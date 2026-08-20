@@ -1,0 +1,55 @@
+{
+  "name": "@warlock.js/web",
+  "version": "4.16.0",
+  "private": true,
+  "type": "module",
+  "description": "Warlock.js web layer — the SSR page pipeline contracts. M1 skeleton: declarations only, no runtime.",
+  "main": "./esm/index.js",
+  "exports": {
+    ".": {
+      "types": "./esm/index.d.ts",
+      "default": "./esm/index.js"
+    },
+    "./vite": {
+      "types": "./esm/vite/index.d.ts",
+      "default": "./esm/vite/index.js"
+    }
+  },
+  "scripts": {
+    "typecheck": "node ../node_modules/typescript/bin/tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@babel/parser": "^7.29.7",
+    "@babel/types": "^7.29.7",
+    "magic-string": "^0.30.21"
+  },
+  "peerDependencies": {
+    "@warlock.js/seal": "*",
+    "react": "*",
+    "vite": ">=7.3.5"
+  },
+  "peerDependenciesMeta": {
+    "vite": {
+      "optional": true
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/warlockjs/web"
+  },
+  "keywords": [
+    "warlock",
+    "ssr",
+    "react",
+    "web"
+  ],
+  "author": "hassanzohdy",
+  "license": "MIT",
+  "module": "./esm/index.js",
+  "typings": "./esm/index.d.ts",
+  "devDependencies": {
+    "vite": "^7.3.5",
+    "vitest": "4.1.10"
+  }
+}
