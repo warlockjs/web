@@ -20,7 +20,13 @@ import MagicString from "magic-string";
 import path from "node:path";
 import type { Plugin } from "vite";
 
-const SERVER_EXPORT_NAMES = new Set(["route", "middleware", "validation", "loader", "metadata"]);
+/**
+ * Exported so Gate C (`gate-c-verify.ts`) can re-derive "does the emitted
+ * bundle contain a server export as a top-level binding" from this exact set
+ * rather than hand-typing a second copy that could drift from projection's
+ * own list (canon `c604f0bc` §6).
+ */
+export const SERVER_EXPORT_NAMES = new Set(["route", "middleware", "validation", "loader", "metadata"]);
 
 /**
  * Recognized client-safe assets that always survive projection untouched,

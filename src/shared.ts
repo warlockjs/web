@@ -1,35 +1,393 @@
 import type { SharedContext } from "./index";
 
-const notImplemented = () =>
-  new Error("@warlock.js/web is not implemented yet");
-
 /**
- * The WRITABLE per-request payload — middleware's half of the contract
- * (base.middleware.ts:71-88 is the canonical writer).
+ * The runtime behind `shared` — the per-request, ALS-backed audit surface.
  *
- * The real implementation is an AsyncLocalStorage-backed proxy: the module
- * scope holds a resolver, never data, which is what separates this from the
- * five banned module-global imports (base.middleware.ts:19-46 states the
- * argument in full). It must THROW outside a request rather than fall back to
- * a shared object, and it is SEALED before the first loader runs. The M1
- * skeleton throws on every access, which is the not-implemented degenerate
- * case of both properties.
+ * `shared` is syntactically global for DX but semantically request-scoped: the
+ * exported value is a Proxy, and EVERY trap re-resolves the current request's
+ * target through core's AsyncLocalStorage store. This module holds a resolver,
+ * never data — nothing here may cache a target, because a cached target
+ * reintroduces the cross-request leak in the one form that still passes a
+ * single-request test (canon 9adaa016 §A.2). And it throws rather than falling
+ * back: outside a live request there is no process-wide object to land on —
+ * that is `useRequestStore()`'s `|| {}` shape (request-context.ts:74-76),
+ * deliberately not copied here; the pattern followed instead is
+ * `requestMemo()`'s raw-store-or-throw (core/src/http/context/request-memo.ts:29-40).
+ *
+ * WHY A RESOLVER AND NOT `import { requestContext } from "@warlock.js/core"`:
+ * web does not (and must not yet) depend on core — no core dep in
+ * web/package.json, no tsconfig path, and no built esm/ in this checkout
+ * (context.ts:96-98 records the same fact for types). So the PIPELINE, which
+ * lives where `requestContext` is in scope, owns the wiring end to end:
+ *
+ *   connectSharedStore(() => requestContext.getStore());  // boot, once
+ *   enterSharedScope(store);                              // stage 2, per request
+ *   await sealShared();                                   // settle stage: gate → parse → freeze
+ *
+ * shared.ts never opens an ALS scope itself.
  */
-export const shared: SharedContext = new Proxy({} as SharedContext, {
-  get() {
-    throw notImplemented();
-  },
-  set() {
-    throw notImplemented();
-  },
-});
 
 /**
- * The READ half, for components, from depth (user-menu.tsx:27-33 is the one
- * use in the reference app). Same object the page and layout props carry —
- * not a copy, not a module global — readonly because components may never
- * write it: writes are middleware work, before the seal.
+ * Untyped view of the per-request target. `SharedContext` is app-augmented and
+ * ships empty, so the runtime writes through this shape and the public surface
+ * casts at the boundary.
+ */
+type SharedTarget = Record<string | symbol, unknown>;
+
+/**
+ * The pipeline's per-request store, structurally. At runtime this IS core's
+ * `RequestContextStore` (`{ request, response }`, request-context.ts:10-13);
+ * only `response.parse` is named here because it is the one member seal needs —
+ * core's `Response.parse` is public (core/src/http/response.ts:297) and the
+ * store already carries the instance, which is how seal reaches it without web
+ * importing core.
+ */
+export interface SharedStore {
+  response?: { parse(value: unknown): Promise<unknown> };
+}
+
+/**
+ * Returns the CURRENT request's store, or undefined outside a request. The
+ * pipeline connects `() => requestContext.getStore()`.
+ */
+export type SharedStoreResolver = () => SharedStore | undefined;
+
+type SharedScope = {
+  target: SharedTarget;
+  sealed: boolean;
+};
+
+/**
+ * Per-request scope records, keyed by the request's own store object — the
+ * exact idiom of request-memo.ts:10: the store object is fresh per request
+ * (RequestContext.buildStore), so two concurrent requests cannot share or even
+ * see each other's entries, and everything is GC-eligible when the request's
+ * ALS frame ends.
+ */
+const sharedScopes = new WeakMap<SharedStore, SharedScope>();
+
+let resolveSharedStore: SharedStoreResolver | undefined;
+
+/**
+ * Boot-time wiring, called once by the pipeline before any request runs.
+ * Returns the previously connected resolver so a caller (tests, mainly) can
+ * restore it.
+ */
+export function connectSharedStore(
+  resolve: SharedStoreResolver | undefined,
+): SharedStoreResolver | undefined {
+  const previous = resolveSharedStore;
+  resolveSharedStore = resolve;
+  return previous;
+}
+
+function currentStore(access: string): SharedStore {
+  if (!resolveSharedStore) {
+    throw new Error(
+      `Cannot ${access}: \`shared\` is not connected to a request store ` +
+        "(web/src/shared.ts). `shared` is request-scoped — its data lives in " +
+        "core's per-request AsyncLocalStorage store, and this module holds only " +
+        "a resolver, never data. Fix: the server bootstrap must call " +
+        "connectSharedStore(() => requestContext.getStore()) before any request " +
+        "runs; in a unit test, connect a resolver for the context the test runs in.",
+    );
+  }
+
+  const store = resolveSharedStore();
+
+  if (!store) {
+    throw new Error(
+      `Cannot ${access}: \`shared\` was accessed outside a request context ` +
+        "(web/src/shared.ts). `shared` is per-request — this happens at module " +
+        "load, in a background job, or from a late timer/dangling promise that " +
+        "outlived its request. There is deliberately NO fallback to a " +
+        "process-wide object: that would leak one user's data into another's " +
+        "response. Fix: move this access into code the request pipeline runs " +
+        "(middleware, a loader, a component render), or pass the value you need " +
+        "explicitly.",
+    );
+  }
+
+  return store;
+}
+
+function scopeOf(store: SharedStore, access: string): SharedScope {
+  const scope = sharedScopes.get(store);
+
+  if (!scope) {
+    throw new Error(
+      `Cannot ${access}: this request has no \`shared\` scope yet ` +
+        "(web/src/shared.ts). The per-request target is created by the pipeline " +
+        "at stage 2 via enterSharedScope(store); this access ran inside the " +
+        "request context but before that point. Fix: move the access after " +
+        "pipeline stage 2 (any middleware/loader/render code qualifies), or — if " +
+        "you are the pipeline — call enterSharedScope(store) first.",
+    );
+  }
+
+  return scope;
+}
+
+function requireScope(access: string): SharedScope {
+  return scopeOf(currentStore(access), access);
+}
+
+function sealedWriteError(action: string, key: string | symbol): Error {
+  return new Error(
+    `Cannot ${action} \`shared.${String(key)}\`: shared is SEALED for this ` +
+      "request (web/src/shared.ts). Writes are middleware work and happen " +
+      "before the seal; after the seal the payload is committed to the page and " +
+      "any further write would silently diverge server from client. Reads keep " +
+      "working. Fix: move this write into middleware (before the pipeline's " +
+      "seal stage), or if the value is render-time state, it does not belong in " +
+      "`shared`.",
+  );
+}
+
+/**
+ * Pipeline stage 2: create THE per-request target. Once per request — the
+ * store object is the request's identity (fresh per request), so a second call
+ * for the same store is a pipeline bug, not a merge.
+ *
+ * Returns the raw target; the pipeline may hold it, but app code goes through
+ * `shared`.
+ */
+export function enterSharedScope(store: SharedStore): SharedContext {
+  if (sharedScopes.has(store)) {
+    throw new Error(
+      "enterSharedScope() was called twice for the same request store " +
+        "(web/src/shared.ts). Each request gets exactly one `shared` target, " +
+        "created once at pipeline stage 2. Fix: enter the scope once per " +
+        "request; to reach the existing target, use `shared` inside the " +
+        "request context instead.",
+    );
+  }
+
+  const target: SharedTarget = {};
+
+  sharedScopes.set(store, { target, sealed: false });
+
+  return target as SharedContext;
+}
+
+function rejectAtGate(path: string, offender: string): never {
+  throw new Error(
+    `sealShared(): \`${path}\` is ${offender} (web/src/shared.ts prototype ` +
+      "gate — runs in production AND dev). `shared` is the audit surface " +
+      "serialized into the page: every value must be plain data (scalars, " +
+      "arrays, plain objects) or carry a `toJSON()` serialization contract " +
+      "(a Resource). A Date/Map/Set/class instance smuggles prototype state " +
+      "past that audit and does not survive serialization intact. Fix: store " +
+      "plain data — an ISO string instead of a Date, an object or array " +
+      "instead of a Map/Set, a Resource (or its `.toJSON()` output) instead " +
+      "of a model or class instance.",
+  );
+}
+
+/**
+ * The prototype gate. Precedence mirrors `Response.parse` exactly so the gate
+ * and the normalization that follows it agree on every value: toJSON wins over
+ * the plain-object branch (response.ts:301-305 vs :319) and is NOT descended —
+ * a Resource's field list is its own contract (canon 9adaa016 §B.6). Date is
+ * checked BEFORE toJSON because `Date.prototype.toJSON` exists and Dates are
+ * rejected regardless.
+ */
+function assertClientSafe(value: unknown, path: string): void {
+  if (value === null || value === undefined) return;
+
+  const valueType = typeof value;
+
+  if (valueType === "function") rejectAtGate(path, "a function");
+  if (valueType !== "object") return;
+
+  if (value instanceof Date) rejectAtGate(path, "a Date");
+  if (value instanceof Map) rejectAtGate(path, "a Map");
+  if (value instanceof Set) rejectAtGate(path, "a Set");
+
+  if (typeof (value as { toJSON?: unknown }).toJSON === "function") return;
+
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertClientSafe(item, `${path}[${index}]`));
+    return;
+  }
+
+  const proto = Object.getPrototypeOf(value);
+
+  if (proto === Object.prototype || proto === null) {
+    for (const key of Object.keys(value)) {
+      assertClientSafe((value as SharedTarget)[key], `${path}.${key}`);
+    }
+    return;
+  }
+
+  const name = (proto?.constructor?.name as string | undefined) ?? "unknown class";
+  rejectAtGate(path, `a class instance (${name})`);
+}
+
+function deepFreeze(value: unknown): void {
+  if (!value || typeof value !== "object" || Object.isFrozen(value)) return;
+
+  Object.freeze(value);
+
+  for (const key of Object.keys(value)) {
+    deepFreeze((value as SharedTarget)[key]);
+  }
+}
+
+/**
+ * The settle-stage seal, exported for the pipeline. Order is load-bearing:
+ *
+ * 1. PROTOTYPE GATE (pre-parse) — production and dev, offending key named
+ *    with its full path. Fail-fast courtesy: catches most violations before
+ *    spending a parse pass on them.
+ * 2. `Response.parse` NORMALIZATION — via the store's own response instance
+ *    (core/src/http/response.ts:297, the public surface). parse mutates the
+ *    target IN PLACE (response.ts:327), which is exactly why it MUST precede
+ *    the freeze: freeze-then-parse throws on the first key parse writes
+ *    (canon 26c64f9a).
+ * 3. PROTOTYPE GATE AGAIN (post-parse) — closes the re-entry window the first
+ *    gate cannot see: `Response.parse` never re-parses a `toJSON()` result
+ *    (canon 26c64f9a fact 2), so a Resource whose `toJSON()` returns a
+ *    Date/Map/Set/class instance re-enters the payload AFTER the first gate
+ *    already ran — the first gate inspects the pre-parse value (a plain
+ *    object with a callable `toJSON`, correctly not descended) and parse then
+ *    puts back exactly what that gate would have rejected. Only a gate that
+ *    runs on the POST-parse target — the object that actually ships — can
+ *    catch it. This is the only gate that matters for correctness; the first
+ *    is a fail-fast courtesy that never gets to be wrong on its own.
+ * 4. DEEP FREEZE — dev only (env read at seal time). Prod skips the freeze but
+ *    NOT the sealed-write throw below; freezing is defense-in-depth for direct
+ *    target references, the throw is the contract.
+ * 5. Sealed flag — writes/deletes/defines through `shared` now throw naming
+ *    the key; reads keep working.
+ *
+ * `store` defaults to the current request's store; the pipeline holds the
+ * store either way, since it entered the scope with it. Returns the sealed
+ * target — serialize THAT, not a re-read of the proxy.
+ */
+export async function sealShared(store?: SharedStore): Promise<Readonly<SharedContext>> {
+  const scopeStore = store ?? currentStore("seal `shared`");
+  const scope = scopeOf(scopeStore, "seal `shared`");
+
+  if (scope.sealed) {
+    throw new Error(
+      "sealShared() was called twice for the same request (web/src/shared.ts). " +
+        "The seal is the pipeline's settle stage and runs once, after " +
+        "middleware writes and before serialization. Fix: seal once per " +
+        "request.",
+    );
+  }
+
+  assertClientSafe(scope.target, "shared");
+
+  const response = scopeStore.response;
+
+  if (!response || typeof response.parse !== "function") {
+    throw new Error(
+      "sealShared() found no `response.parse` on the request store " +
+        "(web/src/shared.ts). Sealing normalizes `shared` through core's " +
+        "public `Response.parse` (core/src/http/response.ts:297), reached via " +
+        "the store's own `response` — the store the pipeline entered the scope " +
+        "with must be core's request store (`{ request, response }`, " +
+        "request-context.ts:10-13). Fix: pass that store (or run sealShared() " +
+        "inside the request context that carries it).",
+    );
+  }
+
+  await response.parse(scope.target);
+
+  assertClientSafe(scope.target, "shared");
+
+  if (process.env.NODE_ENV !== "production") {
+    deepFreeze(scope.target);
+  }
+
+  scope.sealed = true;
+
+  return scope.target as Readonly<SharedContext>;
+}
+
+/**
+ * The WRITABLE per-request payload — middleware's half of the contract.
+ *
+ * Every `shared.x = …` at a call site reads like a global write; it is not —
+ * each trap below resolves the CURRENT request's target through the connected
+ * store resolver, on every single access (canon 9adaa016 §A.8 says document
+ * this at the surface, so: two concurrent requests writing `shared.locale`
+ * write to two different objects).
+ */
+export const shared: SharedContext = new Proxy({} as SharedTarget, {
+  get(_stub, key) {
+    return requireScope(`read \`shared.${String(key)}\``).target[key];
+  },
+
+  set(_stub, key, value) {
+    const scope = requireScope(`write \`shared.${String(key)}\``);
+
+    if (scope.sealed) throw sealedWriteError("write", key);
+
+    scope.target[key] = value;
+
+    return true;
+  },
+
+  has(_stub, key) {
+    return key in requireScope(`check \`shared.${String(key)}\``).target;
+  },
+
+  deleteProperty(_stub, key) {
+    const scope = requireScope(`delete \`shared.${String(key)}\``);
+
+    if (scope.sealed) throw sealedWriteError("delete", key);
+
+    delete scope.target[key];
+
+    return true;
+  },
+
+  ownKeys() {
+    return Reflect.ownKeys(requireScope("enumerate `shared`").target);
+  },
+
+  getOwnPropertyDescriptor(_stub, key) {
+    const descriptor = Object.getOwnPropertyDescriptor(
+      requireScope(`describe \`shared.${String(key)}\``).target,
+      key,
+    );
+
+    if (!descriptor) return undefined;
+
+    // The proxy's book-keeping target is the empty stub, so a frozen real
+    // target's non-configurable descriptors would violate proxy invariants if
+    // reported as-is; configurable:true is the honest report for the proxy
+    // surface (the sealed-write throw is what enforces immutability).
+    return { ...descriptor, configurable: true };
+  },
+
+  defineProperty(_stub, key, descriptor) {
+    const scope = requireScope(`define \`shared.${String(key)}\``);
+
+    if (scope.sealed) throw sealedWriteError("define", key);
+
+    Reflect.defineProperty(scope.target, key, descriptor);
+
+    return true;
+  },
+}) as SharedContext;
+
+/**
+ * The READ half, for components, from depth — same object the page and layout
+ * props carry, not a copy: the returned view is the live proxy, so reads
+ * resolve through the current request's ALS store on every access.
+ *
+ * SERVER HALF ONLY for this slice: it asserts a live request scope and returns
+ * the readonly view. The CLIENT half arrives with hydration — in the browser
+ * there is no ALS; useShared() will read the hydrated payload the pipeline
+ * serialized from `sealShared()`'s return value. That boundary lands with the
+ * hydration slice.
  */
 export function useShared(): Readonly<SharedContext> {
-  throw notImplemented();
+  requireScope("read `shared` via useShared()");
+
+  return shared as Readonly<SharedContext>;
 }

@@ -30,7 +30,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const NODE_BUILTINS = new Set(builtinModules);
 
-type WarlockEnvironment = "server" | "universal" | "client";
+export type WarlockEnvironment = "server" | "universal" | "client";
 
 /**
  * Scopes governed by the burden-inversion marker ruling (room seq 546):
@@ -121,6 +121,23 @@ function findNodeModulesPackageJson(pkgName: string, startDir: string): string |
     dir = parent;
   }
   return undefined;
+}
+
+/**
+ * The governed-scope package name owning `normalized` (an already-`/`-
+ * normalized absolute path), found by taking the LAST `node_modules/`
+ * segment — nested `node_modules` (a dependency's own vendored copy) must
+ * resolve to the nearest enclosing package, not the outermost one. Returns
+ * `undefined` for paths with no `node_modules` segment, or whose owning
+ * package isn't in a governed scope.
+ */
+function packageNameFromNodeModulesPath(normalized: string): string | undefined {
+  const segments = normalized.split("node_modules/");
+  if (segments.length < 2) return undefined;
+  const afterLast = segments[segments.length - 1];
+  const parts = afterLast.split("/");
+  const name = afterLast.startsWith("@") ? `${parts[0]}/${parts[1]}` : parts[0];
+  return isGovernedScope(`${name}/`) ? name : undefined;
 }
 
 function isNodeBuiltin(source: string): boolean {
@@ -241,7 +258,7 @@ function displayName(id: string): string {
   return path.basename(id);
 }
 
-interface GateAOptions {
+export interface EnvironmentClassifierOptions {
   /**
    * Force these governed-scope package names (e.g. `@warlock.js/core`) to
    * classify as `"server"` regardless of what `warlock.environment` their
@@ -263,12 +280,39 @@ interface GateAOptions {
   appRoot?: string;
 }
 
+type GateAOptions = EnvironmentClassifierOptions;
+
+export interface EnvironmentClassifier {
+  appRoot: string;
+  environmentOf(pkgName: string): WarlockEnvironment;
+  /**
+   * Maps an absolute, already-resolved file path (e.g. a Rollup
+   * `OutputChunk.moduleIds` entry) back to the governed-scope package name
+   * that owns it — a `node_modules` dependency, or a workspace member's own
+   * directory PROVIDED the path is outside `appRoot`. The `appRoot` carve-out
+   * matters: a fixture/app can physically live inside a workspace package's
+   * own directory tree (e.g. this repo's own `web/__tests__/` fixtures live
+   * under the `web` package) without thereby "importing" that package — the
+   * app's own source is never a dependency edge onto itself, no matter where
+   * on disk it happens to sit (same distinction Gate A's rule 2 already makes
+   * via `isInsideAppRoot` for the importer side). `undefined` when the path
+   * isn't a governed-scope dependency at all. Exists so Gate C
+   * (`gate-c-verify.ts`) can classify modules already sitting in the EMITTED
+   * bundle graph using this exact same marker logic, instead of hand-rolling
+   * a second classification scheme (canon `c604f0bc` §6: "re-derive ... don't
+   * duplicate").
+   */
+  packageNameForFilePath(absPath: string): string | undefined;
+}
+
 /**
- * The client-build Vite plugin. `vite` is only imported for its types
- * (`import type`), so this module carries no runtime dependency on `vite`
- * being installed — it is a `peerDependenciesMeta.optional` peer.
+ * The `warlock.environment` marker classifier (rule 2, `c604f0bc` §4).
+ * Extracted from `gateAResolve` so Gate C can classify packages it finds in
+ * the EMITTED bundle graph with the identical resolution logic — same
+ * workspace index, same `node_modules` fallback, same burden-inversion
+ * default — rather than a second, potentially-drifting implementation.
  */
-export function gateAResolve(options: GateAOptions = {}): Plugin {
+export function createEnvironmentClassifier(options: EnvironmentClassifierOptions = {}): EnvironmentClassifier {
   const forcedServerPackages = options.serverPackages ? new Set(options.serverPackages) : undefined;
   const appRoot = path.resolve(options.appRoot ?? process.cwd());
   const workspaceIndex = findWorkspaceIndex(__dirname);
@@ -296,6 +340,39 @@ export function gateAResolve(options: GateAOptions = {}): Plugin {
     environmentCache.set(pkgName, environment);
     return environment;
   }
+
+  function packageNameForFilePath(absPath: string): string | undefined {
+    const normalized = normalize(path.resolve(absPath));
+
+    // node_modules is unambiguous — always a dependency, even when nested
+    // inside appRoot (the ordinary case: `appRoot/node_modules/...`).
+    const nodeModulesMatch = packageNameFromNodeModulesPath(normalized);
+    if (nodeModulesMatch) return nodeModulesMatch;
+
+    // Everything else inside appRoot is the app's OWN source, never a
+    // dependency edge, regardless of which workspace package's directory it
+    // happens to physically sit under — see the appRoot carve-out note above.
+    if (isInsideAppRoot(normalized, appRoot)) return undefined;
+
+    if (workspaceIndex) {
+      for (const [name, pkgJsonPath] of workspaceIndex.packageJsonByName) {
+        const root = `${normalize(path.dirname(pkgJsonPath))}/`;
+        if (normalized.startsWith(root)) return name;
+      }
+    }
+    return undefined;
+  }
+
+  return { appRoot, environmentOf, packageNameForFilePath };
+}
+
+/**
+ * The client-build Vite plugin. `vite` is only imported for its types
+ * (`import type`), so this module carries no runtime dependency on `vite`
+ * being installed — it is a `peerDependenciesMeta.optional` peer.
+ */
+export function gateAResolve(options: GateAOptions = {}): Plugin {
+  const { appRoot, environmentOf } = createEnvironmentClassifier(options);
 
   // Maps a resolved module id to the id that imported it, rebuilt per plugin
   // instance (i.e. per build) via our own `this.resolve` calls below — this

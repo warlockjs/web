@@ -16,6 +16,7 @@
     }
   },
   "scripts": {
+    "dev": "tsx src/server/dev-cli.ts",
     "typecheck": "node ../node_modules/typescript/bin/tsc -p tsconfig.json",
     "test": "vitest run"
   },
@@ -27,6 +28,7 @@
   "peerDependencies": {
     "@warlock.js/seal": "*",
     "react": "*",
+    "react-dom": "*",
     "vite": ">=7.3.5"
   },
   "peerDependenciesMeta": {
@@ -49,6 +51,9 @@
   "module": "./esm/index.js",
   "typings": "./esm/index.d.ts",
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "vite": "^7.3.5",
     "vitest": "4.1.10"
   }

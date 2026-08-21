@@ -5,11 +5,26 @@
  */
 import type { Plugin } from "vite";
 import { gateAResolve } from "./gate-a-resolve";
-import { gateBSecrets } from "./gate-b-secrets";
+import { createPublicEnvTracker, gateBSecrets } from "./gate-b-secrets";
+import { gateCVerify } from "./gate-c-verify";
 import { projection } from "./projection";
 
 export { gateAResolve } from "./gate-a-resolve";
-export { gateBSecrets } from "./gate-b-secrets";
+export type { EnvironmentClassifier, EnvironmentClassifierOptions, WarlockEnvironment } from "./gate-a-resolve";
+export { createPublicEnvTracker, gateBSecrets } from "./gate-b-secrets";
+export type { PublicEnvTracker } from "./gate-b-secrets";
+export {
+  buildPublicEnvManifest,
+  findLeakedServerExports,
+  findLeakedServerImportEdges,
+  gateCVerify,
+} from "./gate-c-verify";
+export type {
+  GateCOptions,
+  PublicEnvManifestEntry,
+  ServerExportLeak,
+  ServerImportEdgeLeak,
+} from "./gate-c-verify";
 export { projection, ProjectionAmbiguityError } from "./projection";
 export type { ProjectionResult } from "./projection";
 
@@ -69,7 +84,24 @@ export type { ProjectionResult } from "./projection";
  * output at all (orthogonal concern, raw source vs. import paths), so its
  * position relative to Gate A is not load-bearing — it is placed before Gate
  * A only to keep both `transform` hooks adjacent in the array.
+ *
+ * Gate C (`gate-c-verify.ts`) runs last and only at `generateBundle` — after
+ * the entire `transform`/`resolveId` build phase has completed for every
+ * plugin, regardless of array position (a Rollup lifecycle fact, not
+ * something this array order enforces). It verifies the EMITTED output the
+ * other three produced: no server export survived as a top-level binding, no
+ * import edge into a server-only package survived into the module graph, and
+ * it emits the reviewable `PUBLIC_*` inlined-value manifest (canon `c604f0bc`
+ * §6, Suki room seq 561 pt.2 / 623). `gateBSecrets` and `gateCVerify` share
+ * one `PublicEnvTracker` instance so the manifest and Gate B's own unread-key
+ * exclusion check agree by construction, not by coincidence.
  */
 export function warlockClientBoundary(options: Parameters<typeof gateAResolve>[0] = {}): Plugin[] {
-  return [projection(), gateBSecrets(), gateAResolve(options)];
+  const tracker = createPublicEnvTracker();
+  return [
+    projection(),
+    gateBSecrets({ tracker }),
+    gateAResolve(options),
+    gateCVerify({ ...options, tracker }),
+  ];
 }

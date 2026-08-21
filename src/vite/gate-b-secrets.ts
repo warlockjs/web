@@ -19,6 +19,14 @@
  *
  * Gate A, Gate C and the SSR mirror rule are NOT this gate — see `c604f0bc`
  * §4, §6. Do not extend this file to cover them; they are separate slices.
+ *
+ * A bare `import.meta.env` reference — used as a value directly (passed as
+ * an argument, spread, destructured, or aliased to a variable) rather than
+ * narrowed to a single static `.KEY` access — is caught here too (Suki, room
+ * seq 623): it leaks the WHOLE env object, not one var, so it is the most
+ * severe violation this gate judges, and is caught at the exact source line
+ * like every other Gate B violation, not only as a whole-build
+ * `generateBundle` failure. See `findViolation`'s `consumedEnvBases` note.
  */
 import { parse } from "@babel/parser";
 import type { Plugin } from "vite";
@@ -123,6 +131,26 @@ function expressionText(code: string, node: any): string {
   return code.slice(node.start as number, node.end as number);
 }
 
+/**
+ * Tracks which declared `PUBLIC_*` keys were actually read anywhere in the
+ * client build, and the resolved env values Vite would inline for them.
+ * Shared, by construction, between `gateBSecrets` (which owns the writes —
+ * `transform`'s `onPublicKeyRead` callback, `configResolved`'s declared-env
+ * snapshot) and Gate C's inlined-value manifest (`gate-c-verify.ts`), so the
+ * manifest's "was this key actually inlined" list and Gate B's own
+ * unread-key exclusion (`generateBundle` below) can never drift apart into
+ * two different answers — they read the same `Set`/object, not two
+ * independently-recomputed ones.
+ */
+export interface PublicEnvTracker {
+  readonly referencedKeys: Set<string>;
+  declaredEnv: Record<string, unknown>;
+}
+
+export function createPublicEnvTracker(): PublicEnvTracker {
+  return { referencedKeys: new Set(), declaredEnv: {} };
+}
+
 interface Violation {
   line: number;
   expression: string;
@@ -140,6 +168,20 @@ interface Violation {
  * allowed through, so the caller can track which declared `PUBLIC_*` env
  * vars are actually referenced anywhere in the client build (see
  * `gateBSecrets`'s `generateBundle` check below).
+ *
+ * `consumedEnvBases` (Suki, room seq 623) tracks every `import.meta.env`
+ * MemberExpression node that was already judged as the `.object` of a
+ * further static/computed `.KEY` access (the two checks above) — i.e. a
+ * NARROWED read, whether allowed or refused. Because `walk` visits a parent
+ * node before its children, an outer `<base>.KEY` access always marks its
+ * `base` sub-node as consumed BEFORE that same sub-node is visited on its
+ * own. Any `import.meta.env` MemberExpression NOT found in this set when
+ * visited on its own is therefore a bare reference used as a value —
+ * `const env = import.meta.env`, `fn(import.meta.env)`,
+ * `fn({...import.meta.env})`, `const { X } = import.meta.env` all take this
+ * exact shape (the base is a direct child of a declarator/argument/spread,
+ * never wrapped in one more `.KEY` MemberExpression) — and leaks the WHOLE
+ * env object, not one key, so it fails regardless of what it's assigned to.
  */
 function findViolation(
   code: string,
@@ -147,6 +189,7 @@ function findViolation(
   onPublicKeyRead: (key: string) => void,
 ): Violation | undefined {
   let found: Violation | undefined;
+  const consumedEnvBases = new WeakSet<object>();
 
   walk(ast.program, (node) => {
     if (found || node.type !== "MemberExpression") return;
@@ -166,6 +209,7 @@ function findViolation(
     }
 
     if (isImportMetaEnvBase(outer.object)) {
+      consumedEnvBases.add(outer.object);
       const key = resolveKey(outer);
       if (key.static && VITE_BUILTIN_ENV_KEYS.has(key.key)) return; // Vite built-in, not a secret
       if (key.static && key.key.startsWith(PUBLIC_ENV_PREFIX)) {
@@ -182,6 +226,16 @@ function findViolation(
         fix: key.static
           ? `Rename the env var to start with "${PUBLIC_ENV_PREFIX}" (e.g. "${PUBLIC_ENV_PREFIX}${key.key}") if it is genuinely safe to ship to the browser, or move the code that reads it into a *.server.ts file / server export otherwise.`
           : `Use a static "import.meta.env.${PUBLIC_ENV_PREFIX}*" literal key instead of a computed one, or move the code that reads it into a *.server.ts file / server export if the key resolves to a secret.`,
+      };
+      return;
+    }
+
+    if (isImportMetaEnvBase(outer) && !consumedEnvBases.has(outer)) {
+      found = {
+        line: outer.loc.start.line,
+        expression: expressionText(code, outer),
+        cause: `"import.meta.env" is referenced as a whole object in client-bound code (not narrowed to one static "${PUBLIC_ENV_PREFIX}*" key access) — used as a value like this (assigned, destructured, spread, or passed as an argument), it leaks every declared env var, public or not, to the client.`,
+        fix: `Read only the specific "import.meta.env.${PUBLIC_ENV_PREFIX}*" key(s) you actually need, one at a time, instead of referencing the whole "import.meta.env" object.`,
       };
     }
   });
@@ -214,10 +268,15 @@ function findViolation(
  *    or another whole-object read, which Vite serializes in full,
  *    independent of Gate B's own per-key checks) — verified on the actual
  *    emitted chunk code, not assumed from the transform/define config alone.
+ *
+ * `options.tracker` (default: a private, unshared one) is where that
+ * read/declared-env state lives — pass the SAME `PublicEnvTracker` instance
+ * used to build Gate C's inlined-value manifest (`warlockClientBoundary`
+ * does this) so the manifest and this plugin's unread-key exclusion read off
+ * one shared Set, not two.
  */
-export function gateBSecrets(): Plugin {
-  const referencedPublicKeys = new Set<string>();
-  let declaredEnv: Record<string, unknown> = {};
+export function gateBSecrets(gateBOptions: { tracker?: PublicEnvTracker } = {}): Plugin {
+  const tracker = gateBOptions.tracker ?? createPublicEnvTracker();
 
   return {
     name: "warlock:gate-b-secrets",
@@ -226,7 +285,7 @@ export function gateBSecrets(): Plugin {
       return { envPrefix: PUBLIC_ENV_PREFIX };
     },
     configResolved(config) {
-      declaredEnv = config.env;
+      tracker.declaredEnv = config.env;
     },
     transform(code, id, options) {
       if (options?.ssr) return null;
@@ -235,7 +294,7 @@ export function gateBSecrets(): Plugin {
 
       const ast = parse(code, { sourceType: "module", plugins: ["typescript", "jsx"] });
 
-      const violation = findViolation(code, ast, (key) => referencedPublicKeys.add(key));
+      const violation = findViolation(code, ast, (key) => tracker.referencedKeys.add(key));
       if (violation) {
         this.error(
           [
@@ -254,8 +313,8 @@ export function gateBSecrets(): Plugin {
     generateBundle(_options, bundle) {
       if (this.environment?.config?.consumer === "server") return;
 
-      const unreadKeys = Object.keys(declaredEnv).filter(
-        (key) => key.startsWith(PUBLIC_ENV_PREFIX) && !referencedPublicKeys.has(key),
+      const unreadKeys = Object.keys(tracker.declaredEnv).filter(
+        (key) => key.startsWith(PUBLIC_ENV_PREFIX) && !tracker.referencedKeys.has(key),
       );
       if (unreadKeys.length === 0) return;
 
@@ -263,7 +322,7 @@ export function gateBSecrets(): Plugin {
         if (file.type !== "chunk") continue;
 
         for (const key of unreadKeys) {
-          const inlinedValue = JSON.stringify(declaredEnv[key]);
+          const inlinedValue = JSON.stringify(tracker.declaredEnv[key]);
           if (!file.code.includes(inlinedValue)) continue;
 
           this.error(

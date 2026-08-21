@@ -145,4 +145,39 @@ describe("gateBSecrets — Gate B inline-secret transform gate (real Vite builds
       process.env.PUBLIC_UNREAD_VAR = previousUnreadVar;
     }
   });
+
+  describe("Part 3 (Suki, room seq 623): a bare `import.meta.env` value-reference fails AT TRANSFORM TIME, not only as a generateBundle whole-build failure", () => {
+    it("case 10: const env = import.meta.env (aliased) fails at transform time, source-line-pointing", async () => {
+      try {
+        await buildEntry("case10-import-meta-env-aliased.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        // Same file/line/expression/cause/fix shape as every other Gate B
+        // violation (case 1-8 above) — NOT the whole-build generateBundle
+        // message ("Gate B refused a build: an unread PUBLIC_ env var...").
+        expect(message).toContain("Gate B refused a module: forbidden inline env read in the client build.");
+        expect(message).toContain("case10-import-meta-env-aliased.tsx:");
+        expect(message).toContain("Expression: import.meta.env");
+        expect(message).toContain("Cause:");
+        expect(message).toContain("whole object");
+        expect(message).toContain("Fix:");
+      }
+    });
+
+    it('case 11: fn({...import.meta.env}) (spread) fails at transform time, source-line-pointing', async () => {
+      try {
+        await buildEntry("case11-import-meta-env-spread.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module: forbidden inline env read in the client build.");
+        expect(message).toContain("case11-import-meta-env-spread.tsx:");
+        expect(message).toContain("Expression: import.meta.env");
+        expect(message).toContain("Cause:");
+        expect(message).toContain("whole object");
+        expect(message).toContain("Fix:");
+      }
+    });
+  });
 });
