@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { WebRequest } from "../context";
 import type { MetadataOutput, PageMetadata } from "../metadata";
 import { resolvePageMetadata } from "./resolve-page-metadata";
+import { resolveValidationData } from "./resolve-validation-data";
 import { enterSharedScope, sealShared, shared, type SharedStore } from "../shared";
 import type { SharedContext } from "../index";
 import {
@@ -135,6 +136,14 @@ export type PageLevelName = "app" | "layout" | "page";
 export type PipelineRequest = WebRequest & {
   body?: Record<string, unknown>;
   headers?: Record<string, unknown>;
+  /**
+   * Core's own parses (`core/src/http/request.ts:1010,1026`), and the ONLY
+   * query/params the pipeline reads. Stage 4 used to take these two from a
+   * match object this file built by re-parsing the URL — see
+   * `resolve-validation-data.ts` for what that cost.
+   */
+  query?: Record<string, unknown>;
+  params?: Record<string, unknown>;
   setValidatedData?(data: Record<string, unknown>): void;
 };
 
@@ -287,6 +296,16 @@ export type PageDataBundle = {
     name: string;
     path: string;
     params: Record<string, string>;
+    /**
+     * ⚠ Re-parsed from the URL by this file's own matcher, NOT core's parse —
+     * so it is flat and last-wins: `?tags=a&tags=b&filter[status]=active`
+     * arrives as `{ tags: "b", "filter[status]": "active" }`.
+     *
+     * Nothing in `web` reads it any more — stage 4 was the last consumer and
+     * now takes its query from the request (`resolve-validation-data.ts`).
+     * It survives only because it is part of this public bundle type, and it
+     * goes away with the second matcher itself. **Read `request.query`.**
+     */
     query: Record<string, string>;
   };
   appData?: unknown;
@@ -342,32 +361,6 @@ function matchRoute(
   }
 
   return undefined;
-}
-
-// ---------------------------------------------------------------------------
-// Stage 4 — validation input (mirror of validateAll.ts:8-31, with the PAGE
-// default: params + query, not body)
-// ---------------------------------------------------------------------------
-
-function resolveValidationData(
-  validating: readonly string[] | undefined,
-  request: PipelineRequest,
-  match: { params: Record<string, string>; query: Record<string, string> },
-): Record<string, unknown> {
-  if (!validating || validating.length === 0) {
-    return { ...match.query, ...match.params };
-  }
-
-  let data: Record<string, unknown> = {};
-
-  for (const source of validating) {
-    if (source === "body") data = { ...data, ...(request.body ?? {}) };
-    if (source === "query") data = { ...data, ...match.query };
-    if (source === "params") data = { ...data, ...match.params };
-    if (source === "headers") data = { ...data, ...(request.headers ?? {}) };
-  }
-
-  return data;
 }
 
 // ---------------------------------------------------------------------------
@@ -592,7 +585,7 @@ export async function executePageRequest<TResult = PageDataBundle>(
     const validation = triple.page.validation;
 
     if (validation?.schema) {
-      const data = resolveValidationData(validation.validating, request, match);
+      const data = resolveValidationData(validation.validating, request);
       const result = await v.validate(validation.schema, data);
 
       if (result.isValid && result.data) {
