@@ -36,16 +36,18 @@ export type MetadataOutput = {
  * product-details.page.tsx:71-74). The function form runs server-side, after
  * the loader, with the same `data` the component will receive — which is why
  * it can describe the page instead of guessing at it.
+ *
+ * **`data` is always present, and that is now true rather than merely
+ * declared.** The function form runs only when the loader resolved; when it
+ * rejected, the framework emits `ERROR_PAGE_METADATA` and this never runs
+ * (`server/resolve-page-metadata.ts`, which explains why at length). An earlier
+ * revision passed `{ data: undefined, error }` on the boundary path while
+ * declaring `data` non-optional — every page that read `data` unguarded then
+ * threw a `TypeError` that replaced the loader's real error.
  */
 export type PageMetadata<TLoader extends LoaderFunction | undefined = undefined> =
   | MetadataOutput
   | ((context: {
       data: LoaderData<TLoader>;
-      /**
-       * Set on the boundary path instead of `data` (execute-page-request.ts
-       * stage 8) — metadata may render an error page's title, so the
-       * boundary's error is part of the contract.
-       */
-      error: unknown;
       shared: Readonly<SharedContext>;
     }) => MetadataOutput);

@@ -2,6 +2,7 @@ import { v, type BaseValidator } from "@warlock.js/seal";
 import { randomUUID } from "node:crypto";
 import type { WebRequest } from "../context";
 import type { MetadataOutput, PageMetadata } from "../metadata";
+import { resolvePageMetadata } from "./resolve-page-metadata";
 import { enterSharedScope, sealShared, shared, type SharedStore } from "../shared";
 import type { SharedContext } from "../index";
 import {
@@ -711,20 +712,33 @@ export async function executePageRequest<TResult = PageDataBundle>(
     }
 
     // ── stage 8 · METADATA ────────────────────────────────────────────────
-    // metadata({ data, error, shared }) — exactly one of data/error set
-    // (request-lifecycle.md:56). Skipped after a loader short-circuit: a
-    // redirect/notFound answer has no page render to describe.
+    // metadata({ data, shared }), success path only — `resolve-page-metadata.ts`
+    // owns the rule and the reasoning. Skipped entirely after a loader
+    // short-circuit: a redirect/notFound answer has no page render to describe.
     if (!bundle.shortCircuit) {
-      const metadata = triple.page.metadata;
+      const resolved = resolvePageMetadata({
+        metadata: triple.page.metadata,
+        data: bundle.pageData,
+        error: bundle.error?.error,
+        failed: Boolean(bundle.error),
+        shared: sealedShared,
+      });
 
-      if (typeof metadata === "function") {
-        bundle.metadata = await metadata({
-          data: bundle.error ? undefined : bundle.pageData,
-          error: bundle.error ? bundle.error.error : undefined,
-          shared: sealedShared,
-        });
-      } else if (metadata) {
-        bundle.metadata = metadata;
+      bundle.metadata = resolved.metadata;
+
+      /*
+        The page's own metadata function threw, and there was no earlier error
+        for it to mask. Record it exactly as a loader throw is recorded, so the
+        boundary renders and the framework keeps the status — rather than
+        letting the exception escape stage 8, where nothing is left to catch it
+        and the committed buffers from stage 7 would already be on the wire.
+      */
+      if (resolved.thrown !== undefined) {
+        bundle.error = buildErrorRecord(
+          resolved.thrown,
+          designateBoundary("page", triple),
+          bundle.route.path,
+        );
       }
     }
 
