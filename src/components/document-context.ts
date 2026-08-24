@@ -15,6 +15,37 @@ export type HydrationDocumentPayloadSource = {
    * server on the very request it is hydrating.
    */
   readonly name: string;
+  /**
+   * The params the SERVER matched for this request — `bundle.route.params`
+   * (`server/execute-page-request.ts:288`), carried untransformed. Same reason
+   * `name` is here: the browser must not re-derive them from
+   * `location.pathname`, because deriving them IS a second matcher.
+   *
+   * OPTIONAL, and ungated on purpose — see {@link metadata} below for the rule
+   * both new keys share. The server always emits it (`{}` for a route with no
+   * dynamic segments), so absence means the payload came from a producer that
+   * predates this key; `currentRoute()` then reports `{}` rather than failing a
+   * page over an accessor.
+   */
+  readonly params?: Readonly<Record<string, string>>;
+  /**
+   * The page metadata the server resolved at stage 8, carried WHOLE — the same
+   * `MetadataOutput` `<Head/>` rendered into the document on the first request.
+   *
+   * Why it has to be on the wire at all: `<Head/>` renders inside the App
+   * level, and the App level is not part of the hydrated tree (the client
+   * mounts at `#root`, which App contains). So on a client navigation there is
+   * no React render that can reach `<head>` — without this key the browser
+   * never learns the new page's title and the tab keeps the old one.
+   *
+   * OPTIONAL, deliberately: `bundle.metadata` is itself optional
+   * (`server/execute-page-request.ts:296`) — a page that exports no `metadata`
+   * produces none, and a loader short-circuit skips stage 8 entirely. Gating a
+   * key the server is right not to produce would make `readHydrationPayload`
+   * throw on a valid page. Present-but-not-an-object is still MALFORMED and
+   * still throws; only ABSENT is accepted.
+   */
+  readonly metadata?: MetadataOutput;
 };
 
 export const PAYLOAD_SCRIPT_ID = "__WARLOCK_DATA__";

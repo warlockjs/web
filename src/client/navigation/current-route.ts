@@ -13,26 +13,23 @@ import type { HydrationDocumentPayloadSource } from "../../hydration-payload";
  * disagree with it about the very request it is hydrating.
  *
  * So the name is MRR's because the QUESTION is the same one, but the ANSWER
- * comes from somewhere else: the matched entry's name travels on the hydration
- * payload (`web/src/components/document-context.ts`, the `name` key of the wire
- * contract's five), and this module reports what arrived. Nothing here parses a
- * path, compares a URL to a pattern, or knows that routes have shapes.
+ * comes from somewhere else: the matched entry's name AND ITS PARAMS travel on
+ * the hydration payload (`web/src/components/document-context.ts`), and this
+ * module reports what arrived. Nothing here parses a path, compares a URL to a
+ * pattern, or knows that routes have shapes.
  *
  * The practical consequence for a caller: this is the server's match, so it is
  * as correct as the page on screen and it cannot drift from it — including on
  * the very first render, before any client navigation, which is most page
  * views.
  *
- * ## What is NOT here yet: params
+ * ## The params, and where they come from
  *
- * MRR's route object carries its params. Ours cannot, because the params are
- * not on the wire: the server HAS them (`bundle.route.params`,
- * `web/src/server/execute-page-request.ts:288`) and `buildHydrationPayload`
- * does not put them on the payload (`web/src/server/build-hydration-payload.ts:36-49`,
- * whose keys the wire contract fixes at five). Deriving them in the browser
- * from `location.pathname` would BE the second matcher, so the honest answer is
- * that this reports the name alone until the payload carries them. When it
- * does, the projection below is the one line that changes.
+ * `bundle.route.params` (`web/src/server/execute-page-request.ts:288`) is the
+ * router's own answer; `buildHydrationPayload` puts it on the payload and the
+ * projection below hands it over unchanged. Deriving `{ id: "42" }` from
+ * `location.pathname` here would BE the second matcher this file exists to
+ * refuse — a URL and a pattern are exactly what it must never compare.
  *
  * ## Why nothing here touches `window`
  *
@@ -53,6 +50,22 @@ import type { HydrationDocumentPayloadSource } from "../../hydration-payload";
 export type MatchedRoute = {
   /** The matched page manifest entry's stable `name`, e.g. `products.details`. */
   readonly name: string;
+  /**
+   * The params the SERVER matched, e.g. `{ id: "42" }` for `/users/:id`, and
+   * `{}` for a route with no dynamic segments.
+   *
+   * `undefined` means the payload carried no `params` key — an older build, or
+   * a document cached across a deploy. It is NOT the same answer as `{}`, and
+   * this module will not collapse the two: `{}` is the server saying "this
+   * route has no params", `undefined` is the server not having said. Inventing
+   * the first from the second would be a lie a caller cannot detect, which is
+   * the same standard {@link previousRoute} is held to below. Every payload a
+   * current server produces carries the key.
+   *
+   * A COPY of the payload's object, so a caller writing to it cannot reach the
+   * payload the page was built from.
+   */
+  readonly params?: Readonly<Record<string, string>>;
 };
 
 let current: MatchedRoute | undefined;
@@ -88,7 +101,12 @@ export function recordCurrentRoute(payload: HydrationDocumentPayloadSource): voi
 
   source = payload;
   previous = current;
-  current = { name: payload.name };
+  // A COPY when the payload carried params, and no key at all when it did not
+  // — the projection reports what arrived and never fills a gap in.
+  current =
+    payload.params === undefined
+      ? { name: payload.name }
+      : { name: payload.name, params: { ...payload.params } };
 }
 
 /**

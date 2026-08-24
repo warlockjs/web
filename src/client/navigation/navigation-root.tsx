@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { DocumentContext } from "../../components/document-context";
 import type { HydrationDocumentPayloadSource } from "../../hydration-payload";
+import type { MetadataOutput } from "../../metadata";
 import { connectNavigator } from "../../routing/navigator";
 import { hydrateShared } from "../../shared";
 import type { ClientPageEntry } from "../runtime";
@@ -27,6 +28,151 @@ import { connectRefresher, createRefresher, type RefreshablePage } from "./refre
  * client navigation, and it is a consequence of reusing the builder rather than
  * anything this file does.
  */
+
+/**
+ * ONE tag `<head>` may hold at most one of, addressed the way the browser
+ * already addresses it. No marker attribute: the tags this replaces were
+ * rendered by `<Head/>` on the server and carry none, and a marker would make
+ * the applier ignore exactly the tags it exists to correct — the first
+ * navigation's.
+ */
+type ManagedTag = {
+  /** Finds the existing tag, server-rendered or applied by a previous swap. */
+  selector: string;
+  create: (documentNode: Document) => Element;
+  write: (element: Element, value: string) => void;
+};
+
+function metaTag(attribute: "name" | "property", key: string): ManagedTag {
+  return {
+    selector: `meta[${attribute}="${key}"]`,
+    create: documentNode => {
+      const element = documentNode.createElement("meta");
+
+      element.setAttribute(attribute, key);
+
+      return element;
+    },
+    write: (element, value) => element.setAttribute("content", value),
+  };
+}
+
+const TITLE_TAG: ManagedTag = {
+  selector: "title",
+  create: documentNode => documentNode.createElement("title"),
+  write: (element, value) => {
+    element.textContent = value;
+  },
+};
+
+const CANONICAL_TAG: ManagedTag = {
+  selector: 'link[rel="canonical"]',
+  create: documentNode => {
+    const element = documentNode.createElement("link");
+
+    element.setAttribute("rel", "canonical");
+
+    return element;
+  },
+  write: (element, value) => element.setAttribute("href", value),
+};
+
+/**
+ * The metadata, resolved into (tag, value) pairs in `<Head/>`'s ORDER and by
+ * `<Head/>`'s RULES — including the og fallbacks and the fact that they apply
+ * only when `openGraph` is present (`components/head.ts:21-24,43-48`).
+ *
+ * The duplication is deliberate and it is the known cost here. `<Head/>` is a
+ * React component that renders elements into a tree; this writes elements into
+ * a live `<head>` that no client tree owns. They cannot be one function today,
+ * but they MUST agree: the head after navigating to a URL has to equal the head
+ * after landing on it, or a share preview depends on how the visitor arrived.
+ * The fix is a shared descriptor list both consume — see the report's followup.
+ */
+function resolveManagedTags(
+  metadata: MetadataOutput | undefined,
+): readonly (readonly [ManagedTag, string | undefined])[] {
+  const keywords =
+    metadata?.keywords === undefined
+      ? undefined
+      : Array.isArray(metadata.keywords)
+        ? metadata.keywords.join(", ")
+        : (metadata.keywords as string);
+
+  const openGraph = metadata?.openGraph;
+  const twitter = metadata?.twitter;
+
+  return [
+    [TITLE_TAG, metadata?.title],
+    [metaTag("name", "description"), metadata?.description],
+    [metaTag("name", "keywords"), keywords],
+    [CANONICAL_TAG, metadata?.canonical],
+    [metaTag("name", "robots"), metadata?.robots],
+    [metaTag("property", "og:title"), openGraph && (openGraph.title ?? metadata?.title)],
+    [
+      metaTag("property", "og:description"),
+      openGraph && (openGraph.description ?? metadata?.description),
+    ],
+    [metaTag("property", "og:image"), openGraph?.image],
+    [metaTag("property", "og:url"), openGraph?.url],
+    [metaTag("property", "og:type"), openGraph?.type],
+    [metaTag("name", "twitter:card"), twitter?.card],
+    [metaTag("name", "twitter:title"), twitter?.title],
+    [metaTag("name", "twitter:description"), twitter?.description],
+    [metaTag("name", "twitter:image"), twitter?.image],
+  ];
+}
+
+/**
+ * Make `<head>` describe the page now on screen.
+ *
+ * ## Why this is imperative, and why that is not a shortcut
+ *
+ * `<Head/>` renders inside the App level, and the App level is deliberately NOT
+ * in the hydrated tree — the client mounts at `#root`, which App contains
+ * (`client/build-hydrated-tree.ts`'s header). So no client render can reach
+ * `<head>`, and a swap either writes it directly or leaves the previous page's
+ * title in the tab. It leaves it today; that is the bug.
+ *
+ * ## ABSENT MEANS REMOVED
+ *
+ * Every managed tag the new metadata does not set is REMOVED, not left alone.
+ * `/` sets a description and `/contact-us` does not: keeping it would describe
+ * the contact page with the home page's words to every crawler, share preview
+ * and assistive reader that looks — a wrong answer, where an absent one is
+ * merely absent. A title the new page does not set goes too, and the tab falls
+ * back to the URL, which is the honest rendering of "this page did not name
+ * itself".
+ *
+ * Only the tags `<Head/>` renders FROM METADATA are touched. The charset meta
+ * is rendered unconditionally and belongs to the document, so it is left alone.
+ *
+ * Takes the document as an argument rather than reaching for the global, which
+ * is what makes it provable in a suite with no DOM.
+ */
+export function applyDocumentMetadata(
+  documentNode: Document,
+  metadata: MetadataOutput | undefined,
+): void {
+  for (const [tag, value] of resolveManagedTags(metadata)) {
+    const existing = documentNode.querySelector(tag.selector);
+
+    if (value === undefined) {
+      existing?.remove();
+      continue;
+    }
+
+    if (existing !== null) {
+      tag.write(existing, value);
+      continue;
+    }
+
+    const created = tag.create(documentNode);
+
+    tag.write(created, value);
+    documentNode.head.appendChild(created);
+  }
+}
 
 export type NavigationRootProps = {
   pages: readonly ClientPageEntry[];
@@ -209,6 +355,32 @@ export function NavigationRoot({
   }, [pages, buildTree]);
 
   /*
+    The payload whose metadata `<head>` currently reflects. Seeded with the
+    HYDRATION payload, which is the point: on the initial mount the head is the
+    server's own render of this very metadata, so there is nothing to correct —
+    and re-applying would be a chance to get it wrong, since a payload from a
+    build with no `metadata` key would wipe a head the server filled in
+    correctly. The head is applied on SWAPS only.
+  */
+  const appliedMetadataSource = useRef(current.payload);
+
+  useEffect(() => {
+    if (appliedMetadataSource.current === current.payload) return;
+
+    appliedMetadataSource.current = current.payload;
+
+    /*
+      Keyed on the payload's identity, so this covers a refresh as well as a
+      navigation: `refresh()` produces a NEW payload for the page already on
+      screen, and a page whose metadata is a function of its loader data can
+      legitimately re-title itself when that data changes. One applier at the
+      one place the page changes, rather than a call in each pathway that could
+      be forgotten in the next one.
+    */
+    applyDocumentMetadata(document, current.payload.metadata);
+  }, [current.payload]);
+
+  /*
     DURING RENDER, not in an effect, and that placement is the requirement
     rather than a shortcut. A page component calling `currentRoute()` does it
     while IT is rendering, and child effects run before a parent's, so anything
@@ -234,8 +406,19 @@ export function NavigationRoot({
     would see the payload of the page the user has left. The nearest provider
     wins, so this one keeps it current.
   */
+  /*
+    `metadata` from the PAYLOAD, not `undefined`. The document context is the
+    universal shape — the server provides the resolved metadata around the same
+    tree — so handing the client's readers `undefined` was a lie the payload can
+    now correct. It also removes a latent mismatch: a `<Head/>` rendered inside
+    a Layout (not the App level) renders its tags into `#root` server-side, and
+    hydrating that markup against `metadata: undefined` produced a tree the
+    server never rendered.
+  */
   return (
-    <DocumentContext.Provider value={{ metadata: undefined, payload: current.payload }}>
+    <DocumentContext.Provider
+      value={{ metadata: current.payload.metadata, payload: current.payload }}
+    >
       {current.tree}
     </DocumentContext.Provider>
   );

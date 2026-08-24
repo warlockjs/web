@@ -39,6 +39,19 @@ export function buildHydrationPayload(bundle: PageDataBundle): HydrationDocument
     layoutData: serializableData(bundle.layoutData),
     pageData: serializableData(bundle.pageData),
     shared: serializableData(bundle.shared),
+    // The server's own match, carried for the same reason `name` is: the params
+    // are an ANSWER the router already gave, and re-deriving them in the
+    // browser from `location.pathname` would be a second matcher disagreeing
+    // with the server about the request it is hydrating. `{}` for a route with
+    // no dynamic segments — a real answer, not a missing one.
+    params: bundle.route.params,
+    // Spread, so "the page produced no metadata" is the SAME shape here and on
+    // the wire. `metadata: undefined` would be a key in the in-process object
+    // and no key at all after `JSON.stringify` — one type, two payload shapes,
+    // which is precisely the drift this file exists to prevent. Carried whole:
+    // `<Head/>` renders every member of `MetadataOutput`, so anything narrowed
+    // out here is a tag the first request has and a navigation does not.
+    ...(bundle.metadata === undefined ? {} : { metadata: bundle.metadata }),
     // The matched entry's own name, carried untransformed from stage 1
     // (`bundle.route.name` IS `matched.entry.name`, execute-page-request.ts).
     // The browser reads it to look up the page the server resolved rather than

@@ -29,19 +29,38 @@ type Modules = {
   previousRoute: typeof import("./current-route").previousRoute;
   recordCurrentRoute: typeof import("./current-route").recordCurrentRoute;
   NavigationRoot: typeof import("./navigation-root").NavigationRoot;
+  applyDocumentMetadata: typeof import("./navigation-root").applyDocumentMetadata;
 };
 
 async function freshModules(): Promise<Modules> {
   vi.resetModules();
 
   const { currentRoute, previousRoute, recordCurrentRoute } = await import("./current-route");
-  const { NavigationRoot } = await import("./navigation-root");
+  const { NavigationRoot, applyDocumentMetadata } = await import("./navigation-root");
 
-  return { currentRoute, previousRoute, recordCurrentRoute, NavigationRoot };
+  return {
+    currentRoute,
+    previousRoute,
+    recordCurrentRoute,
+    NavigationRoot,
+    applyDocumentMetadata,
+  };
 }
 
-function payloadOf(name: string): HydrationDocumentPayloadSource {
-  return { appData: {}, layoutData: {}, pageData: {}, shared: {}, name };
+function payloadOf(
+  name: string,
+  params?: Record<string, string>,
+): HydrationDocumentPayloadSource {
+  return {
+    appData: {},
+    layoutData: {},
+    pageData: {},
+    shared: {},
+    name,
+    // Spread, never `params: undefined`: a payload without params has no such
+    // key, and the reader's fallback is only proven against real absence.
+    ...(params === undefined ? {} : { params }),
+  };
 }
 
 /** Never reached: the mount cases render the initial tree, which is given. */
@@ -110,6 +129,47 @@ describe("currentRoute", () => {
 
     expect(modules.currentRoute()).toEqual({ name: "products.details" });
   });
+
+  /**
+   * The params are the SERVER's — `bundle.route.params`, carried on the payload
+   * — so this asserts a hand-off, not a match. Nothing in `current-route.ts`
+   * may look at `location.pathname` to produce them.
+   */
+  it("reports the params the server matched, off the payload", () => {
+    modules.recordCurrentRoute(payloadOf("products.details", { id: "42", slug: "a-chair" }));
+
+    expect(modules.currentRoute()?.params).toEqual({ id: "42", slug: "a-chair" });
+  });
+
+  it("reports empty params for a route with no dynamic segments", () => {
+    modules.recordCurrentRoute(payloadOf("main.home", {}));
+
+    expect(modules.currentRoute()?.params).toEqual({});
+  });
+
+  /**
+   * A payload with no `params` key at all — an older build, or a document
+   * cached across a deploy. The answer is `undefined`, NOT `{}`, and the pair
+   * of cases is the point: `{}` above is the server saying this route has no
+   * params, and `undefined` here is the server not having said. Collapsing them
+   * would report a matched-and-empty result for a payload that never carried
+   * one, which a caller has no way to tell from the truth.
+   */
+  it("reports no params at all when the payload carries none", () => {
+    modules.recordCurrentRoute(payloadOf("main.home"));
+
+    expect(modules.currentRoute()).toEqual({ name: "main.home" });
+    expect(modules.currentRoute()?.params).toBeUndefined();
+  });
+
+  it("does not hand out the payload's own params object", () => {
+    const params = { id: "42" };
+
+    modules.recordCurrentRoute(payloadOf("products.details", params));
+    (modules.currentRoute()?.params as Record<string, string>).id = "99";
+
+    expect(params).toEqual({ id: "42" });
+  });
 });
 
 describe("previousRoute", () => {
@@ -157,9 +217,221 @@ describe("previousRoute", () => {
    * compared, never the name.
    */
   it("reports the same entry when a navigation stays within one route", () => {
-    modules.recordCurrentRoute(payloadOf("users.details"));
-    modules.recordCurrentRoute(payloadOf("users.details"));
+    modules.recordCurrentRoute(payloadOf("users.details", { id: "1" }));
+    modules.recordCurrentRoute(payloadOf("users.details", { id: "2" }));
 
-    expect(modules.previousRoute()).toEqual({ name: "users.details" });
+    expect(modules.previousRoute()).toEqual({ name: "users.details", params: { id: "1" } });
+    expect(modules.currentRoute()).toEqual({ name: "users.details", params: { id: "2" } });
+  });
+});
+
+/**
+ * `applyDocumentMetadata` — the half of the title bug that was never about the
+ * wire.
+ *
+ * The payload carrying metadata is necessary and not sufficient: `<head>` is
+ * rendered by `<Head/>` at the App level, and the App level is deliberately NOT
+ * part of the hydrated tree (`client/build-hydrated-tree.ts`'s header) — the
+ * client mounts at `#root`, inside the body. So no React render on the client
+ * can reach the head, and a swap has to write it imperatively or not at all.
+ *
+ * The suite has no DOM (node environment), so the cases below run against a
+ * fake document in the shape `hydration-payload.spec.ts` already uses for the
+ * payload script. That is enough to prove the RULES — set, update, and
+ * especially REMOVE — and not enough to prove the browser does what we think;
+ * the title change is browser-verified separately.
+ */
+
+type FakeElement = {
+  tagName: string;
+  attributes: Record<string, string>;
+  textContent: string;
+  setAttribute(name: string, value: string): void;
+  remove(): void;
+};
+
+/** Only the four selector shapes the applier uses. Anything else is a bug. */
+const SELECTOR_PATTERN = /^([a-z]+)(?:\[([a-zA-Z-]+)="([^"]+)"\])?$/;
+
+function matchesSelector(element: FakeElement, selector: string): boolean {
+  const parsed = SELECTOR_PATTERN.exec(selector);
+
+  if (!parsed) throw new Error(`The applier used an unsupported selector: ${selector}`);
+
+  const [, tagName, attribute, value] = parsed;
+
+  if (element.tagName !== tagName) return false;
+  if (attribute === undefined) return true;
+
+  return element.attributes[attribute] === value;
+}
+
+function fakeHead(initial: readonly { tagName: string; attributes?: Record<string, string>; textContent?: string }[]) {
+  const elements: FakeElement[] = [];
+
+  const make = (
+    tagName: string,
+    attributes: Record<string, string> = {},
+    textContent = "",
+  ): FakeElement => {
+    const element: FakeElement = {
+      tagName,
+      attributes: { ...attributes },
+      textContent,
+      setAttribute(name, value) {
+        element.attributes[name] = value;
+      },
+      remove() {
+        const index = elements.indexOf(element);
+
+        if (index >= 0) elements.splice(index, 1);
+      },
+    };
+
+    return element;
+  };
+
+  for (const entry of initial) {
+    elements.push(make(entry.tagName, entry.attributes, entry.textContent));
+  }
+
+  const documentNode = {
+    head: {
+      appendChild(element: FakeElement) {
+        elements.push(element);
+      },
+    },
+    createElement: (tagName: string) => make(tagName),
+    querySelector: (selector: string) =>
+      elements.find(element => matchesSelector(element, selector)) ?? null,
+  } as unknown as Document;
+
+  return { documentNode, elements };
+}
+
+/** What the head says now, in the terms the assertions are written in. */
+function describeHead(elements: readonly FakeElement[]): string[] {
+  return elements.map(element => {
+    const attributes = Object.entries(element.attributes)
+      .map(([name, value]) => `${name}=${value}`)
+      .join(" ");
+
+    return [element.tagName, attributes, element.textContent].filter(Boolean).join(" ");
+  });
+}
+
+describe("applyDocumentMetadata", () => {
+  /** THE bug: / -> /contact-us swapped the body and left the title reading "Home". */
+  it("writes the new page's title into the existing title element", () => {
+    const { documentNode, elements } = fakeHead([{ tagName: "title", textContent: "Home" }]);
+
+    modules.applyDocumentMetadata(documentNode, { title: "Contact us" });
+
+    expect(describeHead(elements)).toEqual(["title Contact us"]);
+  });
+
+  it("creates a title element when the document has none", () => {
+    const { documentNode, elements } = fakeHead([]);
+
+    modules.applyDocumentMetadata(documentNode, { title: "Contact us" });
+
+    expect(describeHead(elements)).toEqual(["title Contact us"]);
+  });
+
+  /**
+   * THE decision this block exists for. `/` sets a description, `/contact-us`
+   * does not — leaving the previous page's description in the head describes
+   * the new page with the old page's words to every crawler and share preview
+   * that reads it. Absent means REMOVED, for every tag the applier manages.
+   */
+  it("removes a tag the previous page set and the new page does not", () => {
+    const { documentNode, elements } = fakeHead([
+      { tagName: "title", textContent: "Home" },
+      { tagName: "meta", attributes: { name: "description" }, textContent: "" },
+    ]);
+
+    modules.applyDocumentMetadata(documentNode, { title: "Contact us" });
+
+    expect(describeHead(elements)).toEqual(["title Contact us"]);
+  });
+
+  it("clears every managed tag when the new page has no metadata at all", () => {
+    const { documentNode, elements } = fakeHead([
+      { tagName: "meta", attributes: { charset: "utf-8" } },
+      { tagName: "title", textContent: "Home" },
+      { tagName: "meta", attributes: { name: "description", content: "6 products" } },
+      { tagName: "meta", attributes: { property: "og:title", content: "Home" } },
+      { tagName: "link", attributes: { rel: "canonical", href: "https://app.test/" } },
+    ]);
+
+    modules.applyDocumentMetadata(documentNode, undefined);
+
+    // The charset meta survives: `<Head/>` renders it unconditionally, so it
+    // belongs to the document rather than to any page's metadata.
+    expect(describeHead(elements)).toEqual(["meta charset=utf-8"]);
+  });
+
+  it("updates an existing tag instead of appending a second one", () => {
+    const { documentNode, elements } = fakeHead([
+      { tagName: "meta", attributes: { name: "description", content: "6 products" } },
+    ]);
+
+    modules.applyDocumentMetadata(documentNode, { description: "How to reach us" });
+
+    expect(describeHead(elements)).toEqual(["meta name=description content=How to reach us"]);
+  });
+
+  it("joins array keywords the way <Head/> does", () => {
+    const { documentNode, elements } = fakeHead([]);
+
+    modules.applyDocumentMetadata(documentNode, { keywords: ["contact", "support"] });
+
+    expect(describeHead(elements)).toEqual(["meta name=keywords content=contact, support"]);
+  });
+
+  /**
+   * `<Head/>`'s exact rule (`components/head.ts:22-23,43-48`): og:title falls
+   * back to the top-level title, but ONLY when `openGraph` is present. The
+   * applier mirrors it because the head after a navigation must equal the head
+   * after landing on the same URL — two rules would make that comparison a
+   * coin toss.
+   */
+  it("falls og:title back to the title only when openGraph is present", () => {
+    const withoutOpenGraph = fakeHead([]);
+
+    modules.applyDocumentMetadata(withoutOpenGraph.documentNode, { title: "Contact us" });
+
+    expect(describeHead(withoutOpenGraph.elements)).toEqual(["title Contact us"]);
+
+    const withOpenGraph = fakeHead([]);
+
+    modules.applyDocumentMetadata(withOpenGraph.documentNode, {
+      title: "Contact us",
+      openGraph: { image: "https://app.test/og.png" },
+    });
+
+    expect(describeHead(withOpenGraph.elements)).toEqual([
+      "title Contact us",
+      "meta property=og:title content=Contact us",
+      "meta property=og:image content=https://app.test/og.png",
+    ]);
+  });
+
+  it("writes the twitter and canonical tags", () => {
+    const { documentNode, elements } = fakeHead([]);
+
+    modules.applyDocumentMetadata(documentNode, {
+      canonical: "https://app.test/contact-us",
+      robots: "index,follow",
+      twitter: { card: "summary", title: "Contact us" },
+    });
+
+    // Appended in `<Head/>`'s own order: canonical, then robots, then twitter.
+    expect(describeHead(elements)).toEqual([
+      "link rel=canonical href=https://app.test/contact-us",
+      "meta name=robots content=index,follow",
+      "meta name=twitter:card content=summary",
+      "meta name=twitter:title content=Contact us",
+    ]);
   });
 });

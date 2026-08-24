@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { PAYLOAD_SCRIPT_ID } from "./components/document-context";
 import { readHydrationPayload } from "./hydration-payload";
+import { buildHydrationPayload } from "./server/build-hydration-payload";
+import type { PageDataBundle } from "./server/execute-page-request";
 
 function makeDocument(scriptTextContent: string | null): Document {
   return {
@@ -61,5 +63,128 @@ describe("readHydrationPayload", () => {
     expect(() => readHydrationPayload(documentNode)).toThrow(
       /Warlock hydration payload was found at #.* but could not be read\./,
     );
+  });
+
+  /**
+   * `metadata` and `params` are OPTIONAL, and the two cases below are the whole
+   * of that decision: absent is a valid payload, wrong-typed is not.
+   *
+   * They are ungated on purpose. The five gated keys are the ones the browser
+   * cannot build a page without — no `name`, no page to look up; no `shared`,
+   * no state to hydrate — so their absence has to be a loud failure. A page
+   * that exports no `metadata` produces none (`bundle.metadata` is optional at
+   * `server/execute-page-request.ts:296`), so requiring the key would make the
+   * gate throw on a payload the server is right to have produced.
+   */
+  it("accepts a payload that carries neither metadata nor params", () => {
+    const documentNode = makeDocument(JSON.stringify(fullPayload));
+
+    expect(() => readHydrationPayload(documentNode)).not.toThrow();
+  });
+
+  it("returns metadata and params when the payload carries them", () => {
+    const withBoth = {
+      ...fullPayload,
+      metadata: { title: "Contact us" },
+      params: { id: "42" },
+    };
+
+    const documentNode = makeDocument(JSON.stringify(withBoth));
+
+    expect(readHydrationPayload(documentNode)).toEqual(withBoth);
+  });
+
+  it("throws the malformed message when params is present but is not an object", () => {
+    const documentNode = makeDocument(JSON.stringify({ ...fullPayload, params: "id=42" }));
+
+    expect(() => readHydrationPayload(documentNode)).toThrow(
+      /Warlock hydration payload was found at #.* but could not be read\./,
+    );
+  });
+
+  /** `typeof [] === "object"`, so the array case needs its own rejection. */
+  it("throws the malformed message when params is an array", () => {
+    const documentNode = makeDocument(JSON.stringify({ ...fullPayload, params: ["42"] }));
+
+    expect(() => readHydrationPayload(documentNode)).toThrow(
+      /Warlock hydration payload was found at #.* but could not be read\./,
+    );
+  });
+
+  it("throws the malformed message when metadata is present but is not an object", () => {
+    const documentNode = makeDocument(JSON.stringify({ ...fullPayload, metadata: "Contact us" }));
+
+    expect(() => readHydrationPayload(documentNode)).toThrow(
+      /Warlock hydration payload was found at #.* but could not be read\./,
+    );
+  });
+});
+
+/**
+ * The PRODUCER of the same contract, asserted in the same file as the gate that
+ * reads it — one payload shape, one place it is proven. A key added to one and
+ * not the other is the drift `build-hydration-payload.ts`'s own header exists to
+ * prevent, and it is invisible in a suite that tests them apart.
+ */
+describe("buildHydrationPayload", () => {
+  function bundleOf(overrides: Partial<PageDataBundle> = {}): PageDataBundle {
+    return {
+      route: { name: "users.details", path: "/users/:id", params: { id: "42" }, query: {} },
+      appData: { a: 1 },
+      layoutData: { l: 1 },
+      pageData: { p: 1 },
+      shared: { s: 1 } as PageDataBundle["shared"],
+      ...overrides,
+    };
+  }
+
+  it("carries the matched route's params untransformed", () => {
+    expect(buildHydrationPayload(bundleOf()).params).toEqual({ id: "42" });
+  });
+
+  it("carries an empty params object for a route with no dynamic segments", () => {
+    const bundle = bundleOf({
+      route: { name: "main.home", path: "/", params: {}, query: {} },
+    });
+
+    expect(buildHydrationPayload(bundle).params).toEqual({});
+  });
+
+  it("carries the resolved page metadata whole, not a narrowed projection", () => {
+    const metadata = {
+      title: "Contact us",
+      description: "How to reach us",
+      keywords: ["contact", "support"],
+      canonical: "https://app.test/contact-us",
+      robots: "index,follow",
+      openGraph: { image: "https://app.test/og.png" },
+      twitter: { card: "summary" },
+    };
+
+    expect(buildHydrationPayload(bundleOf({ metadata })).metadata).toEqual(metadata);
+  });
+
+  /**
+   * Not `metadata: undefined` — ABSENT. `JSON.stringify` drops an undefined
+   * value, so a key that is present in the in-process object and gone from the
+   * parsed one is two different payload shapes wearing one type.
+   */
+  it("omits the metadata key entirely when the page produced none", () => {
+    const payload = buildHydrationPayload(bundleOf());
+
+    expect("metadata" in payload).toBe(false);
+    expect(JSON.parse(JSON.stringify(payload))).toEqual(payload);
+  });
+
+  it("still emits the five gated keys", () => {
+    const payload = buildHydrationPayload(bundleOf());
+
+    expect(payload).toMatchObject({
+      appData: { a: 1 },
+      layoutData: { l: 1 },
+      pageData: { p: 1 },
+      shared: { s: 1 },
+      name: "users.details",
+    });
   });
 });
