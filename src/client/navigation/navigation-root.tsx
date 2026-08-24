@@ -6,6 +6,7 @@ import { hydrateShared } from "../../shared";
 import type { ClientPageEntry } from "../runtime";
 import { recordCurrentRoute } from "./current-route";
 import { fetchPageData } from "./fetch-page-data";
+import { takePrefetchedPageData } from "./prefetch";
 import { connectRefresher, createRefresher, type RefreshablePage } from "./refresh";
 
 /**
@@ -93,7 +94,19 @@ export function NavigationRoot({
 
     const apply = async (url: string, replace: boolean): Promise<void> => {
       const ticket = ++token;
-      const result = await fetchPageData(url);
+      /*
+        A prefetched response is CONSUMED, never merely read — `take` removes it,
+        so the same speculative fetch can satisfy exactly one navigation and a
+        second click on the same link goes to the network. That matters because
+        the HTTP cache cannot stand in for this: dev responses are `no-store`
+        (`server/dev-server.ts:254`) and production is `private` with no
+        `max-age` (`server/render-page.ts:432`), so the browser will not reliably
+        replay the speculative response on the real click.
+
+        The race guard below still holds on a cache hit: `??` short-circuits the
+        await, and the synchronous path reaches the same `ticket !== token` check.
+      */
+      const result = takePrefetchedPageData(url) ?? (await fetchPageData(url));
 
       if (disposed || ticket !== token) return;
 
