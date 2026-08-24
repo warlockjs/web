@@ -36,7 +36,7 @@ export type LayoutProps<TLoader extends LoaderFunction | undefined = undefined> 
   children: ReactNode;
 };
 
-/** The root component's props (App.tsx:76). */
+/** The root component's props (root.tsx:76). */
 export type AppProps<TLoader extends LoaderFunction | undefined = undefined> = {
   data: LoaderData<TLoader>;
   shared: Readonly<SharedContext>;

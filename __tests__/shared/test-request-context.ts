@@ -34,7 +34,7 @@ export class TestRequestContext extends Context<TestStore> {
  * (core/src/http/response.ts:297-331): scalars returned as-is (:299), toJSON
  * resolved FIRST and its result never re-parsed (:301-305), iterables mapped
  * (:308-316), and — the load-bearing part — plain objects mutated IN PLACE
- * (:324-330), which is what forces parse to run before freeze (canon 26c64f9a).
+ * (:324-330), which is what forces parse to run before freeze.
  */
 export function makeParsingResponse(): TestStore["response"] {
   async function parse(value: any): Promise<any> {

@@ -23,8 +23,7 @@ export interface LoaderShortCircuit {
  *
  * TODO(Stream A.6 — core ctx migration): once core ships
  * `HttpContext { request, response }` and the declared `request.user` /
- * `request.locals` / `request.nonce` (design/core-asks-v5.md asks #2 and #8,
- * pending the ctx ruling), this narrows to a refinement of core's `Request`
+ * `request.locals` / `request.nonce`, this narrows to a refinement of core's `Request`
  * instead of a standalone structural type.
  */
 export interface WebRequest<
@@ -56,10 +55,15 @@ export interface WebRequest<
    * model (`navService.forUser(user: User)`,
    * v5/app/src/web/layouts/dashboard.layout.tsx:35) and reads `.id` with no
    * null-check (settings.page.tsx:65). No type this package can declare is
-   * assignable to an app-owned model class; the real declaration is core ask
-   * #2 (design/core-asks-v5.md §2) and lands with Stream A.6.
+   * assignable to an app-owned model class; the real declaration has to come
+   * from core's own `Request.user` and lands with Stream A.6.
+   *
+   * Optional, matching core (`Request.user?`, core/src/http/request.ts:94) —
+   * a required member here would reject core's real `Request` at the seam.
+   * `any` absorbs the `undefined`, so loader-side `request.user.id` reads
+   * keep compiling (the recorded M1 deviation stands).
    */
-  user: any;
+  user?: any;
 }
 
 /**
@@ -95,7 +99,7 @@ export interface WebResponse {
  * no `HttpContext` and its `Middleware` is positional `(request, response)`
  * (core/src/router/types.ts:17), so importing the type from
  * `@warlock.js/core` cannot resolve to the v5 shape yet — this structural
- * declaration stands in until the ctx ruling ships it there.
+ * declaration stands in until core declares it.
  */
 export interface HttpContext {
   request: WebRequest;

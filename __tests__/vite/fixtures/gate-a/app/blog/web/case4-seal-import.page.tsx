@@ -13,7 +13,7 @@
 // `seal/src` — one hit, ip.ts) carries no Node builtins, so importing it
 // DIRECTLY (bypassing every barrel) fixture-tests Gate A's "seal is
 // universal, do not over-refuse" rule without tripping over that unrelated
-// issue. See the D.1 worker report for this finding.
+// issue.
 import { AnyValidator } from "@warlock.js/seal/validators/any-validator";
 
 export const route = { path: "/blog" };

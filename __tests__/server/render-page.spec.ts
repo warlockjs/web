@@ -11,7 +11,7 @@ import {
   type PageRoutesRegistry,
 } from "../../src/server/index";
 import { connectSharedStore, type SharedStoreResolver } from "../../src/shared";
-import * as App from "./fixtures/App";
+import * as App from "./fixtures/root";
 import { createCoreHttp, requestContext } from "./fixtures/core-http";
 import * as layout from "./fixtures/layout";
 import { routes } from "./fixtures/routes";
@@ -54,16 +54,30 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-/** The emitted payload script's exact content — the bytes the browser gets. */
+/**
+ * The emitted payload script's exact content — the bytes the browser gets.
+ *
+ * The tag is located by ID and not by a fixed attribute string: `Scripts`
+ * emits the per-request CSP nonce as a third attribute, so the opening tag is
+ * `<script id="…" type="application/json" nonce="…">`. Matching the id is also
+ * what the browser side does — `readHydrationPayload` calls
+ * `getElementById(PAYLOAD_SCRIPT_ID)` — so this locator tracks the real
+ * contract instead of one incidental attribute order.
+ */
 function extractPayload(html: string): string {
-  const open = `<script id="${PAYLOAD_SCRIPT_ID}" type="application/json">`;
-  const start = html.indexOf(open);
+  const opening = new RegExp(`<script id="${PAYLOAD_SCRIPT_ID}"([^>]*)>`).exec(html);
 
-  expect(start).toBeGreaterThan(-1);
+  expect(opening).not.toBeNull();
 
-  const end = html.indexOf("</script>", start);
+  // The two attributes hydration depends on: the JSON type keeps the browser
+  // from executing it, and the nonce is what a `script-src 'nonce-…'` policy
+  // admits.
+  expect(opening![1]).toContain('type="application/json"');
+  expect(opening![1]).toMatch(/ nonce="[^"]+"/);
 
-  return html.slice(start + open.length, end);
+  const start = opening!.index + opening![0].length;
+
+  return html.slice(start, html.indexOf("</script>", start));
 }
 
 describe("renderPage — stage 9 RENDER", () => {
@@ -132,7 +146,27 @@ describe("renderPage — stage 10 EMIT", () => {
     expect(parsed.shared.user).toEqual({ name: "hasan" });
   });
 
-  it("escapes the payload against </script, <!--, -->, U+2028, U+2029 (canon 20c425dd §3 stage 10)", async () => {
+  it("serializes the matched manifest entry's name as the payload's fifth key", async () => {
+    const { html } = await renderPage("products.details", { params: { id: "42" } });
+
+    const parsed = JSON.parse(extractPayload(html));
+
+    // The browser looks up WHICH page the server rendered instead of
+    // re-matching `location.pathname` itself — a second implementation of
+    // route semantics can disagree with the server on the very request it is
+    // hydrating. So the name on the wire is the matched entry's own name,
+    // byte-identical to the manifest's.
+    expect(parsed.name).toBe("products.details");
+    expect(Object.keys(parsed).sort()).toEqual([
+      "appData",
+      "layoutData",
+      "name",
+      "pageData",
+      "shared",
+    ]);
+  });
+
+  it("escapes the payload against </script, <!--, -->, U+2028, U+2029", async () => {
     const attack = '</script><script>alert(1)</script><!-- sneak -->\u2028\u2029';
     const escapingRoutes: PageRouteEntry[] = [
       {
@@ -228,8 +262,11 @@ describe("renderPage — boundary path", () => {
     const payload = extractPayload(html);
     const parsed = JSON.parse(payload);
 
-    // JSON.stringify drops undefined keys: the throwing level has no data.
-    expect(payload).not.toContain('"pageData"');
+    // The throwing level contributed no data — but the KEY still ships:
+    // `readHydrationPayload` rejects a payload missing any of its four
+    // required keys, so a boundary page that omitted `pageData` would fail to
+    // hydrate. "No data" is an explicit empty object, never an absent key.
+    expect(parsed.pageData).toEqual({});
     expect(parsed.appData).toEqual({ appName: "Fixture Store" });
     expect(parsed.layoutData).toEqual({ nav: ["home", "products"], locale: "en" });
     // The error itself never reaches the emitted bytes.

@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "paths": {
+      "web/*": ["../v5/app/src/web/*"],
+      "app/*": ["../v5/app/src/app/*"],
+      "@warlock.js/web": ["./src/index.ts"],
+      "@warlock.js/core": ["../core/src/index.ts"],
+      "@warlock.js/seal": ["../seal/src/index.ts"],
+      "@warlock.js/cascade": ["../cascade/src/index.ts"],
+      "@warlock.js/context": ["../context/src/index.ts"],
+      "@warlock.js/logger": ["../logger/src/index.ts"],
+      "@warlock.js/cache": ["../cache/src/index.ts"],
+      "@warlock.js/fs": ["../fs/src/index.ts"],
+      "@warlock.js/auth": ["../auth/src/index.ts"],
+      "@warlock.js/herald": ["../herald/src/index.ts"],
+      "@warlock.js/access": ["../access/src/index.ts"],
+      "@warlock.js/ai": ["../ai/src/index.ts"],
+      "@warlock.js/notifications": ["../notifications/src/index.ts"]
+    }
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "esm"]
+}

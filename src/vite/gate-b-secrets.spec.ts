@@ -9,7 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_ROOT = path.join(__dirname, "..", "..", "__tests__", "vite", "fixtures", "gate-b");
 
 /**
- * Runs a real Vite build (JS API, not npx — canon `50608334`) for a single
+ * Runs a real Vite build (JS API, not npx) for a single
  * fixture entry, with Gate B as the only plugin. Verifies the actual
  * emitted build failure/success, never the transform logic in isolation —
  * same discipline as D.1-D.3.
@@ -146,7 +146,7 @@ describe("gateBSecrets — Gate B inline-secret transform gate (real Vite builds
     }
   });
 
-  describe("Part 3 (Suki, room seq 623): a bare `import.meta.env` value-reference fails AT TRANSFORM TIME, not only as a generateBundle whole-build failure", () => {
+  describe("a bare `import.meta.env` value-reference fails at transform time, not only as a whole-build failure", () => {
     it("case 10: const env = import.meta.env (aliased) fails at transform time, source-line-pointing", async () => {
       try {
         await buildEntry("case10-import-meta-env-aliased.tsx");

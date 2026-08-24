@@ -1,5 +1,5 @@
 /**
- * Gate C — emitted-output verification (canon `c604f0bc` §6).
+ * Gate C — emitted-output verification.
  *
  * Projection removes the five server exports before the client graph forms.
  * Gate A refuses forbidden import PATHS. Gate B refuses inline secret reads.
@@ -27,8 +27,8 @@
  * the D.1-D.5 happy-path fixtures through the composed pipeline only proves
  * the happy path, never that Gate C itself has teeth.
  *
- * Gate C also emits the inlined-`PUBLIC_*`-value manifest Suki asked for
- * (room seq 561 pt.2) — see `buildPublicEnvManifest` below — and is the only
+ * Gate C also emits the inlined-`PUBLIC_*`-value manifest — see
+ * `buildPublicEnvManifest` below — and is the only
  * one of the three gates that runs exclusively at `generateBundle` time: it
  * has nothing to say about source, only about output.
  */
@@ -83,8 +83,8 @@ type BundleLike = Record<
 
 /**
  * Recursively collects every top-level statement's bound name(s), matching:
- *   - `const route = ...` / `function loader() {}` (exported or not — canon
- *     `c604f0bc` §6 says "top-level bindings", not "top-level exports").
+ *   - `const route = ...` / `function loader() {}` (exported or not — the
+ *     check is on top-level BINDINGS, not top-level exports).
  *   - `export const route = ...` / `export function loader() {}` (the
  *     `ExportNamedDeclaration` wrapper form).
  *   - `export { route }` (the bare re-export-specifier form Rollup sometimes
@@ -115,14 +115,41 @@ function collectServerExportNames(stmt: any): Array<{ name: string; line: number
 }
 
 /**
+ * Thrown when an emitted chunk cannot be parsed, which means Gate C could not
+ * inspect it. A gate that skips what it cannot read reports "no violation
+ * found" on precisely the input it failed to look at — the one input where
+ * that answer is worthless. So an unreadable chunk fails the build instead.
+ */
+export class UnverifiableChunkError extends Error {
+  readonly fileName: string;
+
+  constructor(fileName: string, cause?: unknown) {
+    super(
+      [
+        `Warlock stopped this build: a file in your client bundle could not be checked for server-only code.`,
+        ``,
+        `File: ${fileName}`,
+        `Cause: this file could not be parsed as JavaScript, so the client/server boundary check could not be performed on it. Warlock cannot confirm that the server-only exports (route, middleware, validation, loader, metadata) were kept out of it.`,
+        `Fix: the build is being stopped rather than passed, because a file that was never checked is not a file known to be safe. This emitted file is outside the JavaScript syntax Warlock can currently verify. Two things commonly put it there, and this error cannot tell which: the output uses syntax newer than the parser Warlock ships with, or a plugin or loader emitted non-standard syntax into the client bundle. Check the compatibility of whatever produced this file, then build again.`,
+      ].join("\n"),
+    );
+    this.name = "UnverifiableChunkError";
+    this.fileName = fileName;
+    if (cause !== undefined) (this as { cause?: unknown }).cause = cause;
+  }
+}
+
+/**
  * Part 1, item 1: parses each emitted chunk's ACTUAL code (never pre-transform
  * source) and looks for a top-level binding named one of the five server
- * exports. A parse failure on an emitted chunk is not this gate's concern —
- * it is skipped, not swallowed silently as a pass; a malformed emitted chunk
- * is a different failure Vite itself will already have surfaced.
+ * exports. A parse failure on an emitted chunk FAILS the gate
+ * (`UnverifiableChunkError`) — it is never skipped. Skipping would report the
+ * bundle clean on the one chunk the gate did not actually inspect, which is a
+ * safety check failing open; a build stopped on an unreadable chunk is
+ * recoverable, a boundary silently unenforced is not.
  *
- * D.8 verdict (Suki's `build.minify: true` ruling, `gate-c-verify.spec.ts`
- * "D.8" describe block): this SURVIVES real minification. A minifier (esbuild,
+ * This SURVIVES real minification (pinned by the `gate-c-verify.spec.ts`
+ * "D.8" describe block). A minifier (esbuild,
  * Vite's default) is only free to rename LOCAL bindings; the exported name
  * itself is part of the module's public interface and is never mangled — a
  * minified `export const route = ...` still emits `export { e as route }`,
@@ -141,8 +168,8 @@ export function findLeakedServerExports(bundle: BundleLike): ServerExportLeak[] 
     let ast: any;
     try {
       ast = parse(file.code, { sourceType: "module", plugins: ["typescript", "jsx"] });
-    } catch {
-      continue;
+    } catch (error) {
+      throw new UnverifiableChunkError(file.fileName ?? "(unnamed chunk)", error);
     }
 
     for (const stmt of ast.program.body as any[]) {
@@ -194,9 +221,8 @@ export function findLeakedServerImportEdges(
 
 /**
  * Conservative "does this PUBLIC_* value look safe to print in the reviewable
- * manifest" heuristic (Suki, room seq 561 pt.2: "define safe to show
- * conservatively — if genuinely unsure, show the key only, never guess a
- * value is safe"). The whole point of this manifest is that the `PUBLIC_`
+ * manifest" heuristic: if genuinely unsure, show the key only — never guess
+ * that a value is safe. The whole point of this manifest is that the `PUBLIC_`
  * prefix rule alone is not trustworthy — someone can and will name an actual
  * secret `PUBLIC_STRIPE_KEY` — so a value that LOOKS like a credential is
  * redacted regardless of what its key is named. Non-string values (booleans,
@@ -232,7 +258,7 @@ function stringifyEnvValue(value: unknown): string {
 }
 
 /**
- * Part 2 (Suki, room seq 561 pt.2): the enumerated, human-reviewable list of
+ * The enumerated, human-reviewable list of
  * every `PUBLIC_*` key actually inlined into the client bundle. Built
  * directly from `tracker.referencedKeys` — the exact same `Set` Gate B's own
  * `generateBundle` unread-key check (`gate-b-secrets.ts`) reads from — so
@@ -306,19 +332,39 @@ export function gateCVerify(options: GateCOptions = {}): Plugin {
             ``,
             `File: ${importEdgeLeak.fileName}`,
             `Module: ${importEdgeLeak.moduleId}`,
-            `Cause: "${importEdgeLeak.moduleId}" belongs to ${importEdgeLeak.packageName}, a server-only package (no "warlock": { "environment": "universal" | "client" } marker in its package.json — absent defaults to server-only), and is present among the bundled modules of the emitted client chunk "${importEdgeLeak.fileName}" — Gate A's resolveId should have refused this import before it ever reached the bundle.`,
+            `Cause: "${importEdgeLeak.moduleId}" belongs to ${importEdgeLeak.packageName}, a server-only package (it declares "warlock": { "environment": "server" } in its package.json), and is present among the bundled modules of the emitted client chunk "${importEdgeLeak.fileName}" — Gate A's resolveId should have refused this import before it ever reached the bundle.`,
             `Fix: this should already be impossible if Gate A ran on this build — investigate why ${importEdgeLeak.packageName} reached the emitted output (a Gate A bypass, a custom resolveId/external override, or a plugin ordering change) rather than assuming this build is a one-off; Gate C is defense in depth, not the primary fence.`,
           ].join("\n"),
         );
       }
 
       const manifest = buildPublicEnvManifest(tracker);
-      bundle[manifestFileName] = {
+
+      // EMITTED through `this.emitFile`, not written into `bundle` by hand.
+      //
+      // This used to assign a hand-built record directly:
+      //
+      //     bundle[manifestFileName] = { type: "asset", fileName, name, source } as any;
+      //
+      // and the `as any` was load-bearing, which was the warning sign. A Rollup
+      // asset record carries `names` and `originalFileNames` ARRAYS; that object
+      // had neither, so it was not the shape Rollup produces — it merely
+      // type-asserted its way into the bundle.
+      //
+      // Nothing noticed until the production build got far enough to render
+      // chunks, at which point Vite's own `vite:manifest` plugin read
+      // `chunk.names.length` on every asset and died on `undefined`:
+      //
+      //     [vite:manifest] Cannot read properties of undefined (reading 'length')
+      //
+      // `emitFile` makes Rollup construct the record, so the shape is correct by
+      // construction and stays correct when Rollup adds fields. Hand-building a
+      // bundle entry is signing up to track someone else's internal type forever.
+      this.emitFile({
         type: "asset",
         fileName: manifestFileName,
-        name: manifestFileName,
         source: JSON.stringify(manifest, null, 2),
-      } as any;
+      });
     },
   };
 }

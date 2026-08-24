@@ -1,66 +1,66 @@
 import { describe, expect, it, vi } from "vitest";
+import { Request } from "../../../core/src/http/request";
 import { Response } from "../../../core/src/http/response";
 import { applyBufferedCookie } from "../../src/server/dev-server";
 import type { BufferedCookie } from "../../src/server/buffered-response";
 
 /**
- * Board task `9ccb2e63` (Suki, room seq 1511; C3 §8-A, canon `f9d9a5cc`).
+ * `applyBufferedCookie` commits a `BufferedCookie` by calling core's
+ * `Response.cookie()` — the same method `execute-page-request.ts` uses for the
+ * production commit and every ordinary controller uses for its own cookies.
+ * There is no second serializer left to drift from, so what this spec checks is
+ * no longer "do two implementations agree" but the thing that actually matters:
+ * that a cookie written through the buffer READS BACK as the value the loader
+ * put in it, via core's `Request.cookie()`.
  *
- * Production commits a `BufferedCookie` via core's real `Response.cookie()`
- * (`web/src/server/execute-page-request.ts:317`:
- * `realResponse.cookie(cookie.name, cookie.value, cookie.options)`, itself
- * writing straight to `baseResponse.setCookie` — `baseResponse` IS the real
- * `FastifyReply`, core/src/http/response.ts:960). Dev-server replays the SAME
- * `BufferedCookie` a different way (`applyBufferedCookie`,
- * `web/src/server/dev-server.ts`), because it never has a loader-facing
- * `Response` in scope, only the buffered commit. This spec is the check that
- * those two paths agree byte-for-byte on what reaches fastify's `setCookie`
- * — not "visually similar", the literal `(name, value, options)` tuple.
+ * Every fixture fully specifies the fields `secureCookieDefaults()` would
+ * otherwise supply (`httpOnly`/`sameSite`/`secure`) — per-call options are the
+ * highest-precedence layer in `Response.cookie()`, so a fully-specified bag
+ * makes that merge a no-op and this spec does not depend on
+ * `secureCookieDefaults()` or on `http.cookies.options`.
  *
- * Every fixture below fully specifies every field `secureCookieDefaults()`
- * would otherwise supply (`httpOnly`/`sameSite`/`secure`) — per-call options
- * are the highest-precedence layer in core's `cookie()`
- * (core/src/http/response.ts:960-964), so a fully-specified per-call bag
- * makes that merge a no-op and this test does not depend on
- * `secureCookieDefaults()` or `http.cookies.options` at all. Whether
- * dev-server's replay should ALSO apply those framework-level defaults is
- * board task `d8ef6d01`, deliberately not this one.
+ * Percent-encoding is deliberately out of frame: fastify's `setCookie` applies
+ * it on the way out and parses it off on the way in, symmetrically, below
+ * anything either core method controls.
  */
 
 /** Captures the exact `(name, value, options)` fastify's `setCookie` receives. */
 function createReplyStub() {
   const setCookie = vi.fn();
-  return { setCookie, raw: { once: vi.fn() } } as unknown as import("fastify").FastifyReply & {
-    setCookie: typeof setCookie;
-  };
+  return { setCookie, raw: { once: vi.fn() } } as unknown as Parameters<
+    Response["setResponse"]
+  >[0] & { setCookie: typeof setCookie };
 }
 
-function productionSetCookieCall(cookie: BufferedCookie): unknown[] {
+/** The `(name, value, options)` tuple `applyBufferedCookie` puts on the wire. */
+function committedSetCookieCall(cookie: BufferedCookie): [string, string, Record<string, unknown>] {
   const reply = createReplyStub();
   const response = new Response();
 
   response.setResponse(reply);
-  response.cookie(cookie.name, cookie.value as never, (cookie.options ?? {}) as never);
+  applyBufferedCookie(response, cookie);
 
-  return (reply.setCookie as ReturnType<typeof vi.fn>).mock.calls[0];
+  return reply.setCookie.mock.calls[0] as [string, string, Record<string, unknown>];
 }
 
-function devReplaySetCookieCall(cookie: BufferedCookie): unknown[] {
-  const reply = createReplyStub();
+/** Read a wire value back the way an incoming request would. */
+function readBack(name: string, wireValue: string): unknown {
+  const request = new Request();
 
-  applyBufferedCookie(reply, cookie);
+  // `headers` is present because `setRequest` resolves the request id off it.
+  request.setRequest({ cookies: { [name]: wireValue }, headers: {} } as never);
 
-  return (reply.setCookie as ReturnType<typeof vi.fn>).mock.calls[0];
+  return request.cookie(name);
 }
 
-describe("dev-server cookie replay — drift against core's real serializer", () => {
-  it("matches production byte-for-byte for the locale cookie shape (raw, C3 §8-A maxAge)", () => {
+describe("buffered cookie commit — round-trips through core's own serializer", () => {
+  it("round-trips a raw string cookie unquoted (the locale cookie shape)", () => {
     const cookie: BufferedCookie = {
       name: "locale",
       value: "en-US",
       options: {
         raw: true,
-        maxAge: 31536000, // C3 §8-A, canon f9d9a5cc — seconds, unconverted on both sides
+        maxAge: 31536000, // seconds — the unit both core and fastify use, unconverted
         path: "/",
         httpOnly: true,
         sameSite: "lax",
@@ -68,47 +68,51 @@ describe("dev-server cookie replay — drift against core's real serializer", ()
       },
     };
 
-    expect(devReplaySetCookieCall(cookie)).toEqual(productionSetCookieCall(cookie));
+    const [name, wireValue, options] = committedSetCookieCall(cookie);
+
+    expect(name).toBe("locale");
+    expect(wireValue).toBe("en-US");
+    expect(options.maxAge).toBe(31536000);
+    expect(options.path).toBe("/");
+    expect(readBack(name, wireValue)).toBe("en-US");
   });
 
-  it("matches production for a JSON-wrapped (non-raw) plain string value", () => {
-    // This is the case `String(cookie.value)` (what this file replaces) got
-    // wrong: production JSON-quotes a non-raw string; `String()` would not.
+  it("round-trips a non-raw plain string, JSON-quoted on the wire", () => {
     const cookie: BufferedCookie = {
       name: "theme",
       value: "dark",
       options: { maxAge: 3600, path: "/", httpOnly: true, sameSite: "lax", secure: true },
     };
 
-    const production = productionSetCookieCall(cookie);
-    const devReplay = devReplaySetCookieCall(cookie);
+    const [name, wireValue] = committedSetCookieCall(cookie);
 
-    expect(devReplay).toEqual(production);
-    expect(production[1]).toBe(JSON.stringify("dark"));
+    expect(wireValue).toBe(JSON.stringify("dark"));
+    expect(readBack(name, wireValue)).toBe("dark");
   });
 
-  it("matches production for a JSON-wrapped structured value", () => {
+  it("round-trips a structured value", () => {
+    const value = { theme: "dark", locale: "en-US" };
     const cookie: BufferedCookie = {
       name: "prefs",
-      value: { theme: "dark", locale: "en-US" },
+      value,
       options: { maxAge: 3600, path: "/", httpOnly: true, sameSite: "lax", secure: true },
     };
 
-    expect(devReplaySetCookieCall(cookie)).toEqual(productionSetCookieCall(cookie));
+    const [name, wireValue] = committedSetCookieCall(cookie);
+
+    expect(readBack(name, wireValue)).toEqual(value);
   });
 
-  it("drops core-only `raw` from the options fastify receives, on both paths", () => {
+  it("drops the core-only `raw` flag from the options fastify receives", () => {
     const cookie: BufferedCookie = {
       name: "session",
       value: "abc.def.ghi",
       options: { raw: true, httpOnly: true, sameSite: "lax", secure: true },
     };
 
-    const [, , productionOptions] = productionSetCookieCall(cookie);
-    const [, , devReplayOptions] = devReplaySetCookieCall(cookie);
+    const [, wireValue, options] = committedSetCookieCall(cookie);
 
-    expect(productionOptions).not.toHaveProperty("raw");
-    expect(devReplayOptions).not.toHaveProperty("raw");
-    expect(devReplayOptions).toEqual(productionOptions);
+    expect(options).not.toHaveProperty("raw");
+    expect(wireValue).toBe("abc.def.ghi");
   });
 });

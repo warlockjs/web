@@ -1,0 +1,22 @@
+{
+  // The whole point of this fixture root: `verbatimModuleSyntax: true` is what
+  // makes `import { type X } from "P"` survive esbuild as `import {} from "P"`
+  // and therefore REACH Gate A's `resolveId`. Without this flag esbuild erases
+  // the statement entirely and there is nothing for the gate to judge — the
+  // fixture would pass for the wrong reason. Copied from `v5/app/tsconfig.json`
+  // and `web/tsconfig.json`, which both set it.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules"]
+}

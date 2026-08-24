@@ -3,8 +3,10 @@ import { v } from "@warlock.js/seal";
 import {
   connectPageContext,
   executePageRequest,
+  renderPageRequest,
   type PageContextRunner,
   type PageRouteEntry,
+  type PageRouteMatch,
 } from "../../src/server/index";
 import { connectSharedStore, type SharedStoreResolver } from "../../src/shared";
 import { createCoreHttp, requestContext } from "./fixtures/core-http";
@@ -75,9 +77,13 @@ describe("executePageRequest — middleware short-circuit", () => {
       },
     });
 
+    // Exact shape, deliberately: the record carries the live response status
+    // captured where the pipeline touches the response, so `finishRender` stays
+    // a pure function of (triple, bundle). Nothing was set, so it is the default.
     expect(bundle!.shortCircuit).toEqual({
       stage: "middleware",
       level: "layout",
+      statusCode: 200,
       value: { denied: true },
     });
     // The chain stopped INSIDE stage 3: the page's own middleware never ran.
@@ -87,6 +93,71 @@ describe("executePageRequest — middleware short-circuit", () => {
     expect(bundle!.shared).toBeUndefined();
     expect(appLoader).not.toHaveBeenCalled();
     expect(pageLoader).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The discriminator for the case above. A 200-only assertion proves the
+   * field is PRESENT; it cannot tell a real capture from a hardcoded 200 —
+   * both look identical when the default is all that was ever set.
+   *
+   * Stages 1-4 are byte-identical to an API request and stage 3 may
+   * short-circuit, so a guard denying the request is the canonical non-200
+   * short-circuit. Same three hops, driven with 403:
+   *   1. middleware sets 403 on the live response, then answers
+   *   2. the short-circuit record CARRIES 403 — not 200, not absent
+   *   3. the rendered response PRESERVES 403
+   */
+  it("carries a middleware-set 403 from the live response into the record and out to the rendered status", async () => {
+    const url = "/guarded";
+    const pageLoader = vi.fn(async () => ({ fromPage: true }));
+    const guarded: PageRouteEntry[] = [
+      {
+        path: url,
+        name: "guarded",
+        triple: {
+          app: {},
+          layout: {
+            middleware: [
+              async ({ response }) => {
+                // Exactly what an auth guard does: set the status, then answer.
+                response.setStatusCode(403);
+
+                return { error: "forbidden" };
+              },
+            ],
+          },
+          page: { loader: pageLoader },
+        },
+      },
+    ];
+    const createHttp = (match: PageRouteMatch) =>
+      createCoreHttp({ url, params: match.params, query: match.query });
+
+    // Both surfaces run before anything is asserted, and the hops assert
+    // softly: a break at the record must not hide whether the render hop
+    // survived it. Each hop reports its own verdict.
+    const bundle = await executePageRequest({ url, routes: guarded, createHttp });
+    const rendered = await renderPageRequest(url, { routes: guarded, createHttp });
+
+    // Hop 1: the guard stopped stage 3, nothing below it ran.
+    expect.soft(bundle!.shortCircuit).toMatchObject({ stage: "middleware", level: "layout" });
+    expect.soft(pageLoader).not.toHaveBeenCalled();
+
+    // Hop 2: the record took the LIVE status. Exact shape, so 403 must be the
+    // VALUE of `statusCode` — a record that fell back to the default fails
+    // here on the number, not on the key.
+    expect.soft(bundle!.shortCircuit).toEqual({
+      stage: "middleware",
+      level: "layout",
+      statusCode: 403,
+      value: { error: "forbidden" },
+    });
+
+    // Hop 3: a short-circuit emits no document — the status IS the answer, and
+    // it is the guard's 403, never the `?? 200` fallback standing in for an
+    // absent field.
+    expect.soft(rendered.status).toBe(403);
+    expect.soft(rendered.html).toBe("");
   });
 });
 

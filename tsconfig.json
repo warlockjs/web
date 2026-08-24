@@ -9,11 +9,20 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "noEmit": true,
-    "paths": {
-      "@warlock.js/seal": ["../seal/src/index.ts"]
-    }
+    "rootDir": "./src",
+    "outDir": "./esm",
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "noEmitOnError": true
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  // `src`, not an entry-point list. Vite matches a file to a tsconfig through
+  // this `include`, and it reads `jsx` from the config it matches — so with
+  // only two entries here, every other file in `web/src` matched nothing and
+  // was transformed with esbuild's default CLASSIC JSX, emitting
+  // `React.createElement` into modules that import no `React` binding. That is
+  // a 500 on every page (`ReferenceError: React is not defined`, thrown from
+  // `default-app.tsx` inside `renderToString`), from a config field that looks
+  // like it only concerns declaration emit.
+  "include": ["src"],
+  "exclude": ["node_modules", "esm"]
 }

@@ -1,0 +1,8 @@
+An app root with a real, page-less `app/` directory.
+
+`installPageRoutes` scans `<appSrcRoot>/app` eagerly and throws ENOENT when it
+is missing (web/src/server/install-page-routes.ts:201). web-connector.spec.ts
+points its harness here so that a WebConnector whose `ssrLoadModule` call was
+"simplified" into a plain `import()` fails the way it would in a real app —
+silently, with an unconnected shared store — instead of crashing on a missing
+directory and hiding the bug behind an ENOENT.

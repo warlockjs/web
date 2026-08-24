@@ -4,6 +4,7 @@
  * connectSharedStore/enterSharedScope/sealShared: app code never touches the
  * pipeline's wiring surface.
  */
+export { connectSharedStore } from "../shared";
 export {
   createBufferedResponse,
   isLoaderShortCircuit,
@@ -27,6 +28,7 @@ export {
 } from "./render-page";
 export {
   connectPageContext,
+  connectPageSharedScope,
   executePageRequest,
   type ExecutePageRequestOptions,
   type PageBoundaryDesignation,
@@ -42,3 +44,22 @@ export {
   type PipelineMiddleware,
   type PipelineStore,
 } from "./execute-page-request";
+export {
+  createPageModuleLoader,
+  PageModuleNotInManifestError,
+} from "./create-page-module-loader";
+export {
+  installPageRoutesFromManifest,
+  type InstalledManifestPageRoute,
+  type InstallPageRoutesFromManifestOptions,
+  type PageRouteHandlerFactory,
+} from "./install-page-routes-from-manifest";
+export {
+  composeRoutePath,
+  installPageRoutes,
+  type InstalledPageRoute,
+  type InstallPageRoutesOptions,
+  type LayoutModuleShape,
+  type PageModuleShape,
+  type PageRouteExport,
+} from "./install-page-routes";

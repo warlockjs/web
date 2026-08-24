@@ -8,7 +8,7 @@ import type { SharedContext } from "./index";
  * target through core's AsyncLocalStorage store. This module holds a resolver,
  * never data — nothing here may cache a target, because a cached target
  * reintroduces the cross-request leak in the one form that still passes a
- * single-request test (canon 9adaa016 §A.2). And it throws rather than falling
+ * single-request test. And it throws rather than falling
  * back: outside a live request there is no process-wide object to land on —
  * that is `useRequestStore()`'s `|| {}` shape (request-context.ts:74-76),
  * deliberately not copied here; the pattern followed instead is
@@ -28,9 +28,11 @@ import type { SharedContext } from "./index";
  */
 
 /**
- * Untyped view of the per-request target. `SharedContext` is app-augmented and
- * ships empty, so the runtime writes through this shape and the public surface
- * casts at the boundary.
+ * Untyped view of the per-request target. `SharedContext` declares the
+ * framework keys (`can`, `locale`, `dir`, `nonce`) the pipeline's middleware
+ * writes into the target before any app code reads them, so the runtime writes
+ * through this shape and the public surface casts at the boundary — through
+ * `unknown`, because the two types share no declared members.
  */
 type SharedTarget = Record<string | symbol, unknown>;
 
@@ -167,7 +169,7 @@ export function enterSharedScope(store: SharedStore): SharedContext {
 
   sharedScopes.set(store, { target, sealed: false });
 
-  return target as SharedContext;
+  return target as unknown as SharedContext;
 }
 
 function rejectAtGate(path: string, offender: string): never {
@@ -188,7 +190,7 @@ function rejectAtGate(path: string, offender: string): never {
  * The prototype gate. Precedence mirrors `Response.parse` exactly so the gate
  * and the normalization that follows it agree on every value: toJSON wins over
  * the plain-object branch (response.ts:301-305 vs :319) and is NOT descended —
- * a Resource's field list is its own contract (canon 9adaa016 §B.6). Date is
+ * a Resource's field list is its own contract. Date is
  * checked BEFORE toJSON because `Date.prototype.toJSON` exists and Dates are
  * rejected regardless.
  */
@@ -234,6 +236,57 @@ function deepFreeze(value: unknown): void {
   }
 }
 
+let browserSharedSnapshot: Readonly<SharedContext> | undefined;
+let browserSharedInstalled = false;
+
+function freezeBrowserSnapshot(value: object, seen: Set<object>): void {
+  if (seen.has(value)) return;
+
+  seen.add(value);
+
+  for (const key of Object.keys(value)) {
+    const child = (value as SharedTarget)[key];
+
+    if (child !== null && typeof child === "object") {
+      freezeBrowserSnapshot(child, seen);
+    }
+  }
+
+  Object.freeze(value);
+}
+
+/**
+ * Install the browser's one readonly `shared` snapshot. An object value is
+ * recursively frozen in place and retained wholesale so every consumer
+ * observes the same identity; this never reads or writes the server ALS scope.
+ */
+export function installBrowserSharedSnapshot(value: unknown): void {
+  if (value !== null && typeof value === "object") {
+    freezeBrowserSnapshot(value, new Set<object>());
+  }
+
+  browserSharedSnapshot = value as Readonly<SharedContext>;
+  browserSharedInstalled = true;
+}
+
+/** Compatibility alias; browser snapshot ownership lives in the installer above. */
+export function hydrateShared(value: unknown): void {
+  installBrowserSharedSnapshot(value);
+}
+
+function readBrowserSharedSnapshot(): Readonly<SharedContext> {
+  if (!browserSharedInstalled) {
+    throw new Error(
+      "Cannot read `shared` via useShared(): the browser snapshot has not been " +
+        "installed (web/src/shared.ts). Hydration must validate the complete " +
+        "#__WARLOCK_DATA__ payload and call installBrowserSharedSnapshot() " +
+        "before constructing the React tree.",
+    );
+  }
+
+  return browserSharedSnapshot as Readonly<SharedContext>;
+}
+
 /**
  * The settle-stage seal, exported for the pipeline. Order is load-bearing:
  *
@@ -244,10 +297,10 @@ function deepFreeze(value: unknown): void {
  *    (core/src/http/response.ts:297, the public surface). parse mutates the
  *    target IN PLACE (response.ts:327), which is exactly why it MUST precede
  *    the freeze: freeze-then-parse throws on the first key parse writes
- *    (canon 26c64f9a).
+ *    in place.
  * 3. PROTOTYPE GATE AGAIN (post-parse) — closes the re-entry window the first
  *    gate cannot see: `Response.parse` never re-parses a `toJSON()` result
- *    (canon 26c64f9a fact 2), so a Resource whose `toJSON()` returns a
+ *    (it only normalizes the value handed to it), so a Resource whose `toJSON()` returns a
  *    Date/Map/Set/class instance re-enters the payload AFTER the first gate
  *    already ran — the first gate inspects the pre-parse value (a plain
  *    object with a callable `toJSON`, correctly not descended) and parse then
@@ -298,7 +351,7 @@ export async function sealShared(store?: SharedStore): Promise<Readonly<SharedCo
 
   assertClientSafe(scope.target, "shared");
 
-  if (process.env.NODE_ENV !== "production") {
+  if (import.meta.env.DEV) {
     deepFreeze(scope.target);
   }
 
@@ -312,9 +365,8 @@ export async function sealShared(store?: SharedStore): Promise<Readonly<SharedCo
  *
  * Every `shared.x = …` at a call site reads like a global write; it is not —
  * each trap below resolves the CURRENT request's target through the connected
- * store resolver, on every single access (canon 9adaa016 §A.8 says document
- * this at the surface, so: two concurrent requests writing `shared.locale`
- * write to two different objects).
+ * store resolver, on every single access — two concurrent requests writing
+ * `shared.locale` write to two different objects.
  */
 export const shared: SharedContext = new Proxy({} as SharedTarget, {
   get(_stub, key) {
@@ -373,20 +425,17 @@ export const shared: SharedContext = new Proxy({} as SharedTarget, {
 
     return true;
   },
-}) as SharedContext;
+}) as unknown as SharedContext;
 
 /**
- * The READ half, for components, from depth — same object the page and layout
- * props carry, not a copy: the returned view is the live proxy, so reads
- * resolve through the current request's ALS store on every access.
- *
- * SERVER HALF ONLY for this slice: it asserts a live request scope and returns
- * the readonly view. The CLIENT half arrives with hydration — in the browser
- * there is no ALS; useShared() will read the hydrated payload the pipeline
- * serialized from `sealShared()`'s return value. That boundary lands with the
- * hydration slice.
+ * The READ half for components at depth. On the server it preserves the live
+ * ALS proxy behavior. In the browser it returns the exact recursively frozen
+ * object installed from the validated hydration payload, never an empty or
+ * process-wide fallback.
  */
 export function useShared(): Readonly<SharedContext> {
+  if (typeof window !== "undefined") return readBrowserSharedSnapshot();
+
   requireScope("read `shared` via useShared()");
 
   return shared as Readonly<SharedContext>;

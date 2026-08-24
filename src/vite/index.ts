@@ -4,11 +4,23 @@
  * a project that doesn't build with Vite.
  */
 import type { Plugin } from "vite";
+import {
+  buildHydrationClient,
+  type BuildHydrationClientOptions,
+  type BuildHydrationClientResult,
+} from "./build-client";
 import { gateAResolve } from "./gate-a-resolve";
 import { createPublicEnvTracker, gateBSecrets } from "./gate-b-secrets";
 import { gateCVerify } from "./gate-c-verify";
+import { clientPageRegistry } from "./page-registry-plugin";
 import { projection } from "./projection";
 
+export { buildHydrationClient } from "./build-client";
+export type {
+  BuildHydrationClientOptions,
+  BuildHydrationClientResult,
+  HydrationClientBuildOutput,
+} from "./build-client";
 export { gateAResolve } from "./gate-a-resolve";
 export type { EnvironmentClassifier, EnvironmentClassifierOptions, WarlockEnvironment } from "./gate-a-resolve";
 export { createPublicEnvTracker, gateBSecrets } from "./gate-b-secrets";
@@ -25,11 +37,39 @@ export type {
   ServerExportLeak,
   ServerImportEdgeLeak,
 } from "./gate-c-verify";
+export { HYDRATION_CLIENT_ENTRY_NAME, createHydrationClientEntry } from "./hydration-entries";
+export type { HydrationClientEntry } from "./hydration-entries";
+export {
+  CLIENT_PAGE_REGISTRY_ID,
+  clientPageRegistry,
+  RESOLVED_CLIENT_PAGE_REGISTRY_ID,
+} from "./page-registry-plugin";
+export type { ClientPageRegistryPluginOptions } from "./page-registry-plugin";
 export { projection, ProjectionAmbiguityError } from "./projection";
 export type { ProjectionResult } from "./projection";
 
+export type WarlockClientBoundaryOptions = Parameters<typeof gateAResolve>[0];
+
+export type BuildWarlockHydrationClientOptions = Readonly<{
+  appRoot: string;
+  webRoot: string;
+  /** Absolute client output dir — threaded to `buildHydrationClient` (`<outdir>/client`). */
+  outDir: string;
+  resolveAliases: BuildHydrationClientOptions["resolveAliases"];
+  external?: BuildHydrationClientOptions["external"];
+}>;
+
+function clientEnvironmentOnly(plugin: Plugin): Plugin {
+  return {
+    ...plugin,
+    applyToEnvironment(environment) {
+      return environment.config.consumer === "client";
+    },
+  };
+}
+
 /**
- * The composed client-build pipeline (canon `c604f0bc` §2-7): projection
+ * The composed client-build pipeline: projection
  * strips the 5 server exports first, THEN Gate B's `transform` checks
  * whatever source remains for inline secret reads, THEN Gate A's
  * `resolveId` judges whatever imports remain. Array order here is
@@ -54,8 +94,8 @@ export type { ProjectionResult } from "./projection";
  * component-level `@warlock.js/core` import (never touched by projection)
  * still reaches and is refused by Gate A.
  *
- * This is OBSERVED Rollup behavior, not a documented contract (Suki, room
- * seq 546 pt.3) — a future Vite/Rollup upgrade could invert it. Pinned by a
+ * This is OBSERVED Rollup behavior, not a documented contract — a future
+ * Vite/Rollup upgrade could invert it. Pinned by a
  * regression test (`index.spec.ts`, "D.3 hook ordering pin") that fails
  * loudly if the ordering ever inverts, and by the `vite` peer floor in
  * `web/package.json` (`>=7.3.5`, the version this was verified against). If
@@ -91,17 +131,65 @@ export type { ProjectionResult } from "./projection";
  * something this array order enforces). It verifies the EMITTED output the
  * other three produced: no server export survived as a top-level binding, no
  * import edge into a server-only package survived into the module graph, and
- * it emits the reviewable `PUBLIC_*` inlined-value manifest (canon `c604f0bc`
- * §6, Suki room seq 561 pt.2 / 623). `gateBSecrets` and `gateCVerify` share
+ * it emits the reviewable `PUBLIC_*` inlined-value manifest. `gateBSecrets` and `gateCVerify` share
  * one `PublicEnvTracker` instance so the manifest and Gate B's own unread-key
  * exclusion check agree by construction, not by coincidence.
+ *
+ * `clientPageRegistry()` is FIRST, ahead of projection. It contributes no
+ * `transform` at all — only a `resolveId`/`load` pair for one synthetic id —
+ * so it cannot displace or pre-empt any gate's inspection of any real file.
+ * Two reasons for the position, one of which is not load-bearing and is
+ * labelled as such:
+ *
+ * 1. Load-bearing: it must own `virtual:warlock/pages` before Gate A's
+ *    `resolveId` (also `enforce: "pre"`) reaches its `this.resolve(...)` call
+ *    for that specifier. Gate A's nested resolve would find it anyway, but
+ *    routing the id through Gate A's importer-chain bookkeeping only to have
+ *    it come back means a synthetic id can surface in a user-facing "Import
+ *    chain:" message. Resolving it first keeps ownership of the id in one
+ *    place.
+ * 2. NOT load-bearing: the position relative to `projection()`. Projection is
+ *    `enforce: "pre"` and selects by file BASENAME (`projection.ts:242-248`),
+ *    so it transforms every `*.page.tsx` / `layout.tsx` / `root.tsx` that
+ *    enters the graph regardless of who imported it or where this plugin sits.
+ *    The registry emits absolute POSIX specifiers that Rollup resolves and
+ *    loads as ORDINARY file modules — they are not inlined into the virtual
+ *    module — so each one is transformed exactly as a page imported from a
+ *    real file would be. Projection declines the virtual module itself
+ *    (`\0virtual:warlock/pages` has no matching basename), which is correct:
+ *    generated code has no server exports to strip.
+ *
+ * Point 2 is asserted, not assumed, by a real `vite.build()` in
+ * `page-registry-plugin.spec.ts`: a fixture page whose `loader` — and only its
+ * `loader` — imports a marker module that Gate A independently PERMITS, built
+ * through this exact array, with the marker proven absent from every emitted
+ * chunk while the page's own component text is proven present. Inspecting this
+ * array's order would prove nothing about what reaches the browser.
  */
 export function warlockClientBoundary(options: Parameters<typeof gateAResolve>[0] = {}): Plugin[] {
   const tracker = createPublicEnvTracker();
   return [
+    clientPageRegistry({ appRoot: options.appRoot }),
     projection(),
     gateBSecrets({ tracker }),
     gateAResolve(options),
     gateCVerify({ ...options, tracker }),
-  ];
+  ].map(clientEnvironmentOnly);
+}
+
+/**
+ * Callable production seam: callers own their exact source aliases and the
+ * app-root classification boundary, while this module owns the one canonical
+ * projection/Gate B/Gate A/Gate C composition.
+ */
+export async function buildWarlockHydrationClient(
+  options: BuildWarlockHydrationClientOptions,
+): Promise<BuildHydrationClientResult> {
+  return buildHydrationClient({
+    webRoot: options.webRoot,
+    outDir: options.outDir,
+    resolveAliases: options.resolveAliases,
+    external: options.external,
+    plugins: warlockClientBoundary({ appRoot: options.appRoot }),
+  });
 }

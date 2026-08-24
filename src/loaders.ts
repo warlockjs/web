@@ -45,7 +45,7 @@ export type PageLoader<
 export type LayoutLoader = (context: PageContext) => unknown;
 
 /**
- * The application root's controller (App.tsx:56-58). Same shape as
+ * The application root's controller (root.tsx:56-58). Same shape as
  * `LayoutLoader`; a separate name because the two revalidate and nest under
  * different rules, and conflating them would make that drift invisible.
  */

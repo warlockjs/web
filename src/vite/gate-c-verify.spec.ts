@@ -1,9 +1,17 @@
+/*
+ * SECRET FIXTURES: assemble every secret-shaped test value at RUNTIME (string
+ * concatenation / join), never as a contiguous literal. GitHub push protection
+ * scans this repo's source bytes and BLOCKS any push containing a matching
+ * pattern (it cost two rejected pushes on 2026-08-21). Gate C itself only ever
+ * sees the runtime value via env → built page output, so assembly changes
+ * nothing about what these tests prove.
+ */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "vite";
 import { describe, expect, it } from "vitest";
 import { warlockClientBoundary } from "./index";
-import { gateCVerify } from "./gate-c-verify";
+import { findLeakedServerExports, gateCVerify } from "./gate-c-verify";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -11,7 +19,7 @@ const FIXTURE_ROOT = path.join(__dirname, "..", "..", "__tests__", "vite", "fixt
 const PAGE_DIR = path.join(FIXTURE_ROOT, "app", "blog", "web");
 
 /**
- * Runs a real Vite build (JS API — canon `50608334`) through the FULL
+ * Runs a real Vite build (JS API, not npx) through the FULL
  * composed `warlockClientBoundary()` pipeline (projection + Gate A + Gate B
  * + Gate C), for a single fixture page. Used for Gate C's POSITIVE cases —
  * proving it doesn't false-positive on a legitimately clean bundle, and
@@ -160,7 +168,83 @@ describe("gateCVerify — Gate C output verification (real Vite builds)", () => 
     });
   });
 
-  describe("Part 2: inlined PUBLIC_* value manifest (Suki, room seq 561 pt.2)", () => {
+  describe("a chunk Gate C cannot parse fails the gate — it is never reported clean", () => {
+    /**
+     * The malformed fixture is built INLINE as a hand-made bundle rather than
+     * as a fixture file on disk, for the same reason the leaked-chunk fixtures
+     * are hand-made: a real Vite build can never hand Gate C an unparseable
+     * chunk (esbuild would refuse the source long before `generateBundle`),
+     * and the only way to reach Gate C's own parse call with input it cannot
+     * read is to hand it that input directly. `findLeakedServerExports` is
+     * exported as a pure function over a bundle object precisely for this.
+     */
+    const UNPARSEABLE_CHUNK = "export const route = (((;\nfunction {{{";
+
+    it("case 5: an unparseable emitted chunk throws and names the file, instead of being skipped and reported leak-free", () => {
+      const bundle = {
+        "assets/broken.page-4f2a1c.js": {
+          type: "chunk",
+          fileName: "assets/broken.page-4f2a1c.js",
+          code: UNPARSEABLE_CHUNK,
+        },
+      };
+
+      expect(() => findLeakedServerExports(bundle)).toThrow(
+        /assets\/broken\.page-4f2a1c\.js/,
+      );
+
+      try {
+        findLeakedServerExports(bundle);
+        expect.unreachable("expected the unparseable chunk to fail the gate");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("assets/broken.page-4f2a1c.js");
+        expect(message).toContain("could not be parsed");
+        expect(message).toContain("could not be performed");
+      }
+    });
+
+    it("case 7: names BOTH possible causes and admits it cannot tell them apart, rather than blaming one", () => {
+      // The gate cannot know whether the emitted syntax outran the parser we
+      // ship or a plugin wrote something non-standard, and a message that
+      // picks one sends the reader to bisect the wrong dependency. These are
+      // semantic assertions on purpose: they pin the honesty of the message,
+      // not its exact prose, so the wording stays free to improve.
+      let message = "";
+
+      try {
+        findLeakedServerExports({
+          "assets/broken.page-4f2a1c.js": {
+            type: "chunk",
+            fileName: "assets/broken.page-4f2a1c.js",
+            code: UNPARSEABLE_CHUNK,
+          },
+        });
+        expect.unreachable("expected the unparseable chunk to fail the gate");
+      } catch (error) {
+        message = (error as Error).message;
+      }
+
+      expect(message).toMatch(/parser/i);
+      expect(message).toMatch(/plugin|loader/i);
+      expect(message).toMatch(/cannot tell which|cannot distinguish|which of these/i);
+    });
+
+    it("case 6: a parseable chunk sitting alongside the unparseable one does not rescue the build — the gate still fails", () => {
+      expect(() =>
+        findLeakedServerExports({
+          "assets/fine.js": { type: "chunk", fileName: "assets/fine.js", code: "export const x = 1;" },
+          "assets/broken.page-4f2a1c.js": {
+            type: "chunk",
+            fileName: "assets/broken.page-4f2a1c.js",
+            code: UNPARSEABLE_CHUNK,
+          },
+        }),
+      ).toThrow(/assets\/broken\.page-4f2a1c\.js/);
+    });
+  });
+
+  describe("the inlined PUBLIC_* value manifest", () => {
     it("case 4: the manifest lists exactly the PUBLIC_* keys actually read, values shown or redacted conservatively, agreeing with Gate B's unread-key exclusion", async () => {
       const previousApiUrl = process.env.PUBLIC_API_URL;
       const previousStripeKey = process.env.PUBLIC_STRIPE_KEY;

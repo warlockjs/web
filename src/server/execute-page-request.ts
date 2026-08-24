@@ -1,5 +1,7 @@
-import { v } from "@warlock.js/seal";
-import type { MetadataOutput } from "../metadata";
+import { v, type BaseValidator } from "@warlock.js/seal";
+import { randomUUID } from "node:crypto";
+import type { WebRequest } from "../context";
+import type { MetadataOutput, PageMetadata } from "../metadata";
 import { enterSharedScope, sealShared, shared, type SharedStore } from "../shared";
 import type { SharedContext } from "../index";
 import {
@@ -7,13 +9,14 @@ import {
   isLoaderShortCircuit,
   type BufferedCookie,
   type BufferedHeader,
+  type BufferedWebResponse,
+  type LoaderShortCircuitSignal,
   type ResponseBuffer,
 } from "./buffered-response";
 
 /**
- * Pipeline stages 1–8 of a page request (canon 20c425dd §3,
- * design/request-lifecycle.md:27-63). Stages 9–10 (render/emit) are the next
- * slice; this one ends at the DATA BUNDLE.
+ * Pipeline stages 1–8 of a page request. Stages 9–10 (render/emit) are the
+ * next slice; this one ends at the DATA BUNDLE.
  *
  * The founding sentence governs the shape: a page route is an ordinary
  * Warlock route whose handler renders React instead of returning JSON. So
@@ -23,7 +26,7 @@ import {
  *    (`{ request, response }`, core/src/http/context/request-context.ts:10-13)
  *    with core's own `run` — see `connectPageContext` below;
  *  - middleware short-circuits on `output !== undefined`, core's exact rule
- *    (core/src/http/request.ts:769);
+ *    (`Request.executeMiddleware`, core/src/http/request.ts:817);
  *  - validation mirrors `validateAll` (core/src/validation/validateAll.ts:36-60):
  *    `v.validate(schema, data)`, success calls `request.setValidatedData`,
  *    failure is a 422 (core/src/http/response.ts:1399-1404) — recorded here as
@@ -53,17 +56,20 @@ export type PipelineStore = SharedStore & {
  * (inject-request-context.ts:61).
  */
 export type PageContextRunner = {
-  run<T>(store: PipelineStore, callback: () => T): T;
+  run<T>(store: PipelineStore, callback: () => Promise<T>): Promise<T>;
   getStore(): PipelineStore | undefined;
   buildStore?(payload?: Record<string, any>): PipelineStore;
 };
 
 let pageContextRunner: PageContextRunner | undefined;
+let additionalSharedScopeEntry: ((store: PipelineStore) => void) | undefined;
 
 /**
  * Boot-time wiring, once per process, owned by the server bootstrap (the
- * wiring slice) — web cannot import core (A.3 §2: no core dep, no built esm),
- * so the code that HAS `requestContext` in scope hands it over:
+ * wiring slice) — a value import of core from web risks resolving a second
+ * core instance, and two copies of core means two AsyncLocalStorage stores
+ * (core is a type-only peer of web, never a value import). So the code that HAS
+ * `requestContext` in scope hands it over:
  *
  *   connectPageContext(requestContext);
  *   connectSharedStore(() => requestContext.getStore());
@@ -75,6 +81,19 @@ export function connectPageContext(
 ): PageContextRunner | undefined {
   const previous = pageContextRunner;
   pageContextRunner = runner;
+  return previous;
+}
+
+/**
+ * Connects an additional shared-module instance that must enter every request.
+ * Normal production has one module graph and needs no additional entry; the
+ * dev server uses this seam for the Vite SSR graph that evaluates app code.
+ */
+export function connectPageSharedScope(
+  enter: ((store: PipelineStore) => void) | undefined,
+): ((store: PipelineStore) => void) | undefined {
+  const previous = additionalSharedScopeEntry;
+  additionalSharedScopeEntry = enter;
   return previous;
 }
 
@@ -101,34 +120,73 @@ function requireRunner(): PageContextRunner {
 
 export type PageLevelName = "app" | "layout" | "page";
 
-/** v5 middleware: ONE ctx object, pass-through is `undefined` (request.ts:769). */
+/**
+ * The real request this pipeline touches directly (stages 3-4): `WebRequest`
+ * (context.ts:30-63) is the loader-facing MINIMAL facade and doesn't declare
+ * the raw validation sources or `setValidatedData` — core's actual `Request`
+ * has all of these (`Request.body`, request.ts:914; `Request.headers`,
+ * request.ts:1239; `Request.setValidatedData`, request.ts:769). A type-only
+ * core import is permitted but deliberately not used:
+ * the seam declares exactly the members the pipeline touches, keeping the
+ * coupling explicit. Composed via `&`, not `extends`,
+ * mirroring `BufferedWebResponse`'s own precedent below.
+ */
+export type PipelineRequest = WebRequest & {
+  body?: Record<string, unknown>;
+  headers?: Record<string, unknown>;
+  setValidatedData?(data: Record<string, unknown>): void;
+};
+
+/**
+ * The real response the pipeline touches: exactly the four members it calls —
+ * `header`/`cookie`/`setStatusCode` at the stage-7 commit and `parse` inside
+ * `sealShared` (`sealShared`, shared.ts seal path). Standalone rather than a
+ * `WebResponse` base: that facade's `redirect`/`notFound` return the BRANDED
+ * short-circuit signal (context.ts:81-87), which core's real `Response` never
+ * carries (`Response.redirect`, response.ts:862-865) — basing this type on it
+ * would reject the very instances the seam exists to admit.
+ */
+export type PipelineResponse = {
+  header(key: string, value: string): PipelineResponse;
+  cookie(name: string, value: unknown, options?: Record<string, unknown>): PipelineResponse;
+  setStatusCode(statusCode: number): PipelineResponse;
+  parse(value: unknown): Promise<unknown>;
+};
+
+/** v5 middleware: ONE ctx object, pass-through is `undefined` (`Request.executeMiddleware`, request.ts:817). */
 export type PipelineMiddleware = (ctx: {
-  request: any;
-  response: any;
+  request: PipelineRequest;
+  response: PipelineResponse;
 }) => unknown | Promise<unknown>;
 
 export type PipelineLoader = (ctx: {
-  request: any;
-  response: any;
+  request: PipelineRequest;
+  response: BufferedWebResponse;
   shared: SharedContext;
 }) => unknown | Promise<unknown>;
 
-/** The server half of a page/layout/App module (canon 20c425dd §4). */
+/** The server half of a page/layout/App module. */
 export type PageTripleModule = {
   route?: string | { readonly path: string; readonly name?: string };
   middleware?: readonly PipelineMiddleware[];
-  validation?: { schema?: unknown; validating?: readonly string[] };
+  validation?: { schema?: BaseValidator; validating?: readonly string[] };
   loader?: PipelineLoader;
-  metadata?: unknown;
+  /**
+   * Typed against `PipelineLoader` itself (not a per-page loader type this
+   * fixture-shaped manifest has no way to carry): `LoaderData<PipelineLoader>`
+   * resolves to `unknown` (props.ts:14-16), matching `bundle.pageData`'s own
+   * type below — the function-context call at stage 8 typechecks with no cast.
+   */
+  metadata?: PageMetadata<PipelineLoader>;
   /** Runs-twice half — carried through untouched; the render slice consumes them. */
   default?: unknown;
   ErrorBoundary?: unknown;
 };
 
 /**
- * One manifest entry, hand-authored for this slice
- * (design/request-lifecycle.md:20 — the real manifest generator emits the
- * same shape per page: absolute URL, route name, the App/Layout/Page triple).
+ * One manifest entry, hand-authored for this slice. The real manifest
+ * generator emits the same shape per page: absolute URL, route name, the
+ * App/Layout/Page triple.
  */
 export type PageRouteEntry = {
   path: string;
@@ -146,7 +204,7 @@ export type PageRouteMatch = {
   query: Record<string, string>;
 };
 
-export type ExecutePageRequestOptions = {
+export type ExecutePageRequestOptions<TResult = PageDataBundle> = {
   /** Path + optional query string, e.g. `/products/42?tab=specs`. */
   url: string;
   routes: readonly PageRouteEntry[];
@@ -155,7 +213,13 @@ export type ExecutePageRequestOptions = {
    * construct the Request/Response pair for this match. In production this is
    * core's route handler; in tests it builds REAL core instances.
    */
-  createHttp(match: PageRouteMatch): { request: any; response: any };
+  createHttp(match: PageRouteMatch): { request: PipelineRequest; response: PipelineResponse };
+  /**
+   * Continue stages 9-10 before the request context closes. This is the
+   * render seam: it receives the completed bundle inside the exact ALS store
+   * and shared scope used by middleware and loaders.
+   */
+  finish?(bundle: PageDataBundle): TResult | Promise<TResult>;
 };
 
 // ---------------------------------------------------------------------------
@@ -185,7 +249,15 @@ export type PageResponseCommit = {
 };
 
 export type PageShortCircuit =
-  | { stage: "middleware"; level: PageLevelName; value: unknown }
+  | {
+      stage: "middleware";
+      level: PageLevelName;
+      value: unknown;
+      /** D1: the live response's status at the moment of short-circuit, captured
+       * where the pipeline legitimately touches it (stage 3) — `finishRender`
+       * no longer needs `captured?.response.statusCode`. */
+      statusCode?: number;
+    }
   | { stage: "validation"; status: number; errors: unknown }
   | {
       stage: "loaders";
@@ -195,6 +267,19 @@ export type PageShortCircuit =
       url?: string;
       body?: unknown;
     };
+
+/**
+ * What a throw becomes once it enters the bundle (`buildErrorRecord` below,
+ * the one place this happens). `digest` is an opaque id generated there;
+ * `scrubbed` says whether `error` is the raw thrown value or a production
+ * surrogate standing in for it.
+ */
+export type PageErrorRecord = {
+  error: unknown;
+  boundary: PageBoundaryDesignation;
+  digest: string;
+  scrubbed: boolean;
+};
 
 export type PageDataBundle = {
   route: {
@@ -211,7 +296,7 @@ export type PageDataBundle = {
   metadata?: MetadataOutput;
   commit?: PageResponseCommit;
   shortCircuit?: PageShortCircuit;
-  error?: { error: unknown; boundary: PageBoundaryDesignation };
+  error?: PageErrorRecord;
 };
 
 // ---------------------------------------------------------------------------
@@ -260,12 +345,12 @@ function matchRoute(
 
 // ---------------------------------------------------------------------------
 // Stage 4 — validation input (mirror of validateAll.ts:8-31, with the PAGE
-// default from design/request-lifecycle.md:41-42: params + query, not body)
+// default: params + query, not body)
 // ---------------------------------------------------------------------------
 
 function resolveValidationData(
   validating: readonly string[] | undefined,
-  request: any,
+  request: PipelineRequest,
   match: { params: Record<string, string>; query: Record<string, string> },
 ): Record<string, unknown> {
   if (!validating || validating.length === 0) {
@@ -291,13 +376,42 @@ function resolveValidationData(
 const LEVEL_ORDER: readonly PageLevelName[] = ["app", "layout", "page"];
 
 /**
- * Apply the surviving buffers to the REAL response, root→leaf, per cookie
- * name / header key (canon 20c425dd §10): a leafward level re-writing the same
- * key wins it, everything else merges. Application happens once, here — the
- * loaders only ever touched their buffers.
+ * Settle the surviving buffers root→leaf, per cookie name / header key: a
+ * leafward level re-writing the same key wins it, everything else merges. The
+ * loaders only ever touched their buffers; this is where the winners are
+ * decided.
+ *
+ * WHAT THIS WRITES TO THE LIVE RESPONSE, AND WHAT IT DELIBERATELY DOES NOT.
+ * Headers and status are mirrored onto `realResponse` here; COOKIES ARE NOT.
+ * That asymmetry is the fix for a real defect, and it is not arbitrary:
+ *
+ *   - `header()` and `setStatusCode()` are SET operations, keyed. Writing the
+ *     same key twice leaves one value on the wire, so the mirror and the
+ *     emit's own `response.headers(rendered.headers)` are idempotent with
+ *     each other.
+ *   - `cookie()` APPENDS. Fastify's `setCookie` emits one `Set-Cookie` header
+ *     per call, so mirroring here and replaying at the emit put the SAME
+ *     cookie on the wire twice — on every page response, happy path included
+ *     (`page-redirect-wire.spec.ts`, which asserted the duplicate on purpose
+ *     until this change removed it).
+ *
+ * The emit is the authoritative application site, so the cookie loop is the
+ * one that goes. `finishRender` adds the framework's own headers after this
+ * function has run and chooses the final status only once the render can no
+ * longer change it, so the emit has to apply the returned maps regardless —
+ * it is a superset of this mirror, and it is the ONLY consumer
+ * (`createPageRouteHandler`, the single production emit path, replays
+ * `rendered.cookies` through `applyBufferedCookie`). A stage-7 cookie write
+ * is also committed before stage 9 can overturn the answer, which is already
+ * a known wart of the status mirror above.
+ *
+ * The header mirror is left alone deliberately: it is idempotent, it carries
+ * the `Location` a loader redirect writes into its buffer
+ * (`buffered-response.ts`), and that path landed proven — this card
+ * de-duplicates `Set-Cookie` and changes no redirect behaviour.
  */
 function commitBuffers(
-  realResponse: any,
+  realResponse: PipelineResponse,
   ordered: readonly { level: PageLevelName; buffer: ResponseBuffer }[],
   forcedStatusCode?: number,
 ): PageResponseCommit {
@@ -314,8 +428,11 @@ function commitBuffers(
   if (forcedStatusCode !== undefined) statusCode = forcedStatusCode;
 
   for (const header of headers.values()) realResponse.header(header.key, header.value);
-  for (const cookie of cookies.values()) realResponse.cookie(cookie.name, cookie.value, cookie.options);
   if (statusCode !== undefined) realResponse.setStatusCode(statusCode);
+
+  // No `realResponse.cookie(...)` loop here — see the note above. The settled
+  // cookies leave through the return value only, and the emit applies them
+  // exactly once.
 
   return {
     headers: [...headers.values()],
@@ -325,7 +442,7 @@ function commitBuffers(
   };
 }
 
-function designateBoundary(
+export function designateBoundary(
   throwingLevel: PageLevelName,
   triple: PageRouteEntry["triple"],
 ): PageBoundaryDesignation {
@@ -343,13 +460,44 @@ function designateBoundary(
   return { throwingLevel, boundaryLevel: "app" };
 }
 
+/**
+ * The one place a throw enters the bundle (middleware, stage 3; loaders,
+ * stage 7) — generates `digest` and decides scrubbing. Production never lets
+ * the raw error reach a client: the boundary receives a surrogate carrying
+ * only `digest`, which is exactly what the reference App's ErrorBoundary
+ * renders (v5/app/src/web/root.tsx:136-158 — `error.digest`, nothing else).
+ * Dev keeps the raw thrown value so the boundary/console see the real
+ * stack; it is never mutated to attach `digest` — `digest` lives on the
+ * RECORD only.
+ */
+export function buildErrorRecord(
+  thrown: unknown,
+  boundary: PageBoundaryDesignation,
+  requestPath?: string,
+): PageErrorRecord {
+  const digest = randomUUID();
+
+  // The boundary says the problem was logged, so log it; a digest absent from every log is worse than none.
+  console.error("[warlock] page error", digest, ...(requestPath ? [requestPath] : []), thrown);
+
+  if (process.env.NODE_ENV === "production") {
+    const surrogate = new Error("An unexpected error occurred.");
+
+    (surrogate as Error & { digest: string }).digest = digest;
+
+    return { error: surrogate, boundary, digest, scrubbed: true };
+  }
+
+  return { error: thrown, boundary, digest, scrubbed: false };
+}
+
 // ---------------------------------------------------------------------------
 // The pipeline
 // ---------------------------------------------------------------------------
 
-export async function executePageRequest(
-  options: ExecutePageRequestOptions,
-): Promise<PageDataBundle | undefined> {
+export async function executePageRequest<TResult = PageDataBundle>(
+  options: ExecutePageRequestOptions<TResult>,
+): Promise<TResult | undefined> {
   const runner = requireRunner();
 
   // ── stage 1 · MATCH ─────────────────────────────────────────────────────
@@ -380,6 +528,10 @@ export async function executePageRequest(
 
   return await runner.run(store, async () => {
     enterSharedScope(store);
+    additionalSharedScopeEntry?.(store);
+
+    const finish = async (bundle: PageDataBundle): Promise<TResult> =>
+      options.finish ? await options.finish(bundle) : (bundle as TResult);
 
     const bundle: PageDataBundle = {
       route: {
@@ -394,14 +546,39 @@ export async function executePageRequest(
     // Sequential, outermost first: App → Layout → Page. Middleware gets the
     // REAL request/response (it runs alone, before any parallelism) and is
     // the only writer of `shared`. Short-circuit is core's exact rule:
-    // output !== undefined stops everything below (request.ts:769).
+    // output !== undefined stops everything below (`Request.executeMiddleware`,
+    // request.ts:817).
     for (const level of LEVEL_ORDER) {
       for (const middleware of triple[level].middleware ?? []) {
-        const output = await middleware({ request, response });
+        let output: unknown;
+
+        try {
+          output = await middleware({ request, response });
+        } catch (thrown) {
+          // A middleware throw means NOTHING was served: no loaders ran, no
+          // buffers exist. The "a nested boundary keeps the committed status"
+          // rule is predicated on the page being substantially served, so it
+          // cannot apply here — the framework forces 500 regardless of which
+          // level the boundary designates to.
+          const boundary = designateBoundary(level, triple);
+
+          bundle.error = buildErrorRecord(thrown, boundary, pathname);
+          bundle.commit = commitBuffers(response, [], 500);
+
+          return finish(bundle);
+        }
 
         if (output !== undefined) {
-          bundle.shortCircuit = { stage: "middleware", level, value: output };
-          return bundle;
+          bundle.shortCircuit = {
+            stage: "middleware",
+            level,
+            value: output,
+            // D1: capture the live status HERE, where the pipeline
+            // legitimately touches the response — `finishRender` becomes a
+            // pure function of (triple, bundle).
+            statusCode: (response as PipelineResponse & { statusCode?: number }).statusCode,
+          };
+          return finish(bundle);
         }
       }
     }
@@ -415,7 +592,7 @@ export async function executePageRequest(
 
     if (validation?.schema) {
       const data = resolveValidationData(validation.validating, request, match);
-      const result = await v.validate(validation.schema as any, data);
+      const result = await v.validate(validation.schema, data);
 
       if (result.isValid && result.data) {
         request.setValidatedData?.(result.data);
@@ -423,7 +600,7 @@ export async function executePageRequest(
 
       if (!result.isValid) {
         bundle.shortCircuit = { stage: "validation", status: 422, errors: result.errors };
-        return bundle;
+        return finish(bundle);
       }
     }
 
@@ -462,7 +639,7 @@ export async function executePageRequest(
     // signalling layer's own buffer commits, siblings below are discarded.
     let firstError: { level: PageLevelName; index: number; error: unknown } | undefined;
     let firstSignal:
-      | { level: PageLevelName; index: number; signal: ReturnType<typeof toSignal> }
+      | { level: PageLevelName; index: number; signal: LoaderShortCircuitSignal }
       | undefined;
 
     function toSignal(value: unknown) {
@@ -508,21 +685,25 @@ export async function executePageRequest(
     }
 
     if (firstError) {
-      // Commit strictly rootward of the throw; the framework owns the status
-      // when a boundary renders (canon 20c425dd §10).
-      bundle.error = {
-        error: firstError.error,
-        boundary: designateBoundary(firstError.level, triple),
-      };
-      bundle.commit = commitBuffers(response, buffers.slice(0, firstError.index), 500);
+      const boundary = designateBoundary(firstError.level, triple);
+
+      bundle.error = buildErrorRecord(firstError.error, boundary, pathname);
+
+      // Commit strictly rootward of the throw. A NESTED boundary catch keeps the committed status (the page was
+      // substantially served); only the ROOT (`app`) boundary forces 5xx.
+      bundle.commit = commitBuffers(
+        response,
+        buffers.slice(0, firstError.index),
+        boundary.boundaryLevel === "app" ? 500 : undefined,
+      );
     } else if (firstSignal) {
       bundle.shortCircuit = {
         stage: "loaders",
         level: firstSignal.level,
-        kind: firstSignal.signal!.kind,
-        statusCode: firstSignal.signal!.statusCode,
-        url: firstSignal.signal!.url,
-        body: firstSignal.signal!.body,
+        kind: firstSignal.signal.kind,
+        statusCode: firstSignal.signal.statusCode,
+        url: firstSignal.signal.url,
+        body: firstSignal.signal.body,
       };
       bundle.commit = commitBuffers(response, buffers.slice(0, firstSignal.index + 1));
     } else {
@@ -532,10 +713,7 @@ export async function executePageRequest(
     // ── stage 8 · METADATA ────────────────────────────────────────────────
     // metadata({ data, error, shared }) — exactly one of data/error set
     // (request-lifecycle.md:56). Skipped after a loader short-circuit: a
-    // redirect/notFound answer has no page render to describe. The M1
-    // `PageMetadata` type declares { data, shared }; `error` joins the
-    // declared type with the render slice — the runtime contract is ahead of
-    // the declaration here, recorded in the P1 report.
+    // redirect/notFound answer has no page render to describe.
     if (!bundle.shortCircuit) {
       const metadata = triple.page.metadata;
 
@@ -546,10 +724,10 @@ export async function executePageRequest(
           shared: sealedShared,
         });
       } else if (metadata) {
-        bundle.metadata = metadata as MetadataOutput;
+        bundle.metadata = metadata;
       }
     }
 
-    return bundle;
+    return finish(bundle);
   });
 }

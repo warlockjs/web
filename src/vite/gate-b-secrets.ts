@@ -1,5 +1,5 @@
 /**
- * Gate B — an AST transform gate for inline secrets (canon `c604f0bc` §5).
+ * Gate B — an AST transform gate for inline secrets.
  *
  * `resolveId` (Gate A) refuses import PATHS; it cannot see a bare property
  * read like `process.env.SECRET` or `import.meta.env.SOME_KEY` — there is no
@@ -9,21 +9,20 @@
  * `*.page.tsx` like projection, because a secret can leak from any helper,
  * component, or shared util, not only from a page file.
  *
- * The PUBLIC_ env-var convention this gate enforces is DEFINED here — no
- * other canon entry rules it (implementation-plan §3.1 item 1, unruled
- * elsewhere as of authoring this file): a client module may read
+ * The PUBLIC_ env-var convention this gate enforces is DEFINED here and
+ * nowhere else: a client module may read
  * `import.meta.env.X` only when `X` starts with `PUBLIC_`. `process.env` is
  * never readable client-side at all — Node's `process` object does not exist
  * in the browser, so any static or computed read of `process.env.X` is
  * forbidden regardless of `X`.
  *
- * Gate A, Gate C and the SSR mirror rule are NOT this gate — see `c604f0bc`
- * §4, §6. Do not extend this file to cover them; they are separate slices.
+ * Gate A, Gate C and the SSR mirror rule are NOT this gate. Do not extend
+ * this file to cover them; they are separate slices.
  *
  * A bare `import.meta.env` reference — used as a value directly (passed as
  * an argument, spread, destructured, or aliased to a variable) rather than
- * narrowed to a single static `.KEY` access — is caught here too (Suki, room
- * seq 623): it leaks the WHOLE env object, not one var, so it is the most
+ * narrowed to a single static `.KEY` access — is caught here too: it leaks
+ * the WHOLE env object, not one var, so it is the most
  * severe violation this gate judges, and is caught at the exact source line
  * like every other Gate B violation, not only as a whole-build
  * `generateBundle` failure. See `findViolation`'s `consumedEnvBases` note.
@@ -38,8 +37,8 @@ const PUBLIC_ENV_PREFIX = "PUBLIC_";
  * `resolveConfig`: `env: { ...userEnv, BASE_URL, MODE, DEV, PROD }`, plus
  * `SSR` set per-environment by vite's `vite:define` plugin) — they are
  * framework metadata, not app secrets, and are legitimately readable
- * client-side with no `PUBLIC_` prefix. Named explicitly here (Suki's room
- * ruling, seq 561) so a future false positive against these doesn't get
+ * client-side with no `PUBLIC_` prefix. Named explicitly here so a future
+ * false positive against these doesn't get
  * "fixed" by widening the PUBLIC_ rule instead of consulting this allowlist.
  */
 const VITE_BUILTIN_ENV_KEYS = new Set(["MODE", "DEV", "PROD", "BASE_URL", "SSR"]);
@@ -169,7 +168,7 @@ interface Violation {
  * vars are actually referenced anywhere in the client build (see
  * `gateBSecrets`'s `generateBundle` check below).
  *
- * `consumedEnvBases` (Suki, room seq 623) tracks every `import.meta.env`
+ * `consumedEnvBases` tracks every `import.meta.env`
  * MemberExpression node that was already judged as the `.object` of a
  * further static/computed `.KEY` access (the two checks above) — i.e. a
  * NARROWED read, whether allowed or refused. Because `walk` visits a parent
@@ -248,7 +247,7 @@ function findViolation(
  * (`import type`), matching Gate A / projection's peer-dependency shape.
  *
  * Beyond the `transform` gate itself, this plugin also owns two pieces of
- * Vite config surface (Suki's room ruling, seq 561), both load-bearing for
+ * Vite config surface, both load-bearing for
  * the `PUBLIC_` convention this file defines:
  *
  * 1. `config()` sets `envPrefix: "PUBLIC_"`. Vite's own `import.meta.env.*`

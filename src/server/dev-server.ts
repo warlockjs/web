@@ -1,455 +1,258 @@
 /**
- * Real Vite middleware-mode dev server, mounted on core's real Fastify
- * instance (`core/src/http/server.ts`'s `startHttpServer()`), rendering
- * v5/app's real page files through `renderPageRequest`
- * (`web/src/server/render-page.ts`) via `vite.ssrLoadModule` at request time.
+ * Two small pieces of the dev/SSR page plumbing that `./web-connector.ts` wires
+ * but deliberately does not own: the buffered-cookie commit, and the DEV-ONLY
+ * error transport that stops a refused module from reaching the browser as a
+ * bare 404 (see {@link devErrorTransportPlugin}).
  *
- * DELIBERATE EXCEPTION to A.3 §2 ("web has no core dependency" — see
- * `web/src/shared.ts`'s header comment): that rule protects the SHIPPED
- * package surface (`web/src/index.ts` / `web/src/server/index.ts`'s barrel,
- * `web/package.json`'s `dependencies`). This file is not exported from
- * either barrel and is not part of `web/package.json`'s dependency graph —
- * it is a dev/CLI bootstrap script that runs inside this monorepo checkout
- * exactly the way `web/__tests__/server/fixtures/core-http.ts` already
- * reaches core via a relative path (that file's own header comment records
- * the same reasoning). A published `@warlock.js/web` consumer never imports
- * this module; only `warlock dev`-style tooling that already depends on core
- * would.
+ * ---
+ *
+ * Commits one buffered cookie (`BufferedCookie`, from `./buffered-response.ts`)
+ * onto the live Warlock `Response` — the single place in the SSR page pipeline
+ * where a cookie the loader buffered turns into a real `Set-Cookie` header.
+ *
+ * It delegates to core's `Response.cookie()` rather than talking to fastify.
+ * That method already owns everything this file used to reimplement: it takes
+ * core's own `CookieOptions`, JSON-stringifies the value unless `{ raw: true }`,
+ * strips the core-only `raw` flag, and layers the framework's secure-cookie
+ * defaults and the `http.cookies.options` config under the per-call options.
+ * Going through it means the SSR page path and every ordinary controller emit
+ * cookies by the exact same code, so the two cannot drift apart.
+ *
+ * The helper is passed INTO `installPageRoutes`/`createPageRouteHandler` as an
+ * option rather than imported by them, which is what keeps this module out of a
+ * cycle with the page-route installer.
  */
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import type { CookieSerializeOptions } from "@fastify/cookie";
-import type { FastifyReply, FastifyRequest } from "fastify";
-import type { ViteDevServer } from "vite";
-import { requestContext } from "../../../core/src/http/context/request-context";
-import { Request } from "../../../core/src/http/request";
-import { Response } from "../../../core/src/http/response";
-import { startHttpServer, type FastifyInstance } from "../../../core/src/http/server";
-import { connectSharedStore } from "../shared";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { stripVTControlCharacters } from "node:util";
+import type { Connect, Plugin } from "vite";
+import type { Response } from "../../../core/src/http/response";
 import type { BufferedCookie } from "./buffered-response";
-import {
-  connectPageContext,
-  renderPageRequest,
-  type PageContextRunner,
-  type PageRouteEntry,
-  type PageRouteMatch,
-  type PageTripleModule,
-} from "./index";
 
 /**
- * Explicit core `CookieOptions` (core/src/http/response.ts:37, `CookieSerializeOptions
- * & { raw }`) → fastify `setCookie` options mapping, field by field — the replacement
- * for the `as Parameters<FastifyReply["setCookie"]>[2]` cast this file used to reach
- * into a `BufferedCookie`'s loosely-typed `options` bag (`Record<string, unknown>`,
- * `web/src/server/buffered-response.ts:24`) and hand it to fastify unchecked.
+ * Replay a buffered cookie onto the response that will actually be sent.
  *
- * `maxAge` gets its own line deliberately: @fastify/cookie's own `SerializeOptions`
- * documents it as "A number in seconds"
- * (node_modules/@fastify/cookie/types/plugin.d.ts:122-123) — the SAME unit core's
- * `CookieOptions` uses (it extends `CookieSerializeOptions` directly, no conversion
- * layer). The locale cookie's `maxAge: 31536000` (C3 §8-A, canon `f9d9a5cc`) is
- * therefore passed through untouched — but doing that inside a typed, per-field
- * mapping (rather than a blanket cast) means a future unit mismatch on EITHER side
- * fails to compile here instead of silently reaching a real Set-Cookie header.
- *
- * `raw` is dropped, not forwarded: it is core-only (`Response.cookie()` consumes it
- * to choose `JSON.stringify` vs `String(value)` — see `serializeBufferedCookieValue`
- * below), and fastify's `setCookie` has no such option.
+ * `BufferedCookie.options` is a loosely-typed bag (`Record<string, unknown>`)
+ * because the buffer is written by loader code before any response exists; the
+ * cast hands it to `Response.cookie()`, which is where the option shape is
+ * defined and enforced for every other caller in the framework.
  */
-export function mapCookieOptionsToFastify(
-  options: Record<string, unknown> | undefined,
-): CookieSerializeOptions {
-  if (!options) return {};
-
-  const fastifyOptions: CookieSerializeOptions = {};
-
-  if (options.domain !== undefined) fastifyOptions.domain = options.domain as string;
-  if (options.encode !== undefined) {
-    fastifyOptions.encode = options.encode as (value: string) => string;
-  }
-  if (options.expires !== undefined) fastifyOptions.expires = options.expires as Date;
-  if (options.httpOnly !== undefined) fastifyOptions.httpOnly = options.httpOnly as boolean;
-  if (options.maxAge !== undefined) fastifyOptions.maxAge = options.maxAge as number; // seconds, both sides
-  if (options.partitioned !== undefined) {
-    fastifyOptions.partitioned = options.partitioned as boolean;
-  }
-  if (options.path !== undefined) fastifyOptions.path = options.path as string;
-  if (options.sameSite !== undefined) {
-    fastifyOptions.sameSite = options.sameSite as CookieSerializeOptions["sameSite"];
-  }
-  if (options.priority !== undefined) {
-    fastifyOptions.priority = options.priority as CookieSerializeOptions["priority"];
-  }
-  if (options.secure !== undefined) {
-    fastifyOptions.secure = options.secure as CookieSerializeOptions["secure"];
-  }
-  if (options.signed !== undefined) fastifyOptions.signed = options.signed as boolean;
-  // `raw` intentionally has no branch here — see the doc comment above.
-
-  return fastifyOptions;
+export function applyBufferedCookie(response: Response, cookie: BufferedCookie): void {
+  response.cookie(cookie.name, cookie.value as never, (cookie.options ?? {}) as never);
 }
 
 /**
- * Mirrors core's own value serialization (`Response.cookie()`,
- * core/src/http/response.ts:958: `raw ? String(value) : JSON.stringify(value)`)
- * exactly. This is the fix for the encoding decision this file used to make
- * unilaterally via unconditional `String(cookie.value)`: for any committed cookie
- * NOT marked `{ raw: true }` (the default), production JSON-stringifies the value —
- * a plain string comes out quoted, a structured value comes out as its JSON form —
- * while `String(cookie.value)` silently disagreed (no quotes on a string, and
- * `"[object Object]"` for anything structured). `dev-server-cookie-drift.spec.ts`
- * is what checks this stays true, rather than trusting it by inspection.
+ * Where a captured transform/resolve failure rides from Vite's connect stack to
+ * the Fastify hook that mounted it.
  *
- * Percent-encoding of the resulting string is NOT this function's concern — that
- * happens one layer further out, inside fastify's `setCookie`/the `cookie` package's
- * own `serialize`, and is settled by canon as unconditional with no opt-out. Nothing
- * here touches it.
+ * A `Symbol.for` key on the raw `IncomingMessage` rather than a `WeakMap`
+ * because the two halves live in different modules and are wired at different
+ * times; the request object is the only thing they provably share, and the
+ * symbol cannot collide with a Vite/Fastify/user property.
+ *
+ * Exported so a test can stage a captured failure without booting a vite
+ * server, and so the two halves cannot drift onto two different keys.
  */
-export function serializeBufferedCookieValue(cookie: BufferedCookie): string {
-  const raw = cookie.options?.raw === true;
-  return raw ? String(cookie.value) : JSON.stringify(cookie.value);
+export const DEV_TRANSFORM_ERROR_BODY = Symbol.for("warlock.web.devTransformErrorBody");
+
+type DevTransformErrorCarrier = { [DEV_TRANSFORM_ERROR_BODY]?: string };
+
+/**
+ * The status a refused module now answers with.
+ *
+ * NOT the 404 this replaces. That 404 was never a decision about the module —
+ * it is what an unmatched URL gets once vite has declined it, and which of the
+ * two framework answers you see depends only on whether the app declares a
+ * catch-all page: with one (v5/app does — `path: "*"`) the request lands in the
+ * page pipeline, matches no route, and `./render-page.ts:604` returns
+ * `{ html: "", status: 404 }` for `./create-page-route-handler.ts:147` to write
+ * as an empty `text/html` body; without one it is `core/src/router/router.ts:879`.
+ * Either way "the module does not exist" is precisely the wrong thing to tell a
+ * developer whose module exists and was refused. 500 is the status VITE ITSELF writes for
+ * this exact condition when it is not in middleware mode
+ * (`node_modules/vite/dist/node/chunks/config.js:9528`), so this adopts that
+ * convention rather than inventing a third one.
+ */
+export const DEV_TRANSFORM_ERROR_STATUS = 500;
+
+/**
+ * `buildErrorMessage` as vite exports it. Declared structurally so this module
+ * needs no value import of vite — vite is an optional, dev-only peer and a
+ * production install does not carry it.
+ */
+export type BuildErrorMessage = (
+  error: Error,
+  args?: string[],
+  includeStack?: boolean,
+) => string;
+
+/**
+ * The dev error transport was constructed while the process is hosting a
+ * PRODUCTION build. Refused by name at construction rather than degraded,
+ * because everything this transport does — file paths, source frames, plugin
+ * names — is exactly what a production response must never carry.
+ */
+export class DevErrorTransportInProductionError extends Error {
+  public constructor() {
+    super(
+      "The dev error transport was constructed with `Application.runtimeStrategy === " +
+        '"production"`. It exists only to put a Vite transform failure in front of a ' +
+        "developer and its response body carries absolute file paths and source frames, " +
+        "so it must never be mounted on a production-hosted server.",
+    );
+    this.name = "DevErrorTransportInProductionError";
+  }
 }
 
 /**
- * The one place a buffered cookie becomes a real Set-Cookie header — both
- * `/contact-us` and `/hydration-demo` call this instead of hand-rolling the
- * `setCookie` call (and its cast) twice.
- */
-export function applyBufferedCookie(fastifyReply: FastifyReply, cookie: BufferedCookie): void {
-  fastifyReply.setCookie(
-    cookie.name,
-    serializeBufferedCookieValue(cookie),
-    mapCookieOptionsToFastify(cookie.options),
-  );
-}
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-/** repo root: web/src/server/dev-server.ts -> web/src/server -> web/src -> web -> repo root. */
-const REPO_ROOT = path.resolve(__dirname, "../../../");
-const V5_APP_ROOT = path.join(REPO_ROOT, "v5/app");
-const WEB_SRC_INDEX = path.join(REPO_ROOT, "web/src/index.ts");
-const CORE_SRC_INDEX = path.join(REPO_ROOT, "core/src/index.ts");
-
-/**
- * The ONE route this slice proves (brief step 6): the real
- * `v5/app/src/app/main/web/contact-us.page.tsx`, wrapped by the real
- * `v5/app/src/app/main/web/layout.tsx` and the real `v5/app/src/web/App.tsx`
- * — the app-root file lives OUTSIDE the `src/app/*` feature tree, at
- * `src/web/App.tsx` (confirmed by search: `App.tsx` does not exist anywhere
- * under `src/app`; it exists only at `src/web/App.tsx`; `v5/app/tsconfig.json`'s
- * own `paths` — `"web/*": ["web/*"]`, `"app/*": ["app/*"]` — name that exact
- * split).
- */
-const CONTACT_US_ROUTE = {
-  path: "/contact-us",
-  name: "main.contact-us",
-  files: {
-    app: path.join(V5_APP_ROOT, "src/web/App.tsx"),
-    layout: path.join(V5_APP_ROOT, "src/app/main/web/layout.tsx"),
-    page: path.join(V5_APP_ROOT, "src/app/main/web/contact-us.page.tsx"),
-  },
-} as const;
-
-/**
- * Vite middleware mode, `appType: "custom"` (brief step 2 — Warlock owns the
- * response shape; Vite never fronts Warlock, `design/request-lifecycle.md`).
+ * Render a refused module's failure as the plain-text body the browser gets.
  *
- * `root: V5_APP_ROOT` — empirically the only choice that resolves the real
- * page files correctly: `vite.ssrLoadModule` needs ABSOLUTE paths regardless
- * of root, but the page/layout files themselves import bare specifiers
- * (`"web/components/top-bar"`, `"@warlock.js/core"`, `"@warlock.js/web"`)
- * that only resolve if Vite's module graph starts scanning from v5/app's own
- * tree — rooting at `web/` (the framework package) instead would make Vite
- * apply v5/app's dependency optimizer scan to the WRONG project and never
- * see `v5/app/tsconfig.json`'s path aliases at all. The two bare-specifier
- * families v5/app's tsconfig declares (`web/*`, `app/*`, tsconfig.json's
- * `paths`) are NOT picked up by Vite automatically (no `vite-tsconfig-paths`
- * plugin is installed in this workspace — checked: absent from
- * `node_modules` and from every package.json in the tree) so they are
- * re-declared as explicit `resolve.alias` entries below, by hand, matching
- * the tsconfig source of truth exactly.
+ * Formatting is DELEGATED to vite's own exported `buildErrorMessage`, not
+ * reimplemented: it is the same function vite uses to print the failure to the
+ * terminal, so the text a developer reads in the network panel and the text
+ * they read in the terminal cannot drift. Two things are added around it —
+ * `error.name`, which vite's terminal path replaces with a fixed
+ * "Internal server error:" prefix and which is the single most useful token for
+ * a named gate refusal (`ProjectionAmbiguityError`), and the `cause` chain,
+ * which vite does not walk.
  *
- * `@warlock.js/web` and `@warlock.js/core` are ALSO aliased straight to their
- * TypeScript source barrels rather than left to Vite's normal node_modules
- * resolution: both packages declare `"main": "./esm/index.js"` and neither
- * has a built `esm/` in this checkout (`web/package.json:7`, confirmed via
- * `ls web/esm` / `ls core/esm` — both absent), and `node_modules/@warlock.js`
- * has no `web` symlink at all (checked: `access`, `auth`, `cache`, ...,
- * `seal` are linked; `web` is missing even though it is listed in the root
- * `package.json` workspaces array). Aliasing to source is also the only
- * choice consistent with Vite dev semantics elsewhere in this file: always
- * current source, no stale build.
+ * `stripVTControlCharacters` is not optional: `buildErrorMessage` colours its
+ * output with picocolors, which is ON whenever the dev server owns a TTY, and
+ * raw ANSI escapes in an HTTP body are noise. Vite strips them the same way for
+ * the overlay payload (`config.js:9490-9497`).
  *
- * The REST of the `@warlock.js/*` siblings core's own source imports at
- * runtime (`seal`, `cascade`, `context`, `logger`, `cache`, `fs`, `auth`,
- * `herald`) hit the exact same unbuilt-package problem transitively — proven
- * empirically: the first run of this file without these aliases died on
- * `Cannot find package '.../node_modules/@warlock.js/context/index.js'`
- * (core's own `request-context.ts` importing `@warlock.js/context`). Rather
- * than re-derive the list by trial and error, this reuses the EXACT
- * workaround and alias set already established and documented for this
- * problem in `core/vitest.config.ts:13-28` / `web/vitest.config.ts:9-39` (the
- * latter using exact-match regexes over core's plain-string form specifically
- * so a subpath specifier like `@warlock.js/seal/validators/any-validator`
- * isn't corrupted — same reasoning applies here since v5/app source may do
- * the same).
+ * The stack is deliberately omitted (`includeStack: false`). A gate refusal's
+ * stack points into the gate, not into the developer's code; the fields that
+ * locate the problem — plugin, file, line, source frame — are what
+ * `buildErrorMessage` puts there without it.
  */
-const WORKSPACE_SIBLINGS = [
-  "seal",
-  "cascade",
-  "context",
-  "logger",
-  "cache",
-  "fs",
-  "auth",
-  "herald",
-  // Not in core/vitest.config.ts's or web/vitest.config.ts's list (core's own
-  // unit suite never triggers this import path) — found empirically: the
-  // FULL `core/src/index.ts` barrel (what `@warlock.js/core` is aliased to,
-  // above) transitively evaluates every `connectors/*-connector.ts`, each of
-  // which dynamically imports its own sibling package by bare specifier
-  // (`grep -rn 'await import("@warlock' core/src`: access-connector.ts:39,57,
-  // ai-connector.ts:41, herald-connector.ts:31,59 [herald already listed
-  // above], notifications-connector.ts:38). Same unbuilt-esm problem, walked
-  // exhaustively here rather than one alias at a time — see this task's
-  // report for why aliasing `@warlock.js/core` to the full barrel (not a
-  // narrower entry) surfaces the whole connector fan-out.
-  "access",
-  "ai",
-  "notifications",
-] as const;
+export function formatDevTransformError(
+  error: unknown,
+  buildErrorMessage: BuildErrorMessage,
+): string {
+  const failure =
+    error instanceof Error ? error : new Error(typeof error === "string" ? error : String(error));
 
-const workspaceSourceAlias = (packageName: string) => ({
-  find: new RegExp(`^@warlock\\.js/${packageName}$`),
-  replacement: path.join(REPO_ROOT, packageName, "src/index.ts"),
-});
+  const lines = [
+    stripVTControlCharacters(
+      buildErrorMessage(failure, [`${failure.name}: ${failure.message}`], false),
+    ),
+  ];
 
-async function createDevViteServer(): Promise<ViteDevServer> {
-  const { createServer } = await import("vite");
+  // Walk the `cause` chain. A gate may wrap a parser failure, and the wrapped
+  // message is usually the one naming the actual syntax that was refused.
+  let cause = (failure as { cause?: unknown }).cause;
 
-  return createServer({
-    root: V5_APP_ROOT,
-    appType: "custom",
-    server: { middlewareMode: true },
-    // Without an explicit target, esbuild assumes the runtime supports
-    // standard (TC39) decorators natively and leaves `@RegisterModel()`-style
-    // syntax untouched — but this Node build has no native decorator support
-    // (verified directly: even a bare `new Function("@dec class C{}")()`
-    // throws `SyntaxError: Invalid or unexpected token` here), and Vite's SSR
-    // module runner evaluates transformed code via `new AsyncFunction(...)`,
-    // which hits that exact wall. `target: "es2022"` makes esbuild downlevel
-    // decorators into real helper calls instead of passing the syntax through.
-    esbuild: { target: "es2022" },
-    // Optional peers `core/src/mail` reaches via `await import(...)`
-    // (nodemailer, the AWS SES SDK, @react-email/render) are real published
-    // packages with real dist output — nothing about them needs Vite's
-    // transform, and they may not even be installed. Left un-externalized,
-    // Vite's SSR module runner tries to resolve/transform them anyway and
-    // dies ("transport was disconnected, cannot call fetchModule", a 30s
-    // hang, not a clean error) — canon `5f684f28`: an optional peer loaded
-    // via `await import()` must be declared external to every bundler and
-    // SSR pipeline. `core` itself is NOT here — it has no built output yet
-    // (the M1 finding), which is exactly why the alias list above exists.
-    ssr: {
-      external: ["nodemailer", "@aws-sdk/client-sesv2", "@react-email/render"],
-    },
-    resolve: {
-      alias: [
-        { find: /^web\//, replacement: `${path.join(V5_APP_ROOT, "src/web")}/` },
-        { find: /^app\//, replacement: `${path.join(V5_APP_ROOT, "src/app")}/` },
-        { find: /^@warlock\.js\/web$/, replacement: WEB_SRC_INDEX },
-        { find: /^@warlock\.js\/core$/, replacement: CORE_SRC_INDEX },
-        ...WORKSPACE_SIBLINGS.map(workspaceSourceAlias),
-      ],
-    },
-  });
+  while (cause instanceof Error) {
+    lines.push(`  Caused by: ${cause.name}: ${stripVTControlCharacters(cause.message)}`);
+    cause = (cause as { cause?: unknown }).cause;
+  }
+
+  return `${lines.join("\n")}\n`;
 }
 
 /**
- * Load the app/layout/page triple fresh, via `vite.ssrLoadModule`, EVERY
- * call — no module-level caching (brief step 5: dev semantics, always
- * current source). Each request's route entry is built from this, so the
- * `PageRouteEntry` handed to `renderPageRequest` per call is never reused
- * across requests either.
+ * DEV-ONLY. Capture the transform/resolve failure that vite is about to throw
+ * away, so the request that caused it can answer with it.
+ *
+ * WHY THIS IS A PLUGIN AND NOT A `middlewares.use(...)` CALL — this is the
+ * whole defect, and it is an ordering fact, not a style choice:
+ *
+ *  - Vite mounts its own error handler LAST, built as
+ *    `errorMiddleware(server, !!middlewareMode)`
+ *    (`node_modules/vite/dist/node/chunks/config.js:25705`).
+ *  - In middleware mode that `allowNext` flag is `true`, and the handler then
+ *    logs the error to the TERMINAL and calls `next()` — with no error
+ *    (`config.js:9525-9527`).
+ *  - connect only routes an error to a 4-arity handler while an error is in
+ *    flight (`config.js:10611-10626`), so `next()` clears it: every layer after
+ *    that point, INCLUDING the `done` callback `./web-connector.ts` hands the
+ *    stack, is called as if the request had simply gone unhandled. The
+ *    framework then answers the only way it can for a URL it does not know — a
+ *    404, empty (see {@link DEV_TRANSFORM_ERROR_STATUS} for which of the two
+ *    produces it).
+ *  - Anything registered with `vite.middlewares.use(...)` after `createServer()`
+ *    resolves lands AFTER that handler and is therefore unreachable. A
+ *    `configureServer` POST hook does not: vite runs post hooks at
+ *    `config.js:25700`, five lines BEFORE it mounts its error handler.
+ *
+ * So this sits between the failure and vite's logger. It captures, then calls
+ * `next(error)` and lets vite's own handler run exactly as before — the
+ * terminal message and the `hot.send({ type: "error" })` overlay push
+ * (`config.js:9511-9521`) are unchanged. This transport ADDS a reader; it
+ * replaces nothing.
+ *
+ * @param isProductionRuntime the connector's own hosting-mode signal
+ *        (`./web-connector.ts:122`) — passed in rather than re-derived so there
+ *        is one definition of "this process is Vite-hosted", not two.
  */
-async function loadContactUsTriple(
-  vite: ViteDevServer,
-): Promise<PageRouteEntry["triple"]> {
-  const [app, layout, page] = await Promise.all([
-    vite.ssrLoadModule(CONTACT_US_ROUTE.files.app),
-    vite.ssrLoadModule(CONTACT_US_ROUTE.files.layout),
-    vite.ssrLoadModule(CONTACT_US_ROUTE.files.page),
-  ]);
+export function devErrorTransportPlugin(options: {
+  isProductionRuntime: () => boolean;
+  buildErrorMessage: BuildErrorMessage;
+}): Plugin {
+  const { isProductionRuntime, buildErrorMessage } = options;
+
+  if (isProductionRuntime()) {
+    throw new DevErrorTransportInProductionError();
+  }
+
+  const capture: Connect.ErrorHandleFunction = (error, request, _response, next) => {
+    // Re-asserted per request, not just at construction: `runtimeStrategy` is
+    // process state and a transport that leaks source frames is not something
+    // to hold open on a boot-time reading alone. In production this layer is a
+    // pass-through and vite's handler behaves exactly as it does today.
+    if (isProductionRuntime()) return next(error);
+
+    (request as DevTransformErrorCarrier)[DEV_TRANSFORM_ERROR_BODY] = formatDevTransformError(
+      error,
+      buildErrorMessage,
+    );
+
+    next(error);
+  };
 
   return {
-    app: app as PageTripleModule,
-    layout: layout as PageTripleModule,
-    page: page as PageTripleModule,
-  };
-}
-
-/**
- * Slice 4c — the hand-wired hydration proof (board task `549226c7`). ONE
- * page, deliberately no App/Layout: an empty triple slot (no `.default`) is
- * exactly what `wrapRootward` already treats as "use the framework default"
- * (`render-page.ts`), so `DefaultApp` supplies the `id="root"` mount this
- * proof hydrates into — not a new mount-point convention, the one that
- * already exists for the no-custom-App case.
- */
-const HYDRATION_DEMO_ROUTE = {
-  path: "/hydration-demo",
-  name: "main.hydration-demo",
-  page: path.join(V5_APP_ROOT, "src/app/main/web/hydration-demo.page.tsx"),
-  clientEntry: "/src/app/main/web/hydration-demo.client.tsx",
-} as const;
-
-async function loadHydrationDemoTriple(
-  vite: ViteDevServer,
-): Promise<PageRouteEntry["triple"]> {
-  const page = await vite.ssrLoadModule(HYDRATION_DEMO_ROUTE.page);
-
-  return {
-    app: {} as PageTripleModule,
-    layout: {} as PageTripleModule,
-    page: page as PageTripleModule,
-  };
-}
-
-/**
- * `createHttp` mirrors `core/src/router/router.ts:924-932` exactly (minus
- * `setRoute`, which needs a core `Route` this hand-authored entry does not
- * have — the same omission `web/__tests__/server/fixtures/core-http.ts`
- * documents at its own top). Built fresh per call from the CURRENT request's
- * real fastify request/reply — never a shared/module-level pair.
- */
-function createHttpForRequest(fastifyRequest: FastifyRequest, fastifyReply: FastifyReply) {
-  return (_match: PageRouteMatch) => {
-    const request = new Request();
-    const response = new Response();
-
-    response.setResponse(fastifyReply); // router.ts:927
-    (request as any).response = response; // router.ts:928
-    (response as any).request = request; // router.ts:930
-    request.setRequest(fastifyRequest); // router.ts:932 (setRoute omitted, see above)
-
-    return { request, response };
-  };
-}
-
-export type DevServerHandle = {
-  fastify: FastifyInstance;
-  vite: ViteDevServer;
-  port: number;
-  close(): Promise<void>;
-};
-
-/**
- * Boots the real Fastify instance (`startHttpServer`), mounts Vite's
- * middleware stack onto it (brief step 3 — `vite.middlewares` is a plain
- * Connect `(req, res, next)` stack; Fastify's `request.raw`/`reply.raw` ARE
- * Node's `req`/`res`), wires the page pipeline's REAL (non-test) context —
- * `connectPageContext(requestContext)` / `connectSharedStore(() =>
- * requestContext.getStore())`, the exact pair
- * `web/__tests__/server/render-page-request.spec.ts`'s `beforeAll` already
- * proves works, called here for the first time OUTSIDE a test (see this
- * task's report for why that matters) — and registers the one `/contact-us`
- * route.
- */
-export async function startDevServer(options: { port?: number } = {}): Promise<DevServerHandle> {
-  const vite = await createDevViteServer();
-  const fastify = startHttpServer();
-
-  connectPageContext(requestContext as unknown as PageContextRunner);
-  connectSharedStore(() => requestContext.getStore() as any);
-
-  fastify.addHook("onRequest", (request, reply, done) => {
-    vite.middlewares(request.raw, reply.raw, done);
-  });
-
-  fastify.get(CONTACT_US_ROUTE.path, async (fastifyRequest, fastifyReply) => {
-    // `vite.ssrLoadModule` errors (a real page/layout/App file failing to
-    // parse or evaluate — see this task's report for two such REAL, upstream
-    // blockers found for this exact route) and `render-page.ts`'s
-    // `finishRender` (which has no try/catch around `renderToString`) both
-    // otherwise surface as an opaque Fastify 500 with no server-side trace.
-    try {
-      const triple = await loadContactUsTriple(vite);
-      const routes: PageRouteEntry[] = [
-        { path: CONTACT_US_ROUTE.path, name: CONTACT_US_ROUTE.name, triple },
-      ];
-
-      const rendered = await renderPageRequest(fastifyRequest.url, {
-        routes,
-        createHttp: createHttpForRequest(fastifyRequest, fastifyReply),
-      });
-
-      for (const cookie of rendered.cookies) {
-        applyBufferedCookie(fastifyReply, cookie);
-      }
-
-      fastifyReply.code(rendered.status).headers(rendered.headers).send(rendered.html);
-    } catch (error) {
-      fastifyRequest.log.error({ err: error }, "dev-server: /contact-us render failed");
-      throw error;
-    }
-  });
-
-  // Slice 4c (board task 549226c7): the hand-wired hydration proof route.
-  // This is a hand-wired, single-page proof, not a general mechanism — the
-  // script tag is injected here, for this one route, rather than added to
-  // `<Scripts/>`/`DefaultApp` generally, which would be inventing the real
-  // client-runtime wiring ahead of the spike this task explicitly defers to.
-  fastify.get(HYDRATION_DEMO_ROUTE.path, async (fastifyRequest, fastifyReply) => {
-    try {
-      const triple = await loadHydrationDemoTriple(vite);
-      const routes: PageRouteEntry[] = [
-        { path: HYDRATION_DEMO_ROUTE.path, name: HYDRATION_DEMO_ROUTE.name, triple },
-      ];
-
-      const rendered = await renderPageRequest(fastifyRequest.url, {
-        routes,
-        createHttp: createHttpForRequest(fastifyRequest, fastifyReply),
-      });
-
-      for (const cookie of rendered.cookies) {
-        applyBufferedCookie(fastifyReply, cookie);
-      }
-
-      const scriptTag = `<script type="module" src="${HYDRATION_DEMO_ROUTE.clientEntry}"></script>`;
-      const html = rendered.html.replace("</body>", `${scriptTag}</body>`);
-
-      fastifyReply.code(rendered.status).headers(rendered.headers).send(html);
-    } catch (error) {
-      fastifyRequest.log.error({ err: error }, "dev-server: /hydration-demo render failed");
-      throw error;
-    }
-  });
-
-  const port = options.port ?? 0;
-
-  await fastify.listen({ port, host: "127.0.0.1" });
-
-  const address = fastify.server.address();
-  const actualPort = typeof address === "object" && address ? address.port : port;
-
-  return {
-    fastify,
-    vite,
-    port: actualPort,
-    async close() {
-      // `startHttpServer()` configures `forceCloseConnections: "idle"`
-      // (core/src/http/server.ts:34), but requests answered by Vite's connect
-      // middleware are written straight to `reply.raw`, bypassing Fastify's
-      // reply lifecycle — Fastify never observes those requests completing,
-      // so their keep-alive sockets are never counted idle and an "idle"-only
-      // force close waits on them forever (reproduced: `fastify.close()`
-      // alone hangs past the 30s hook timeout in
-      // web/__tests__/server/dev-server.spec.ts's afterAll). A dev server has
-      // no draining obligation, so drop every socket outright before closing.
-      fastify.server.closeAllConnections();
-      await fastify.close();
-      await vite.close();
+    name: "warlock:dev-error-transport",
+    // Belt to the `isProductionRuntime` braces: this plugin has no business in
+    // a `vite build` graph either.
+    apply: "serve",
+    configureServer(server) {
+      // RETURNING a function is what makes this a POST hook — the ordering the
+      // note above depends on. Mounting inline here would land the layer BEFORE
+      // vite's transform middleware, where no error has been thrown yet.
+      return () => {
+        server.middlewares.use(capture);
+      };
     },
   };
+}
+
+/**
+ * Answer the request with the failure {@link devErrorTransportPlugin} captured,
+ * if there was one. Returns `false` when there was not, which is the normal
+ * case and means "carry on down the framework's own path".
+ *
+ * Called from the Fastify `onRequest` hook that mounts vite
+ * (`./web-connector.ts:321`), in the `done` callback — i.e. at the one moment
+ * where connect has finished, vite has declined to answer, and the framework is
+ * about to 404. Writing to the raw `ServerResponse` rather than through Fastify
+ * is what the mount already does for every response vite serves, so this stays
+ * on the same side of the seam.
+ */
+export function sendCapturedDevError(request: IncomingMessage, response: ServerResponse): boolean {
+  const body = (request as DevTransformErrorCarrier)[DEV_TRANSFORM_ERROR_BODY];
+
+  if (typeof body !== "string") return false;
+
+  // A middleware further down may have answered already (vite serves plenty of
+  // requests itself). Never write twice; the captured body is then just dropped.
+  if (response.headersSent || response.writableEnded) return false;
+
+  response.statusCode = DEV_TRANSFORM_ERROR_STATUS;
+  response.setHeader("content-type", "text/plain; charset=utf-8");
+  // A refusal is a fact about the CURRENT source. Caching it would survive the
+  // edit that fixes it.
+  response.setHeader("cache-control", "no-store");
+  response.end(body);
+
+  return true;
 }

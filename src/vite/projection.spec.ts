@@ -49,6 +49,34 @@ async function transformedCode(fileName: string): Promise<string> {
   return typeof result === "string" ? result : result.code;
 }
 
+/**
+ * Same REAL `transform` hook, source supplied inline instead of from a fixture
+ * file. The id still has to be a projectable BASENAME — that is what
+ * `isProjectableFile` selects on, and it is the only thing the hook reads the
+ * id for besides the error message.
+ *
+ * Inline rather than on disk because the cases below are about the SHAPE of a
+ * module-scope declaration, and reading the shape next to its assertion is what
+ * makes each one legible; the fixtures earlier in this file stay where they are.
+ */
+async function transformSource(source: string, baseName: string): Promise<string> {
+  const id = path.join(FIXTURE_DIR, baseName);
+  const plugin: Plugin = projection();
+  const hook = plugin.transform as unknown as TransformHook;
+  const result = await hook.call(pluginContext, source, id);
+  if (result === null) throw new Error(`expected ${baseName} to be transformed, got null`);
+  return typeof result === "string" ? result : result.code;
+}
+
+async function refusalMessage(source: string, baseName: string): Promise<string> {
+  try {
+    await transformSource(source, baseName);
+  } catch (error) {
+    return (error as Error).message;
+  }
+  throw new Error(`expected ${baseName} to be refused, but it transformed cleanly`);
+}
+
 describe("projection — strip the 5 server exports (real transform hook, real output)", () => {
   it("case 1: a shared import between loader and the component survives; all 5 server exports are gone", async () => {
     const code = await transformedCode("case1-shared-import.page.tsx");
@@ -108,8 +136,297 @@ describe("projection — strip the 5 server exports (real transform hook, real o
     expect(result).toBeNull();
   });
 
-  it("ignores files that are not *.page.tsx/layout.tsx/App.tsx", async () => {
+  it("ignores files that are not *.page.tsx/layout.tsx/root.tsx", async () => {
     const { result } = await runTransform("helper.ts");
     expect(result).toBeNull();
+  });
+
+  /**
+   * THE APP ROOT, which until now was named in a test title and exercised by
+   * none.
+   *
+   * The negative test above says it "ignores files that are not
+   * *.page.tsx/layout.tsx/root.tsx" — but its body runs `helper.ts`, so it
+   * passes whatever that title claims. `isProjectableFile` recognises a root by
+   * EXACT BASENAME rather than by a suffix, which makes it the one branch a
+   * rename silently disables: the root would stop being projected, its
+   * `middleware`, `loader` and `revalidate` would ship to the browser, and the
+   * whole suite would stay green.
+   *
+   * So this asserts the positive case, on real transformed output.
+   */
+  it("projects the APP ROOT by name — its server exports do not reach the browser", async () => {
+    const code = await transformedCode("root.tsx");
+
+    expect(code).not.toMatch(/export const middleware/);
+    expect(code).not.toMatch(/export const loader/);
+    expect(code).toContain("export default function App");
+  });
+
+  it("does NOT strip `revalidate` — the sixth server export projection does not know about", () => {
+    /*
+      A CHARACTERIZATION TEST: this asserts what the code does today, not what
+      it ought to do, and it is here so the gap is visible in the suite instead
+      of only in a card.
+
+      Projection strips five exports — route, middleware, validation, loader,
+      metadata. The page contract documents `revalidate` as a SERVER export too,
+      and the reference app's root says so in as many words ("The SIXTH server
+      export, and it is documented as one"). Projection has never been told.
+
+      Today the leak is inert: `export const revalidate = false` is a boolean,
+      so nothing server-side rides out with it. It stops being inert the moment
+      a page computes the value from anything — the expression survives, and its
+      imports survive with it, which is exactly how a server module reaches the
+      browser bundle.
+
+      When projection learns the sixth export, this test flips to `not.toMatch`
+      and the assertion below it moves up into the test above.
+    */
+    return transformedCode("root.tsx").then(code => {
+      expect(code).toMatch(/export const revalidate/);
+    });
+  });
+
+  it("drops the root's server-only import once the exports using it are gone", async () => {
+    /*
+      Stripping the exports is only half of it. An import that existed solely to
+      feed `middleware` has to go with it, or the browser bundle still pulls the
+      server module in and Gate A refuses the build for a symbol nobody uses.
+      The import the COMPONENT shares stays, which is what makes this an
+      assertion about attribution rather than about deleting imports.
+    */
+    const code = await transformedCode("root.tsx");
+
+    // Matched as an IMPORT STATEMENT, not as the bare name: the fixture's own
+    // comments mention the module, and a loose `/server-only-helper/` passes or
+    // fails on prose rather than on what projection removed.
+    expect(code).not.toMatch(/from ["']\.\/server-only-helper["']/);
+    expect(code).toContain('from "./helper"');
+  });
+});
+
+/**
+ * A page hoists things to MODULE SCOPE for two ordinary reasons, and until now
+ * projection refused both of them identically — which is what stopped `v5/app`'s
+ * real client build at `products/web/layout.tsx:30` (card `afc42f4b`).
+ *
+ * The two reasons are not ambiguous, and telling them apart needs no new
+ * knowledge: it is the SAME reference-attribution question already answered for
+ * import bindings by "case 1" and "case 2" above, asked about the other kind of
+ * binding. What follows pins the answer in both directions, plus the cases where
+ * the reference graph genuinely cannot answer and the refusal has to stand.
+ */
+describe("projection — attributing a module-scope declaration by who reads it", () => {
+  /**
+   * The `v5/app` shape, verbatim in structure: a named middleware whose ONLY
+   * reader is `export const middleware`. It is not a contract violation —
+   * line 2 puts it in the middleware export; naming the array element is a
+   * formatting choice, not a way around the fence.
+   */
+  it("removes a helper whose only reader is a server export — and the import it held alive", async () => {
+    const code = await transformSource(
+      [
+        `import { readSession } from "./server-only-helper";`,
+        `import { formatTitle } from "./helper";`,
+        ``,
+        `const publishCart = async ({ request }) => {`,
+        `  readSession(request);`,
+        `};`,
+        ``,
+        `export const middleware = [publishCart];`,
+        ``,
+        `export default function ProductsLayout({ data }) {`,
+        `  return <h1>{formatTitle(data.title)}</h1>;`,
+        `}`,
+      ].join("\n"),
+      "layout.tsx",
+    );
+
+    expect(code).not.toContain("publishCart");
+    expect(code).not.toMatch(/export const middleware/);
+    // The point of removing the helper: the server module it pulled in goes too.
+    expect(code).not.toMatch(/from ["']\.\/server-only-helper["']/);
+    expect(code).toContain('from "./helper"');
+    expect(code).toContain("export default function ProductsLayout");
+  });
+
+  /**
+   * The other half, and the reason this could never be fixed by making
+   * projection stricter about middleware: `v5/app`'s settings page hoists a
+   * plain constant and a pure mapper that ONLY the component reads
+   * (`settings.page.tsx:118,129`). Refusing these is refusing hoisting itself.
+   */
+  it("keeps a module-scope constant and helper that the component reads", async () => {
+    const code = await transformSource(
+      [
+        `const COMMON_TIMEZONES = ["UTC", "Africa/Cairo"];`,
+        ``,
+        `const toOptions = zones => zones.map(zone => ({ value: zone, label: zone }));`,
+        ``,
+        `export const loader = async () => ({ profile: {} });`,
+        ``,
+        `export default function AccountSettingsPage() {`,
+        `  return <select>{toOptions(COMMON_TIMEZONES).map(o => o.label)}</select>;`,
+        `}`,
+      ].join("\n"),
+      "settings.page.tsx",
+    );
+
+    expect(code).toContain("COMMON_TIMEZONES");
+    expect(code).toContain("const toOptions");
+    expect(code).not.toMatch(/export const loader/);
+    expect(code).toContain("export default function AccountSettingsPage");
+  });
+
+  /**
+   * One pass is not enough. `buildQuery` is reachable only THROUGH `runQuery`,
+   * so it only becomes orphaned after `runQuery` is removed — the same
+   * transitive shape "case 2" proves for imports, which is why this walks to a
+   * fixpoint instead of sweeping once.
+   */
+  it("removes a chain of server-only helpers transitively", async () => {
+    const code = await transformSource(
+      [
+        `function buildQuery(id) {`,
+        `  return { id };`,
+        `}`,
+        ``,
+        `const runQuery = async id => fetch(buildQuery(id));`,
+        ``,
+        `export const loader = async ({ params }) => runQuery(params.id);`,
+        ``,
+        `export default function BlogPage() {`,
+        `  return <h1>Blog</h1>;`,
+        `}`,
+      ].join("\n"),
+      "blog.page.tsx",
+    );
+
+    expect(code).not.toContain("buildQuery");
+    expect(code).not.toContain("runQuery");
+    expect(code).toContain("export default function BlogPage");
+  });
+
+  /**
+   * THE FAIL-OPEN GUARD, and the reason "no surviving reader" alone is not the
+   * rule. This declaration has no reader anywhere — but its initializer RUNS,
+   * so removing it would delete a side effect the browser might be the one that
+   * needs, and keeping it would ship server work. Neither is derivable from the
+   * reference graph, so the refusal stands and says exactly why.
+   */
+  it("refuses — does not silently drop — an unread declaration whose initializer executes", async () => {
+    const message = await refusalMessage(
+      [
+        `import { installPolyfill } from "./server-only-helper";`,
+        ``,
+        `const installed = installPolyfill();`,
+        ``,
+        `export default function BlogPage() {`,
+        `  return <h1>Blog</h1>;`,
+        `}`,
+      ].join("\n"),
+      "blog.page.tsx",
+    );
+
+    expect(message).toContain("const installed = installPolyfill();");
+    expect(message).toContain("initializer executes code");
+    expect(message).toContain("Fix:");
+  });
+
+  /**
+   * A `class` is never removed even when nothing reads it: static blocks,
+   * decorators and computed keys all run at definition time, so a class falls on
+   * the "can execute" side by construction rather than by inspecting its body.
+   */
+  it("refuses an unread top-level class rather than removing it", async () => {
+    const message = await refusalMessage(
+      [
+        `class QueryBuilder {`,
+        `  static registry = [];`,
+        `}`,
+        ``,
+        `export default function BlogPage() {`,
+        `  return <h1>Blog</h1>;`,
+        `}`,
+      ].join("\n"),
+      "blog.page.tsx",
+    );
+
+    expect(message).toContain("class QueryBuilder {");
+    expect(message).toContain("Cause:");
+  });
+
+  /**
+   * The class the COMPONENT uses survives, so the rule above is about
+   * attribution and not about a blanket ban on classes.
+   */
+  it("keeps a top-level class the component reads", async () => {
+    const code = await transformSource(
+      [
+        `class Formatter {`,
+        `  format(value) {`,
+        `    return String(value);`,
+        `  }`,
+        `}`,
+        ``,
+        `export const loader = async () => ({ title: "" });`,
+        ``,
+        `export default function BlogPage({ data }) {`,
+        `  return <h1>{new Formatter().format(data.title)}</h1>;`,
+        `}`,
+      ].join("\n"),
+      "blog.page.tsx",
+    );
+
+    expect(code).toContain("class Formatter");
+    expect(code).not.toMatch(/export const loader/);
+  });
+
+  /**
+   * A statement that binds NO name is still a hard refusal — there is no reader
+   * to attribute it by, which is a different failure from the ones above and now
+   * says so instead of claiming the file holds "executable code outside the 5
+   * known server exports" (true of every case in this describe, and the reason
+   * the old message read as an internal error).
+   */
+  it("still refuses a bare top-level statement, naming the absent binding as the cause", async () => {
+    const message = await refusalMessage(
+      [
+        `console.log("boot");`,
+        ``,
+        `export default function BlogPage() {`,
+        `  return <h1>Blog</h1>;`,
+        `}`,
+      ].join("\n"),
+      "blog.page.tsx",
+    );
+
+    expect(message).toContain('console.log("boot")');
+    expect(message).toContain("declares nothing");
+  });
+
+  /**
+   * Unchanged and asserted here because this describe is the one that could
+   * erode it: attribution decides LOCAL declarations only. A non-server-named
+   * EXPORT survives whatever it references (`c604f0bc` §9), including when
+   * nothing in the file reads it.
+   */
+  it("never attributes a non-server-named export — it survives unread", async () => {
+    const code = await transformSource(
+      [
+        `export const prefix = "/products";`,
+        ``,
+        `export const middleware = [];`,
+        ``,
+        `export default function ProductsLayout() {`,
+        `  return <main />;`,
+        `}`,
+      ].join("\n"),
+      "layout.tsx",
+    );
+
+    expect(code).toContain('export const prefix = "/products"');
+    expect(code).not.toMatch(/export const middleware/);
   });
 });

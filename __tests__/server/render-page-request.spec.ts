@@ -55,7 +55,9 @@ describe("renderPageRequest — url in, document out", () => {
     expect(status).toBe(200);
     expect(html.startsWith("<!DOCTYPE html>")).toBe(true);
     expect(html).toContain("<h1>Product 42</h1>");
-    expect(html).toContain(`<script id="${PAYLOAD_SCRIPT_ID}" type="application/json">`);
+    // Located by id, as the browser's `readHydrationPayload` locates it: the
+    // opening tag also carries the per-request CSP nonce `Scripts` emits.
+    expect(html).toMatch(new RegExp(`<script id="${PAYLOAD_SCRIPT_ID}" type="application/json" nonce="[^"]+">`));
     // The url's own segments fed the pipeline: :id from the path, user from
     // the query string — nothing was passed as options.
     expect(data.product.id).toBe("42");
@@ -93,7 +95,15 @@ describe("renderPageRequest — parity with renderPage (the shared stages-9–10
       query: { user: "hasan" },
     });
 
-    expect(byUrl.html).toBe(byName.html);
+    // Byte-identical EXCEPT the CSP nonce, which core's Request generates
+    // fresh per request — two renders are two requests, so a literal
+    // comparison would assert the one thing that must differ. Both must still
+    // carry a nonce; only its value is masked.
+    const maskNonce = (html: string) => html.replace(/ nonce="[^"]+"/g, ' nonce="…"');
+
+    expect(byUrl.html).toMatch(/ nonce="[^"]+"/);
+    expect(byName.html).toMatch(/ nonce="[^"]+"/);
+    expect(maskNonce(byUrl.html)).toBe(maskNonce(byName.html));
     expect(byUrl.status).toBe(byName.status);
     expect(byUrl.headers).toEqual(byName.headers);
   });

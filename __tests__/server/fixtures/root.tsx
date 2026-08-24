@@ -4,7 +4,7 @@ import "./types";
 
 /**
  * The fixture application root, in the v5/app contract shape (v5/app
- * src/web/App.tsx): middleware chain first, loader `satisfies AppLoader`,
+ * src/web/root.tsx): middleware chain first, loader `satisfies AppLoader`,
  * a component that never sees request/response.
  */
 

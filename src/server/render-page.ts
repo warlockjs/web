@@ -1,29 +1,40 @@
-import { createElement, type ReactNode } from "react";
+import { createElement, type ComponentType, type ReactNode } from "react";
 import DefaultApp from "../components/default-app";
 import {
   DocumentContext,
   escapePayload,
   PAYLOAD_SCRIPT_ID,
+  type DocumentContextValue,
 } from "../components/document-context";
 import type { SharedContext } from "../index";
+import { buildHydrationPayload } from "./build-hydration-payload";
 import type { BufferedCookie } from "./buffered-response";
 import {
+  buildErrorRecord,
+  designateBoundary,
   executePageRequest,
   type ExecutePageRequestOptions,
   type PageDataBundle,
+  type PageErrorRecord,
   type PageLevelName,
   type PageRouteEntry,
   type PageRouteMatch,
   type PageTripleModule,
+  type PipelineRequest,
+  type PipelineResponse,
 } from "./execute-page-request";
 
 export { escapePayload, PAYLOAD_SCRIPT_ID };
 
 /**
- * Pipeline stages 9–10 (canon 20c425dd §3): RENDER the page tree from the
- * data bundle stages 1–8 produced, then EMIT the HTML document. This module
- * never re-runs any earlier stage — `renderPage` calls `executePageRequest`
- * and everything here consumes its bundle as-is.
+ * Pipeline stages 9–10: RENDER the page tree from the
+ * data bundle stages 1–8 produced, then return finalized { html, status,
+ * headers, cookies }. Stage 10 happens at the CALL SITE in two halves —
+ * 10a the caller applies status + headers (the single live-response write,
+ * after render, before anything flushes), 10b it flushes
+ * the document. Nothing in this module writes the live response. It never
+ * re-runs any earlier stage — `renderPage` calls `executePageRequest` and
+ * everything here consumes its bundle as-is.
  *
  * `renderPage` is deliberately double-duty (dx-differentiators.md §3): it is
  * the production orchestrator AND the test helper. Because a loader IS a
@@ -97,8 +108,11 @@ export type RenderedPage = {
    * built without them is a security defect, not a convenience.
    */
   cookies: BufferedCookie[];
-  /** The PAGE loader's data — `data.product.name` reads as the dx story writes it. */
-  data: any;
+  /**
+   * The PAGE loader's data — `data.product.name` reads as the dx story
+   * writes it. `unknown`: the pipeline never checks a loader's return shape.
+   */
+  data: unknown;
   /**
    * The full stages-1–8 bundle, for assertions beyond the page's own data.
    * Undefined ONLY on `renderPageRequest`'s no-match path: no route matched,
@@ -193,7 +207,7 @@ const DATA_KEYS: Record<PageLevelName, "appData" | "layoutData" | "pageData"> = 
  *
  * A level with no default export contributes no DOM and passes children
  * through — that is `layout.tsx` omitting its default export to be a guard
- * with no DOM (canon 20c425dd §5).
+ * with no DOM.
  */
 function buildPageElement(
   triple: Record<PageLevelName, PageTripleModule>,
@@ -207,12 +221,16 @@ function buildPageElement(
  * covers, still wrapped by every level rootward of it — a page-level throw
  * keeps its App and Layout chrome, whose data survived the settle rules
  * (P1 §4: fulfilled sibling data stays in the bundle).
+ *
+ * `record` is explicit rather than read from `bundle.error` — a render-time
+ * throw (`finishRender`'s stage 9 escalation loop) designates a NEW boundary on the fly that the stage 1-8 bundle never saw.
  */
 function buildBoundaryElement(
   triple: Record<PageLevelName, PageTripleModule>,
   bundle: PageDataBundle,
+  record: PageErrorRecord,
 ): ReactNode {
-  const { boundary, error } = bundle.error!;
+  const { boundary, error } = record;
   const Boundary = triple[boundary.boundaryLevel].ErrorBoundary as
     | ((props: { error: unknown }) => ReactNode)
     | undefined;
@@ -225,7 +243,7 @@ function buildBoundaryElement(
 
   // "App" has no level rootward of it, so `wrapRootward` returns `wrapped`
   // unwrapped when the boundary covers the app level itself — but the
-  // pipeline always emits a complete document (Suki, room seq 1205), so the
+  // pipeline always emits a complete document, so the
   // framework default supplies the shell here even though the app's own
   // (broken) root is what's being bypassed.
   return boundary.boundaryLevel === "app"
@@ -242,7 +260,7 @@ function buildLeaf(
 
   if (!Component) return null;
 
-  return createElement(Component as any, {
+  return createElement(Component as ComponentType<LevelProps>, {
     data: bundle[DATA_KEYS[level]],
     shared: bundle.shared,
   });
@@ -263,10 +281,10 @@ function wrapRootward(
 
     if (!Component) {
       // "App" is the root: no App export means no custom document, but the
-      // pipeline always emits a complete one (Suki, room seq 1205) — the
+      // pipeline always emits a complete one — the
       // framework default App supplies it. Layout has no such fallback: an
-      // omitted layout default export stays a no-DOM passthrough (canon
-      // 20c425dd §5), unchanged from before.
+      // omitted layout default export stays a no-DOM passthrough,
+      // unchanged from before.
       if (level === "app") {
         element = createElement(DefaultApp, { children: element });
       }
@@ -274,7 +292,7 @@ function wrapRootward(
       continue;
     }
 
-    element = createElement(Component as any, {
+    element = createElement(Component as ComponentType<LevelProps>, {
       data: bundle[DATA_KEYS[level]],
       shared: bundle.shared,
       children: element,
@@ -285,12 +303,12 @@ function wrapRootward(
 }
 
 // ---------------------------------------------------------------------------
-// Stage 10 — EMIT
+// Document assembly — stage 10 (10a apply + 10b flush) lives at the call site
 // ---------------------------------------------------------------------------
 
 /**
  * The root (App or the framework default) now ALWAYS renders a complete
- * `<html>…</html>` document itself (Suki, room seq 1205) — `<Head/>`/
+ * `<html>…</html>` document itself — `<Head/>`/
  * `<Scripts/>` read the metadata/payload from `DocumentContext` (provided
  * around the element in `finishRender`, below) and emit real elements.
  * There is nothing left for this stage to assemble by string surgery; it
@@ -304,13 +322,24 @@ function emitDocument(body: string): string {
 // The shared tail (stages 9–10) — both orchestrators end here
 // ---------------------------------------------------------------------------
 
-type CapturedHttp = { request: any; response: any };
+/**
+ * The real request/response pair `capturingCreateHttp` captured for this
+ * call. `finishRender` itself no longer takes this (D1: the short-circuit
+ * status now lives on `bundle.shortCircuit`/`bundle.commit`) — it is used at
+ * the two orchestrator call sites for the `as` impersonation write
+ * (`state.captured.request.user = as`, below) and to read the document
+ * slots (`documentSlotsFrom`, below).
+ */
+type CapturedHttp = {
+  request: PipelineRequest;
+  response: PipelineResponse;
+};
 
 /**
- * Wrap the caller's createHttp to capture the real pair (for the
- * short-circuit status + the document's default header), the matched entry
- * (the only place a URL-based caller learns which triple to render), and to
- * apply `as` — `user` is a plain public property on core's Request
+ * Wrap the caller's createHttp to capture the real pair (for the document
+ * slots, `documentSlotsFrom` below), the matched entry (the only place a
+ * URL-based caller learns which triple to render), and to apply `as` —
+ * `user` is a plain public property on core's Request
  * (core/src/http/request.ts:92), exactly the write auth middleware performs.
  */
 function capturingCreateHttp(
@@ -335,10 +364,38 @@ function capturingCreateHttp(
   };
 }
 
+/**
+ * The two request-derived document slots (`nonce`/`lang` on
+ * `DocumentContextValue`), extracted at the orchestrator call sites
+ * because `finishRender` no longer carries `captured` (D1). `dir` is not
+ * here: core's Request has no dir-like field (checked
+ * core/src/http/request.ts — only `nonce` at :177 and `locale` at :343
+ * exist) — an app supplies `dir` via its own convention.
+ */
+type DocumentSlots = {
+  nonce?: string;
+  lang?: string;
+};
+
+/**
+ * Structural read of the two core `Request` fields the slots need. Neither
+ * `nonce` nor `locale` is declared on `PipelineRequest`/`WebRequest` (the
+ * loader-facing facade only declares `validated`/`input`/`user`,
+ * context.ts:30-68) — a narrow typed intersection at the one call site that
+ * needs it, the same pattern `execute-page-request.ts` uses for its own
+ * `(response as PipelineResponse & { statusCode?: number })` read
+ * (execute-page-request.ts:517).
+ */
+function documentSlotsFrom(captured: CapturedHttp | undefined): DocumentSlots {
+  const request = captured?.request as (PipelineRequest & { nonce?: string; locale?: string }) | undefined;
+
+  return { nonce: request?.nonce, lang: request?.locale };
+}
+
 async function finishRender(
   triple: PageRouteEntry["triple"],
   bundle: PageDataBundle,
-  captured: CapturedHttp | undefined,
+  documentSlots: DocumentSlots,
 ): Promise<RenderedPage> {
   const headers: Record<string, string> = {};
 
@@ -359,54 +416,108 @@ async function finishRender(
         ? bundle.shortCircuit.status
         : bundle.shortCircuit.stage === "loaders"
           ? bundle.shortCircuit.statusCode
-          : (captured?.response.statusCode ?? 200);
+          // D1: the middleware variant now carries its own statusCode,
+          // captured at stage 3 where the pipeline legitimately touches the
+          // live response (execute-page-request.ts:514-518) — no live read here.
+          : (bundle.shortCircuit.statusCode ?? 200);
 
     return { html: "", status, headers, cookies, data: bundle.pageData, bundle };
   }
 
-  // ── stage 9 · RENDER ────────────────────────────────────────────────────
+  // The framework's closed-by-default answer (README rule 8): every document
+  // is `Cache-Control: private` unless a loader's committed headers already
+  // answered for the key. Map-only — `finishRender` never writes the live
+  // response; the caller applies the returned headers.
+  if (headers["cache-control"] === undefined) {
+    headers["cache-control"] = "private";
+  }
+
+  // ── stage 9 · RENDER ─────────────────────────────────────────────────────
   // Lazy import: react-dom is a peer used only on this path, so merely
   // loading the server barrel never requires it.
   const { renderToString } = await import("react-dom/server");
 
-  const element = bundle.error
-    ? buildBoundaryElement(triple, bundle)
-    : buildPageElement(triple, bundle);
-
+  // JSON.stringify omits object properties whose value is undefined. Loader
   // `<Head/>`/`<Scripts/>` read this context — metadata and the payload are
   // both already final by this point (stages 1-8 are done), so there is
   // nothing left for the root to await.
-  const withContext = createElement(DocumentContext.Provider, {
-    value: {
-      metadata: bundle.metadata,
-      payload: {
-        appData: bundle.appData,
-        layoutData: bundle.layoutData,
-        pageData: bundle.pageData,
-        shared: bundle.shared,
-      },
-    },
-    children: element,
-  });
+  //
+  // The payload comes from `buildHydrationPayload` rather than being assembled
+  // here, so that this document and the `_loader` route hand the browser the
+  // SAME object. See that module for why the two must not drift.
+  const documentValue: DocumentContextValue = {
+    metadata: bundle.metadata,
+    payload: buildHydrationPayload(bundle),
+    nonce: documentSlots.nonce,
+    lang: documentSlots.lang,
+  };
 
-  const body = renderToString(withContext as any);
+  const renderWithContext = (element: ReactNode): string =>
+    renderToString(createElement(DocumentContext.Provider, { value: documentValue, children: element }));
 
-  // ── stage 10 · EMIT ─────────────────────────────────────────────────────
-  // README rule 8, the framework's half: every document this pipeline
-  // produces is `Cache-Control: private` unless a loader's committed headers
-  // already answered for the key — closed by default, not heuristically
-  // cacheable. Applied to the REAL response, same write path as the commit.
-  if (headers["cache-control"] === undefined) {
-    headers["cache-control"] = "private";
-    captured?.response.header("Cache-Control", "private");
+  // A boundary that throws while rendering escalates to
+  // the next enclosing boundary rootward; if none survives, the framework's
+  // last-resort terminal renders. `currentError` starts as whatever stage
+  // 1-8 already designated (`bundle.error`, undefined for a normal page
+  // render) and is replaced by each escalation — `bundle.error` itself is
+  // never mutated, staying a truthful stage 1-8 record.
+  let currentError = bundle.error;
+  let renderTimeThrow = false;
+  let body: string;
+
+  for (;;) {
+    try {
+      const element = currentError
+        ? buildBoundaryElement(triple, bundle, currentError)
+        : buildPageElement(triple, bundle);
+
+      body = renderWithContext(element);
+      break;
+    } catch (thrown) {
+      renderTimeThrow = true;
+
+      if (currentError?.boundary.boundaryLevel === "app") {
+        // The floor: the app-level boundary's own render just threw, so
+        // there is nothing rootward of `app` to escalate to (§2's "none
+        // survives"). Render the framework's trivial boundary directly —
+        // bypassing the app's ErrorBoundary/App component, since that is
+        // what just failed — wrapped in DefaultApp so the response is still
+        // a complete `<html>` document (default-app.tsx:22-46) rather than
+        // a bare `<main>` fragment.
+        body = renderWithContext(createElement(DefaultApp, { children: createElement(FrameworkRootBoundary, {}) }));
+        break;
+      }
+
+      // Escalate from the level rootward of whatever just threw — searching
+      // from the SAME level would re-select the boundary that just failed.
+      // A throw not yet attributable to a level (a normal page render, no
+      // prior designation) starts the search at `page`.
+      const throwingLevel: PageLevelName =
+        currentError?.boundary.boundaryLevel === "layout" ? "app" : currentError ? "layout" : "page";
+
+      currentError = buildErrorRecord(thrown, designateBoundary(throwingLevel, triple));
+    }
   }
 
-  const html = emitDocument(body);
+  // Status is chosen after render — the last thing that can change the
+  // outcome — and RETURNED, never applied: `finishRender` writes the live
+  // response zero times (and now zero live response READS either — D1 deleted the last one). The caller applies
+  // status + headers at one site and flushes immediately after (stage
+  // 10a/10b). A render-time throw follows the same status rule as a
+  // pre-render one: a NESTED boundary catch
+  // (page/layout) keeps the committed status; the app boundary or the
+  // framework terminal forces 500. Without a render-time throw, the
+  // pre-render designation already carries this rule — P1's commit forces
+  // 500 only when it designated `app` (execute-page-request.ts:625-637).
+  const status = renderTimeThrow
+    ? currentError!.boundary.boundaryLevel === "app"
+      ? 500
+      : (bundle.commit?.statusCode ?? 200)
+    : bundle.error
+      ? (bundle.commit?.statusCode ?? 500)
+      : (bundle.commit?.statusCode ?? 200);
 
-  // On the boundary path the framework owns the status — P1's commit already
-  // forced 500 (execute-page-request.ts:517); everything else is the
-  // committed status or the document default.
-  const status = bundle.error ? (bundle.commit?.statusCode ?? 500) : (bundle.commit?.statusCode ?? 200);
+  const html = emitDocument(body);
 
   return { html, status, headers, cookies, data: bundle.pageData, bundle };
 }
@@ -436,9 +547,14 @@ export async function renderPage(
   const url = buildUrl(entry, options.params ?? {}, options.query ?? {});
   const { state, createHttp } = capturingCreateHttp(registry, options.as);
 
-  const bundle = await executePageRequest({ url, routes: registry.routes, createHttp });
+  const rendered = await executePageRequest({
+    url,
+    routes: registry.routes,
+    createHttp,
+    finish: bundle => finishRender(entry.triple, bundle, documentSlotsFrom(state.captured)),
+  });
 
-  if (!bundle) {
+  if (!rendered) {
     throw new Error(
       `renderPage("${routeName}"): the built URL "${url}" did not match ` +
         "stage 1 (web/src/server/render-page.ts). The name resolved but the " +
@@ -446,7 +562,7 @@ export async function renderPage(
     );
   }
 
-  return finishRender(entry.triple, bundle, state.captured);
+  return rendered;
 }
 
 /**
@@ -466,13 +582,18 @@ export async function renderPageRequest(
   const registry = requireRegistry(options);
   const { state, createHttp } = capturingCreateHttp(registry, options.as);
 
-  const bundle = await executePageRequest({ url, routes: registry.routes, createHttp });
+  const rendered = await executePageRequest({
+    url,
+    routes: registry.routes,
+    createHttp,
+    finish: bundle => finishRender(state.match!.entry.triple, bundle, documentSlotsFrom(state.captured)),
+  });
 
-  if (!bundle) {
+  if (!rendered) {
     return { html: "", status: 404, headers: {}, cookies: [], data: undefined, bundle: undefined };
   }
 
   // executePageRequest only produces a bundle after createHttp ran for the
   // match, so the captured entry is present whenever the bundle is.
-  return finishRender(state.match!.entry.triple, bundle, state.captured);
+  return rendered;
 }

@@ -15,10 +15,8 @@ describe("sealShared — gate → parse → freeze", () => {
   beforeEach(() => {
     context = new TestRequestContext();
     connectSharedStore(() => context.getStore());
-    // the env gate reads NODE_ENV at seal time; pin it rather than inherit the
-    // machine's (this box exports NODE_ENV=production globally) — the
-    // production-behaviour specs stub their own value over this one
-    vi.stubEnv("NODE_ENV", "development");
+    // The freeze gate reads Vite's built-in DEV flag at seal time.
+    vi.stubEnv("DEV", true);
   });
 
   afterEach(() => {
@@ -80,7 +78,7 @@ describe("sealShared — gate → parse → freeze", () => {
   it("seal order: parse normalizes toJSON payloads in place, THEN freeze locks them", async () => {
     await inRequest(async (store, target) => {
       // a Resource-like value: non-plain data behind a toJSON contract — the
-      // gate lets it through without descending (canon 9adaa016 §B.6)
+      // gate lets it through without descending
       sharedAny.user = { toJSON: () => ({ name: "hasan", roles: ["admin"] }) };
       sharedAny.locale = "en";
 
@@ -92,7 +90,7 @@ describe("sealShared — gate → parse → freeze", () => {
       expect(sealed.user).toEqual({ name: "hasan", roles: ["admin"] });
 
       // freeze landed AFTER parse — had the order been reversed, parse's
-      // in-place write would have thrown (canon 26c64f9a's failure mode)
+      // in-place write would have thrown on the frozen target
       expect(Object.isFrozen(target)).toBe(true);
       expect(Object.isFrozen(target.user)).toBe(true);
       expect(Object.isFrozen(target.user.roles)).toBe(true);
@@ -102,9 +100,9 @@ describe("sealShared — gate → parse → freeze", () => {
   it("second gate rejects a Date a Resource's toJSON introduces AFTER parse (parse re-entry hole)", async () => {
     await inRequest(async store => {
       // pre-parse this looks like a plain object with a callable toJSON — the
-      // FIRST gate passes it untouched (canon 9adaa016 §B.6, not descended).
+      // FIRST gate passes it untouched (not descended).
       // parse() resolves toJSON (response.ts:301-305) and never re-parses the
-      // result (26c64f9a fact 2), so the Date re-enters the payload AFTER the
+      // result, so the Date re-enters the payload AFTER the
       // first gate already ran. Only a SECOND gate, run on the post-parse
       // target, can catch it.
       sharedAny.event = {
@@ -134,7 +132,7 @@ describe("sealShared — gate → parse → freeze", () => {
   });
 
   it("freeze is dev-only: production seals without freezing, but sealed writes still throw", async () => {
-    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("DEV", false);
 
     await inRequest(async (store, target) => {
       sharedAny.locale = "en";

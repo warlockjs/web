@@ -1,50 +1,28 @@
 import { createContext, useContext } from "react";
 import type { MetadataOutput } from "../metadata";
 
-/**
- * What `<Head/>`/`<Scripts/>` need to render real elements instead of the
- * framework injecting them by string surgery post-render (Suki, room seq
- * 1205): the resolved page metadata and the exact payload the hydration
- * script will read back. Provided once, around the root element, before
- * `renderToString` runs (`render-page.ts`'s stage 9 — the bundle is already
- * complete by then). Universal: no server-only imports, so the client's
- * hydration entry (a later slice) can provide the same shape from the parsed
- * payload script.
- */
-export type DocumentContextValue = {
-  metadata: MetadataOutput | undefined;
-  payload: {
-    appData: unknown;
-    layoutData: unknown;
-    pageData: unknown;
-    shared: unknown;
-  };
+export type HydrationDocumentPayloadSource = {
+  readonly appData: unknown;
+  readonly layoutData: unknown;
+  readonly pageData: unknown;
+  readonly shared: unknown;
+  /**
+   * The matched page manifest entry's stable `name` — the same field the
+   * manifest entry contract `{ type, name, path, load }` declares. It is on
+   * the wire so the browser can look up WHICH page the server rendered
+   * instead of re-matching `location.pathname` itself: re-matching is a
+   * second implementation of route semantics, and it can disagree with the
+   * server on the very request it is hydrating.
+   */
+  readonly name: string;
 };
 
-export const DocumentContext = createContext<DocumentContextValue | undefined>(undefined);
-
-/**
- * Id the hydration slice reads the payload back out by. Owned here, not in
- * `render-page.ts`, because `<Scripts/>` (this module's consumer) renders on
- * BOTH server and client (App.tsx's own doc comment) — a component that ships
- * to the browser cannot import from `web/src/server/*` without tripping
- * Gate A's client/server boundary. `render-page.ts` imports this constant
- * from here instead of defining it.
- */
 export const PAYLOAD_SCRIPT_ID = "__WARLOCK_DATA__";
 
 const LINE_SEPARATOR = String.fromCharCode(0x2028);
 const PARAGRAPH_SEPARATOR = String.fromCharCode(0x2029);
 
-/**
- * The payload-script escape (canon 20c425dd §3 stage 10). Escaping EVERY `<`
- * and `>` as unicode sequences is strictly wider than the named sequences
- * (`</script` and `<!--` both contain `<`; `-->` contains `>`) and is safe:
- * in JSON text those characters can only occur inside string literals, where
- * the \uXXXX form is the same string. U+2028/U+2029 are legal raw in JSON
- * strings but terminate lines in JavaScript — escaped for the same
- * inline-script safety.
- */
+/** Escape JSON text for raw insertion into an application/json script. */
 export function escapePayload(json: string): string {
   return json
     .split("<")
@@ -57,6 +35,37 @@ export function escapePayload(json: string): string {
     .join("\\u2029");
 }
 
+/**
+ * What `<Head/>`/`<Scripts/>` need to render real elements instead of the
+ * framework injecting them by string surgery post-render (Suki, room seq
+ * 1205): the resolved page metadata and the exact payload the hydration
+ * script will read back. Provided once, around the root element, before
+ * `renderToString` runs (`render-page.ts`'s stage 9 — the bundle is already
+ * complete by then). Universal: no server-only imports, so the client's
+ * hydration entry (a later slice) can provide the same shape from the parsed
+ * payload script.
+ */
+export type DocumentContextValue = {
+  metadata: MetadataOutput | undefined;
+  payload: HydrationDocumentPayloadSource;
+  /**
+   * The nonce/lang/dir SLOTS: fed by the render provider from CORE request
+   * fields — request nonce, request locale — never from app-owned `shared`
+   * keys, which an app can overwrite. The provider-side
+   * wiring is a separate slice, so these are absent at runtime until it
+   * lands; every reader must treat them as optional.
+   */
+  nonce?: string;
+  lang?: string;
+  dir?: string;
+};
+
+export const DocumentContext = createContext<DocumentContextValue | undefined>(undefined);
+
+/**
+ * Require the page pipeline's universal document state. The payload id and
+ * escaping helpers remain exported above for the existing server seam.
+ */
 export function useDocumentContext(componentName: string): DocumentContextValue {
   const value = useContext(DocumentContext);
 

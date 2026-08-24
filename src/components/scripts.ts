@@ -2,26 +2,30 @@ import { createElement, type ReactElement } from "react";
 import { escapePayload, PAYLOAD_SCRIPT_ID, useDocumentContext } from "./document-context";
 
 export type ScriptsProps = {
-  /** Per-request CSP nonce for the inline payload script (App.tsx:119). */
+  /** Per-request CSP nonce for the inline payload script (root.tsx:119). */
   nonce?: string;
 };
 
 /**
- * OPTIONAL placement override for the serialized payload (every loader's data
- * + `shared`, escaped) and the hydration modules. Written when placement
- * genuinely matters — a CSP nonce, or ordering against the app's own scripts.
+ * OPTIONAL placement override for the serialized loader data and `shared`.
+ * Hydration module emission is separate wiring.
  */
 export function Scripts(props: ScriptsProps): ReactElement {
-  const { payload } = useDocumentContext("Scripts");
+  const { payload, nonce } = useDocumentContext("Scripts");
 
-  // `dangerouslySetInnerHTML`, not children: `escapePayload`'s output must
+  // Explicit prop wins: v5/app's root.tsx passes `shared.nonce` today
+  // (root.tsx:119) and must keep working unchanged. Only an absent prop falls
+  // back to the framework's nonce slot (document-context.ts).
+  const resolvedNonce = props.nonce ?? nonce;
+
+  // `dangerouslySetInnerHTML`, not children: the serializer's escaped output must
   // reach the document byte-for-byte. React's default child-text escaping
   // (HTML-entity escaping) would double-process it and corrupt the JSON
-  // (spike P7's escaping contract — see document-context.ts's own comment).
+  // (spike P7's escaping contract).
   return createElement("script", {
     id: PAYLOAD_SCRIPT_ID,
     type: "application/json",
-    nonce: props.nonce,
+    nonce: resolvedNonce,
     dangerouslySetInnerHTML: { __html: escapePayload(JSON.stringify(payload)) },
   });
 }

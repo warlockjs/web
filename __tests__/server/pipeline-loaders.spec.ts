@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   connectPageContext,
   executePageRequest,
@@ -14,8 +14,7 @@ import { routes } from "./fixtures/routes";
  * settle is allSettled; commit is root→leaf per cookie name / header key; a
  * throw discards the throwing layer's buffer with its siblings' below it and
  * designates the boundary; a short-circuit (redirect/notFound) keeps its own
- * buffer and discards the levels below (canon 20c425dd §10,
- * design/request-lifecycle.md:47-54).
+ * buffer and discards the levels below.
  */
 
 let previousRunner: PageContextRunner | undefined;
@@ -29,6 +28,14 @@ beforeAll(() => {
 afterAll(() => {
   connectPageContext(previousRunner);
   connectSharedStore(previousResolver);
+});
+
+beforeEach(() => {
+  vi.stubEnv("NODE_ENV", "development");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 const tick = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms));
@@ -110,11 +117,17 @@ describe("executePageRequest — buffered commit, root→leaf per key", () => {
     const { reply } = created[0];
 
     // One write per key reached the real reply — the leaf-most value.
-    expect(reply.headers["x-shared"]).toBe("page");
-    expect(reply.headers["x-app-only"]).toBe("1");
-    expect(reply.cookies).toEqual([
-      expect.objectContaining({ name: "session", value: JSON.stringify("page-value") }),
-    ]);
+    expect(reply.appliedHeaders["x-shared"]).toBe("page");
+    expect(reply.appliedHeaders["x-app-only"]).toBe("1");
+
+    // COOKIES ARE NOT MIRRORED ONTO THE LIVE RESPONSE, and this used to assert
+    // that they were. `header()` is a keyed SET, so mirroring it here and
+    // applying it again at the emit is idempotent; `cookie()` APPENDS, so the
+    // same mirror put a second identical `Set-Cookie` on every page response
+    // (`page-redirect-wire.spec.ts` asserted the duplicate on purpose until it
+    // was removed). The settle result below is how a cookie leaves this stage
+    // now — the emit is the single application site.
+    expect(reply.cookies).toEqual([]);
 
     expect(bundle!.commit).toMatchObject({ committedLevels: ["app", "layout", "page"] });
     expect(bundle!.commit!.headers).toEqual([
@@ -128,7 +141,7 @@ describe("executePageRequest — buffered commit, root→leaf per key", () => {
 });
 
 describe("executePageRequest — a loader throw", () => {
-  it("page throw: siblings' data intact field-by-field, page boundary designated, status framework-owned", async () => {
+  it("page throw: siblings' data intact field-by-field, page boundary designated, final status deferred", async () => {
     const failure = new Error("page loader exploded");
 
     const { result, created } = runInline({
@@ -157,6 +170,8 @@ describe("executePageRequest — a loader throw", () => {
     expect(bundle!.error).toEqual({
       error: failure,
       boundary: { throwingLevel: "page", boundaryLevel: "page" },
+      digest: expect.any(String),
+      scrubbed: false,
     });
 
     // Siblings' data intact, field by field.
@@ -164,14 +179,16 @@ describe("executePageRequest — a loader throw", () => {
     expect(bundle!.layoutData).toEqual({ nav: ["home"], badge: 3 });
     expect(bundle!.pageData).toBeUndefined();
 
-    // The throwing layer's buffer is discarded; rootward buffers commit.
-    expect(reply.headers["x-from-app"]).toBe("kept");
-    expect(reply.headers["x-from-page"]).toBeUndefined();
+    // The throwing layer's buffer is discarded and rootward buffers commit.
+    // This stage does not write a status for a nested boundary: renderPage
+    // chooses the final status after the boundary itself has rendered.
+    expect(reply.appliedHeaders["x-from-app"]).toBe("kept");
+    expect(reply.appliedHeaders["x-from-page"]).toBeUndefined();
     expect(bundle!.commit).toMatchObject({
       committedLevels: ["app", "layout"],
-      statusCode: 500,
+      statusCode: undefined,
     });
-    expect(created[0].response.statusCode).toBe(500);
+    expect(created[0].response.statusCode).toBe(200);
   });
 
   it("layout throw with no layout/app boundary: designation falls back to the app root", async () => {
@@ -206,9 +223,9 @@ describe("executePageRequest — a loader throw", () => {
     // — but its buffer is discarded along with the throwing layer's
     // ("the throwing layer's buffer is discarded with its siblings' below
     // it", request-lifecycle.md:51-52).
-    expect(reply.headers["x-from-app"]).toBe("kept");
-    expect(reply.headers["x-from-layout"]).toBeUndefined();
-    expect(reply.headers["x-from-page"]).toBeUndefined();
+    expect(reply.appliedHeaders["x-from-app"]).toBe("kept");
+    expect(reply.appliedHeaders["x-from-layout"]).toBeUndefined();
+    expect(reply.appliedHeaders["x-from-page"]).toBeUndefined();
     expect(bundle!.commit).toMatchObject({ committedLevels: ["app"], statusCode: 500 });
   });
 });
@@ -248,16 +265,24 @@ describe("executePageRequest — loader short-circuits", () => {
       body: undefined,
     });
 
-    // The signalling layer's own buffer commits (its cookie + status)…
-    expect(reply.cookies).toEqual([
-      expect.objectContaining({ name: "intended-url", value: JSON.stringify("/inline") }),
+    // The signalling layer's own buffer commits (its cookie + status) — as a
+    // SETTLE RESULT, not as a live-response write. This is the case that
+    // proved the de-duplication safe: it is the only spec that covered a
+    // short-circuit committing a cookie, so if the emit did NOT carry
+    // `commit.cookies` to the wire, deleting the mirror would drop a session
+    // cookie on every guard redirect. It does carry it — asserted at the wire,
+    // where a bundle-level spec like this one cannot see it, in
+    // `page-redirect-wire.spec.ts` ("loader redirect (LAYOUT level)").
+    expect(reply.cookies).toEqual([]);
+    expect(bundle!.commit!.cookies).toEqual([
+      expect.objectContaining({ name: "intended-url", value: "/inline" }),
     ]);
     expect(bundle!.commit).toMatchObject({
       committedLevels: ["app", "layout"],
       statusCode: 302,
     });
     // …the level below is discarded wholesale: buffer AND data.
-    expect(reply.headers["x-from-page"]).toBeUndefined();
+    expect(reply.appliedHeaders["x-from-page"]).toBeUndefined();
     expect(bundle!.pageData).toBeUndefined();
     expect(bundle!.appData).toEqual({ ok: true });
     // stage 8 does not run for a short-circuited page

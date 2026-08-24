@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "vite";
 import type { Plugin } from "vite";
 import { describe, expect, it } from "vitest";
-import { warlockClientBoundary } from "./index";
+import { warlockClientBoundary, type WarlockClientBoundaryOptions } from "./index";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -14,16 +14,16 @@ const GATE_A_FIXTURE_ROOT = path.join(__dirname, "..", "..", "__tests__", "vite"
 const GATE_A_PAGE_DIR = path.join(GATE_A_FIXTURE_ROOT, "app", "blog", "web");
 
 /**
- * Runs a real Vite build (JS API — canon `50608334`) through the COMPOSED
+ * Runs a real Vite build (JS API, not npx) through the COMPOSED
  * pipeline (`projection` + Gate A `resolveId`, in that order), for a single
  * fixture page — never the two plugins in isolation. Verifies the actual
  * emitted outcome, matching D.1/D.2's verification convention.
  */
-async function buildPage(fileName: string) {
+async function buildPage(fileName: string, boundaryOptions: WarlockClientBoundaryOptions = {}) {
   return build({
     root: FIXTURE_ROOT,
     logLevel: "silent",
-    plugins: [warlockClientBoundary({ appRoot: FIXTURE_ROOT })],
+    plugins: [warlockClientBoundary({ appRoot: FIXTURE_ROOT, ...boundaryOptions })],
     build: {
       write: false,
       minify: false,
@@ -49,6 +49,16 @@ function firstChunkCode(result: Awaited<ReturnType<typeof buildPage>>): string {
 }
 
 describe("warlockClientBoundary — composed projection + Gate A pipeline (real Vite builds)", () => {
+  // `@warlock.js/core` carries no `warlock.environment` marker of its own, and
+  // an ABSENT marker classifies as universal (see `createEnvironmentClassifier`
+  // and `gate-a-resolve.spec.ts` case 6). Case 2 below is about PROJECTION —
+  // that a component-level import is not stripped and still meets Gate A — not
+  // about how core is classified, so it names core as server explicitly, the
+  // same way `gate-a-resolve.spec.ts` case 1 does. Without this the build
+  // wanders into core's own dependencies and fails on an unrelated rule, which
+  // proves nothing about projection.
+  const CORE_AS_SERVER: WarlockClientBoundaryOptions = { serverPackages: ["@warlock.js/core"] };
+
   it("case 1 (positive): loader-only @warlock.js/core import is stripped by projection before Gate A sees it, build succeeds", async () => {
     const result = await buildPage("case1-loader-only-core-import.page.tsx");
     const code = firstChunkCode(result);
@@ -60,7 +70,7 @@ describe("warlockClientBoundary — composed projection + Gate A pipeline (real 
 
   it("case 2 (negative control): a component-level @warlock.js/core import is never touched by projection and is still refused by Gate A", async () => {
     try {
-      await buildPage("case2-component-core-import.page.tsx");
+      await buildPage("case2-component-core-import.page.tsx", CORE_AS_SERVER);
       expect.unreachable("expected the build to fail");
     } catch (error) {
       const message = (error as Error).message;
@@ -88,7 +98,7 @@ describe("warlockClientBoundary — composed projection + Gate A pipeline (real 
   });
 });
 
-describe("D.3 hook ordering pin (Suki, room seq 546 pt.3) — transform runs before resolveId", () => {
+describe("hook ordering pin — transform runs before resolveId", () => {
   it("records transform(entry) firing before resolveId of the entry's own surviving import specifier, via a real vite.build()", async () => {
     // Instrumented real build (not asserted from plugin array order — see
     // the ordering-dependent comment above `warlockClientBoundary` in

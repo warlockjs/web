@@ -63,6 +63,19 @@ export default defineConfig({
           // (pipeline) specs — the latter import REAL core classes and are
           // why the aliases exist at all.
           include: ["__tests__/**/*.spec.ts"],
+          // The server specs re-import the core graph cold (`vi.resetModules()`
+          // then `core/src/http/request` -> `@warlock.js/seal`,
+          // `@warlock.js/cascade`, all aliased to TypeScript SOURCE above), and
+          // the first case in a file pays the whole transform. Measured: ~15-23s
+          // on an idle machine, and 53.4s with 16 busy CPU workers on 12 cores.
+          // The old 30s budget sat between those two numbers, so the suite's
+          // pass/fail tracked machine load rather than the code — it failed at
+          // 30342/30003/30094/30013ms under concurrent load. 90s clears the
+          // measured contended cost with room, and is scoped to this project, so
+          // `web` and the unit suites keep vitest's 5s default and still catch
+          // genuinely slow tests. The transform cost itself is the real defect;
+          // this only stops it from being reported as flakiness.
+          testTimeout: 90_000,
         },
       },
       {

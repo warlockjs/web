@@ -31,9 +31,11 @@ afterAll(() => {
 });
 
 beforeEach(() => {
-  // This machine exports NODE_ENV=production globally (A.3 §5 finding); the
-  // dev-freeze assertions need the env pinned at seal time.
-  vi.stubEnv("NODE_ENV", "development");
+  // This suite exercises the DEV pipeline, stated here rather than inherited
+  // from the launching shell: `sealShared()` gates its deep freeze on Vite's
+  // built-in DEV flag, so pin that flag — not NODE_ENV, which the gate never
+  // reads — and the freeze assertions below hold on any box.
+  vi.stubEnv("DEV", true);
 });
 
 afterEach(() => {
@@ -78,7 +80,10 @@ describe("executePageRequest — happy path (stages 1-8)", () => {
     expect(shared.locale).toBe("en");
     expect(shared.appName).toBe("Fixture Store");
     expect(shared.user).toEqual({ name: "hasan" });
-    // The bundle carries sealShared()'s RETURN — the dev-frozen target itself.
+    // The bundle carries sealShared()'s RETURN — the target itself, deep-frozen
+    // because DEV is pinned true above. (The freeze is belt-and-braces and is
+    // compiled out of production builds; the sealed-write throw is what enforces
+    // the contract, and it is not env-gated.)
     expect(Object.isFrozen(bundle!.shared)).toBe(true);
 
     // stage 6 — every loader's data, and every loader saw the SAME sealed
@@ -96,11 +101,19 @@ describe("executePageRequest — happy path (stages 1-8)", () => {
     // core Response, which wrote through to the fastify reply shim.
     const { reply } = created[0];
 
-    expect(reply.headers["x-fixture-level"]).toBe("page");
-    expect(reply.headers["cache-control"]).toBe("private, max-age=60");
-    // Core's Response.cookie JSON-stringifies by default (response.ts:958).
-    expect(reply.cookies).toEqual([
-      expect.objectContaining({ name: "last-product", value: JSON.stringify("42") }),
+    expect(reply.appliedHeaders["x-fixture-level"]).toBe("page");
+    expect(reply.appliedHeaders["cache-control"]).toBe("private, max-age=60");
+    // Cookies are NOT mirrored onto the live response at stage 7 — only the
+    // emit writes them, exactly once. header()/setStatusCode() are keyed SETs
+    // and so are idempotent with the emit; cookie() APPENDS, which is why
+    // mirroring it produced a duplicate Set-Cookie on every page response.
+    // The committed cookie is asserted on the settle result below; its
+    // wire-level counterpart lives in page-redirect-wire.spec.ts.
+    // The BUFFER holds the raw value; core's Response.cookie JSON-stringifies
+    // at the wire (response.ts:958), so the encoded form is asserted there.
+    expect(reply.cookies).toEqual([]);
+    expect(bundle!.commit!.cookies).toEqual([
+      expect.objectContaining({ name: "last-product", value: "42" }),
     ]);
     expect(bundle!.commit).toMatchObject({
       committedLevels: ["app", "layout", "page"],
@@ -129,6 +142,7 @@ describe("executePageRequest — happy path (stages 1-8)", () => {
 
     // The document is still personalized: App middleware ran, shared sealed.
     expect((bundle!.shared as any).appName).toBe("Fixture Store");
+    // Frozen under the DEV flag pinned above, same as the full-surface page.
     expect(Object.isFrozen(bundle!.shared)).toBe(true);
     expect(bundle!.commit!.headers).toEqual([]);
     expect(bundle!.shortCircuit).toBeUndefined();

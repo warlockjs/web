@@ -15,8 +15,8 @@ export const route = {
 } as const;
 
 /**
- * Validated over params (design/request-lifecycle.md:41 — the page's
- * `{ schema, validating }` over params + query). The 2-char floor gives the
+ * Validated over params — the page's `{ schema, validating }` over params +
+ * query. The 2-char floor gives the
  * specs a deterministic failure: `/products/x` → 422 before any loader runs.
  */
 export const validation = {
