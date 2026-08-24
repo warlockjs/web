@@ -45,6 +45,7 @@
     "magic-string": "^0.30.21"
   },
   "peerDependencies": {
+    "@vitejs/plugin-react": "^5.2.0",
     "@warlock.js/core": "^5.0.0",
     "@warlock.js/seal": "*",
     "react": "*",
@@ -53,6 +54,9 @@
   },
   "peerDependenciesMeta": {
     "vite": {
+      "optional": true
+    },
+    "@vitejs/plugin-react": {
       "optional": true
     }
   },
@@ -70,6 +74,7 @@
   "license": "MIT",
   "devDependencies": {
     "@playwright/test": "^1.62.1",
+    "@vitejs/plugin-react": "^5.2.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "vite": "^7.3.5",
