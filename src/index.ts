@@ -72,8 +72,22 @@ export type {
   QueryStringValue,
   QueryStringObject,
   QueryStringOptions,
+  QueryStringInput,
+  QueryStringLeaf,
+  QueryStringNested,
   RepeatedKeyStrategy,
 } from "./routing/query-string";
+
+// The ENCODER, now living beside the decoder it must agree with — `href()`
+// imports it from here rather than owning a private copy. One grammar, two
+// directions: emit `tags[]=a`, `filter[status]=active`, and read them back the
+// same way, because that is what core's own parser accepts
+// (`core/src/http/request.ts:491` runs `request.query` through `parseBody`).
+//
+// `UnserializableQueryValueError` is thrown rather than encoded for shapes core
+// would silently destroy — refusing to write a value beats writing one that
+// arrives as something else.
+export { queryStringOf, UnserializableQueryValueError } from "./routing/query-string";
 export { Head } from "./components/head";
 export { Scripts } from "./components/scripts";
 

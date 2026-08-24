@@ -3,6 +3,7 @@ import {
   queryString,
   resetQueryStringOptions,
   setQueryStringOptions,
+  UnserializableQueryValueError,
   type QueryStringObject,
 } from "./query-string";
 import { href, publishRouteTable, resetRouteTable, type RouteQuery } from "./route-table";
@@ -14,8 +15,9 @@ import { href, publishRouteTable, resetRouteTable, type RouteQuery } from "./rou
  * This is the point of the whole file. A round trip against a local
  * re-implementation would prove that this module agrees with itself; only the
  * production writer can prove that what `<Link>` puts in the document is what
- * `queryString.parse` reads back. `queryStringOf` (route-table.ts:246) is
- * module-private, and `href` is its only public door.
+ * `queryString.parse` reads back. `queryStringOf` is exported now, but going
+ * through `href` keeps these assertions pinned to the URL a visitor actually
+ * clicks rather than to the helper underneath it.
  */
 function encodeAsLinkWould(query: RouteQuery): string {
   const url = href("probe", undefined, query);
@@ -25,7 +27,7 @@ function encodeAsLinkWould(query: RouteQuery): string {
 }
 
 /** Assert `parse(encode(query))` — the round trip — equals `expected`. */
-function expectRoundTrip(query: RouteQuery, expected: Record<string, string>): void {
+function expectRoundTrip(query: RouteQuery, expected: QueryStringObject): void {
   expect(queryString.parse(encodeAsLinkWould(query))).toEqual(expected);
 }
 
@@ -82,25 +84,35 @@ describe("round trip: href() writes it, queryString.parse() reads it back", () =
   });
 });
 
-describe("the encoder is lossy before the wire — arrays and nested objects", () => {
-  // REAL FINDING, not a gap in this module. `String(value)` (route-table.ts:252)
-  // destroys these shapes at WRITE time, so the information is gone before any
-  // decoder sees the URL. These tests pin the loss rather than paper over it:
-  // if `queryStringOf` ever learns bracket or repeated-key array syntax, they go
-  // red and the decoder gets updated in the same change.
+describe("arrays and nested objects: the bracket grammar the SERVER parses", () => {
+  // These shapes used to be destroyed at WRITE time by `String(value)`:
+  // `{tags:["a","b"]}` became `?tags=a%2Cb` (byte-identical to the plain string
+  // "a,b") and `{filter:{...}}` became `?filter=%5Bobject+Object%5D`. The
+  // encoder now emits the grammar `@warlock.js/core` already reads — measured,
+  // not invented, in reports/query-grammar-findings-2026-08-24.md:
+  //
+  //   core/src/http/request.ts:491      request.query goes through parseBody
+  //   core/src/http/request.ts:516-520  `key[]` marks an array
+  //   core/src/http/request.ts:557-561  `key[sub]` becomes {key: {sub}}
+  //
+  // so what `<Link>` writes and what a controller reads are one format.
 
-  it("flattens an array to a comma-joined string, unrecoverably", () => {
-    // `String(["a","b"])` is "a,b", so the array and the plain string produce
-    // BYTE-IDENTICAL urls. That is the proof that no decoder can recover the
-    // array: there is nothing left in the URL to tell them apart.
-    expect(encodeAsLinkWould({ tags: ["a", "b"] })).toBe("?tags=a%2Cb");
+  it("writes an array as repeated `key[]` pairs, at every cardinality", () => {
+    expect(encodeAsLinkWould({ tags: ["a", "b"] })).toBe("?tags%5B%5D=a&tags%5B%5D=b");
+    expectRoundTrip({ tags: ["a", "b"] }, { tags: ["a", "b"] });
+
+    // The case the old encoder could not express at all. `?tags=a` would be read
+    // back by core as the SCALAR "a" (fast-querystring only makes an array when
+    // it sees a duplicate); `?tags[]=a` is wrapped into a one-element array by
+    // request.ts:568-575. A shape that changes with the number of matches is a
+    // TypeError waiting for the day a filter matches one item.
+    expect(encodeAsLinkWould({ tags: ["a"] })).toBe("?tags%5B%5D=a");
+    expectRoundTrip({ tags: ["a"] }, { tags: ["a"] });
+
+    // And the array is now DISTINGUISHABLE from the comma string it used to be
+    // byte-identical to — the whole point of the change.
     expect(encodeAsLinkWould({ tags: "a,b" })).toBe("?tags=a%2Cb");
-
-    // So the round trip returns a string, and this module refuses to guess.
-    expectRoundTrip({ tags: ["a", "b"] }, { tags: "a,b" });
-
-    // A one-element array is likewise indistinguishable from the scalar.
-    expect(encodeAsLinkWould({ tags: ["a"] })).toBe("?tags=a");
+    expectRoundTrip({ tags: "a,b" }, { tags: "a,b" });
   });
 
   it("does not split values on \",\", because commas are legitimate text", () => {
@@ -111,13 +123,143 @@ describe("the encoder is lossy before the wire — arrays and nested objects", (
     expect(queryString.parse("?name=Doe%2C+John")).toEqual({ name: "Doe, John" });
   });
 
-  it("stringifies a nested object to \"[object Object]\" — total data loss", () => {
-    // Every key and value inside `filter` is gone at route-table.ts:252. There
-    // is no decoding this back; the only fix is at the encoder.
+  it("writes a nested object as `key[sub]`, and reads it back as an object", () => {
     expect(encodeAsLinkWould({ filter: { status: "active" } })).toBe(
-      "?filter=%5Bobject+Object%5D",
+      "?filter%5Bstatus%5D=active",
     );
-    expectRoundTrip({ filter: { status: "active" } }, { filter: "[object Object]" });
+    expectRoundTrip({ filter: { status: "active" } }, { filter: { status: "active" } });
+
+    // Several keys, one object, order preserved.
+    expect(encodeAsLinkWould({ filter: { status: "active", min: 5 } })).toBe(
+      "?filter%5Bstatus%5D=active&filter%5Bmin%5D=5",
+    );
+    expectRoundTrip({ filter: { status: "active", min: 5 } }, { filter: { status: "active", min: "5" } });
+  });
+
+  it("writes an array INSIDE an object as `key[sub][]`", () => {
+    expect(encodeAsLinkWould({ filter: { tags: ["a", "b"] } })).toBe(
+      "?filter%5Btags%5D%5B%5D=a&filter%5Btags%5D%5B%5D=b",
+    );
+    expectRoundTrip({ filter: { tags: ["a", "b"] } }, { filter: { tags: ["a", "b"] } });
+
+    // Mixed scalar and array siblings.
+    expectRoundTrip(
+      { filter: { status: "active", tags: ["a", "b"] } },
+      { filter: { status: "active", tags: ["a", "b"] } },
+    );
+  });
+
+  it("drops an undefined member, at the top level and inside a container", () => {
+    expect(encodeAsLinkWould({ filter: { status: "active", min: undefined } })).toBe(
+      "?filter%5Bstatus%5D=active",
+    );
+    expect(encodeAsLinkWould({ tags: ["a", undefined, "b"] })).toBe(
+      "?tags%5B%5D=a&tags%5B%5D=b",
+    );
+  });
+
+  it("omits an empty array and an empty object, because the format cannot express them", () => {
+    // A visible, documented limitation rather than a guess. `?tags[]=` would
+    // mean the one-element array [""], which is a different value.
+    expect(encodeAsLinkWould({ tags: [] })).toBe("");
+    expect(encodeAsLinkWould({ filter: {} })).toBe("");
+    expect(encodeAsLinkWould({ tags: [], page: 2 })).toBe("?page=2");
+  });
+
+  it("passes a key that already contains brackets through unchanged", () => {
+    // The pre-existing manual workaround: before the encoder understood nesting,
+    // `{"filter[status]": "active"}` was the only way to reach core's nested
+    // parser. It still produces exactly the same bytes, and now decodes to the
+    // same object the structured form does.
+    expect(encodeAsLinkWould({ "filter[status]": "active" })).toBe("?filter%5Bstatus%5D=active");
+    expect(queryString.parse(encodeAsLinkWould({ "filter[status]": "active" }))).toEqual({
+      filter: { status: "active" },
+    });
+  });
+});
+
+describe("shapes the wire format cannot carry are REFUSED, not mangled", () => {
+  // `a[b][c]=x` is not a gap in core — it is measured DATA LOSS: parseBody takes
+  // the `][` branch (request.ts:528-551), computes `Number("b")` as NaN, and the
+  // value lands on a NaN index that never survives. Emitting it would move this
+  // card's bug across the wire, where it is harder to see. `href()` already
+  // throws on a missing route parameter for the same reason.
+
+  it("throws on an object nested two levels deep", () => {
+    expect(() => encodeAsLinkWould({ filter: { range: { min: 1 } } })).toThrow(
+      UnserializableQueryValueError,
+    );
+    expect(() => encodeAsLinkWould({ filter: { range: { min: 1 } } })).toThrow(
+      /filter\[range\]/,
+    );
+  });
+
+  it("throws on an array of objects rather than emitting a grammar it cannot read back", () => {
+    expect(() => encodeAsLinkWould({ items: [{ name: "x" }] })).toThrow(
+      UnserializableQueryValueError,
+    );
+  });
+
+  it("throws on an array of arrays", () => {
+    expect(() => encodeAsLinkWould({ grid: [["a"], ["b"]] })).toThrow(
+      UnserializableQueryValueError,
+    );
+  });
+
+  it("names the offending key and the shape in the message", () => {
+    let message = "";
+
+    try {
+      encodeAsLinkWould({ filter: { range: { min: 1 } } });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+
+    expect(message).toContain("filter[range]");
+    expect(message).toContain("object");
+  });
+
+  it("still serialises a value that has its own string form, like a Date", () => {
+    const date = new Date("2026-08-24T00:00:00.000Z");
+
+    // A Date is an object, but it is NOT a bag of query keys — it has a
+    // meaningful string form, so it is a leaf here rather than a refusal, and
+    // certainly not `since[getTime]=...`. Asserted through the round trip
+    // because the exact bytes of `String(date)` are timezone-dependent.
+    expect(() => encodeAsLinkWould({ since: date })).not.toThrow();
+    expectRoundTrip({ since: date }, { since: String(date) });
+    expect(encodeAsLinkWould({ since: date })).not.toContain("object+Object");
+  });
+});
+
+describe("the decoder reads back only the grammar the encoder writes", () => {
+  it("treats a key shape neither side can produce as a literal key", () => {
+    // `a[b][c]` is refused by the encoder, so it can only arrive from a URL
+    // warlock did not write. Guessing at it is how a decoder drifts from its
+    // writer; carrying it verbatim loses nothing and surprises nobody.
+    expect(queryString.parse("?a%5Bb%5D%5Bc%5D=x")).toEqual({ "a[b][c]": "x" });
+    expect(queryString.parse("?items%5B0%5D%5Bname%5D=x")).toEqual({ "items[0][name]": "x" });
+    expect(queryString.parse("?a%5B=1")).toEqual({ "a[": "1" });
+  });
+
+  it("keeps `key[]` an array even when it occurs once", () => {
+    expect(queryString.parse("?tags%5B%5D=a")).toEqual({ tags: ["a"] });
+  });
+
+  it("gives a nested bag a null prototype too", () => {
+    const parsed = queryString.parse("?filter%5B__proto__%5D=polluted");
+
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(Object.getPrototypeOf(parsed["filter"] as object)).toBeNull();
+    expect((parsed["filter"] as Record<string, unknown>)["__proto__"]).toBe("polluted");
+  });
+
+  it("lets the last shape win when a foreign URL contradicts itself", () => {
+    // `?a=1&a[b]=2` is not something the encoder can emit — `Object.entries`
+    // yields each key once. Rather than dropping the second pair onto a string
+    // (a silent no-op), the container is rebuilt.
+    expect(queryString.parse("?a=1&a%5Bb%5D=2")).toEqual({ a: { b: "2" } });
+    expect(queryString.parse("?a%5Bb%5D=2&a%5B%5D=1")).toEqual({ a: ["1"] });
   });
 });
 
@@ -213,12 +355,30 @@ describe("parse input shapes", () => {
 });
 
 describe("setQueryStringOptions: repeated keys, the one thing the encoder has no opinion on", () => {
-  it("never sees a repeated key from this package's own encoder", () => {
-    // Why the option is safe: `queryStringOf` iterates `Object.entries`
-    // (route-table.ts:251), so a key appears at most once. `?tag=a&tag=b` can
-    // only come from a URL warlock did not write, which means no setting of
-    // this flag can put the decoder out of step with the encoder.
+  it("never sees a repeated PLAIN key from this package's own encoder", () => {
+    // Why the option is still safe now that the encoder can repeat `tag[]`:
+    // `queryStringOf` iterates `Object.entries`, so a plain key appears at most
+    // once. `?tag=a&tag=b` can only come from a URL warlock did not write, which
+    // means no setting of this flag can put the decoder out of step with the
+    // encoder.
     expect(encodeAsLinkWould({ tag: "a", other: "b" })).toBe("?tag=a&other=b");
+  });
+
+  it("does not touch the bracket forms, which the encoder DOES have an opinion on", () => {
+    // The strategy governs only the shape the encoder cannot emit. If it also
+    // governed `tag[]` and `filter[x]`, then `repeatedKeys: "array"` would turn
+    // `{filter:{x:"1"}}` into `{filter:{x:["1"]}}` and break the round trip by
+    // configuration — the exact class of drift this module exists to prevent.
+    for (const strategy of ["last", "first", "array"] as const) {
+      setQueryStringOptions({ repeatedKeys: strategy });
+
+      expect(queryString.parse(encodeAsLinkWould({ tags: ["a", "b"] }))).toEqual({
+        tags: ["a", "b"],
+      });
+      expect(queryString.parse(encodeAsLinkWould({ filter: { x: "1" } }))).toEqual({
+        filter: { x: "1" },
+      });
+    }
   });
 
   it('defaults to "last", matching URLSearchParams.get()', () => {

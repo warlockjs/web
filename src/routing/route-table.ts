@@ -25,6 +25,8 @@
  * middleware, or a component.
  */
 
+import { queryStringOf, type QueryStringInput } from "./query-string";
+
 /** The two fields `href` needs. Callers may pass richer entries; the rest is ignored. */
 export type RouteTableEntry = {
   readonly name: string;
@@ -34,8 +36,15 @@ export type RouteTableEntry = {
 /** What `href` accepts for a `:param` segment. Rendered with `String(value)`. */
 export type RouteParameters = Readonly<Record<string, unknown>>;
 
-/** Query values; an `undefined` value is omitted rather than serialized. */
-export type RouteQuery = Readonly<Record<string, unknown>>;
+/**
+ * Query values; an `undefined` value is omitted rather than serialized.
+ *
+ * A value may be a scalar, an array of scalars, or an object one level deep —
+ * the shapes `@warlock.js/core` parses back out of the URL. Anything deeper
+ * throws `UnserializableQueryValueError`; the grammar and the measurements
+ * behind it are documented in query-string.ts.
+ */
+export type RouteQuery = QueryStringInput;
 
 const PARAMETER_PATTERN = /:([A-Za-z0-9_]+)|\*/g;
 
@@ -243,20 +252,6 @@ function interpolate(
   });
 }
 
-function queryStringOf(query: RouteQuery | undefined): string {
-  if (query === undefined) return "";
-
-  const search = new URLSearchParams();
-
-  for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined) search.append(key, String(value));
-  }
-
-  const serialized = search.toString();
-
-  return serialized === "" ? "" : `?${serialized}`;
-}
-
 /**
  * Resolve a route NAME to a URL.
  *
@@ -264,6 +259,14 @@ function queryStringOf(query: RouteQuery | undefined): string {
  * every call site keeps working. That is the property the hardcoded table in
  * the previous `<Link>` could not offer, because it restated six URLs by hand
  * and silently refused every other page in the app.
+ *
+ * The query half is delegated to `queryStringOf`, which lives next to the
+ * DECODER it has to agree with. It used to live here, and being module-private
+ * meant the read half could not share it — the one-writer rule held only
+ * because nobody had written the second writer yet.
+ *
+ * @throws {UnserializableQueryValueError} when a query value nests deeper than
+ * the wire format core parses can carry.
  */
 export function href(
   name: string,

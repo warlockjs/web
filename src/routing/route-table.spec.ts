@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { UnserializableQueryValueError } from "./query-string";
 import {
   MissingRouteParameterError,
   RouteTableNotPublishedError,
@@ -53,6 +54,40 @@ describe("href — the name→URL primitive", () => {
     expect(href("products.list", undefined, { page: 2, sort: undefined })).toBe(
       "/products?page=2",
     );
+  });
+
+  it("carries an array and a nested filter in the grammar core parses", () => {
+    /*
+      `String(value)` used to flatten both of these before they reached the wire:
+      an array became a comma string indistinguishable from the plain string, and
+      an object became the literal "[object Object]". The encoder now emits what
+      `@warlock.js/core` reads back — `key[]` for arrays, `key[sub]` for one
+      level of nesting (core/src/http/request.ts:516-520, :557-561). The grammar
+      and the measurements are in query-string.ts and its spec; this asserts the
+      public door emits it.
+    */
+    publishRouteTable([{ name: "products.list", path: "/products" }]);
+
+    expect(href("products.list", undefined, { tags: ["a", "b"] })).toBe(
+      "/products?tags%5B%5D=a&tags%5B%5D=b",
+    );
+    expect(href("products.list", undefined, { filter: { status: "active" } })).toBe(
+      "/products?filter%5Bstatus%5D=active",
+    );
+  });
+
+  it("refuses a query value the wire format cannot carry, rather than mangling it", () => {
+    /*
+      Same reasoning as MissingRouteParameterError below: core reads `a[b][c]=x`
+      back as `{a: []}` (the index is `Number("b")`, i.e. NaN —
+      core/src/http/request.ts:528-551), so emitting it would produce a link that
+      looks right and arrives with the value gone.
+    */
+    publishRouteTable([{ name: "products.list", path: "/products" }]);
+
+    expect(() =>
+      href("products.list", undefined, { filter: { range: { min: 1 } } }),
+    ).toThrow(UnserializableQueryValueError);
   });
 
   it("supports a catch-all segment through the `*` parameter", () => {
