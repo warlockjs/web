@@ -4,7 +4,7 @@ import type { AliasOptions, PluginOption, Rollup } from "vite";
 import { createHydrationClientEntry, type HydrationClientEntry } from "./hydration-entries";
 
 export interface BuildHydrationClientOptions {
-  /** Application web root containing `src/client/index.ts`. */
+  /** `@warlock.js/web` root containing the packaged or checkout hydration entry. */
   webRoot: string;
   /**
    * Absolute output directory for the client bundle — REQUIRED.

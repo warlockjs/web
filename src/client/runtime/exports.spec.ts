@@ -34,7 +34,7 @@ describe("client package export", () => {
   });
 
   it("targets only the public client runtime barrel", () => {
-    const clientExport = packageJson.exports["./client"];
+    const clientExport = packageJson.exports["./client/runtime"];
 
     expect(clientExport).toEqual({
       types: "./src/client/runtime/index.ts",
@@ -45,11 +45,11 @@ describe("client package export", () => {
       (packageExport) => Object.values(packageExport),
     );
 
-    expect(allExportTargets).not.toContain("./src/client/index.ts");
+    expect(allExportTargets).not.toContain("./src/hydration/index.ts");
   });
 
   it("resolves the public client subpath", async () => {
-    const runtime = await import("@warlock.js/web/client");
+    const runtime = await import("@warlock.js/web/client/runtime");
 
     expect(typeof runtime.validateClientRouteManifest).toBe("function");
     expect(typeof runtime.loadClientRouteComposition).toBe("function");

@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { HttpContext } from "../../../core/src/router/types";
+import type { HttpContext } from "@warlock.js/core";
 import {
   createPageRouteHandler,
   type PageModuleLoader,

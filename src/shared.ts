@@ -351,7 +351,31 @@ export async function sealShared(store?: SharedStore): Promise<Readonly<SharedCo
 
   assertClientSafe(scope.target, "shared");
 
-  if (import.meta.env.DEV) {
+  /*
+    OPTIONAL CHAINING IS LOAD-BEARING, and the fallback that used to sit here
+    is deliberately gone.
+
+    `import.meta.env` is injected by a BUNDLER. When this package is compiled
+    into an app's server bundle — what happens in this checkout — esbuild's
+    `define` (build/generate-pages-barrel.ts:59-62) replaces the whole
+    expression and the question never arises. When `@warlock.js/web` is
+    INSTALLED, it is external to that bundle, nothing replaces anything, and
+    plain `import.meta.env.DEV` threw `Cannot read properties of undefined`
+    on EVERY page render. `?.` is what makes the absent case falsy instead
+    of fatal.
+
+    A `globalThis.process?.env?.NODE_ENV` fallback was tried and REJECTED:
+    Gate B matches `process.env` only when the object is the bare identifier
+    `process` (vite/gate-b-secrets.ts:100), so routing through `globalThis`
+    walks straight past the secret-leak gate. A dev-only freeze is not worth
+    teaching the codebase the shape that evades that check.
+
+    The cost is honest and small: an installed package running under
+    `NODE_ENV=development` outside a bundler does not freeze. `DEV` is in Gate
+    B's own allowlist (gate-b-secrets.ts:44), so this form stays permitted in
+    client-bound code.
+  */
+  if (import.meta.env?.DEV) {
     deepFreeze(scope.target);
   }
 

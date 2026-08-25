@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Router } from "../../../core/src/router/router";
+import type { Router } from "@warlock.js/core";
 import * as discoverPagesModule from "../build/discover-pages";
 import { NestedLayoutsNotSupportedError } from "../routing/layout-policy";
 import * as createPageRouteHandlerModule from "./create-page-route-handler";

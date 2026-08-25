@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { HttpContext } from "../../../core/src/router/types";
+import type { HttpContext } from "@warlock.js/core";
 import {
   createPageRouteHandler,
   type PageModuleLoader,
@@ -12,6 +12,7 @@ import {
   type PageRoutesRegistry,
 } from "../../src/server/index";
 import { connectSharedStore, type SharedStoreResolver } from "../../src/shared";
+import { expectHydrationPayloadKeys } from "../shared/expect-payload-keys";
 import { requestContext } from "./fixtures/core-http";
 import * as App from "./fixtures/root";
 import * as contactPage from "./fixtures/contact.page";
@@ -381,13 +382,7 @@ describe("createPageRouteHandler — data requests", () => {
 
     // Every key the hydration contract requires, and the route NAME the
     // browser uses to pick the page instead of re-matching the pathname.
-    expect(Object.keys(payload).sort()).toEqual([
-      "appData",
-      "layoutData",
-      "name",
-      "pageData",
-      "shared",
-    ]);
+    expectHydrationPayloadKeys(payload);
     expect(payload.name).toBe("main.contact-us");
     expect(recorded.written.contentType).toBe("application/json");
   });

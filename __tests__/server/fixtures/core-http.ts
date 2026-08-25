@@ -17,9 +17,7 @@
  * page pipeline's stage 1 replaces fastify's matcher here.
  */
 import { EventEmitter } from "node:events";
-import { requestContext } from "../../../../core/src/http/context/request-context";
-import { Request } from "../../../../core/src/http/request";
-import { Response } from "../../../../core/src/http/response";
+import { Request, requestContext, Response } from "@warlock.js/core";
 
 export { requestContext, Request, Response };
 

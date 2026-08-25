@@ -180,4 +180,100 @@ describe("gateBSecrets — Gate B inline-secret transform gate (real Vite builds
       }
     });
   });
+
+  describe("process.env reached through an indirect global object", () => {
+    it("case 12: globalThis.process.env.SECRET_KEY fails", async () => {
+      try {
+        await buildEntry("case12-global-this-process-env.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module");
+        expect(message).toContain("Expression: globalThis.process.env.SECRET_KEY");
+      }
+    });
+
+    it("case 13: window.process.env.SECRET_KEY fails", async () => {
+      try {
+        await buildEntry("case13-window-process-env.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module");
+        expect(message).toContain("Expression: window.process.env.SECRET_KEY");
+      }
+    });
+
+    it("case 14: self.process.env.SECRET_KEY fails", async () => {
+      try {
+        await buildEntry("case14-self-process-env.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module");
+        expect(message).toContain("Expression: self.process.env.SECRET_KEY");
+      }
+    });
+
+    it('case 15: globalThis["process"].env.SECRET_KEY fails', async () => {
+      try {
+        await buildEntry("case15-global-this-process-bracket.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module");
+        expect(message).toContain('Expression: globalThis["process"].env.SECRET_KEY');
+      }
+    });
+
+    it("case 16: globalThis?.process?.env?.SECRET_KEY fails", async () => {
+      try {
+        await buildEntry("case16-global-this-process-optional.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module");
+        expect(message).toContain("Expression: globalThis?.process?.env?.SECRET_KEY");
+      }
+    });
+
+    it("case 17: window?.process?.env?.SECRET_KEY fails", async () => {
+      try {
+        await buildEntry("case17-window-process-optional.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module");
+        expect(message).toContain("Expression: window?.process?.env?.SECRET_KEY");
+      }
+    });
+
+    it("case 18: self?.process?.env?.SECRET_KEY fails", async () => {
+      try {
+        await buildEntry("case18-self-process-optional.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module");
+        expect(message).toContain("Expression: self?.process?.env?.SECRET_KEY");
+      }
+    });
+
+    it('case 19: globalThis?.["process"]?.env?.SECRET_KEY fails', async () => {
+      try {
+        await buildEntry("case19-global-this-process-bracket-optional.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module");
+        expect(message).toContain('Expression: globalThis?.["process"]?.env?.SECRET_KEY');
+      }
+    });
+
+    it("case 20: a process-object alias remains outside the structural matcher and passes", async () => {
+      const result = await buildEntry("case20-process-object-alias.tsx");
+      const code = firstChunkCode(result);
+      expect(code).toContain("Case20Component");
+    });
+  });
 });

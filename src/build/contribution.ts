@@ -26,7 +26,8 @@ export type WebBuildOptions = {
   srcDir?: string;
   /**
    * Absolute path to the `@warlock.js/web` package root, which holds the
-   * hydration entry (`src/client/index.ts`).
+   * hydration entry (packaged as `esm/hydration/index.mjs`, with a source
+   * fallback at `src/hydration/index.ts` for this checkout).
    *
    * Defaults to this module's own package root, derived from `import.meta.url`
    * at emit time. Set it explicitly when the build process loads this module

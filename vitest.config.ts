@@ -70,12 +70,41 @@ export default defineConfig({
           // on an idle machine, and 53.4s with 16 busy CPU workers on 12 cores.
           // The old 30s budget sat between those two numbers, so the suite's
           // pass/fail tracked machine load rather than the code — it failed at
-          // 30342/30003/30094/30013ms under concurrent load. 90s clears the
-          // measured contended cost with room, and is scoped to this project, so
-          // `web` and the unit suites keep vitest's 5s default and still catch
-          // genuinely slow tests. The transform cost itself is the real defect;
-          // this only stops it from being reported as flakiness.
-          testTimeout: 90_000,
+          // 30342/30003/30094/30013ms under concurrent load. The budget is scoped
+          // to this project, so `web` and the unit suites keep vitest's 5s default
+          // and still catch genuinely slow tests.
+          //
+          // 2026-08-24 — raised 90s -> 180s. The server specs now reach core
+          // through `@warlock.js/core` (the package name) rather than through
+          // `core/src/<module>` paths, which is a deliberate change and NOT a
+          // regression: the root barrel re-exports every core subsystem, so each
+          // `vi.resetModules()` re-evaluates all of it instead of the seven
+          // modules the connector actually names.
+          //
+          // Measured on the same suite, changing only the import style:
+          //   deep imports  58.7s wall — green
+          //   package name  127-167s wall — `web-connector-production.spec.ts`
+          //                 timed out at the old 90s budget, twice, while passing
+          //                 standalone in 33s
+          // A later run of the identical package-name configuration came in at
+          // 85.3s and green. The spread is real: this suite's cost tracks machine
+          // load, which is the whole reason the budget has to sit well above the
+          // typical number rather than just above it.
+          //
+          // The barrel is right at RUNTIME — a Warlock process loads all of core
+          // regardless, and the connector shares that process. The cost is an
+          // artefact of `freshWebGraph()` re-importing under `vi.resetModules()`.
+          //
+          // Fixing it for real means core exposing per-subsystem subpath entries
+          // in `builder/pkgist.config.ts` AND its `exports` map together; adding
+          // them to only one would resolve in-repo and fail once published.
+          // NOTE for whoever tries: giving core an `exports` map was attempted on
+          // 2026-08-24 and REVERTED. It doubled core's own test execution time
+          // (121.7s -> 258.3s) and took core from 1 failing test to 8, and it
+          // doubled this suite too (85.3s -> 180.1s). Unproven suspicion: the map
+          // yields a different module id than the relative paths core's tests
+          // use, so core gets instantiated twice. Answer that before retrying.
+          testTimeout: 180_000,
         },
       },
       {

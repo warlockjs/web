@@ -29,8 +29,12 @@
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Connector, ConnectorBuildContribution } from "@warlock.js/core";
-import { ConnectorLifecyclePhase, type ConnectorName } from "../../../core/src/connectors/types";
+import {
+  type Connector,
+  type ConnectorBuildContribution,
+  ConnectorLifecyclePhase,
+  type ConnectorName,
+} from "@warlock.js/core";
 import { createWebBuildContribution, type WebBuildOptions } from "../build/contribution";
 import type { WebConnector, WebConnectorOptions } from "./web-connector";
 

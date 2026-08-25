@@ -26,7 +26,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Router } from "../../../core/src/router/router";
+import type { Router } from "@warlock.js/core";
 import type { PageManifest } from "../../src/server/page-manifest";
 
 const createServerMock = vi.hoisted(() => vi.fn());
@@ -173,6 +173,7 @@ function viteDouble() {
     connectSharedStore: vi.fn(),
     connectPageContext: vi.fn(),
     installPageRoutes: vi.fn(async () => []),
+    devStylesheetUrls: vi.fn(() => [] as string[]),
   };
 
   const vite = {

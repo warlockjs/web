@@ -17,8 +17,7 @@
  * the one import that has to happen at boot is a dynamic one and why it names
  * the pipeline barrel and nothing else.
  */
-import type { Response } from "../../../core/src/http/response";
-import type { Router } from "../../../core/src/router/router";
+import type { Response, Router } from "@warlock.js/core";
 import type { SharedStoreResolver } from "../shared";
 import type { BufferedCookie } from "./buffered-response";
 import type { PageContextRunner } from "./execute-page-request";
@@ -53,6 +52,17 @@ export type InstallProductionPageRoutesOptions = {
    * demanding a file it had no reason to emit.
    */
   resolveHydrationClientModuleUrl: () => string;
+  /**
+   * Where the client build wrote its output. The stylesheets every page must
+   * link are read from the manifest inside it — resolved HERE rather than by
+   * the caller, because the barrel that owns that reader is the one this
+   * function already imports at boot.
+   *
+   * OPTIONAL for the same reason `PageManifest.clientDir` is: a build that
+   * discovered zero pages emits no client bundle, so there is no directory to
+   * name — and no page that could need a stylesheet either.
+   */
+  clientDir?: string;
 };
 
 /**
@@ -111,6 +121,7 @@ export async function installProductionPageRoutes(
     sharedStore,
     applyBufferedCookie,
     resolveHydrationClientModuleUrl,
+    clientDir,
   } = options;
 
   assertEveryPageDeclaresRoute(manifest);
@@ -132,6 +143,8 @@ export async function installProductionPageRoutes(
     router,
     manifest,
     hydrationClientModuleUrl: resolveHydrationClientModuleUrl(),
+    stylesheetUrls:
+      clientDir === undefined ? [] : webServer.productionStylesheetUrls(clientDir),
     applyBufferedCookie,
   });
 }

@@ -2,6 +2,18 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.0.0 - 2026-08-25
+
+**First published release.**
+
+### Added
+
+- SSR React pages with hydration, client navigation, route metadata, shared data, and Vite integration.
+
+### Changed
+
+- The hydration runtime is packaged as its own public entry, and production/dev route wiring now resolves the packaged client manifest and stylesheets.
+
 ## 4.16.0
 
 **First published release.** The package existed in the monorepo but was absent

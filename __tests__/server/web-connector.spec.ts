@@ -5,13 +5,10 @@ import { fileURLToPath } from "node:url";
 import type { FastifyReply, FastifyRequest, HookHandlerDoneFunction } from "fastify";
 import type { InlineConfig } from "vite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  ConnectorLifecyclePhase,
-  ConnectorPriority,
-} from "../../../core/src/connectors/types";
-import { container } from "../../../core/src/container";
-import { type Router, router } from "../../../core/src/router/router";
-import type { RuntimeStrategy } from "../../../core/src/utils/environment";
+import { ConnectorLifecyclePhase, ConnectorPriority, container, router, type Router, type RuntimeStrategy } from "@warlock.js/core";
+
+
+
 import { DEV_TRANSFORM_ERROR_BODY } from "../../src/server/dev-server";
 import type { PageManifest } from "../../src/server/page-manifest";
 import { connectSharedStore, type SharedStoreResolver } from "../../src/shared";
@@ -118,7 +115,7 @@ async function withClientBuild(body: () => Promise<void>): Promise<void> {
     path.join(clientDir, "manifest.json"),
     JSON.stringify({
       // The REAL Vite shape: keyed by source path, entry name in `name`.
-      "src/client/index.ts": {
+      "src/hydration/index.ts": {
         name: "hydration",
         file: "assets/hydration-abc123.js",
         isEntry: true,
@@ -313,12 +310,13 @@ async function bootHarness(graph: BootGraph = ownGraph) {
   };
 
   // The module double that `ssrLoadModule` hands back. Deliberately NOT the
-  // real barrel: the whole point of test 8 is that these three functions, and
+  // real barrel: the whole point of test 8 is that these four functions, and
   // not the real barrel's, are the ones the connector wires.
   const webServerModule = {
     connectSharedStore: vi.fn(),
     connectPageContext: vi.fn(),
     installPageRoutes: vi.fn(async () => INSTALLED_PAGES_MARKER),
+    devStylesheetUrls: vi.fn(() => [] as string[]),
   };
 
   const vite = {

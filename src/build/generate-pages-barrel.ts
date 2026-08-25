@@ -20,6 +20,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { parse } from "@babel/parser";
 import type { ConnectorEsbuildPatch } from "@warlock.js/core";
 import { discoverPages, discoverWebRoots, isFile, toPosix, walkFiles } from "./discover-pages";
 
@@ -38,6 +39,13 @@ export { NestedLayoutsNotSupportedError } from "../routing/layout-policy";
 export type { DiscoveredPage, DiscoverPagesOptions } from "./discover-pages";
 
 /**
+ * Declared BEFORE the patch that reads it. `const` is hoisted but sits in the
+ * temporal dead zone, and the patch below is an object literal evaluated at
+ * module load — reading this from further down the file would throw.
+ */
+const STYLE_EXTENSIONS = [".css", ".scss", ".sass", ".less", ".styl"];
+
+/**
  * The esbuild patch web contributes (spike-settled, contract §3a).
  *
  * NO `process.env.NODE_ENV` define: warlock assigns to `process.env.NODE_ENV`
@@ -53,6 +61,23 @@ export const WEB_ESBUILD_PATCH: ConnectorEsbuildPatch = {
     "import.meta.env.SSR": "true",
     "import.meta.env.MODE": '"production"',
   },
+  /**
+   * Stylesheets compile to NOTHING in the server bundle, rather than failing it.
+   *
+   * `root.tsx` importing `./app.css` is how Tailwind — and every other CSS
+   * pipeline — is normally wired, so rejecting it meant the framework could not
+   * build a styled application at all. But the server has no use for the bytes:
+   * it renders HTML, and all it ever needs of a stylesheet is a URL to put in a
+   * `<link>`. The CSS itself belongs to the CLIENT bundle, which Vite builds
+   * from the same `root.tsx` and which handles CSS natively.
+   *
+   * So the import stays in the user's source, the server drops it, and Vite
+   * emits the real asset. Nothing is silently lost: a stylesheet that does not
+   * exist still fails the client build, loudly, where it matters.
+   */
+  loader: Object.fromEntries(
+    STYLE_EXTENSIONS.map((extension) => [extension, "empty" as const]),
+  ) as ConnectorEsbuildPatch["loader"],
 };
 
 /** Line appended to section 4 of the generated production entry, after `./routes`. */
@@ -62,8 +87,6 @@ const REMEDY =
   "remove the import from this file (move it into a client-only module, or " +
   "reference the asset by URL instead), or wait for the Vite-based server " +
   "build, which is the only build that can compile imports like this one";
-
-const STYLE_EXTENSIONS = [".css", ".scss", ".sass", ".less", ".styl"];
 
 const ASSET_EXTENSIONS = [
   ".svg",
@@ -119,7 +142,8 @@ export class WebPageGraphUnsupportedImportError extends Error {
     super(
       `Cannot build the page graph: "${sourceFile}" ${reason} (${specifier}). ` +
         "Pages are compiled into the server bundle, which supports plain code imports only — " +
-        "stylesheets, static assets, `?raw`/`?url` queries and `import.meta.url` are not supported there. " +
+        "static assets, `?raw`/`?url` queries and `import.meta.url` are not supported there. " +
+        "(Stylesheets ARE supported: the server bundle drops them and the client bundle emits them.) " +
         `To fix: ${REMEDY}.`,
     );
     this.name = "WebPageGraphUnsupportedImportError";
@@ -130,6 +154,50 @@ const FROM_SPECIFIER = /\bfrom\s*["']([^"']+)["']/g;
 const BARE_IMPORT = /\bimport\s*["']([^"']+)["']/g;
 const DYNAMIC_IMPORT = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
 
+/**
+ * Blank every comment, preserving byte offsets.
+ *
+ * The scan below is regex over source text, so without this a specifier written
+ * inside a comment is indistinguishable from a real import. That is not
+ * hypothetical: documenting this very restriction — writing `import "./app.css"`
+ * in a doc comment to explain why it is unsupported — failed the build, and the
+ * error then insisted the file imported a stylesheet that it did not import.
+ * Removing the real import did not help, because the comment was the match.
+ *
+ * Comments are replaced with spaces rather than deleted so every subsequent
+ * offset, and therefore every line number in anything reported from here,
+ * stays exactly where it was.
+ *
+ * A parse failure is deliberately NOT fatal: this function's job is to find
+ * hazards, not to validate syntax. esbuild reports a genuine syntax error far
+ * better than we would, and failing here would replace its clear message with a
+ * worse one. On a parse failure the raw source is scanned — the pre-existing
+ * behaviour, false positives and all.
+ */
+function withoutComments(source: string): string {
+  try {
+    const ast = parse(source, {
+      sourceType: "module",
+      errorRecovery: true,
+      plugins: ["typescript", "jsx", "decorators-legacy"],
+    });
+
+    let stripped = source;
+
+    for (const comment of ast.comments ?? []) {
+      const { start, end } = comment as { start: number; end: number };
+
+      stripped =
+        stripped.slice(0, start) + " ".repeat(end - start) + stripped.slice(end);
+    }
+
+    return stripped;
+  } catch {
+    return source;
+  }
+}
+
+/** Expects source whose comments have already been blanked by {@link withoutComments}. */
 function collectSpecifiers(source: string): string[] {
   const specifiers: string[] = [];
 
@@ -151,9 +219,18 @@ function hazardFor(specifier: string): string | undefined {
   const [base, query] = specifier.split("?", 2);
   const lowered = base.toLowerCase();
 
-  if (STYLE_EXTENSIONS.some((extension) => lowered.endsWith(extension))) {
-    return "imports a stylesheet";
-  }
+  /*
+    STYLESHEETS ARE NOT A HAZARD — see `loader` in WEB_ESBUILD_PATCH above.
+
+    They used to be rejected here, which meant `import "./app.css"` in
+    `root.tsx` — the ordinary way to wire Tailwind or any other CSS pipeline —
+    failed the build outright. The server bundle now compiles them to nothing,
+    because the server only ever needs a stylesheet's URL, and the client bundle
+    that Vite builds from the same sources emits the real asset.
+
+    STYLE_EXTENSIONS is still the single list both halves read from, so the set
+    esbuild stubs and the set this check tolerates cannot drift apart.
+  */
 
   if (ASSET_EXTENSIONS.some((extension) => lowered.endsWith(extension))) {
     return "imports a static asset";
@@ -171,11 +248,21 @@ function hazardFor(specifier: string): string | undefined {
  * the moment the page graph needs a capability the esbuild server build does
  * not have, naming the file, the specifier and the remedy.
  *
- * LIMITATION, stated on purpose: this is a FILE-LEVEL scan of the `.ts`/`.tsx`
- * sources under the discovered web roots — it is not transitive resolution. A
- * page that imports a workspace package which itself imports CSS is not
- * caught here; that failure surfaces at esbuild time instead. Widening the
- * scan to the resolved graph is the separate `assertGeneratedImports` card.
+ * LIMITATIONS, stated on purpose — BOTH directions, because stating only one
+ * is what made the other one expensive to find:
+ *
+ * FALSE NEGATIVES. This is a FILE-LEVEL scan of the `.ts`/`.tsx` sources under
+ * the discovered web roots — it is not transitive resolution. A page that
+ * imports a workspace package which itself imports CSS is not caught here; that
+ * failure surfaces at esbuild time instead.
+ *
+ * FALSE POSITIVES. The scan is regex over source text, so anything that LOOKS
+ * like a specifier counts. Comments are blanked first ({@link withoutComments})
+ * because a documented example used to fail the build while insisting on an
+ * import that was not there. String and template literals are NOT blanked —
+ * they cannot be, since real specifiers are string literals — so a specifier
+ * inside a template literal (a code sample in a docs page, say) still matches.
+ * Rare, and it fails loudly rather than silently, but it is not impossible.
  */
 export function assertNoViteOnlyImports(webRoots: readonly string[], appRoot: string): void {
   for (const webRoot of webRoots) {
@@ -185,7 +272,10 @@ export function assertNoViteOnlyImports(webRoots: readonly string[], appRoot: st
     );
 
     for (const sourceFile of sources) {
-      const source = fs.readFileSync(sourceFile, "utf-8");
+      // Comments stripped ONCE, and reused by both checks below: `import.meta.url`
+      // was as blind to comments as the specifier scan was, and mentioning it in
+      // prose — as this very file does — would have failed the build.
+      const source = withoutComments(fs.readFileSync(sourceFile, "utf-8"));
       const relative = toPosix(path.relative(appRoot, sourceFile));
 
       for (const specifier of collectSpecifiers(source)) {

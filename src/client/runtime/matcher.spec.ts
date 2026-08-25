@@ -1,9 +1,5 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
-import { RouteRegistry } from "../../../../core/src/router/route-registry";
-import type {
-  RequestHandler,
-  Route,
-} from "../../../../core/src/router/types";
+import { type RequestHandler, type Route, RouteRegistry } from "@warlock.js/core";
 import { matchClientRoute } from "./index";
 import type {
   ClientPageEntry,

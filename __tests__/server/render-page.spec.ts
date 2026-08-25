@@ -10,6 +10,7 @@ import {
   type PageRouteMatch,
   type PageRoutesRegistry,
 } from "../../src/server/index";
+import { expectHydrationPayloadKeys } from "../shared/expect-payload-keys";
 import { connectSharedStore, type SharedStoreResolver } from "../../src/shared";
 import * as App from "./fixtures/root";
 import { createCoreHttp, requestContext } from "./fixtures/core-http";
@@ -157,13 +158,7 @@ describe("renderPage — stage 10 EMIT", () => {
     // hydrating. So the name on the wire is the matched entry's own name,
     // byte-identical to the manifest's.
     expect(parsed.name).toBe("products.details");
-    expect(Object.keys(parsed).sort()).toEqual([
-      "appData",
-      "layoutData",
-      "name",
-      "pageData",
-      "shared",
-    ]);
+    expectHydrationPayloadKeys(parsed);
   });
 
   it("escapes the payload against </script, <!--, -->, U+2028, U+2029", async () => {

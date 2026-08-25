@@ -45,7 +45,7 @@ export type GenerateClientRegistryOptions = {
 export const CLIENT_REGISTRY_EXPORT_NAME = "pages";
 
 /** The specifier the generated module imports its entry type from. */
-const CLIENT_RUNTIME_SPECIFIER = "@warlock.js/web/client";
+const CLIENT_RUNTIME_SPECIFIER = "@warlock.js/web/client/runtime";
 
 /**
  * Raised when two pages claim one route name.

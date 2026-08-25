@@ -20,8 +20,8 @@
  * Scope: this file creates a seam and nothing else. It does not implement
  * `type: "page"` routing, HTML error pages, or any other new capability.
  */
-import type { Response } from "../../../core/src/http/response";
-import type { HttpContext } from "../../../core/src/router/types";
+import type { HttpContext, Response } from "@warlock.js/core";
+
 import {
   DATA_RESPONSE_CONTENT_TYPE,
   isDataRequest,
@@ -54,6 +54,12 @@ export type PageRouteHandlerOptions = {
   loadModule: PageModuleLoader;
   /** Browser module appended after the server-rendered document. */
   hydrationClientModuleUrl?: string;
+  /**
+   * Stylesheet URLs for this page, emitted into `<head>` so the FIRST paint is
+   * styled. Absent or empty means the application has no CSS — it never means
+   * a stylesheet failed to resolve, which is the build's job to report.
+   */
+  stylesheetUrls?: readonly string[];
   /** Same helper `dev-server.ts` exports — passed in, never imported. */
   applyBufferedCookie: (response: Response, cookie: BufferedCookie) => void;
 };
@@ -97,6 +103,44 @@ function installHydrationClientModule(
 }
 
 /**
+ * Put the page's stylesheets in `<head>`, so the first paint is styled.
+ *
+ * Without this the document carries no CSS at all. The stylesheet reaches the
+ * browser only because the CLIENT bundle imports it, which means it is applied
+ * by JavaScript after the module graph loads — the page renders unstyled first
+ * and restyles a moment later. Correct markup, wrong-looking page, and nothing
+ * in the console to explain it.
+ *
+ * A `<link>` in `<head>` is render-blocking, which is exactly what is wanted
+ * here: the browser holds the first paint until the CSS is in, so there is no
+ * flash rather than a faster ugly one.
+ *
+ * Inserted before `</head>` rather than after `<head>` so an application's own
+ * `<link>`/`<style>` in the root document still comes FIRST and can be
+ * overridden by these — matching how the framework's tags are documented to
+ * behave, and keeping cascade order predictable.
+ */
+function installStylesheets(html: string, stylesheetUrls: readonly string[]): string {
+  if (stylesheetUrls.length === 0 || html === "") return html;
+
+  const closingHeadIndex = html.lastIndexOf("</head>");
+
+  // No `<head>` is not an error the way a missing `</body>` is: a root that
+  // renders no head is unusual but legal, and losing the stylesheet is a
+  // cosmetic failure where losing hydration is a broken page. Silently
+  // dropping it would be the wrong trade the other way, though — so the
+  // document is left exactly as rendered and the caller's own missing-`</body>`
+  // check remains the loud one.
+  if (closingHeadIndex === -1) return html;
+
+  const links = stylesheetUrls
+    .map((url) => `<link rel="stylesheet" href="${escapeHtmlAttribute(url)}">`)
+    .join("");
+
+  return `${html.slice(0, closingHeadIndex)}${links}${html.slice(closingHeadIndex)}`;
+}
+
+/**
  * Build the handler for ONE page route. Per request it loads the App + layout
  * + page triple (concurrently, in that order), renders the URL through
  * `renderPageRequest`, splices in the hydration module, applies the committed
@@ -116,6 +160,7 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     layoutFile,
     loadModule,
     hydrationClientModuleUrl,
+    stylesheetUrls,
     applyBufferedCookie,
   } = options;
 
@@ -195,8 +240,14 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       return;
     }
 
+    // Stylesheets first: they go in `<head>`, the hydration module goes before
+    // `</body>`, and doing the head work on the already-rendered string keeps
+    // both splices in one place rather than threading CSS through the React
+    // render just to reach the same bytes.
+    const styled = installStylesheets(rendered.html, stylesheetUrls ?? []);
+
     const html = installHydrationClientModule(
-      rendered.html,
+      styled,
       hydrationClientModuleUrl,
       hydrationClientModuleUrl === undefined ? undefined : request.nonce,
     );

@@ -38,8 +38,7 @@ import { composeRoutePath } from "../routing/compose-route-path";
 import { NestedLayoutsNotSupportedError, selectPageLayout } from "../routing/layout-policy";
 import { canonicalizeRouteExport, deriveFallbackRouteName } from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
-import type { Response } from "../../../core/src/http/response";
-import type { Router } from "../../../core/src/router/router";
+import type { Response, Router } from "@warlock.js/core";
 import type { BufferedCookie } from "./buffered-response";
 import { createPageRouteHandler } from "./create-page-route-handler";
 import type { PipelineMiddleware } from "./execute-page-request";
@@ -196,6 +195,13 @@ export type InstallPageRoutesOptions = {
   appFile: string;
   /** Browser module loaded after the server-rendered application and payload. */
   hydrationClientModuleUrl?: string;
+  /**
+   * Stylesheet URLs emitted into every page's `<head>`.
+   *
+   * In dev these are Vite source URLs; see `devStylesheetUrls` for why they
+   * carry `?direct`.
+   */
+  stylesheetUrls?: readonly string[];
   /** Same helper `dev-server.ts` exports — passed in, not imported, to avoid a dev-server.ts <-> this-file cycle. */
   applyBufferedCookie: (response: Response, cookie: BufferedCookie) => void;
 };
@@ -218,6 +224,7 @@ export async function installPageRoutes(
     appSrcRoot,
     appFile,
     hydrationClientModuleUrl,
+    stylesheetUrls,
     applyBufferedCookie,
   } = options;
   const pageFiles = [...discoverPageFiles(appSrcRoot)].sort((left, right) =>
@@ -283,6 +290,7 @@ export async function installPageRoutes(
                   : vite.ssrLoadModule(moduleId)
             : moduleId => vite.ssrLoadModule(moduleId),
         hydrationClientModuleUrl,
+        stylesheetUrls,
         applyBufferedCookie,
       }),
       // `isPage` marks this route as SSR-served. Pages and API routes share one

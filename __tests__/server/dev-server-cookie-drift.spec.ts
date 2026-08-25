@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { Request } from "../../../core/src/http/request";
-import { Response } from "../../../core/src/http/response";
+import { Request, Response } from "@warlock.js/core";
 import { applyBufferedCookie } from "../../src/server/dev-server";
 import type { BufferedCookie } from "../../src/server/buffered-response";
 

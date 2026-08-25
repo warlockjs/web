@@ -90,17 +90,38 @@ function isIdentifierNamed(node: any, name: string): boolean {
   return node?.type === "Identifier" && node.name === name;
 }
 
+function isMemberExpression(node: any): boolean {
+  return node?.type === "MemberExpression" || node?.type === "OptionalMemberExpression";
+}
+
+function isProcessObject(node: any): boolean {
+  if (isIdentifierNamed(node, "process")) return true;
+  if (!isMemberExpression(node)) return false;
+
+  const host = node.object;
+  if (
+    !isIdentifierNamed(host, "globalThis") &&
+    !isIdentifierNamed(host, "window") &&
+    !isIdentifierNamed(host, "self")
+  ) {
+    return false;
+  }
+
+  if (!node.computed) return isIdentifierNamed(node.property, "process");
+  return node.property?.type === "StringLiteral" && node.property.value === "process";
+}
+
 /** Matches the `process.env` member expression itself (dot or static-bracket). */
 function isProcessEnvBase(node: any): boolean {
-  if (node?.type !== "MemberExpression") return false;
-  if (!isIdentifierNamed(node.object, "process")) return false;
+  if (!isMemberExpression(node)) return false;
+  if (!isProcessObject(node.object)) return false;
   if (!node.computed) return isIdentifierNamed(node.property, "env");
   return node.property?.type === "StringLiteral" && node.property.value === "env";
 }
 
 /** Matches the `import.meta.env` member expression itself (dot or static-bracket). */
 function isImportMetaEnvBase(node: any): boolean {
-  if (node?.type !== "MemberExpression") return false;
+  if (!isMemberExpression(node)) return false;
   const object = node.object;
   if (object?.type !== "MetaProperty") return false;
   if (object.meta?.name !== "import" || object.property?.name !== "meta") return false;
@@ -191,7 +212,7 @@ function findViolation(
   const consumedEnvBases = new WeakSet<object>();
 
   walk(ast.program, (node) => {
-    if (found || node.type !== "MemberExpression") return;
+    if (found || !isMemberExpression(node)) return;
     const outer = node;
 
     if (isProcessEnvBase(outer.object)) {

@@ -36,7 +36,7 @@ describe("resolveHydrationClientUrl", () => {
   it("returns '/' + entry.file for the hydration entry the client build wrote", () => {
     const clientDir = makeClientDir(
       JSON.stringify({
-        "src/client/index.ts": {
+        "src/hydration/index.ts": {
           name: HYDRATION_CLIENT_ENTRY_NAME,
           file: "assets/hydration-abc123.js",
           isEntry: true,
@@ -73,7 +73,7 @@ describe("resolveHydrationClientUrl", () => {
           file: "assets/home.page-zzz999.js",
           isEntry: true,
         },
-        "src/client/index.ts": {
+        "src/hydration/index.ts": {
           name: HYDRATION_CLIENT_ENTRY_NAME,
           file: "assets/hydration-real42.js",
           isEntry: true,
@@ -140,7 +140,7 @@ describe("resolveHydrationClientUrl", () => {
   it("raises WebClientAssetPrefixViolationError when the entry file sits outside the assets dir", () => {
     const clientDir = makeClientDir(
       JSON.stringify({
-        "src/client/index.ts": {
+        "src/hydration/index.ts": {
           name: HYDRATION_CLIENT_ENTRY_NAME,
           file: "entry-abc.js",
           isEntry: true,
@@ -165,7 +165,7 @@ describe("resolveHydrationClientUrl", () => {
   it("returns a URL under the one shared client-asset prefix, by construction", () => {
     const clientDir = makeClientDir(
       JSON.stringify({
-        "src/client/index.ts": {
+        "src/hydration/index.ts": {
           name: HYDRATION_CLIENT_ENTRY_NAME,
           file: "assets/hydration-abc123.js",
           isEntry: true,

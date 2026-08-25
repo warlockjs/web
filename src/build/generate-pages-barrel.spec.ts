@@ -197,8 +197,14 @@ describe("generatePagesBarrel", () => {
 });
 
 describe("the Vite-switch tripwire", () => {
+  // Stylesheets are deliberately absent from this list. They used to trip the
+  // tripwire, which made `import "./app.css"` — the way Tailwind and every
+  // other CSS pipeline is wired — fail the production build outright. The
+  // esbuild `loader` map in WEB_ESBUILD_PATCH now stubs them to empty for the
+  // SERVER bundle only, because the server needs a stylesheet's URL and never
+  // its bytes; the client bundle still emits the real asset. The two tests
+  // below pin that pass-through, so the relaxation cannot silently widen.
   const cases: [string, string, string][] = [
-    ["a stylesheet", 'import "./styles.css";\n', "./styles.css"],
     ["an asset", 'import logo from "../logo.svg";\n', "../logo.svg"],
     ["a ?raw query", 'import readme from "./readme.md?raw";\n', "./readme.md?raw"],
     ["a ?url query", 'import href from "./doc.pdf?url";\n', "./doc.pdf?url"],
@@ -245,7 +251,7 @@ describe("the Vite-switch tripwire", () => {
   it("scans non-page sources under the web roots too, and leaves the barrel unwritten", async () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/web/components/button.tsx": 'import "./button.scss";\nexport const Button = null;\n',
+      "src/web/components/button.tsx": 'import icon from "./button.svg";\nexport const Button = icon;\n',
       "src/app/main/web/home.page.tsx": PAGE,
     });
     const productionDir = path.join(appRoot, ".warlock/production");
@@ -266,5 +272,41 @@ describe("the Vite-switch tripwire", () => {
     await expect(
       generatePagesBarrel({ appRoot, productionDir: path.join(appRoot, ".warlock/production"), clientDir: "dist/client" }),
     ).resolves.toMatchObject({ pageCount: 1 });
+  });
+
+  it("lets a stylesheet import through from a page, and writes the barrel", async () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/app/main/web/home.page.tsx": `import "./home.css";\n${PAGE}`,
+    });
+    const productionDir = path.join(appRoot, ".warlock/production");
+
+    await expect(
+      generatePagesBarrel({ appRoot, productionDir, clientDir: "dist/client" }),
+    ).resolves.toMatchObject({ pageCount: 1 });
+    expect(fs.existsSync(path.join(productionDir, "pages.ts"))).toBe(true);
+  });
+
+  it("lets a stylesheet import through from a non-page source under a web root", async () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": `import "./app.css";\n${APP}`,
+      "src/web/components/button.tsx": 'import "./button.scss";\nexport const Button = null;\n',
+      "src/app/main/web/home.page.tsx": PAGE,
+    });
+
+    await expect(
+      generatePagesBarrel({ appRoot, productionDir: path.join(appRoot, ".warlock/production"), clientDir: "dist/client" }),
+    ).resolves.toMatchObject({ pageCount: 1 });
+  });
+
+  it("still fires on every non-stylesheet hazard reached through a stylesheet-importing file", async () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/app/main/web/home.page.tsx": `import "./home.css";\nimport logo from "./logo.svg";\n${PAGE}`,
+    });
+
+    await expect(
+      generatePagesBarrel({ appRoot, productionDir: path.join(appRoot, ".warlock/production"), clientDir: "dist/client" }),
+    ).rejects.toThrowError(WebPageGraphUnsupportedImportError);
   });
 });

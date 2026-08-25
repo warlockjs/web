@@ -25,7 +25,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { stripVTControlCharacters } from "node:util";
 import type { Connect, Plugin } from "vite";
-import type { Response } from "../../../core/src/http/response";
+import type { Response } from "@warlock.js/core";
 import type { BufferedCookie } from "./buffered-response";
 
 /**

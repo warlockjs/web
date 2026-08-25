@@ -5,7 +5,13 @@ import {
 
 export type { HydrationDocumentPayloadSource } from "./components/document-context";
 
-const REQUIRED_PAYLOAD_KEYS = [
+/**
+ * Exported so a payload-shape assertion can be written against the contract
+ * itself. A spec that hardcodes its own copy of this list silently becomes a
+ * claim about a PAST revision — that is exactly how the rev. 3 keys landed with
+ * two specs still asserting the rev. 2 shape.
+ */
+export const REQUIRED_PAYLOAD_KEYS = [
   "appData",
   "layoutData",
   "pageData",
@@ -38,7 +44,7 @@ function malformedPayload(): never {
  * rule the required keys live by, so it throws. Arrays included — `typeof []`
  * is `"object"`, and an array of params is not params.
  */
-const OPTIONAL_OBJECT_PAYLOAD_KEYS = ["metadata", "params"] as const;
+export const OPTIONAL_OBJECT_PAYLOAD_KEYS = ["metadata", "params"] as const;
 
 function isPlainObject(value: unknown): boolean {
   return typeof value === "object" && value !== null && !Array.isArray(value);

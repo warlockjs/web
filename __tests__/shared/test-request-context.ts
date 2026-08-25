@@ -11,7 +11,7 @@
  * (`{ request, response }`, request-context.ts:10-13): the isolation specs
  * execute the very `run` function core executes per request.
  */
-import { Context } from "../../../context/src/base-context";
+import { Context } from "@warlock.js/context";
 import type { SharedStore } from "../../src/shared";
 
 export type TestStore = SharedStore & {

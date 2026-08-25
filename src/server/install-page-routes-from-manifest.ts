@@ -26,8 +26,7 @@ import { composeRoutePath } from "../routing/compose-route-path";
 import { NestedLayoutsNotSupportedError, selectPageLayout } from "../routing/layout-policy";
 import { canonicalizeRouteExport, deriveFallbackRouteName } from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
-import type { Response } from "../../../core/src/http/response";
-import type { Router } from "../../../core/src/router/router";
+import type { Response, Router } from "@warlock.js/core";
 import type { BufferedCookie } from "./buffered-response";
 import { createPageModuleLoader } from "./create-page-module-loader";
 import {
@@ -85,6 +84,8 @@ export type InstallPageRoutesFromManifestOptions = {
   manifest: PageManifest;
   /** Browser module loaded after the server-rendered application and payload. */
   hydrationClientModuleUrl?: string;
+  /** Stylesheet URLs emitted into every page's `<head>`. */
+  stylesheetUrls?: readonly string[];
   /** Same helper `dev-server.ts` exports — passed in, never imported. */
   applyBufferedCookie: (response: Response, cookie: BufferedCookie) => void;
   createHandler?: PageRouteHandlerFactory;
@@ -215,6 +216,7 @@ export function installPageRoutesFromManifest(
     router,
     manifest,
     hydrationClientModuleUrl,
+    stylesheetUrls,
     applyBufferedCookie,
     createHandler = createPageRouteHandler,
   } = options;
@@ -289,6 +291,7 @@ export function installPageRoutesFromManifest(
                   ? Promise.resolve(composedLayout)
                   : loadModule(moduleId),
         hydrationClientModuleUrl,
+        stylesheetUrls,
         applyBufferedCookie,
       }),
       // `isPage` marks this route as SSR-served. Pages and API routes share one

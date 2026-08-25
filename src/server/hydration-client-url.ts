@@ -85,8 +85,8 @@ type ManifestEntry = { file?: unknown; name?: unknown; isEntry?: unknown };
  * Find the hydration entry in a parsed Vite manifest.
  *
  * VITE KEYS BY SOURCE PATH, NOT BY ENTRY NAME. A rollup input of
- * `{ hydration: "src/client/index.ts" }` produces the record
- * `"src/client/index.ts": { name: "hydration", isEntry: true, file: "assets/hydration-<hash>.js" }`
+ * `{ hydration: "src/hydration/index.ts" }` produces the record
+ * `"src/hydration/index.ts": { name: "hydration", isEntry: true, file: "assets/hydration-<hash>.js" }`
  * — the name the build and this module share lives in the `name` FIELD, and
  * there is no `"hydration"` key at all. Indexing the manifest by
  * {@link HYDRATION_CLIENT_ENTRY_NAME} therefore missed every real manifest and

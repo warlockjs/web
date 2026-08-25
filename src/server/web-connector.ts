@@ -41,20 +41,12 @@
  * put `../vite`, core's router and `./dev-server` into the import graph of
  * every consuming app's `warlock.config.ts`.
  */
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyReply, FastifyRequest, HookHandlerDoneFunction } from "fastify";
 import type { Alias, Plugin, PluginOption, ViteDevServer } from "vite";
-import { Application } from "../../../core/src/application/application";
-import { BaseConnector } from "../../../core/src/connectors/base-connector";
-import {
-  ConnectorLifecyclePhase,
-  type ConnectorName,
-} from "../../../core/src/connectors/types";
-import { container } from "../../../core/src/container";
-import { requestContext } from "../../../core/src/http/context/request-context";
-import type { FastifyInstance } from "../../../core/src/http/server";
-import { router } from "../../../core/src/router/router";
+import { Application, BaseConnector, ConnectorLifecyclePhase, type ConnectorName, container, type FastifyInstance, requestContext, router } from "@warlock.js/core";
 import { resolveWebPackageRoot } from "../build/contribution";
 import { appConventionAliases } from "../vite/app-convention-aliases";
 import { createHydrationClientEntry, warlockClientBoundary } from "../vite";
@@ -226,6 +218,25 @@ type ReactPluginFactory = ((options?: Record<string, unknown>) => PluginOption[]
   preambleCode?: string;
 };
 
+/**
+ * A directory, plus the path the filesystem really stores it at when the two
+ * differ. Both forms belong in `server.fs.allow` — see the `fs` block in
+ * {@link WebConnector.createViteServer} for why one of them is never enough.
+ *
+ * A missing directory is not this function's problem to report: the roots it is
+ * handed are already proven (`resolveWebPackageRoot`) or are the app's own cwd,
+ * and an allow-list entry that points nowhere simply matches nothing.
+ */
+function withRealPath(directory: string): string[] {
+  try {
+    const realPath = fs.realpathSync(directory);
+
+    return realPath === directory ? [directory] : [directory, realPath];
+  } catch {
+    return [directory];
+  }
+}
+
 /** POSIX-normalised, case-folded — Vite ids are `/`-separated on Windows too. */
 function normalizeModuleId(id: string): string {
   const [filepath] = id.split("?");
@@ -339,6 +350,11 @@ export class WebConnector extends BaseConnector {
         // The URL is resolved lazily, by the production path, only if there are
         // pages to hydrate — see the option's own note.
         resolveHydrationClientModuleUrl: () => this.resolveHydrationClientModuleUrl(),
+        // The stylesheets are read from the manifest in this directory, by the
+        // installer itself — it already imports the barrel that owns that
+        // reader, and production has one module graph, so resolving there
+        // rather than here avoids loading the barrel twice.
+        clientDir: this.pageManifest.clientDir,
       });
 
       // SERVE THE CLIENT BUNDLE. Without this the whole production page path
@@ -433,6 +449,11 @@ export class WebConnector extends BaseConnector {
       appSrcRoot: paths.appSrcRoot,
       appFile: paths.appFile,
       hydrationClientModuleUrl: this.resolveHydrationClientModuleUrl(paths.webRoot),
+      // Without these the first paint of every full page load is unstyled: the
+      // client bundle imports the CSS, so JavaScript applies it only after the
+      // module graph loads. A render-blocking <link> in <head> is what makes
+      // the page arrive styled instead of arriving and then correcting itself.
+      stylesheetUrls: webServerSsr.devStylesheetUrls(paths.appRoot, paths.appFile),
       applyBufferedCookie,
     });
   }
@@ -727,7 +748,12 @@ export class WebConnector extends BaseConnector {
     fastify: FastifyInstance,
     paths: Awaited<ReturnType<WebConnector["resolvePaths"]>>,
   ): Promise<ViteDevServer> {
-    const { createServer, buildErrorMessage } = await import("vite");
+    const { createServer, buildErrorMessage, searchForWorkspaceRoot } = await import("vite");
+
+    // Vite's own default for `server.fs.allow`, reproduced rather than dropped:
+    // naming the key at all REPLACES the default, and an application that
+    // legitimately serves files from above its own root has to keep working.
+    const workspaceRoot = searchForWorkspaceRoot(paths.appRoot);
 
     return createServer({
       root: paths.appRoot,
@@ -755,6 +781,34 @@ export class WebConnector extends BaseConnector {
       server: {
         middlewareMode: true,
         hmr: { server: fastify.server },
+        fs: {
+          // `<Scripts />` points the browser at the hydration client entry under
+          // `<webRoot>`: the published `esm/hydration/index.mjs` when installed,
+          // or `src/hydration/index.ts` in this checkout. A dependency normally
+          // lives under the app root's `node_modules`; when `@warlock.js/web` is
+          // LINKED — a monorepo checkout, `npm link`, or a `file:` dependency —
+          // its real path can sit outside every directory Vite allows by default
+          // and the request comes back `403 Restricted`.
+          //
+          // That failure is silent in the worst way: SSR has already produced
+          // the markup by the time the browser asks for the script, so the page
+          // renders perfectly, nothing is logged, and the only symptom is that
+          // no button ever works. Naming web's own root makes a linked install
+          // behave like an installed one.
+          //
+          // Every root is listed twice, as given and as `realpathSync` reports
+          // it, because Vite resolves a requested file to its REAL path before
+          // testing it against this list. Allowing the symlink alone therefore
+          // matches nothing — the 403 page prints the link that was allowed
+          // directly above the real path it rejected.
+          allow: [
+            ...new Set([
+              ...withRealPath(workspaceRoot),
+              ...withRealPath(paths.appRoot),
+              ...withRealPath(paths.webRoot),
+            ]),
+          ],
+        },
       },
       // Without an explicit target, esbuild assumes native (TC39) decorator
       // support and leaves `@RegisterModel()`-style syntax untouched — but Vite's
@@ -774,6 +828,25 @@ export class WebConnector extends BaseConnector {
         ],
       },
       resolve: {
+        // ONE React, resolved from the application. A linked `@warlock.js/web`
+        // resolves `react` out of its own tree while the app's pages resolve it
+        // out of theirs; two React instances share no hook dispatcher, and SSR
+        // dies on the first `useState` with "Cannot read properties of null".
+        // `dedupe` forces these package names to resolve from Vite's `root` —
+        // the app — whoever imported them, in the SSR environment as much as in
+        // the client one.
+        //
+        // Two names cover every entry point. Vite matches a deep import against
+        // the package it belongs to before consulting this list, so
+        // `react-dom/client`, `react/jsx-runtime` and `react/jsx-dev-runtime`
+        // are already deduped by `react-dom` and `react`; listing them
+        // separately would only add entries that can never match.
+        //
+        // Do NOT express this as a `resolve.alias` entry instead. Pointing a
+        // bare React specifier at a directory drags React's CommonJS entry into
+        // Vite's SSR module graph, and the dev server then dies at startup with
+        // "module is not defined" before it renders anything at all.
+        dedupe: ["react", "react-dom"],
         alias: [
           ...(this.options.resolveAlias ?? []),
           // The app-tree convention `v5/app/tsconfig.json`'s own `paths` declare.
