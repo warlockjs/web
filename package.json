@@ -1,6 +1,6 @@
 {
   "name": "@warlock.js/web",
-  "version": "5.0.0",
+  "version": "5.0.1",
   "type": "module",
   "description": "Warlock.js web layer for the SSR page pipeline and client runtime.",
   "main": "./src/index.ts",
@@ -50,7 +50,7 @@
     "@warlock.js/seal": "*",
     "react": "*",
     "react-dom": "*",
-    "vite": ">=7.3.5"
+    "vite": ">=7.3.5 <8"
   },
   "peerDependenciesMeta": {
     "vite": {

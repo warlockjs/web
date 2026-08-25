@@ -17,6 +17,14 @@ const FIXTURE_ROOT = path.join(__dirname, "..", "..", "__tests__", "vite", "fixt
 async function buildEntry(fileName: string) {
   return build({
     root: FIXTURE_ROOT,
+    // Stated, not inherited (canon a31d170c). This matches Vite's own default
+    // for `build()`, so it changes nothing today — it is here so that what the
+    // fixtures are compiled under is written down rather than assumed.
+    //
+    // NOTE: `mode` does NOT decide `import.meta.env.DEV`. That comes from
+    // Vite's `isProduction`, which reads NODE_ENV first — and vitest sets
+    // NODE_ENV=test when the shell leaves it empty. See case 8.
+    mode: "production",
     logLevel: "silent",
     plugins: [gateBSecrets()],
     build: {
@@ -123,11 +131,29 @@ describe("gateBSecrets — Gate B inline-secret transform gate (real Vite builds
     expect(code).toContain('"production"');
   });
 
+  /**
+   * What this case is actually about is the GATE: `DEV` carries no `PUBLIC_`
+   * prefix, and Gate B must still let it through because it is a Vite built-in
+   * — and Vite must still inline it, so nothing reaches the browser as a
+   * runtime lookup.
+   *
+   * It used to assert the literal `false`. That is not a property of the gate;
+   * it is a property of whoever ran the suite. Vite's `isProduction` reads
+   * NODE_ENV before it reads `mode`, and vitest sets NODE_ENV=test when the
+   * shell leaves it unset — so the assertion passed under this machine's
+   * agent shells (which export NODE_ENV=production) and failed in a clean one.
+   * Green for a reason that had nothing to do with the code under test.
+   *
+   * So assert the inlining itself: a boolean literal is present and no
+   * `import.meta.env` survives into the chunk. True in either environment,
+   * and it fails if the gate ever stops inlining.
+   */
   it("case 8: import.meta.env.DEV (Vite built-in) passes despite no PUBLIC_ prefix, and is inlined for real", async () => {
     const result = await buildEntry("case8-import-meta-env-dev.tsx");
     const code = firstChunkCode(result);
     expect(code).toContain("Case8Component");
-    expect(code).toContain("false");
+    expect(code).toMatch(/return (true|false);/);
+    expect(code).not.toContain("import.meta.env");
   });
 
   it("case 9: only one of two declared PUBLIC_* vars is read anywhere in the client build — the read one is inlined, the unread one is not, verified on the emitted bundle", async () => {
