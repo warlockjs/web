@@ -1,6 +1,6 @@
 {
   "name": "@warlock.js/web",
-  "version": "5.0.1",
+  "version": "5.0.2",
   "type": "module",
   "description": "Warlock.js web layer for the SSR page pipeline and client runtime.",
   "main": "./src/index.ts",

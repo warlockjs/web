@@ -826,6 +826,27 @@ export class WebConnector extends BaseConnector {
           ...WEB_OPTIONAL_PEERS,
           ...(this.options.ssrExternal ?? []),
         ],
+        /**
+         * ONE `@warlock.js/web`, for the same reason `resolve.dedupe` below
+         * insists on one React — and it is invisible from inside this repo.
+         *
+         * Vite externalises `node_modules` in SSR by default, so an installed
+         * app gets TWO instances: the app's own `root.tsx` imports
+         * `@warlock.js/web` and Vite hands that off to Node, while the pipeline
+         * is loaded deliberately through `vite.ssrLoadModule(...)` and stays
+         * inside Vite's graph. `renderPage` then sets the document context on
+         * Vite's copy of `components/document-context`, and the app's `<Head/>`
+         * reads Node's copy, which has nothing in it:
+         *
+         *     <Head/> was rendered outside the page pipeline's document context
+         *
+         * Measured on a published 5.0.1 install: `GET /` 500 without this line,
+         * 200 with it (404 control still 404). In THIS checkout the package
+         * resolves to source under Vite's root, never through `node_modules`,
+         * so both paths land on one instance and the bug cannot reproduce.
+         * Canon `6b7ab838`.
+         */
+        noExternal: ["@warlock.js/web"],
       },
       resolve: {
         // ONE React, resolved from the application. A linked `@warlock.js/web`

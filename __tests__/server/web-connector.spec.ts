@@ -571,6 +571,28 @@ describe("WebConnector — module identity of the pipeline barrel", () => {
     }
   });
 
+  /**
+   * The other half of the same property, and the half that only bites once the
+   * package is INSTALLED.
+   *
+   * The test above proves the PIPELINE is loaded through Vite. It says nothing
+   * about the app: `root.tsx` imports `@warlock.js/web` by name, and Vite
+   * externalises `node_modules` in SSR by default, so in a published install
+   * node loads a SECOND copy. `renderPage` sets the document context on Vite's
+   * copy; the app's `<Head/>` reads node's, finds nothing, and throws
+   * "rendered outside the page pipeline's document context" — a 500 on the home
+   * page of every scaffolded app. Measured on published 5.0.1.
+   *
+   * It cannot reproduce in this checkout, because here the package resolves to
+   * source under Vite's root and never through `node_modules` — which is why
+   * this asserts the CONFIG rather than a render. Canon `6b7ab838`.
+   */
+  it("marks @warlock.js/web noExternal so an INSTALLED app shares the pipeline's instance", async () => {
+    const harness = await bootHarness();
+
+    expect(harness.viteConfig.ssr?.noExternal).toContain("@warlock.js/web");
+  });
+
   it("registers pages through VITE's installPageRoutes, on the same Vite the middleware serves", async () => {
     const harness = await bootHarness();
 
