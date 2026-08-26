@@ -67,11 +67,20 @@ export type PageModuleShape = {
 };
 
 export type InstalledPageRoute = {
+  /** The canonical declared route path, before layout-prefix composition. */
+  declaredPath: string;
   path: string;
   name: string;
   file: string;
   layoutFile: string | undefined;
 };
+
+/**
+ * Ownership key for the framework's fallback 404 route. A NUL-prefixed value
+ * cannot be a real filesystem path, so it cannot collide with an app page's
+ * canonical source-file key.
+ */
+export const FRAMEWORK_DEFAULT_NOT_FOUND_SOURCE_FILE = "\0warlock:framework-default-404";
 
 /**
  * The page's app-root-relative POSIX source path, e.g.
@@ -96,6 +105,23 @@ function resolveRoute(
     path: canonical.path,
     name: canonical.name ?? deriveFallbackRouteName({ routePath: canonical.path, sourceFile }),
   };
+}
+
+/**
+ * Resolve the stable identity used to distinguish a route-export edit from an
+ * ordinary component-body edit. The declared path is retained before layout
+ * composition so `/settings` under `/admin` compares with the next declared
+ * `/settings`, not with the effective `/admin/settings` route.
+ */
+export function resolvePageRouteIdentity(
+  routeExport: PageRouteExport,
+  pageFile: string,
+  appSrcRoot: string,
+): Pick<InstalledPageRoute, "declaredPath" | "name"> {
+  const sourceFile = canonicalSourceFileFor(pageFile, appSrcRoot);
+  const route = resolveRoute(routeExport, sourceFile);
+
+  return { declaredPath: route.path, name: route.name };
 }
 
 export type LayoutModuleShape = {
@@ -275,7 +301,11 @@ export async function installPageRoutes(
       throw new MissingRouteExportError(sourceFile);
     }
 
-    const { path: routePath, name } = resolveRoute(pageModule.route, sourceFile);
+    const { declaredPath: routePath, name } = resolvePageRouteIdentity(
+      pageModule.route,
+      pageFile,
+      appSrcRoot,
+    );
 
     const loadLayout: LoadLayout = layoutFile =>
       vite.ssrLoadModule(layoutFile) as Promise<LayoutModuleShape>;
@@ -334,7 +364,13 @@ export async function installPageRoutes(
       ),
     );
 
-    installed.push({ path: effectivePath, name, file: pageFile, layoutFile });
+    installed.push({
+      declaredPath: routePath,
+      path: effectivePath,
+      name,
+      file: pageFile,
+      layoutFile,
+    });
   }
 
   /*
@@ -396,7 +432,7 @@ export async function installPageRoutes(
       );
 
     if (notFoundPageFile === undefined) {
-      registerNotFoundRoute();
+      await router.withSourceFile(FRAMEWORK_DEFAULT_NOT_FOUND_SOURCE_FILE, registerNotFoundRoute);
     } else {
       await router.withSourceFile(
         canonicalSourceFileFor(notFoundPageFile, appSrcRoot),

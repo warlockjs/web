@@ -295,6 +295,31 @@ describe("clientPageRegistry — the server half wins: metadata edits force a fu
     expect(result).toEqual([]);
   });
 
+  it("waits for live route publication and does not send a duplicate reload when it was handled", async () => {
+    const order: string[] = [];
+    const plugin = clientPageRegistry({
+      appRoot: makeAppRoot(),
+      beforePageHotUpdate: async ({ file, type }) => {
+        order.push(`routes:${type}:${file}`);
+        return true;
+      },
+    });
+    const source = metadataPageSource("/blog/article", "First", "hello");
+    callHookWith(plugin, "transform", transformContext(), source, PAGE);
+
+    const { thisArg, sent } = hotUpdateContext();
+    const result = await callHookWith<Promise<any>>(
+      plugin,
+      "hotUpdate",
+      thisArg,
+      hotUpdateOptions(PAGE, metadataPageSource("/renamed", "First", "hello")),
+    );
+
+    expect(order).toEqual([`routes:update:${PAGE}`]);
+    expect(sent).toEqual([]);
+    expect(result).toEqual([]);
+  });
+
   it("a JSX edit (projected client code changed) sends nothing and defers to Fast Refresh", async () => {
     const plugin = clientPageRegistry({ appRoot: makeAppRoot() });
 

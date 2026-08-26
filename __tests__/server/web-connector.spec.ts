@@ -383,12 +383,11 @@ describe("WebConnector — lifecycle placement", () => {
     expect(WEB_CONNECTOR_PRIORITY).toBe(connector.priority);
   });
 
-  it("watches no files and never restarts — page HMR is Vite's, not the connector's", () => {
+  it("watches no files and stays inert before a development boot", () => {
     const connector = new WebConnector();
 
-    // `shouldRestart` is overridden to a hard `false`
-    // (`web-connector.ts:268-270`), not merely left to BaseConnector's empty
-    // `watchedFiles` match — a restart would drop Vite's warm module graph.
+    // The synchronous watcher seam must not load or act before development boot
+    // has supplied Vite and resolved the application's page root.
     expect(connector.shouldRestart()).toBe(false);
     expect(connector.shouldRestart(["src/app/main/web/home.page.tsx"])).toBe(false);
     expect(connector.shouldRestart(["src/config/http.ts"])).toBe(false);
@@ -737,6 +736,7 @@ describe("WebConnector — the manifest mode branch", () => {
         expect(connector.getPageManifest()).toBe(providedManifest);
         expect(connector.getInstalledPages()).toEqual([
           {
+            declaredPath: "/products",
             path: "/products",
             name: "main.products",
             file: "src/app/main/web/products.page.tsx",

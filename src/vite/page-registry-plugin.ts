@@ -57,6 +57,16 @@ export type ClientPageRegistryPluginOptions = {
   appRoot?: string;
   /** Source directory name under `appRoot`; forwarded verbatim to `discoverPages`, which defaults it to `"src"`. */
   srcDir?: string;
+  /**
+   * Optional server-side barrier run before this plugin decides how the browser
+   * receives a page update. `true` means the callback already published the
+   * new route graph and sent the required reload, so this hook emits no second
+   * update for the same filesystem event.
+   */
+  beforePageHotUpdate?: (context: {
+    file: string;
+    type: "create" | "update" | "delete";
+  }) => boolean | Promise<boolean>;
 };
 
 /**
@@ -459,6 +469,15 @@ export function clientPageRegistry(options: ClientPageRegistryPluginOptions = {}
      * construction.
      */
     async hotUpdate(context) {
+      if (isServerPageModule(context.file)) {
+        const routeGraphHandled = await options.beforePageHotUpdate?.({
+          file: context.file,
+          type: context.type,
+        });
+
+        if (routeGraphHandled) return [];
+      }
+
       // `create`/`delete` are page graph churn, not in-place edits — leave them
       // to Vite's normal handling (a new/removed module reloads on its own).
       if (context.type !== "update") return undefined;

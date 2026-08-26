@@ -12,7 +12,10 @@ import {
 import { gateAResolve } from "./gate-a-resolve";
 import { createPublicEnvTracker, gateBSecrets } from "./gate-b-secrets";
 import { gateCVerify } from "./gate-c-verify";
-import { clientPageRegistry } from "./page-registry-plugin";
+import {
+  clientPageRegistry,
+  type ClientPageRegistryPluginOptions,
+} from "./page-registry-plugin";
 import { projection } from "./projection";
 
 export { buildHydrationClient } from "./build-client";
@@ -42,13 +45,16 @@ export type { HydrationClientEntry } from "./hydration-entries";
 export {
   CLIENT_PAGE_REGISTRY_ID,
   clientPageRegistry,
+  invalidateClientPageRegistry,
   RESOLVED_CLIENT_PAGE_REGISTRY_ID,
 } from "./page-registry-plugin";
 export type { ClientPageRegistryPluginOptions } from "./page-registry-plugin";
 export { projection, ProjectionAmbiguityError } from "./projection";
 export type { ProjectionResult } from "./projection";
 
-export type WarlockClientBoundaryOptions = Parameters<typeof gateAResolve>[0];
+export type WarlockClientBoundaryOptions = Parameters<typeof gateAResolve>[0] & {
+  beforePageHotUpdate?: ClientPageRegistryPluginOptions["beforePageHotUpdate"];
+};
 
 export type BuildWarlockHydrationClientOptions = Readonly<{
   appRoot: string;
@@ -166,10 +172,13 @@ function clientEnvironmentOnly(plugin: Plugin): Plugin {
  * chunk while the page's own component text is proven present. Inspecting this
  * array's order would prove nothing about what reaches the browser.
  */
-export function warlockClientBoundary(options: Parameters<typeof gateAResolve>[0] = {}): Plugin[] {
+export function warlockClientBoundary(options: WarlockClientBoundaryOptions = {}): Plugin[] {
   const tracker = createPublicEnvTracker();
   return [
-    clientPageRegistry({ appRoot: options.appRoot }),
+    clientPageRegistry({
+      appRoot: options.appRoot,
+      beforePageHotUpdate: options.beforePageHotUpdate,
+    }),
     projection(),
     gateBSecrets({ tracker }),
     gateAResolve(options),

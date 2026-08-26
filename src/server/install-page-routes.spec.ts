@@ -7,7 +7,11 @@ import * as discoverPagesModule from "../build/discover-pages";
 import { NestedLayoutsNotSupportedError } from "../routing/layout-policy";
 import * as createPageRouteHandlerModule from "./create-page-route-handler";
 import type { PageRouteHandler, PageRouteHandlerOptions } from "./create-page-route-handler";
-import { installPageRoutes, type InstallPageRoutesOptions } from "./install-page-routes";
+import {
+  FRAMEWORK_DEFAULT_NOT_FOUND_SOURCE_FILE,
+  installPageRoutes,
+  type InstallPageRoutesOptions,
+} from "./install-page-routes";
 import {
   DuplicateNotFoundPageError,
   frameworkDefaultNotFoundDocument,
@@ -178,14 +182,38 @@ describe("installPageRoutes — source-file ownership", () => {
     expect(router.list()).toEqual([
       { path: "/account", isPage: true, sourceFile: "src/web/account.page.tsx" },
       { path: "/", isPage: true, sourceFile: "src/web/home.page.tsx" },
-      { path: NOT_FOUND_ROUTE_PATH, isPage: true, sourceFile: undefined },
+      {
+        path: NOT_FOUND_ROUTE_PATH,
+        isPage: true,
+        sourceFile: FRAMEWORK_DEFAULT_NOT_FOUND_SOURCE_FILE,
+      },
     ]);
 
     router.removeRoutesBySourceFile("src/web/account.page.tsx");
 
     expect(router.list()).toEqual([
       { path: "/", isPage: true, sourceFile: "src/web/home.page.tsx" },
-      { path: NOT_FOUND_ROUTE_PATH, isPage: true, sourceFile: undefined },
+      {
+        path: NOT_FOUND_ROUTE_PATH,
+        isPage: true,
+        sourceFile: FRAMEWORK_DEFAULT_NOT_FOUND_SOURCE_FILE,
+      },
+    ]);
+  });
+
+  it("removes only the framework-default 404 catch-all by its synthetic owner", async () => {
+    const appRoot = makeAppTree({ "src/web/home.page.tsx": "" });
+    const appSrcRoot = path.join(appRoot, "src");
+    const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
+    const vite = fakeVite({ [homeFile]: { route: "/" } });
+
+    const { run, router } = install(appSrcRoot, vite);
+    await run();
+
+    router.removeRoutesBySourceFile(FRAMEWORK_DEFAULT_NOT_FOUND_SOURCE_FILE);
+
+    expect(router.list()).toEqual([
+      { path: "/", isPage: true, sourceFile: "src/web/home.page.tsx" },
     ]);
   });
 
@@ -327,6 +355,7 @@ describe("installPageRoutes — ancestor layout composition", () => {
     const installed = await run();
 
     expect(registered.map((route) => route.path)).toEqual(["/admin/settings"]);
+    expect(installed[0]?.declaredPath).toBe("/settings");
     expect(installed[0]?.path).toBe("/admin/settings");
     expect(installed[0]?.layoutFile).toBe(layoutFile);
   });

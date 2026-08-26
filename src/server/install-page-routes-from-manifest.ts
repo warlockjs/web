@@ -77,6 +77,8 @@ type LayoutModuleShape = {
 export type PageRouteHandlerFactory = (options: PageRouteHandlerOptions) => PageRouteHandler;
 
 export type InstalledManifestPageRoute = {
+  /** The canonical declared route path, before layout-prefix composition. */
+  declaredPath: string;
   /** The composed path the route was registered on. */
   path: string;
   /** The resolved route name; shared namespace with API routes. */
@@ -327,6 +329,7 @@ export function installPageRoutesFromManifest(
     );
 
     installed.push({
+      declaredPath: routePath,
       path: effectivePath,
       name,
       file: page.sourceFile,

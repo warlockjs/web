@@ -49,12 +49,26 @@ import type { Alias, Plugin, PluginOption, ViteDevServer } from "vite";
 import { Application, BaseConnector, ConnectorLifecyclePhase, type ConnectorName, container, type FastifyInstance, requestContext, router } from "@warlock.js/core";
 import { resolveWebPackageRoot } from "../build/contribution";
 import { appConventionAliases } from "../vite/app-convention-aliases";
-import { createHydrationClientEntry, warlockClientBoundary } from "../vite";
+import {
+  createHydrationClientEntry,
+  invalidateClientPageRegistry,
+  warlockClientBoundary,
+} from "../vite";
 import { CLIENT_ASSET_URL_PREFIX } from "./client-asset-url-prefix";
 import { applyBufferedCookie, devErrorTransportPlugin, sendCapturedDevError } from "./dev-server";
 import { resolveHydrationClientUrl } from "./hydration-client-url";
 import type { InstalledPageRoute } from "./install-page-routes";
 import { installProductionPageRoutes } from "./install-production-page-routes";
+import {
+  classifyPageFileChanges,
+  hasPageFileChanges,
+  type PageFileChanges,
+} from "./page-file-change";
+import {
+  pageRouteSourceFiles,
+  pageRoutesNeedReplacement,
+  registeredPageFiles,
+} from "./page-route-reload";
 import { consumePageManifest, type PageManifest } from "./page-manifest";
 import { WEB_CONNECTOR_PRIORITY } from "./web-connector-factory";
 
@@ -114,6 +128,23 @@ export { WEB_CONNECTOR_PRIORITY };
  */
 function isProductionRuntime(): boolean {
   return Application.runtimeStrategy === "production";
+}
+
+function pageFileVersion(file: string): string {
+  try {
+    return `present:${fs.readFileSync(file, "utf8")}`;
+  } catch {
+    return "absent";
+  }
+}
+
+function pageChangeVersions(changes: PageFileChanges): Map<string, string> {
+  return new Map(
+    [...changes.added, ...changes.removed, ...changes.inspectionNeeded].map((file) => {
+      const absoluteFile = path.resolve(file);
+      return [absoluteFile, pageFileVersion(absoluteFile)] as const;
+    }),
+  );
 }
 
 export class WebPageManifestMissingError extends Error {
@@ -287,8 +318,9 @@ export class WebConnector extends BaseConnector {
   public readonly lifecyclePhase = ConnectorLifecyclePhase.Late;
 
   /**
-   * Nothing. Page, layout and component edits are Vite's HMR to own — a
-   * connector restart would tear down the module graph Vite is keeping warm.
+   * Nothing. Core already supplies each watcher batch to `shouldRestart`; page
+   * membership and route identity are classified there, while component and
+   * layout body edits remain Vite's HMR domain.
    */
   protected readonly watchedFiles: string[] = [];
 
@@ -306,6 +338,26 @@ export class WebConnector extends BaseConnector {
    * production reading is a hard error and why the branch is on MODE.
    */
   protected pageManifest?: PageManifest;
+
+  /**
+   * The paths the DEVELOPMENT boot resolved, kept so `shouldRestart` can decide
+   * whether a changed file is a page without re-deriving (and re-proving) the
+   * web package root on every watcher batch. `undefined` in production and
+   * before boot, which is exactly when `shouldRestart` must answer `false`.
+   */
+  protected resolvedPaths?: Awaited<ReturnType<WebConnector["resolvePaths"]>>;
+
+  /** Synchronous watcher classification handed to the async reload phase. */
+  protected pendingPageChanges?: PageFileChanges;
+
+  /** Reuses Vite's pipeline-barrel module instance for every dev reinstall. */
+  protected installDevPageRoutes?: () => Promise<InstalledPageRoute[]>;
+
+  /** Serializes Vite and core watcher callbacks that can observe the same edit. */
+  protected pageRouteReloadQueue: Promise<unknown> = Promise.resolve();
+
+  /** Committed file versions awaiting the overlapping watcher callback. */
+  protected pendingHotUpdateSuppressions = new Map<string, string>();
 
   public constructor(options: WebConnectorOptions = {}) {
     super();
@@ -400,6 +452,10 @@ export class WebConnector extends BaseConnector {
     const fastify = this.resolveFastify();
     const paths = await this.resolvePaths();
 
+    // Kept for `shouldRestart`, which is asked of this connector on every
+    // watcher batch and must answer without re-resolving anything.
+    this.resolvedPaths = paths;
+
     this.vite = await this.createViteServer(fastify, paths);
 
     // The pipeline barrel is loaded THROUGH VITE, not imported directly, and
@@ -443,7 +499,7 @@ export class WebConnector extends BaseConnector {
       },
     );
 
-    this.installedPages = await webServerSsr.installPageRoutes({
+    this.installDevPageRoutes = () => webServerSsr.installPageRoutes({
       router,
       vite: this.vite,
       appSrcRoot: paths.appSrcRoot,
@@ -456,6 +512,8 @@ export class WebConnector extends BaseConnector {
       stylesheetUrls: webServerSsr.devStylesheetUrls(paths.appRoot, paths.appFile),
       applyBufferedCookie,
     });
+
+    this.installedPages = await this.installDevPageRoutes();
   }
 
   /**
@@ -559,18 +617,132 @@ export class WebConnector extends BaseConnector {
     await this.vite?.close();
     this.vite = undefined;
     this.installedPages = [];
+    this.installDevPageRoutes = undefined;
+    this.pendingPageChanges = undefined;
+    this.pendingHotUpdateSuppressions.clear();
     this.pageManifest = undefined;
 
     this.active = false;
   }
 
   /**
-   * Never restart on a file change. Pages, layouts and components are Vite's
-   * HMR domain; rebooting this connector would drop Vite's module graph and
-   * re-register every page route on a Fastify instance that is already serving.
+   * Queue page add/remove/edit candidates for asynchronous live routing work.
+   * Classification stays synchronous because core's connector interface is;
+   * edited route exports are evaluated later through Vite's fresh SSR graph.
    */
-  public shouldRestart(): boolean {
-    return false;
+  public shouldRestart(changedFiles: string[] = []): boolean {
+    if (this.vite === undefined || this.resolvedPaths === undefined) {
+      return false;
+    }
+
+    this.pendingPageChanges = this.classifyPageChanges(changedFiles);
+    return this.pendingPageChanges !== undefined;
+  }
+
+  protected classifyPageChanges(changedFiles: readonly string[]): PageFileChanges | undefined {
+    if (this.resolvedPaths === undefined) return undefined;
+
+    const changes = classifyPageFileChanges(changedFiles, {
+      appRoot: this.resolvedPaths.appRoot,
+      appSrcRoot: this.resolvedPaths.appSrcRoot,
+      installedPageFiles: registeredPageFiles(router.list(), this.resolvedPaths.appSrcRoot),
+    });
+
+    return hasPageFileChanges(changes) ? changes : undefined;
+  }
+
+  protected enqueuePageRouteReload(changes: PageFileChanges): Promise<boolean> {
+    const eventVersions = pageChangeVersions(changes);
+    const run = this.pageRouteReloadQueue.catch(() => undefined).then(async () => {
+      const vite = this.vite;
+      const install = this.installDevPageRoutes;
+      const paths = this.resolvedPaths;
+
+      if (vite === undefined || install === undefined || paths === undefined) return false;
+
+      const matchingCommittedFiles = new Set<string>();
+
+      // This check belongs inside the queue: a matching core transaction may
+      // commit while a Vite callback is waiting behind it. File versions are
+      // captured when the job is queued so a later edit cannot consume an
+      // earlier event's marker.
+      for (const [file, eventVersion] of eventVersions) {
+        const committedVersion = this.pendingHotUpdateSuppressions.get(file);
+        if (committedVersion === undefined) continue;
+
+        // Matching markers are consumed exactly once. A mismatched marker is
+        // obsolete and must not survive to suppress a future reverted edit.
+        this.pendingHotUpdateSuppressions.delete(file);
+        if (committedVersion === eventVersion) matchingCommittedFiles.add(file);
+      }
+
+      if (eventVersions.size > 0 && matchingCommittedFiles.size === eventVersions.size) {
+        return true;
+      }
+
+      const replace = await pageRoutesNeedReplacement(changes, {
+        vite,
+        appSrcRoot: paths.appSrcRoot,
+        installedPages: this.installedPages,
+      });
+
+      if (!replace) return false;
+
+      const nextInstalledPages = await router.replaceRoutesBySourceFiles(
+        pageRouteSourceFiles(router.list()),
+        install,
+      );
+
+      // Advance observable state only after the router transaction commits.
+      // A rejected install keeps both the old route table and browser live.
+      this.installedPages = nextInstalledPages;
+      invalidateClientPageRegistry(vite);
+
+      for (const [file, eventVersion] of eventVersions) {
+        if (!matchingCommittedFiles.has(file)) {
+          this.pendingHotUpdateSuppressions.set(file, eventVersion);
+        }
+      }
+
+      return true;
+    });
+
+    this.pageRouteReloadQueue = run;
+    return run;
+  }
+
+  /**
+   * Vite-side ordering barrier. It publishes a changed route graph before the
+   * page-registry plugin can reload the document; a matching change already
+   * handled by core is consumed once, preventing a duplicate full reload.
+   */
+  protected async handlePageHotUpdate(file: string): Promise<boolean> {
+    const absoluteFile = path.resolve(file);
+    const changes = this.classifyPageChanges([absoluteFile]);
+    if (changes === undefined) return false;
+
+    return this.enqueuePageRouteReload(changes);
+  }
+
+  /**
+   * Live page routing update. Despite the connector API name, this never closes
+   * Vite: it atomically replaces page-owned routes only when membership or the
+   * canonical route identity changed, then refreshes the client registry.
+   */
+  public async restart(): Promise<void> {
+    const changes = this.pendingPageChanges;
+    this.pendingPageChanges = undefined;
+
+    if (
+      changes === undefined ||
+      this.resolvedPaths === undefined ||
+      this.vite === undefined ||
+      this.installDevPageRoutes === undefined
+    ) {
+      return;
+    }
+
+    await this.enqueuePageRouteReload(changes);
   }
 
   /** The pages this connector registered on the router, in registration order. */
@@ -766,7 +938,10 @@ export class WebConnector extends BaseConnector {
         // why the layer has to be registered from a plugin and not from
         // `vite.middlewares.use(...)` after this call returns.
         devErrorTransportPlugin({ isProductionRuntime, buildErrorMessage }),
-        ...warlockClientBoundary({ appRoot: paths.appRoot }),
+        ...warlockClientBoundary({
+          appRoot: paths.appRoot,
+          beforePageHotUpdate: ({ file }) => this.handlePageHotUpdate(file),
+        }),
         // AFTER the boundary, and the order matters among `enforce: "pre"`
         // plugins (Vite keeps array order within an enforce bucket).
         // `warlock:projection` strips a page's server exports — `loader` and

@@ -146,6 +146,18 @@ export function webConnector(options: WebConnectorFactoryOptions = {}): Connecto
     shutdown: async () => {
       await instance?.shutdown();
     },
-    shouldRestart: () => false,
+
+    // Asked on EVERY watcher batch, so the `instance?.` is load-bearing twice:
+    // it keeps the answer free for a connector that never booted, and it is the
+    // only reason this delegate can forward the question at all — by the time a
+    // watcher batch exists, `boot()` has already loaded the heavy half, so
+    // reading the real answer off it costs nothing beyond the call.
+    //
+    // It used to be a hard `false`, which meant a `*.page.tsx` created while
+    // `warlock dev` was running was never noticed: page routes are installed
+    // once, in `WebConnector.boot()`, so the new page's URL 404'd in silence.
+    // The connector itself now decides: add/remove and route-identity edits are
+    // live route-table work; component-body-only edits remain Vite HMR work.
+    shouldRestart: (changedFiles: string[]) => instance?.shouldRestart(changedFiles) ?? false,
   };
 }

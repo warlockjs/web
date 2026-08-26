@@ -158,6 +158,7 @@ describe("production page route installation", () => {
     expect(registered[0].options).toEqual({ name: "main", isPage: true });
     expect(installed).toEqual([
       {
+        declaredPath: "/",
         path: "/",
         name: "main",
         file: "src/app/main/web/home.page.tsx",
