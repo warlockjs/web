@@ -10,6 +10,13 @@ import {
   installPageRoutesFromManifest,
   type InstallPageRoutesFromManifestOptions,
 } from "./install-page-routes-from-manifest";
+import {
+  DuplicateNotFoundPageError,
+  frameworkDefaultNotFoundDocument,
+  NotFoundPageDeclaresRouteError,
+  NOT_FOUND_ROUTE_NAME,
+  NOT_FOUND_ROUTE_PATH,
+} from "./not-found-page";
 import type { PageManifest, PageManifestPageEntry } from "./page-manifest";
 
 type RegisteredRoute = {
@@ -21,17 +28,34 @@ type RegisteredRoute = {
 /**
  * A router stand-in that records what was registered. Registration is the whole
  * observable output of this module, so the double only has to remember it.
+ *
+ * The catch-all is recorded SEPARATELY. Every install registers the not-found
+ * route (`*`) whether or not the build carried a `404.page.tsx`, and it is not
+ * one of the pages — no declared URL, not in the returned table, not published
+ * for `href()`. Keeping it out of `registered` keeps that array meaning what
+ * every case below was written to mean: the pages that declared a path.
  */
-function recordingRouter() {
+function recordingRouter(apiRoutes: readonly string[] = []) {
   const registered: RegisteredRoute[] = [];
+  const notFound: RegisteredRoute[] = [];
 
   const router = {
     get(path: string, handler: PageRouteHandler, options: RegisteredRoute["options"]) {
-      registered.push({ path, handler, options });
+      (path === NOT_FOUND_ROUTE_PATH ? notFound : registered).push({ path, handler, options });
     },
+    // `apiRoutes` stands for the routes the APPLICATION registered on the same
+    // router — pages and API share one namespace, and the not-found route's rule
+    // is computed from exactly this table.
+    list: () => [
+      ...apiRoutes.map((path) => ({ path, isPage: false })),
+      ...[...registered, ...notFound].map((route) => ({
+        path: route.path,
+        isPage: route.options.isPage,
+      })),
+    ],
   } as unknown as InstallPageRoutesFromManifestOptions["router"];
 
-  return { router, registered };
+  return { router, registered, notFound };
 }
 
 /**
@@ -106,8 +130,9 @@ const productsPage: PageManifestPageEntry = {
 function install(
   manifest: PageManifest,
   overrides: Partial<InstallPageRoutesFromManifestOptions> = {},
+  apiRoutes: readonly string[] = [],
 ) {
-  const { router, registered } = recordingRouter();
+  const { router, registered, notFound } = recordingRouter(apiRoutes);
   const { createHandler, built } = recordingHandlerFactory();
 
   const run = () =>
@@ -119,7 +144,7 @@ function install(
       ...overrides,
     });
 
-  return { run, registered, built };
+  return { run, registered, notFound, built };
 }
 
 describe("production page route installation", () => {
@@ -621,5 +646,134 @@ describe("the route table it publishes", () => {
     install(manifestOf([homePage])).run();
 
     expect(routeTablePublisher()).toBe("installPageRoutesFromManifest (production)");
+  });
+});
+
+/**
+ * THE NOT-FOUND ROUTE, production half.
+ *
+ * The properties that matter are the same three in both modes: the page is not
+ * registered at a URL of its own, the catch-all is registered whether or not the
+ * application wrote one, and the handler is built with no layout and a 404 for a
+ * rendered-OK status.
+ */
+describe("installPageRoutesFromManifest — the not-found page", () => {
+  const notFoundPage: PageManifestPageEntry = {
+    module: { default: () => null },
+    sourceFile: "src/app/main/web/404.page.tsx",
+    layouts: [homeLayout],
+  };
+
+  it("registers the catch-all last, under the reserved name, marked as a page", () => {
+    const { run, registered, notFound } = install(manifestOf([homePage, notFoundPage]));
+
+    run();
+
+    // The 404 page is NOT one of the registered pages — no `/404`, no path of
+    // its own, nothing derived from its filename.
+    expect(registered.map((route) => route.path)).toEqual(["/"]);
+    expect(notFound).toHaveLength(1);
+    expect(notFound[0].path).toBe(NOT_FOUND_ROUTE_PATH);
+    expect(notFound[0].options).toEqual({ name: NOT_FOUND_ROUTE_NAME, isPage: true });
+  });
+
+  it("keeps the not-found page out of the returned table, so href() cannot point at it", () => {
+    const { run } = install(manifestOf([homePage, notFoundPage]));
+
+    const installed = run();
+
+    expect(installed.map((page) => page.file)).toEqual(["src/app/main/web/home.page.tsx"]);
+    expect(() => href(NOT_FOUND_ROUTE_NAME)).toThrowError();
+  });
+
+  it("builds its handler with no layout, the request's own path as the pattern, and a 404 status", () => {
+    const { run, built } = install(manifestOf([homePage, notFoundPage]));
+
+    run();
+
+    const handler = built.find((options) => options.pageFile === notFoundPage.sourceFile);
+
+    expect(handler).toBeDefined();
+    expect(handler?.layoutFile).toBeUndefined();
+    expect(handler?.name).toBe(NOT_FOUND_ROUTE_NAME);
+    expect(handler?.statusForRenderedOk).toBe(404);
+    expect(handler?.matchPath?.("/anything/at/all")).toBe("/anything/at/all");
+  });
+
+  it("registers the catch-all even with no 404 page in the build — the framework default still answers 404", () => {
+    const { run, notFound, built } = install(manifestOf([homePage]));
+
+    run();
+
+    expect(notFound).toHaveLength(1);
+    // No page handler was built for it: there is no page to build one from.
+    expect(built.map((options) => options.pageFile)).toEqual(["src/app/main/web/home.page.tsx"]);
+  });
+
+  it("registers nothing at all for a build that discovered no pages", () => {
+    const { run, registered, notFound } = install(manifestOf([]));
+
+    run();
+
+    expect(registered).toEqual([]);
+    // "Configured with web, no pages yet" is legal, and an application with no
+    // page surface has no page 404 to answer with.
+    expect(notFound).toEqual([]);
+  });
+
+  it("refuses two not-found pages by name rather than letting walk order pick one", () => {
+    const second: PageManifestPageEntry = {
+      module: { default: () => null },
+      sourceFile: "src/app/shop/web/404.page.tsx",
+      layouts: [],
+    };
+
+    const { run, registered } = install(manifestOf([homePage, notFoundPage, second]));
+
+    expect(() => run()).toThrowError(DuplicateNotFoundPageError);
+    expect(() => run()).toThrowError(/src\/app\/shop\/web\/404\.page\.tsx/);
+    // Refused before anything was registered.
+    expect(registered).toEqual([]);
+  });
+
+  it("refuses a not-found page that declares a route export — it has no URL to promise", () => {
+    const withRoute: PageManifestPageEntry = {
+      module: { default: () => null, route: "/404" },
+      sourceFile: "src/app/main/web/404.page.tsx",
+      layouts: [],
+    };
+
+    const { run, registered } = install(manifestOf([homePage, withRoute]));
+
+    expect(() => run()).toThrowError(NotFoundPageDeclaresRouteError);
+    expect(registered).toEqual([]);
+  });
+
+  it("answers a bare fetch() with JSON through the registered handler", async () => {
+    const { run, notFound } = install(manifestOf([homePage, notFoundPage]), {}, ["/api/users"]);
+
+    run();
+
+    const sent: { body: unknown; status?: number }[] = [];
+    const context = {
+      // `*/*` is what `fetch()` sends: no explicit `text/html`, so JSON.
+      request: { method: "GET", path: "/api/uzers", header: () => "*/*" },
+      response: {
+        send: async (body: unknown, status?: number) => {
+          sent.push({ body, status });
+        },
+      },
+    };
+
+    // The caller named no media type it wanted, so the document path is never
+    // entered — whatever the path happens to look like.
+    await notFound[0].handler(context as never);
+
+    expect(sent).toEqual([
+      {
+        status: 404,
+        body: { error: "Route not found", path: "/api/uzers", method: "GET" },
+      },
+    ]);
   });
 });

@@ -62,6 +62,33 @@ export type PageRouteHandlerOptions = {
   stylesheetUrls?: readonly string[];
   /** Same helper `dev-server.ts` exports — passed in, never imported. */
   applyBufferedCookie: (response: Response, cookie: BufferedCookie) => void;
+  /**
+   * The pattern stage 1 matches `request.path` against, when it differs from
+   * the REGISTERED path. Defaults to `path`, which is right for every route
+   * whose URL is its own.
+   *
+   * Exactly one route needs it: the not-found page, registered on the catch-all
+   * `*`. `matchRoute` compares segment by segment (`./match-page-route.ts`) and
+   * has no wildcard token, so a route registered as `*` matches NOTHING — the
+   * pipeline reports no match and `renderPageRequest` answers `{ html: "",
+   * status: 404 }`. Correct status, empty document: a 404 page that never
+   * renders its own body. Handing it `requestPath => requestPath` makes the
+   * requested URL the route's pattern for that one request, so the match is
+   * trivially true and the page renders for the URL the visitor actually asked
+   * for.
+   */
+  matchPath?: (requestPath: string) => string;
+  /**
+   * The status this route answers with when the pipeline settles on a plain
+   * `200` — the not-found route's `404`, and nothing else uses it.
+   *
+   * Applied ONLY to `200`, never as a blanket override: a `200` from this
+   * pipeline means "the document rendered and nobody objected", which for this
+   * route is precisely the not-found case. Any other settled status is a real
+   * outcome that the page or the boundary decided — a 500 from a failed render,
+   * a redirect — and overwriting it would report a broken page as a missing one.
+   */
+  statusForRenderedOk?: number;
 };
 
 export type PageRouteHandler = (context: HttpContext) => Promise<void>;
@@ -162,6 +189,8 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     hydrationClientModuleUrl,
     stylesheetUrls,
     applyBufferedCookie,
+    matchPath,
+    statusForRenderedOk,
   } = options;
 
   return async ({ request, response }: HttpContext) => {
@@ -177,7 +206,9 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       page: ownPageModule as PageTripleModule,
     };
 
-    const routes: PageRouteEntry[] = [{ path, name, triple }];
+    const routes: PageRouteEntry[] = [
+      { path: matchPath === undefined ? path : matchPath(request.path), name, triple },
+    ];
 
     // A DATA request runs everything above and below this line identically —
     // it is the same route, the same match and the same pipeline — and differs
@@ -189,6 +220,15 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       routes,
       createHttp: () => ({ request, response }),
     });
+
+    // See `statusForRenderedOk`: a settled 200 is the only status this route is
+    // allowed to restate, and both the document and the data branch below must
+    // restate it the same way — a client navigation that received 200 with a
+    // not-found payload would push the URL into history as a real page.
+    const status =
+      rendered.status === 200 && statusForRenderedOk !== undefined
+        ? statusForRenderedOk
+        : rendered.status;
 
     if (wantsData) {
       // Cookies and headers FIRST, exactly as the document path does below and
@@ -214,7 +254,7 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       // synthesising an empty payload the client would try to render as a page.
       if (rendered.bundle === undefined) {
         response.setContentType(DATA_RESPONSE_CONTENT_TYPE);
-        await response.send(JSON.stringify({ error: "not_found" }), rendered.status);
+        await response.send(JSON.stringify({ error: "not_found" }), status);
 
         return;
       }
@@ -235,7 +275,7 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       // A string body also bypasses `parseBody()` entirely, so the content type
       // has to be declared rather than inferred from an object body.
       response.setContentType(DATA_RESPONSE_CONTENT_TYPE);
-      await response.send(JSON.stringify(buildHydrationPayload(rendered.bundle)), rendered.status);
+      await response.send(JSON.stringify(buildHydrationPayload(rendered.bundle)), status);
 
       return;
     }
@@ -267,6 +307,6 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
 
     response.headers(rendered.headers);
 
-    await response.html(html, rendered.status);
+    await response.html(html, status);
   };
 }

@@ -727,7 +727,13 @@ describe("WebConnector — the manifest mode branch", () => {
         // reading the mode and started reading the value.
         await connector.boot();
 
-        expect(registered).toEqual([{ path: "/products", name: "main.products" }]);
+        expect(registered).toEqual([
+          { path: "/products", name: "main.products" },
+          // The catch-all, registered last and belonging to the framework
+          // rather than to the application: it answers every URL that no page
+          // and no API route claimed, with a 404 status either way.
+          { path: "*", name: "warlock.not-found" },
+        ]);
         expect(connector.getPageManifest()).toBe(providedManifest);
         expect(connector.getInstalledPages()).toEqual([
           {
@@ -909,7 +915,13 @@ describe("WebConnector — production page serving", () => {
         await connector.boot();
 
         // It boots, and the pages are on the router.
-        expect(registered).toEqual([{ path: "/products", name: "main.products" }]);
+        expect(registered).toEqual([
+          { path: "/products", name: "main.products" },
+          // The catch-all, registered last and belonging to the framework
+          // rather than to the application: it answers every URL that no page
+          // and no API route claimed, with a 404 status either way.
+          { path: "*", name: "warlock.not-found" },
+        ]);
 
         // THE property this case exists for: a production boot that serves
         // pages still never touches the dev-only half.

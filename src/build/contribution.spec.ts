@@ -7,6 +7,7 @@ import type { ConnectorBuildContext } from "@warlock.js/core";
 import {
   assertWebPackageRoot,
   ClientOutDirNotSupportedError,
+  ConnectorPluginsNotSupportedError,
   createWebBuildContribution,
   resolveWebPackageRoot,
   WebPackageRootResolutionError,
@@ -202,6 +203,71 @@ describe("web build contribution — clientOutDir", () => {
 
     expect(generatePagesBarrelSpy).not.toHaveBeenCalled();
     expect(buildHydrationClient).not.toHaveBeenCalled();
+  });
+});
+
+describe("web build contribution — connector plugins", () => {
+  it("fails the build, naming the option, when the connector was given plugins", async () => {
+    const appRoot = makeTree({ "src/web/root.tsx": APP, "src/web/home.page.tsx": PAGE });
+    const context = buildContext(appRoot);
+    const contribution = createWebBuildContribution({ connectorPluginCount: 1 });
+
+    let thrown: unknown;
+
+    try {
+      await contribution.generate?.(context);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(ConnectorPluginsNotSupportedError);
+    expect((thrown as Error).name).toBe("ConnectorPluginsNotSupportedError");
+    expect((thrown as Error).message).toContain('"plugins"');
+    expect((thrown as Error).message).toContain("webConnector({ plugins })");
+    // An error that only says "no" costs the reader the hour this one saves.
+    expect((thrown as Error).message).toContain("postcss.config.mjs");
+  });
+
+  it("refuses before writing the barrel or building the client — no partial artifacts", async () => {
+    const appRoot = makeTree({ "src/web/root.tsx": APP, "src/web/home.page.tsx": PAGE });
+    const context = buildContext(appRoot);
+
+    generatePagesBarrelSpy.mockClear();
+    buildHydrationClient.mockClear();
+
+    await expect(
+      createWebBuildContribution({ connectorPluginCount: 2 }).generate?.(context),
+    ).rejects.toBeInstanceOf(ConnectorPluginsNotSupportedError);
+
+    expect(generatePagesBarrelSpy).not.toHaveBeenCalled();
+    expect(buildHydrationClient).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(context.productionDir, "pages.ts"))).toBe(false);
+  });
+
+  it("constructing the contribution never throws — `warlock dev` loads this same config", () => {
+    // The refusal lives in `generate`, which only a build calls. If it moved to
+    // the constructor, a connector with dev-only plugins could not boot the dev
+    // server those plugins exist for.
+    expect(() => createWebBuildContribution({ connectorPluginCount: 3 })).not.toThrow();
+  });
+
+  it("does not fire on the normal path — zero or absent plugins build as before", async () => {
+    const appRoot = makeTree({ "src/web/root.tsx": APP, "src/web/home.page.tsx": PAGE });
+    const context = buildContext(appRoot);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    generatePagesBarrelSpy.mockClear();
+    buildHydrationClient.mockClear();
+
+    const contribution = createWebBuildContribution({ connectorPluginCount: 0 });
+
+    await contribution.generate?.(context);
+    await contribution.emit?.(context);
+
+    expect(generatePagesBarrelSpy).toHaveBeenCalledTimes(1);
+    expect(buildHydrationClient).toHaveBeenCalledTimes(1);
+
+    log.mockRestore();
   });
 });
 

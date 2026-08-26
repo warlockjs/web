@@ -22,6 +22,7 @@ import type { SharedStoreResolver } from "../shared";
 import type { BufferedCookie } from "./buffered-response";
 import type { PageContextRunner } from "./execute-page-request";
 import type { InstalledManifestPageRoute } from "./install-page-routes-from-manifest";
+import { isNotFoundPageFile } from "./not-found-page";
 import type { PageManifest } from "./page-manifest";
 
 /** The only export this module reads off a page module namespace. */
@@ -96,6 +97,13 @@ export class PageManifestEntryMissingRouteError extends Error {
  */
 function assertEveryPageDeclaresRoute(manifest: PageManifest): void {
   for (const page of manifest.pages) {
+    // THE ONE EXEMPTION, and it is not a relaxation of the rule — it is the
+    // rule's premise not applying. Every other page needs a `route` because a
+    // page with no URL is a page nothing can reach; `404.page.tsx` is reached by
+    // NOT matching, so a `route` on it would be the error instead
+    // (`install-page-routes-from-manifest.ts` refuses that one).
+    if (isNotFoundPageFile(page.sourceFile)) continue;
+
     if ((page.module as PageModuleShape).route === undefined) {
       throw new PageManifestEntryMissingRouteError(page.sourceFile);
     }

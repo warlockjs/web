@@ -35,6 +35,15 @@ import {
   type PageRouteHandlerOptions,
 } from "./create-page-route-handler";
 import type { PipelineMiddleware } from "./execute-page-request";
+import {
+  createNotFoundRouteHandler,
+  DuplicateNotFoundPageError,
+  isNotFoundPageFile,
+  NotFoundPageDeclaresRouteError,
+  NOT_FOUND_ROUTE_NAME,
+  NOT_FOUND_ROUTE_PATH,
+  type RegisteredRouteShape,
+} from "./not-found-page";
 import type { PageManifest, PageManifestLayoutEntry, PageManifestPageEntry } from "./page-manifest";
 
 /** A page declares either a bare path or a path plus an explicit route name. */
@@ -240,10 +249,27 @@ export function installPageRoutesFromManifest(
   // every lookup into a miss.
   const loadModule = createPageModuleLoader(manifest);
 
+  // Same partition development makes, on the same rule (the filename), so the
+  // two modes cannot disagree about which file is the not-found page. It is
+  // taken OUT of the registration loop rather than skipped inside it: every step
+  // in there composes and claims a URL, and `404.page.tsx` has none.
+  const notFoundPages = manifest.pages.filter((page) => isNotFoundPageFile(page.sourceFile));
+  const pages = manifest.pages.filter((page) => !isNotFoundPageFile(page.sourceFile));
+
+  if (notFoundPages.length > 1) {
+    throw new DuplicateNotFoundPageError(notFoundPages.map((page) => page.sourceFile));
+  }
+
+  const notFoundPage = notFoundPages[0];
+
+  if (notFoundPage !== undefined && (notFoundPage.module as PageModuleShape).route !== undefined) {
+    throw new NotFoundPageDeclaresRouteError(notFoundPage.sourceFile);
+  }
+
   const installed: InstalledManifestPageRoute[] = [];
   const fileByPath = new Map<string, string>();
 
-  for (const page of manifest.pages) {
+  for (const page of pages) {
     const { host: layout, prefix: layoutPrefix } = layoutLevelOf(page);
     const routeExport = (page.module as PageModuleShape).route;
 
@@ -307,6 +333,40 @@ export function installPageRoutesFromManifest(
       layoutFile: layout?.sourceFile,
     });
   }
+
+  /*
+    THE CATCH-ALL — the same route dev registers, built the same way, differing
+    only in where a module comes from. Registered last, and registered even when
+    the build carried no `404.page.tsx`, so a production deployment answers 404
+    with the right STATUS whether or not anyone has designed the page yet.
+  */
+  router.get(
+    NOT_FOUND_ROUTE_PATH,
+    createNotFoundRouteHandler({
+      renderPage:
+        notFoundPage === undefined
+          ? undefined
+          : createHandler({
+              path: NOT_FOUND_ROUTE_PATH,
+              name: NOT_FOUND_ROUTE_NAME,
+              appFile: app.sourceFile,
+              pageFile: notFoundPage.sourceFile,
+              // No layout, and therefore no layout middleware — see the dev
+              // installer for why the not-found path takes nothing that can
+              // redirect or throw.
+              layoutFile: undefined,
+              loadModule,
+              hydrationClientModuleUrl,
+              stylesheetUrls,
+              applyBufferedCookie,
+              matchPath: (requestPath) => requestPath,
+              statusForRenderedOk: 404,
+            }),
+    }),
+    // `isPage` for the same reason the dev installer carries it — the router's
+    // duplicate-name error reads the flag to say which claimant is the page.
+    { name: NOT_FOUND_ROUTE_NAME, isPage: true },
+  );
 
   /*
     Same publish as the dev installer, for the same reason: `href()` and the

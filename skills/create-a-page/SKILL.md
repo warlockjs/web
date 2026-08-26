@@ -62,7 +62,9 @@ export default function ContactPage() {
 }
 ```
 
-The `route` export is required. Development skips a page without it; the production discovery pass refuses to build it.
+The `route` export is required, and a page without one is **refused, not skipped**. `warlock dev` and the production discovery pass throw the same `MissingRouteExportError`, naming the file, because a page with no route is a page nothing can ever reach.
+
+Changed in 5.1: through 5.0.2 the dev server silently skipped a route-less page, so the file you had just written 404'd with nothing said. Dev and build now reach the same verdict from the same condition.
 
 ## Route declarations
 
@@ -80,6 +82,8 @@ export const route = {
 ```
 
 Prefer an explicit stable `name` for links. Without one, Warlock derives a name from the module and declared path: a module page gets `<module>.<path-as-dots>`, a global root page gets `index`, and another global page gets its dotted path.
+
+**Only the route NAME is ever derived — never the route PATH.** There is no filename-to-URL convention in Warlock and there never has been. Omitting `route` does not fall back to the file's location; it fails (see above). Every segment of a page's URL is written down somewhere: the page's own `route.path`, prefixed by the literal `prefix` exports of the positional layouts above it ([use-layouts](../use-layouts/SKILL.md)). Where the file sits decides which layouts are above it — never what the path spells.
 
 The build reads `route` without executing application code. Declare it directly with `export const` and literal strings. Variables, function calls, computed object keys, spreads, and `export { route }` are refused.
 
@@ -123,9 +127,21 @@ The browser boundary is decided by the import graph, not by the file's location.
 
 Keep server-only repository and service reads inside `loader`. Do not read them from module-scope initializers or the default component.
 
+## Editing a page in development
+
+`warlock dev` decides Fast Refresh vs. a full reload by comparing the module's *skeleton* — its source with every component body masked out — across the edit. Everything outside a component body is part of the skeleton: imports, module-level declarations, and all server exports (`route`, `middleware`, `validation`, `loader`, `metadata`). The skeleton moving, with or without a simultaneous JSX change, forces a full reload; the skeleton holding still defers to Fast Refresh.
+
+- **A JSX-only edit hot-updates.** The skeleton is unchanged, so Vite's Fast Refresh applies the projected client code with no reload and no lost component state.
+- **A `metadata`-only edit reloads the document.** `metadata` sits outside the skeleton's masked region, so the edit moves it. Warlock sends a full reload, which re-runs SSR and rebuilds `<head>`. Component state is lost — that is the price of seeing the new `<title>` without touching the browser.
+- **Any module-level change reloads, not just `metadata`.** An edited import, a module-level declaration, or an edit confined to `route`, `middleware`, `validation`, or `loader` all move the skeleton the same way and take the same full-reload path.
+- **A helper function used only by the JSX still reloads if it is declared at module level.** The rule does not try to prove which half of a shared declaration the edit was "really" for — it over-approximates deliberately, because a false reload only costs component state, while a missed one ships a stale `<head>` and calls it a hot update.
+- Creating or deleting a page file is page-graph churn, not an in-place edit; Vite handles it on its own.
+
+Changed in 5.1: a metadata-only edit previously left a stale `<head>` until you refreshed the browser by hand. The current skeleton-comparison rule replaces that earlier, narrower "metadata-only" special case.
+
 ## Gotchas
 
-- **Do not derive URLs from filenames.** The file chooses discovery; `route` chooses the public URL.
+- **Do not expect URLs to be derived from filenames.** No such convention exists. The file's location chooses discovery and which layout prefixes apply; `route` chooses the rest of the public URL. A page with no `route` is refused, not mounted at its path.
 - **Keep `route` literal.** A computed route cannot be discovered without executing app code and is refused.
 - **Do not annotate the loader with `: PageLoader`.** That erases the return type `PageProps` needs.
 - **Components receive data, not HTTP objects.** `request` and `response` belong to loaders; the component also renders in the browser.

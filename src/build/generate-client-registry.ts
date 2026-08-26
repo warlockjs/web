@@ -120,6 +120,13 @@ function loadSource(page: DiscoveredPage, toImportSpecifier: (file: string) => s
 
   // Outermost first, exactly as discovery enumerated the chain — the order IS
   // the nesting, so reordering it would silently reparent the page.
+  //
+  // Emitted VERBATIM, including the empty chain discovery reports for the
+  // not-found page (`./discover-pages.ts`), which is what keeps hydration
+  // rendering the same `App(Page)` the installers SSR'd. The not-found case is
+  // NOT re-detected here: a second rule about which page gets layouts is a
+  // second convention waiting to disagree with the server's, which is the same
+  // reason `routePath` below is not re-composed either.
   const layoutBindings = page.layouts.map((layoutFile, index) => {
     bindings.push(`layout${index}`);
     specifiers.push(toImportSpecifier(layoutFile));

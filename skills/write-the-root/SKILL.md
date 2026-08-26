@@ -46,6 +46,8 @@ The browser hydrates `#root`, not the whole document. The client tree deliberate
 
 Because App is outside the hydrated subtree, put client state that must survive navigation in a layout or component beneath `#root`, not in the document root.
 
+**Requires 5.1 in an installed app.** In 5.0.0–5.0.2 the dev server handed the browser `react-dom/client` as raw CommonJS, so `hydrateRoot` was not there as a named export and the hydration entry died on import — no client JavaScript ran at all. The symptoms were a page that server-rendered correctly but had dead `useState`, no HMR, and `<Link>` doing full page loads. The fix pre-bundles React through Vite's `optimizeDeps`. If you are debugging this against a checkout of the framework itself, note that the defect never reproduced there: inside the monorepo the hydration entry resolves outside `node_modules` and React was always optimized normally.
+
 ## `<Head />`
 
 `<Head />` renders the resolved page metadata at that position. It takes no props and emits:

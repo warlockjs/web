@@ -8,6 +8,13 @@ import { NestedLayoutsNotSupportedError } from "../routing/layout-policy";
 import * as createPageRouteHandlerModule from "./create-page-route-handler";
 import type { PageRouteHandler, PageRouteHandlerOptions } from "./create-page-route-handler";
 import { installPageRoutes, type InstallPageRoutesOptions } from "./install-page-routes";
+import {
+  DuplicateNotFoundPageError,
+  frameworkDefaultNotFoundDocument,
+  NotFoundPageDeclaresRouteError,
+  NOT_FOUND_ROUTE_NAME,
+  NOT_FOUND_ROUTE_PATH,
+} from "./not-found-page";
 
 /**
  * `installPageRoutes` no longer walks the filesystem itself — every subject
@@ -46,18 +53,37 @@ afterEach(() => {
 
 type RegisteredRoute = { path: string; options: { name?: string; isPage?: boolean } };
 
-/** A router double that records every registration; the whole observable output of an install run. */
+/**
+ * A router double that records every registration; the whole observable output
+ * of an install run.
+ *
+ * The catch-all is recorded SEPARATELY. Every install that finds any page also
+ * registers the not-found route (`*`), and it is not one of the pages — it has
+ * no declared URL, it is not in the returned table and it is not published for
+ * `href()`. Splitting it here keeps `registered` meaning what every case below
+ * was written to mean: the pages that declared a path.
+ */
 function recordingRouter() {
   const registered: RegisteredRoute[] = [];
+  const notFound: (RegisteredRoute & { handler: PageRouteHandler })[] = [];
 
   const router = {
-    get(routePath: string, _handler: PageRouteHandler, options: RegisteredRoute["options"]) {
-      registered.push({ path: routePath, options });
+    get(routePath: string, handler: PageRouteHandler, options: RegisteredRoute["options"]) {
+      if (routePath === NOT_FOUND_ROUTE_PATH) {
+        notFound.push({ path: routePath, options, handler });
+      } else {
+        registered.push({ path: routePath, options });
+      }
+
       return router;
     },
+    list: () => [
+      ...registered.map((route) => ({ path: route.path, isPage: route.options.isPage })),
+      ...notFound.map((route) => ({ path: route.path, isPage: route.options.isPage })),
+    ],
   } as unknown as Router;
 
-  return { router, registered };
+  return { router, registered, notFound };
 }
 
 /**
@@ -86,7 +112,7 @@ function install(
   vite: InstallPageRoutesOptions["vite"],
   overrides: Partial<InstallPageRoutesOptions> = {},
 ) {
-  const { router, registered } = recordingRouter();
+  const { router, registered, notFound } = recordingRouter();
 
   const run = () =>
     installPageRoutes({
@@ -98,7 +124,7 @@ function install(
       ...overrides,
     });
 
-  return { run, registered };
+  return { run, registered, notFound };
 }
 
 describe("installPageRoutes — the global root, alongside a module root", () => {
@@ -122,6 +148,30 @@ describe("installPageRoutes — the global root, alongside a module root", () =>
     expect(registered.map((route) => route.path).sort()).toEqual(["/", "/dashboard"]);
     expect(installed.map((page) => page.path).sort()).toEqual(["/", "/dashboard"]);
     expect(installed.find((page) => page.path === "/dashboard")?.file).toBe(dashboardFile);
+  });
+});
+
+describe("installPageRoutes — a page with no route export", () => {
+  it("refuses it by name, with the same error the build throws, instead of silently skipping it", async () => {
+    const appRoot = makeAppTree({
+      "src/web/contact-us.page.tsx": "",
+      "src/web/home.page.tsx": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+    const contactFile = path.join(appSrcRoot, "web", "contact-us.page.tsx");
+    const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
+
+    const vite = fakeVite({
+      [contactFile]: {},
+      [homeFile]: { route: "/" },
+    });
+
+    const { run, registered } = install(appSrcRoot, vite);
+
+    await expect(run()).rejects.toThrowError(discoverPagesModule.MissingRouteExportError);
+    await expect(run()).rejects.toThrowError(/contact-us\.page\.tsx/);
+    // The boot fails; it does not half-register the rest of the app behind a warning.
+    expect(registered).toEqual([]);
   });
 });
 
@@ -467,5 +517,165 @@ describe("installPageRoutes — dev's URL is discovery's URL", () => {
 
     expect(discovered.map(page => page.routePath)).toEqual([installed[0]?.path]);
     expect(installed[0]?.path).toBe("/users/account/settings");
+  });
+});
+
+/**
+ * THE NOT-FOUND ROUTE, development half — the same three properties production
+ * proves, against a Vite-backed loader instead of a manifest.
+ */
+describe("installPageRoutes — the not-found page", () => {
+  it("registers the catch-all last, under the reserved name, and never at /404", async () => {
+    const appRoot = makeAppTree({
+      "src/web/home.page.tsx": "",
+      "src/web/404.page.tsx": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+    const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
+    const notFoundFile = path.join(appSrcRoot, "web", "404.page.tsx");
+
+    const vite = fakeVite({
+      [homeFile]: { route: "/" },
+      // No `route` export — the whole point.
+      [notFoundFile]: { default: () => null },
+    });
+
+    const { run, registered, notFound } = install(appSrcRoot, vite);
+    const installed = await run();
+
+    expect(registered.map((route) => route.path)).toEqual(["/"]);
+    expect(registered.some((route) => route.path === "/404")).toBe(false);
+    expect(notFound).toHaveLength(1);
+    expect(notFound[0].options).toEqual({ name: NOT_FOUND_ROUTE_NAME, isPage: true });
+    // Not in the returned table either, so `href()` cannot resolve it.
+    expect(installed.map((page) => page.file)).toEqual([homeFile]);
+  });
+
+  it("does not refuse it for lacking a route export, the way it refuses every other page", async () => {
+    const appRoot = makeAppTree({ "src/web/404.page.tsx": "" });
+    const appSrcRoot = path.join(appRoot, "src");
+    const notFoundFile = path.join(appSrcRoot, "web", "404.page.tsx");
+
+    const vite = fakeVite({ [notFoundFile]: { default: () => null } });
+
+    const { run, registered, notFound } = install(appSrcRoot, vite);
+
+    await expect(run()).resolves.toEqual([]);
+    expect(registered).toEqual([]);
+    expect(notFound).toHaveLength(1);
+  });
+
+  it("builds its handler with no layout, the request's own path as the pattern, and a 404 status", async () => {
+    const appRoot = makeAppTree({
+      "src/web/home.page.tsx": "",
+      "src/web/layout.tsx": "",
+      "src/web/404.page.tsx": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+    const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
+    const notFoundFile = path.join(appSrcRoot, "web", "404.page.tsx");
+
+    const vite = fakeVite({
+      [homeFile]: { route: "/" },
+      [notFoundFile]: { default: () => null },
+      [path.join(appSrcRoot, "web", "layout.tsx")]: { default: () => null },
+    });
+
+    const built: PageRouteHandlerOptions[] = [];
+    vi.spyOn(createPageRouteHandlerModule, "createPageRouteHandler").mockImplementation(
+      (options: PageRouteHandlerOptions): PageRouteHandler => {
+        built.push(options);
+
+        return async () => undefined;
+      },
+    );
+
+    const { run } = install(appSrcRoot, vite);
+    await run();
+
+    const handler = built.find((options) => options.pageFile === notFoundFile);
+
+    expect(handler).toBeDefined();
+    // A layout brings its whole chain's middleware, and a guard that redirects
+    // on the not-found path turns a missing page into an incident.
+    expect(handler?.layoutFile).toBeUndefined();
+    expect(handler?.statusForRenderedOk).toBe(404);
+    expect(handler?.matchPath?.("/anything/at/all")).toBe("/anything/at/all");
+  });
+
+  it("registers the catch-all even when the application ships no 404 page", async () => {
+    const appRoot = makeAppTree({ "src/web/home.page.tsx": "" });
+    const appSrcRoot = path.join(appRoot, "src");
+
+    const vite = fakeVite({ [path.join(appSrcRoot, "web", "home.page.tsx")]: { route: "/" } });
+
+    const { run, notFound } = install(appSrcRoot, vite);
+    await run();
+
+    expect(notFound).toHaveLength(1);
+  });
+
+  it("answers the framework default document, with a 404 status, when there is no 404 page", async () => {
+    const appRoot = makeAppTree({ "src/web/home.page.tsx": "" });
+    const appSrcRoot = path.join(appRoot, "src");
+
+    const vite = fakeVite({ [path.join(appSrcRoot, "web", "home.page.tsx")]: { route: "/" } });
+
+    const { run, notFound } = install(appSrcRoot, vite);
+    await run();
+
+    const sent: { body: unknown; status?: number }[] = [];
+
+    await notFound[0].handler({
+      // A browser navigation — the one request shape that opens the page path.
+      request: { method: "GET", path: "/nope", header: () => "text/html" },
+      response: {
+        html: async (body: string, status?: number) => {
+          sent.push({ body, status });
+        },
+      },
+    } as never);
+
+    expect(sent).toEqual([{ body: frameworkDefaultNotFoundDocument(), status: 404 }]);
+  });
+
+  it("registers nothing at all for an application with no pages", async () => {
+    const appRoot = makeAppTree({ "src/web/root.tsx": "" });
+    const appSrcRoot = path.join(appRoot, "src");
+
+    const { run, registered, notFound } = install(appSrcRoot, fakeVite({}));
+    await run();
+
+    expect(registered).toEqual([]);
+    expect(notFound).toEqual([]);
+  });
+
+  it("refuses two not-found pages by name rather than letting walk order pick one", async () => {
+    const appRoot = makeAppTree({
+      "src/web/404.page.tsx": "",
+      "src/app/shop/web/404.page.tsx": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+
+    const { run, registered, notFound } = install(appSrcRoot, fakeVite({}));
+
+    await expect(run()).rejects.toThrowError(DuplicateNotFoundPageError);
+    await expect(run()).rejects.toThrowError(/404\.page\.tsx/);
+    expect(registered).toEqual([]);
+    expect(notFound).toEqual([]);
+  });
+
+  it("refuses a not-found page that declares a route export, at install time", async () => {
+    const appRoot = makeAppTree({ "src/web/404.page.tsx": "" });
+    const appSrcRoot = path.join(appRoot, "src");
+    const notFoundFile = path.join(appSrcRoot, "web", "404.page.tsx");
+
+    const vite = fakeVite({ [notFoundFile]: { default: () => null, route: "/404" } });
+
+    const { run, notFound } = install(appSrcRoot, vite);
+
+    await expect(run()).rejects.toThrowError(NotFoundPageDeclaresRouteError);
+    // Refused at boot, not on the first request that misses.
+    expect(notFound).toEqual([]);
   });
 });

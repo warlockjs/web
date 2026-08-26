@@ -7,7 +7,9 @@ import {
   discoverPages,
   DuplicatePageRouteNameError,
   MissingRouteExportError,
+  UnknownMetadataKeyError,
 } from "./discover-pages";
+import { NotFoundPageDeclaresRouteError } from "../server/not-found-page";
 import { NonLiteralRouteExportError } from "./read-route-exports";
 
 const temporaryDirectories: string[] = [];
@@ -697,5 +699,253 @@ describe("discoverPages — the middleware chain, and the temporary refusal that
     expect(relative(appRoot, page.middlewareLayouts)).toEqual([
       "src/app/users/web/account/layout.tsx",
     ]);
+  });
+});
+
+/**
+ * The not-found page is the one page with no URL, and discovery has to agree
+ * with both installers about that — or the build emits an artefact the server
+ * refuses (or worse, one it accepts and serves differently).
+ */
+describe("discoverPages — 404.page.tsx", () => {
+  it("reports it without a `route` export, where any other page would be refused", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/app/main/web/home.page.tsx": pageDeclaring('export const route = "/";'),
+      "src/app/main/web/404.page.tsx": pageDeclaring(""),
+    });
+
+    const pages = discoverPages({ appRoot });
+
+    expect(pages).toHaveLength(2);
+
+    const notFound = pages.find((page) => page.pageFile.endsWith("404.page.tsx"));
+
+    // The reserved identity both installers register it under, so the client
+    // registry and the SSR'd document agree about which entry this is.
+    expect(notFound?.routeName).toBe("warlock.not-found");
+    // The catch-all the client matcher understands as a terminal token, sorted
+    // last by specificity — never in preference to a real page.
+    expect(notFound?.routePath).toBe("*");
+  });
+
+  it("still refuses every OTHER route-less page in the same tree", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/app/main/web/404.page.tsx": pageDeclaring(""),
+      "src/app/main/web/draft.page.tsx": pageDeclaring(""),
+    });
+
+    expect(() => discoverPages({ appRoot })).toThrowError(MissingRouteExportError);
+  });
+
+  it("refuses a `route` export on it — the opposite error, for the opposite reason", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/app/main/web/404.page.tsx": pageDeclaring('export const route = "/404";'),
+    });
+
+    try {
+      discoverPages({ appRoot });
+      expect.unreachable("expected discovery to reject a not-found page with a route export");
+    } catch (error) {
+      expect(error).toBeInstanceOf(NotFoundPageDeclaresRouteError);
+      expect((error as Error).message).toContain("404.page.tsx");
+    }
+  });
+
+  it("refuses two of them, because the reserved route name can only identify one", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/app/main/web/404.page.tsx": pageDeclaring(""),
+      "src/app/shop/web/404.page.tsx": pageDeclaring(""),
+    });
+
+    expect(() => discoverPages({ appRoot })).toThrowError(DuplicatePageRouteNameError);
+  });
+});
+
+/**
+ * THE DEFECT THIS BLOCK EXISTS FOR, in the words of the report that found it:
+ *
+ * ```ts
+ * export const metadata = { tittle: x }
+ * ```
+ *
+ * `tittle` is not a joke — it is the specification. That line compiles, the page
+ * is served with no `<title>`, and nothing anywhere says a word. An annotated
+ * export is refused by TypeScript (`metadata.spec.ts` proves that, executed by
+ * `yarn typecheck`); NOBODY WRITES THE ANNOTATION, so the contract is checked
+ * here too, where every page already passes through.
+ */
+describe("discoverPages — the `metadata` contract", () => {
+  /** A routed page whose `metadata` export is `declaration`, verbatim. */
+  function pageWithMetadata(declaration: string): string {
+    return pageDeclaring(`export const route = "/list";\n${declaration}`);
+  }
+
+  function discoverWith(metadata: string) {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/app/shop/web/products.page.tsx": pageWithMetadata(metadata),
+    });
+
+    return () => discoverPages({ appRoot });
+  }
+
+  it("REFUSES an unannotated typo — the one the compiler cannot see", () => {
+    // No `: PageMetadata` anywhere. TypeScript infers `{ tittle: string }` and
+    // is satisfied. This is the acceptance criterion: a fix that only fires
+    // when someone already wrote the type is a fix that does not fire.
+    const discover = discoverWith('export const metadata = { tittle: "x" };');
+
+    expect(discover).toThrow(UnknownMetadataKeyError);
+    // The FILE and the KEY, because a build error that says only "unknown key"
+    // sends the developer looking through every page they have.
+    expect(discover).toThrow(/src\/app\/shop\/web\/products\.page\.tsx/);
+    expect(discover).toThrow(/tittle/);
+  });
+
+  it("names the line and suggests the key that was meant", () => {
+    const discover = discoverWith('export const metadata = { tittle: "x" };');
+
+    try {
+      discover();
+      expect.unreachable("discovery accepted an unknown metadata key");
+    } catch (error) {
+      const failure = error as UnknownMetadataKeyError;
+
+      expect(failure.unknownKeys).toEqual([
+        { container: "metadata", key: "tittle", line: 2, suggestion: "title" },
+      ]);
+      expect(failure.message).toContain("Did you mean `title`?");
+    }
+  });
+
+  it("accepts every key a renderer actually reads, and no page pays for the check", () => {
+    // The full surface of `MetadataOutput`, which is the full surface of
+    // `components/head.ts` — if this ever throws, the type and the key list
+    // have drifted from the tags.
+    const discover = discoverWith(`export const metadata = {
+      title: "Products",
+      description: "Everything in stock",
+      keywords: ["shop", "products"],
+      canonical: "https://example.com/products",
+      robots: "index,follow",
+      openGraph: { title: "Products", description: "d", image: "i", url: "u", type: "website" },
+      twitter: { card: "summary", title: "Products", description: "d", image: "i" },
+    };`);
+
+    expect(discover).not.toThrow();
+  });
+
+  it("checks INSIDE openGraph and twitter — same silence, one level down", () => {
+    const discover = discoverWith(
+      'export const metadata = { title: "x", openGraph: { titel: "x" } };',
+    );
+
+    expect(discover).toThrow(/`metadata\.openGraph\.titel`/);
+    expect(discover).toThrow(/Did you mean `title`\?/);
+  });
+
+  it("checks the FUNCTION form's concise body — how every reference-app page writes it", () => {
+    const discover = discoverWith(
+      'export const metadata = ({ data }) => ({ title: data.name, descriptoin: "x" });',
+    );
+
+    expect(discover).toThrow(/`metadata\.descriptoin`/);
+    expect(discover).toThrow(/Did you mean `description`\?/);
+  });
+
+  it("checks a function form's `return`, wherever in the body it sits", () => {
+    const discover = discoverWith(`export const metadata = ({ data }) => {
+      if (data.missing) {
+        return { robtos: "noindex" };
+      }
+
+      return { title: data.name };
+    };`);
+
+    expect(discover).toThrow(/`metadata\.robtos`/);
+    expect(discover).toThrow(/Did you mean `robots`\?/);
+  });
+
+  it("does not mistake a nested callback's return for the metadata", () => {
+    const discover = discoverWith(`export const metadata = ({ data }) => {
+      const rows = data.items.map(item => ({ tittle: item.name }));
+
+      return { title: rows.length + " items" };
+    };`);
+
+    expect(discover).not.toThrow();
+  });
+
+  it("reports EVERY unknown key at once, not the first one per build", () => {
+    const discover = discoverWith(
+      'export const metadata = { tittle: "x", descripton: "y", robots: "noindex" };',
+    );
+
+    try {
+      discover();
+      expect.unreachable("discovery accepted unknown metadata keys");
+    } catch (error) {
+      expect((error as UnknownMetadataKeyError).unknownKeys.map(({ key }) => key)).toEqual([
+        "tittle",
+        "descripton",
+      ]);
+    }
+  });
+
+  it("still refuses a key it cannot suggest a replacement for", () => {
+    const discover = discoverWith('export const metadata = { openGraphImage: "x" };');
+
+    expect(discover).toThrow(/`metadata\.openGraphImage` — no such key\./);
+    expect(discover).not.toThrow(/Did you mean/);
+  });
+
+  it("a spread adds keys but excuses none written beside it", () => {
+    const discover = discoverWith(
+      'export const metadata = { ...base, tittle: "x" };',
+    );
+
+    expect(discover).toThrow(/`metadata\.tittle`/);
+  });
+
+  it("says nothing about metadata it genuinely cannot read — computed keys and values elsewhere", () => {
+    // Refusing what a parse cannot see would fail builds that are fine. The
+    // type annotation is the second net in exactly these narrow places.
+    expect(discoverWith("export const metadata = buildMetadata();")).not.toThrow();
+    expect(discoverWith("export const metadata = shared;")).not.toThrow();
+    expect(discoverWith('export const metadata = { [key]: "x" };')).not.toThrow();
+  });
+
+  it("leaves a page with no metadata export alone — it is an optional export", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/app/shop/web/products.page.tsx": routed("/list"),
+    });
+
+    expect(() => discoverPages({ appRoot })).not.toThrow();
+  });
+
+  it("checks the ANNOTATED form too — the two nets catch the same key", () => {
+    const discover = discoverWith(
+      'export const metadata: PageMetadata = { tittle: "x" } as PageMetadata;',
+    );
+
+    expect(discover).toThrow(/`metadata\.tittle`/);
+  });
+
+  it("refuses the route-less page FIRST — the bigger defect names its own line", () => {
+    // Order is a decision, not an accident: a page nothing can reach is a
+    // larger problem than a page reached with a missing tag.
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/app/shop/web/products.page.tsx": pageDeclaring(
+        'export const metadata = { tittle: "x" };',
+      ),
+    });
+
+    expect(() => discoverPages({ appRoot })).toThrow(MissingRouteExportError);
   });
 });

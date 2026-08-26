@@ -92,6 +92,12 @@ The two prefix-only layouts above are legal because neither renders. Add a defau
 
 Non-rendering layouts may carry prefixes and middleware and may nest freely. Do not delete a middleware-only authorization boundary to satisfy the rendering limit; consolidate only the default-export wrappers.
 
+## `404.page.tsx` never gets a layout
+
+A `404.page.tsx` renders with no layouts, even when it sits in a directory with a rendering `layout.tsx` above it. Discovery reports an empty layout chain for the not-found page only, and both the client hydration registry and the production route table read from that same chain — the server has always rendered it with no layout wrapper, so the client no longer hydrates one either. A page that exists to handle failure must not depend on app chrome that can itself throw or need data.
+
+This is scoped to the not-found page: an ordinary page in the same directory still gets its full layout chain, and nested-layout refusal on the 404's own path is still enforced exactly as it is for any other page.
+
 ## Why layout state persists
 
 Client navigation rebuilds the Layout + Page element tree at the same `#root` position. When the next page uses the same layout component type in the same position, React reconciles it instead of remounting it. Layout state such as open menus, scroll containers, and media survives.

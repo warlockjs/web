@@ -64,6 +64,21 @@ export {
   type PageRouteExport,
 } from "./install-page-routes";
 export {
+  acceptsHtmlExplicitly,
+  classifyUnmatchedRequest,
+  createNotFoundRouteHandler,
+  DuplicateNotFoundPageError,
+  frameworkDefaultNotFoundDocument,
+  isNotFoundPageFile,
+  NotFoundPageDeclaresRouteError,
+  NOT_FOUND_PAGE_FILENAME,
+  NOT_FOUND_ROUTE_NAME,
+  NOT_FOUND_ROUTE_PATH,
+  type NotFoundRouteHandlerOptions,
+  type RegisteredRouteShape,
+  type UnmatchedRequestKind,
+} from "./not-found-page";
+export {
   devStylesheetUrls,
   productionStylesheetUrls,
   VITE_DIRECT_CSS_QUERY,

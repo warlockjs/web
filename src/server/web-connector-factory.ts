@@ -94,6 +94,14 @@ export function webConnector(options: WebConnectorFactoryOptions = {}): Connecto
   const build: ConnectorBuildContribution = createWebBuildContribution({
     ...buildOptions,
     webRoot: buildOptions?.webRoot ?? webRoot,
+    // The COUNT, never the array. `connectorOptions.plugins` are dev-server
+    // plugins and the production build cannot apply them; the build contribution
+    // refuses the build rather than let them vanish silently
+    // (`ConnectorPluginsNotSupportedError`). Passing a number keeps this options
+    // object JSON-serializable — handing the plugin instances over would pull
+    // Vite into every config load, which is the one thing this module exists to
+    // prevent — and the refusal needs nothing more than "how many".
+    connectorPluginCount: connectorOptions.plugins?.length ?? 0,
   });
 
   let instance: WebConnector | undefined;

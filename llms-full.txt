@@ -6,11 +6,13 @@
 
 > First published release: 5.0.0. `@warlock.js/web` had never been published to npm before this release.
 
+> Use 5.1 or newer. In an installed 5.0.0–5.0.2 app no client JavaScript ran at all: the dev server served `react-dom/client` as raw CommonJS, so `hydrateRoot` was missing and hydration failed on import — dead `useState`, no HMR, `<Link>` falling back to full page loads. Pages still server-rendered, which is why it looked like a React problem.
+
 > Consumer entry points: `@warlock.js/web`, `@warlock.js/web/client/runtime`, `@warlock.js/web/connector`, and `@warlock.js/web/vite`. The published `@warlock.js/web/hydration` subpath is a framework build input; application code never imports it.
 
 > Deliberate non-goals: server actions are a v2 design decision rather than a missing v1 feature; page routes reject regex parameters, optional parameters, and multiple parameters in one segment.
 
-> Generated artifact. Concatenates every SKILL.md and reference file under `@warlock.js/web/skills/`. Re-run `node scripts/generate-llms.mjs` after any change.
+> Hand-maintained. Concatenates every SKILL.md and reference file under `@warlock.js/web/skills/`. Update this file by hand when the package's public API changes.
 
 ## add-web-to-an-app  `@warlock.js/web/add-web-to-an-app/SKILL.md`
 
@@ -122,7 +124,7 @@ The desired result is one page route at `/` and, when the stock JSON route exist
 
 ---
 name: create-a-page
-description: 'Create an SSR React page under `src/web/**` or `src/app/<module>/web/**` with a literal `route`, a default component, an optional typed `loader`, and page `metadata`. Triggers: `*.page.tsx`, `route`, `PageLoader`, `PageProps`, `PageMetadata`; "create a page", "add an SSR route", "make a React page", "type page loader data"; typical import `import type { PageLoader, PageProps } from "@warlock.js/web"`. Skip: root document shell — `@warlock.js/web/write-the-root/SKILL.md`; layout wrappers and prefixes — `@warlock.js/web/use-layouts/SKILL.md`; loader lifecycle and `shared` — `@warlock.js/web/load-page-data/SKILL.md`; competing frameworks `next`, `remix`, `react-router` file routes.'
+description: 'Create an SSR React page under `src/web/**` or `src/app/<module>/web/**` with a literal `route`, a default component, an optional typed `loader`, and page `metadata`; know when a dev edit gets Fast Refresh vs. a full reload. Triggers: `*.page.tsx`, `route`, `PageLoader`, `PageProps`, `PageMetadata`, Fast Refresh, HMR; "create a page", "add an SSR route", "make a React page", "type page loader data", "why did my edit reload the page"; typical import `import type { PageLoader, PageProps } from "@warlock.js/web"`. Skip: root document shell — `@warlock.js/web/write-the-root/SKILL.md`; layout wrappers and prefixes — `@warlock.js/web/use-layouts/SKILL.md`; loader lifecycle and `shared` — `@warlock.js/web/load-page-data/SKILL.md`; competing frameworks `next`, `remix`, `react-router` file routes.'
 ---
 
 # Warlock — create a page
@@ -184,7 +186,9 @@ export default function ContactPage() {
 }
 ```
 
-The `route` export is required. Development skips a page without it; the production discovery pass refuses to build it.
+The `route` export is required, and a page without one is **refused, not skipped**. `warlock dev` and the production discovery pass throw the same `MissingRouteExportError`, naming the file, because a page with no route is a page nothing can ever reach.
+
+Changed in 5.1: through 5.0.2 the dev server silently skipped a route-less page, so the file you had just written 404'd with nothing said. Dev and build now reach the same verdict from the same condition.
 
 ## Route declarations
 
@@ -202,6 +206,8 @@ export const route = {
 ```
 
 Prefer an explicit stable `name` for links. Without one, Warlock derives a name from the module and declared path: a module page gets `<module>.<path-as-dots>`, a global root page gets `index`, and another global page gets its dotted path.
+
+**Only the route NAME is ever derived — never the route PATH.** There is no filename-to-URL convention in Warlock and there never has been. Omitting `route` does not fall back to the file's location; it fails (see above). Every segment of a page's URL is written down somewhere: the page's own `route.path`, prefixed by the literal `prefix` exports of the positional layouts above it ([use-layouts](../use-layouts/SKILL.md)). Where the file sits decides which layouts are above it — never what the path spells.
 
 The build reads `route` without executing application code. Declare it directly with `export const` and literal strings. Variables, function calls, computed object keys, spreads, and `export { route }` are refused.
 
@@ -245,9 +251,21 @@ The browser boundary is decided by the import graph, not by the file's location.
 
 Keep server-only repository and service reads inside `loader`. Do not read them from module-scope initializers or the default component.
 
+## Editing a page in development
+
+`warlock dev` decides Fast Refresh vs. a full reload by comparing the module's *skeleton* — its source with every component body masked out — across the edit. Everything outside a component body is part of the skeleton: imports, module-level declarations, and all server exports (`route`, `middleware`, `validation`, `loader`, `metadata`). The skeleton moving, with or without a simultaneous JSX change, forces a full reload; the skeleton holding still defers to Fast Refresh.
+
+- **A JSX-only edit hot-updates.** The skeleton is unchanged, so Vite's Fast Refresh applies the projected client code with no reload and no lost component state.
+- **A `metadata`-only edit reloads the document.** `metadata` sits outside the skeleton's masked region, so the edit moves it. Warlock sends a full reload, which re-runs SSR and rebuilds `<head>`. Component state is lost — that is the price of seeing the new `<title>` without touching the browser.
+- **Any module-level change reloads, not just `metadata`.** An edited import, a module-level declaration, or an edit confined to `route`, `middleware`, `validation`, or `loader` all move the skeleton the same way and take the same full-reload path.
+- **A helper function used only by the JSX still reloads if it is declared at module level.** The rule does not try to prove which half of a shared declaration the edit was "really" for — it over-approximates deliberately, because a false reload only costs component state, while a missed one ships a stale `<head>` and calls it a hot update.
+- Creating or deleting a page file is page-graph churn, not an in-place edit; Vite handles it on its own.
+
+Changed in 5.1: a metadata-only edit previously left a stale `<head>` until you refreshed the browser by hand. The current skeleton-comparison rule replaces that earlier, narrower "metadata-only" special case.
+
 ## Gotchas
 
-- **Do not derive URLs from filenames.** The file chooses discovery; `route` chooses the public URL.
+- **Do not expect URLs to be derived from filenames.** No such convention exists. The file's location chooses discovery and which layout prefixes apply; `route` chooses the rest of the public URL. A page with no `route` is refused, not mounted at its path.
 - **Keep `route` literal.** A computed route cannot be discovered without executing app code and is refused.
 - **Do not annotate the loader with `: PageLoader`.** That erases the return type `PageProps` needs.
 - **Components receive data, not HTTP objects.** `request` and `response` belong to loaders; the component also renders in the browser.
@@ -458,6 +476,8 @@ description: 'Navigate hydrated pages with `<Link>`, resolve named URLs with `hr
 # Warlock — navigate on the client
 
 `<Link>` renders a real anchor for progressive enhancement and intercepts a plain in-app click after hydration. The server remains the only route matcher; client navigation fetches the page-data representation of the URL and swaps the Layout + Page tree.
+
+Every behaviour on this page requires 5.1 in an installed app. In 5.0.0–5.0.2 no client JavaScript executed at all — `react-dom/client` was served as raw CommonJS and hydration never mounted — so `<Link>` degraded to its underlying anchor and every click was a full page load. See [write-the-root](../write-the-root/SKILL.md#root-is-the-hydration-boundary).
 
 ## The shape
 
@@ -785,7 +805,7 @@ The hydration entry is built from the projected client graph. CSS imports are kn
 
 ---
 name: use-layouts
-description: 'Wrap pages with positional `layout.tsx` modules, compose literal `prefix` exports, load typed layout data with `LayoutLoader` / `LayoutProps`, and preserve layout state during client navigation. Triggers: `layout.tsx`, `prefix`, `LayoutLoader`, `LayoutProps`, `children`; "add a page layout", "share navigation between pages", "prefix page routes", "keep a layout mounted". Skip: full-document root — `@warlock.js/web/write-the-root/SKILL.md`; page route export — `@warlock.js/web/create-a-page/SKILL.md`; loader and shared lifecycle — `@warlock.js/web/load-page-data/SKILL.md`; competing layout systems `next/layout`, React Router outlets, Remix nested routes.'
+description: 'Wrap pages with positional `layout.tsx` modules, compose literal `prefix` exports, load typed layout data with `LayoutLoader` / `LayoutProps`, preserve layout state during client navigation, and know why `404.page.tsx` never receives a layout. Triggers: `layout.tsx`, `prefix`, `LayoutLoader`, `LayoutProps`, `children`, `404.page.tsx`; "add a page layout", "share navigation between pages", "prefix page routes", "keep a layout mounted", "404 page has no layout". Skip: full-document root — `@warlock.js/web/write-the-root/SKILL.md`; page route export — `@warlock.js/web/create-a-page/SKILL.md`; loader and shared lifecycle — `@warlock.js/web/load-page-data/SKILL.md`; competing layout systems `next/layout`, React Router outlets, Remix nested routes.'
 ---
 
 # Warlock — use layouts
@@ -877,6 +897,12 @@ The two prefix-only layouts above are legal because neither renders. Add a defau
 
 Non-rendering layouts may carry prefixes and middleware and may nest freely. Do not delete a middleware-only authorization boundary to satisfy the rendering limit; consolidate only the default-export wrappers.
 
+## `404.page.tsx` never gets a layout
+
+A `404.page.tsx` renders with no layouts, even when it sits in a directory with a rendering `layout.tsx` above it. Discovery reports an empty layout chain for the not-found page only, and both the client hydration registry and the production route table read from that same chain — the server has always rendered it with no layout wrapper, so the client no longer hydrates one either. A page that exists to handle failure must not depend on app chrome that can itself throw or need data.
+
+This is scoped to the not-found page: an ordinary page in the same directory still gets its full layout chain, and nested-layout refusal on the 404's own path is still enforced exactly as it is for any other page.
+
 ## Why layout state persists
 
 Client navigation rebuilds the Layout + Page element tree at the same `#root` position. When the next page uses the same layout component type in the same position, React reconciles it instead of remounting it. Layout state such as open menus, scroll containers, and media survives.
@@ -954,6 +980,8 @@ App document
 The browser hydrates `#root`, not the whole document. The client tree deliberately contains Layout + Page and excludes App because App contains the mount point. Keep exactly one element with `id="root"` around `{children}`. It may be nested inside your own body markup, but it must not be renamed or omitted.
 
 Because App is outside the hydrated subtree, put client state that must survive navigation in a layout or component beneath `#root`, not in the document root.
+
+**Requires 5.1 in an installed app.** In 5.0.0–5.0.2 the dev server handed the browser `react-dom/client` as raw CommonJS, so `hydrateRoot` was not there as a named export and the hydration entry died on import — no client JavaScript ran at all. The symptoms were a page that server-rendered correctly but had dead `useState`, no HMR, and `<Link>` doing full page loads. The fix pre-bundles React through Vite's `optimizeDeps`. If you are debugging this against a checkout of the framework itself, note that the defect never reproduced there: inside the monorepo the hydration entry resolves outside `node_modules` and React was always optimized normally.
 
 ## `<Head />`
 

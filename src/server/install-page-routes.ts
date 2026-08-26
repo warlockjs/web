@@ -33,7 +33,12 @@
  */
 import path from "node:path";
 import type { ViteDevServer } from "vite";
-import { discoverPageFiles, layoutChainFor, toPosix } from "../build/discover-pages";
+import {
+  discoverPageFiles,
+  layoutChainFor,
+  MissingRouteExportError,
+  toPosix,
+} from "../build/discover-pages";
 import { composeRoutePath } from "../routing/compose-route-path";
 import { NestedLayoutsNotSupportedError, selectPageLayout } from "../routing/layout-policy";
 import { canonicalizeRouteExport, deriveFallbackRouteName } from "../routing/route-identity";
@@ -42,6 +47,15 @@ import type { Response, Router } from "@warlock.js/core";
 import type { BufferedCookie } from "./buffered-response";
 import { createPageRouteHandler } from "./create-page-route-handler";
 import type { PipelineMiddleware } from "./execute-page-request";
+import {
+  createNotFoundRouteHandler,
+  DuplicateNotFoundPageError,
+  isNotFoundPageFile,
+  NotFoundPageDeclaresRouteError,
+  NOT_FOUND_ROUTE_NAME,
+  NOT_FOUND_ROUTE_PATH,
+  type RegisteredRouteShape,
+} from "./not-found-page";
 
 /** Re-exported so `web/src/server/index.ts`'s existing barrel export keeps resolving. */
 export { composeRoutePath };
@@ -212,8 +226,10 @@ export type InstallPageRoutesOptions = {
  * `route.path` — a registration-time failure, not a runtime 404 one of them
  * silently loses.
  *
- * Pages with no `route` export are skipped: discovery cannot invent a public
- * URL or route name for an undeclared page.
+ * Pages with no `route` export are REFUSED, not skipped, with the same
+ * `MissingRouteExportError` the build throws: discovery cannot invent a public
+ * URL for an undeclared page, and a dev server that silently drops the file you
+ * just wrote is indistinguishable from a typo in the URL.
  */
 export async function installPageRoutes(
   options: InstallPageRoutesOptions,
@@ -227,9 +243,21 @@ export async function installPageRoutes(
     stylesheetUrls,
     applyBufferedCookie,
   } = options;
-  const pageFiles = [...discoverPageFiles(appSrcRoot)].sort((left, right) =>
+  const discovered = [...discoverPageFiles(appSrcRoot)].sort((left, right) =>
     left.pageFile < right.pageFile ? -1 : left.pageFile > right.pageFile ? 1 : 0,
   );
+
+  // THE NOT-FOUND PAGE IS TAKEN OUT OF THE ORDINARY LOOP, not filtered inside
+  // it. It has no `route` export to read, no path to compose and no collision
+  // to check — every step below is about a page with a URL, and `404.page.tsx`
+  // does not have one. Registering it here would put it at `/404`, which is not
+  // a page anybody asked to be able to visit.
+  const notFoundPageFiles = discovered.filter((page) => isNotFoundPageFile(page.pageFile));
+  const pageFiles = discovered.filter((page) => !isNotFoundPageFile(page.pageFile));
+
+  if (notFoundPageFiles.length > 1) {
+    throw new DuplicateNotFoundPageError(notFoundPageFiles.map((page) => page.pageFile));
+  }
 
   const installed: InstalledPageRoute[] = [];
   const fileByPath = new Map<string, string>();
@@ -237,11 +265,16 @@ export async function installPageRoutes(
   for (const { pageFile, webRoot } of pageFiles) {
     const pageModule = (await vite.ssrLoadModule(pageFile)) as PageModuleShape;
 
+    const sourceFile = canonicalSourceFileFor(pageFile, appSrcRoot);
+
+    // Same condition, same error, same wording the build already throws
+    // (`MissingRouteExportError`, `web/src/build/discover-pages.ts`) — dev used
+    // to `continue` here, so a page you had just written vanished into a
+    // not-found with nothing said. One condition, one verdict.
     if (pageModule.route === undefined) {
-      continue;
+      throw new MissingRouteExportError(sourceFile);
     }
 
-    const sourceFile = canonicalSourceFileFor(pageFile, appSrcRoot);
     const { path: routePath, name } = resolveRoute(pageModule.route, sourceFile);
 
     const loadLayout: LoadLayout = layoutFile =>
@@ -300,6 +333,64 @@ export async function installPageRoutes(
     );
 
     installed.push({ path: effectivePath, name, file: pageFile, layoutFile });
+  }
+
+  /*
+    THE CATCH-ALL, registered LAST and only when this application has a page
+    surface at all. "Configured with web, no pages yet" is a legal state, and an
+    application serving no pages has no page 404 to answer with — its unmatched
+    URLs stay core's to answer, exactly as they are today.
+
+    Registered even when the application ships no `404.page.tsx`: the framework
+    default still answers 404, so an application that has not written one yet
+    gets the right STATUS from the first request, and adding the file later
+    changes the body and nothing else.
+  */
+  if (discovered.length > 0) {
+    const notFoundPageFile = notFoundPageFiles[0]?.pageFile;
+
+    // Read at INSTALL time, so a `route` export on the not-found page is
+    // refused at boot with everything else — not on the first request that
+    // misses, which is the one request nobody is watching.
+    if (notFoundPageFile !== undefined) {
+      const notFoundModule = (await vite.ssrLoadModule(notFoundPageFile)) as PageModuleShape;
+
+      if (notFoundModule.route !== undefined) {
+        throw new NotFoundPageDeclaresRouteError(notFoundPageFile);
+      }
+    }
+
+    router.get(
+      NOT_FOUND_ROUTE_PATH,
+      createNotFoundRouteHandler({
+        renderPage:
+          notFoundPageFile === undefined
+            ? undefined
+            : createPageRouteHandler({
+                path: NOT_FOUND_ROUTE_PATH,
+                name: NOT_FOUND_ROUTE_NAME,
+                appFile,
+                pageFile: notFoundPageFile,
+                // NO LAYOUT, deliberately, and it is the same trade as "no
+                // loader on the 404 page": a layout brings its whole chain's
+                // middleware with it, and a guard that redirects or throws on
+                // the not-found path turns a missing page into an incident. The
+                // page renders inside the application root and nothing else.
+                layoutFile: undefined,
+                loadModule: (moduleId) => vite.ssrLoadModule(moduleId),
+                hydrationClientModuleUrl,
+                stylesheetUrls,
+                applyBufferedCookie,
+                // The URL that missed IS this route's pattern for this request.
+                matchPath: (requestPath) => requestPath,
+                statusForRenderedOk: 404,
+              }),
+      }),
+      // `isPage` for the same reason every other page route carries it: the
+      // router's duplicate-name error reads the flag to say which claimant is
+      // the page.
+      { name: NOT_FOUND_ROUTE_NAME, isPage: true },
+    );
   }
 
   /*

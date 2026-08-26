@@ -213,7 +213,13 @@ describe("WebConnector — production page serving", () => {
 
     // The page's own `route` export decides the URL, in production exactly as
     // in development — a build cannot quietly disagree with the dev server.
-    expect(registered).toEqual([{ path: "/products", name: "main.products" }]);
+    expect(registered).toEqual([
+      { path: "/products", name: "main.products" },
+      // The catch-all, registered last and belonging to the framework
+      // rather than to the application: it answers every URL that no page
+      // and no API route claimed, with a 404 status either way.
+      { path: "*", name: "warlock.not-found" },
+    ]);
     expect(connector.getInstalledPages()).toEqual([
       {
         path: "/products",

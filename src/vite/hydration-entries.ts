@@ -18,10 +18,14 @@ function normalizeFileSystemPath(filePath: string): string {
  * Where the hydration entry lives inside an INSTALLED `@warlock.js/web`, and
  * where it lives inside this checkout — in that order of preference.
  *
- * The published package declares `"files": ["esm"]`, so `src/` is absent from
- * every real install. Resolving the entry to `<webRoot>/src/hydration/index.ts`
- * unconditionally therefore worked in this monorepo and failed for every
- * consumer, with `warlock build` unable to emit a client bundle at all.
+ * The published tarball ships `esm/`, `skills/` and the docs files — no `src/`
+ * — so `src/` is absent from every real install. (Verified against
+ * `@warlock.js/web@5.0.2`: 191 files, none under `src/`. Note the published
+ * `package.json` carries no `files` key at all; the release tooling rewrites
+ * the manifest, so do not treat this repo's `files` field as the mechanism.)
+ * Resolving the entry to `<webRoot>/src/hydration/index.ts` unconditionally
+ * therefore worked in this monorepo and failed for every consumer, with
+ * `warlock build` unable to emit a client bundle at all.
  *
  * The built artifact is preferred rather than the source being published,
  * because shipping `src/` beside `esm/` would put TWO instances of
