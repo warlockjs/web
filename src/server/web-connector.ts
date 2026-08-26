@@ -70,6 +70,7 @@ import {
   registeredPageFiles,
 } from "./page-route-reload";
 import { consumePageManifest, type PageManifest } from "./page-manifest";
+import { createUnregisteredPageReporter } from "./unregistered-pages";
 import { WEB_CONNECTOR_PRIORITY } from "./web-connector-factory";
 
 /**
@@ -496,6 +497,27 @@ export class WebConnector extends BaseConnector {
 
           done(error);
         });
+      },
+    );
+
+    const reportUnregisteredPages = createUnregisteredPageReporter({
+      appRoot: paths.appRoot,
+      appSrcRoot: paths.appSrcRoot,
+      registeredPageFiles: () => registeredPageFiles(router.list(), paths.appSrcRoot),
+    });
+
+    fastify.addHook(
+      "onResponse",
+      (request: FastifyRequest, reply: FastifyReply, done: HookHandlerDoneFunction) => {
+        if (reply.statusCode === 404) {
+          reportUnregisteredPages({
+            method: request.method,
+            url: request.url,
+            pathname: new URL(request.url, "http://warlock.local").pathname,
+          });
+        }
+
+        done();
       },
     );
 

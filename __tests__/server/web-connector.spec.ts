@@ -291,7 +291,11 @@ function recordRoutes(graph: WebGraph) {
  * Stand up a booted connector against doubles, recording the teardown call
  * order on a single shared array so `shutdown()` sequencing is observable.
  */
-async function bootHarness(graph: BootGraph = ownGraph) {
+async function bootHarness(
+  graph: BootGraph = ownGraph,
+  harnessAppSrcRoot = appSrcRoot,
+  harnessAppRoot = process.cwd(),
+) {
   const order: string[] = [];
 
   const rawServer = {
@@ -330,7 +334,10 @@ async function bootHarness(graph: BootGraph = ownGraph) {
   createServerMock.mockResolvedValue(vite);
   graph.container.set("http.server", fastify as never);
 
-  const connector = new graph.WebConnector({ appSrcRoot });
+  const connector = new graph.WebConnector({
+    appRoot: harnessAppRoot,
+    appSrcRoot: harnessAppSrcRoot,
+  });
 
   await connector.boot();
 
@@ -350,6 +357,18 @@ function onRequestHook(harness: Harness) {
   const call = harness.fastify.addHook.mock.calls.find(([event]) => event === "onRequest");
 
   if (!call) throw new Error("connector registered no onRequest hook");
+
+  return call[1] as (
+    request: FastifyRequest,
+    reply: FastifyReply,
+    done: HookHandlerDoneFunction,
+  ) => void;
+}
+
+function onResponseHook(harness: Harness) {
+  const call = harness.fastify.addHook.mock.calls.find(([event]) => event === "onResponse");
+
+  if (!call) throw new Error("connector registered no onResponse hook");
 
   return call[1] as (
     request: FastifyRequest,
@@ -495,6 +514,45 @@ describe("WebConnector — the Vite config it builds", () => {
     expect(done).not.toHaveBeenCalled();
     expect(raw.statusCode).toBe(500);
     expect(chunks.join("")).toContain("ProjectionAmbiguityError: nope");
+  });
+});
+
+describe("WebConnector unregistered global page diagnostic", () => {
+  it("passes the pathname to the reporter, keeping unrelated 404s silent", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const temporaryAppRoot = fs.mkdtempSync(path.join(os.tmpdir(), "warlock-unregistered-page-"));
+    const temporaryAppSrcRoot = path.join(temporaryAppRoot, "src");
+
+    try {
+      fs.mkdirSync(path.join(temporaryAppSrcRoot, "web"), { recursive: true });
+      fs.writeFileSync(
+        path.join(temporaryAppSrcRoot, "web", "about.page.tsx"),
+        'export const route = "/about";\nexport default () => null;\n',
+      );
+
+      const harness = await bootHarness(ownGraph, temporaryAppSrcRoot, temporaryAppRoot);
+      const hook = onResponseHook(harness);
+      const done = vi.fn();
+
+      hook(
+        { method: "GET", url: "/missing" } as FastifyRequest,
+        { statusCode: 404 } as FastifyReply,
+        done,
+      );
+      expect(warn).not.toHaveBeenCalled();
+
+      hook(
+        { method: "GET", url: "/about?from=404" } as FastifyRequest,
+        { statusCode: 404 } as FastifyReply,
+        done,
+      );
+
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn.mock.calls[0][0]).toContain("src/web/about.page.tsx");
+      expect(done).toHaveBeenCalledTimes(2);
+    } finally {
+      fs.rmSync(temporaryAppRoot, { recursive: true, force: true });
+    }
   });
 });
 
