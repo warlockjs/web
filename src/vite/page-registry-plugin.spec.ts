@@ -4,12 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import { build } from "vite";
 import type { Plugin } from "vite";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { CLIENT_REGISTRY_EXPORT_NAME } from "../build/generate-client-registry";
 import { warlockClientBoundary } from "./index";
 import {
   CLIENT_PAGE_REGISTRY_ID,
   clientPageRegistry,
+  invalidateClientPageRegistry,
   RESOLVED_CLIENT_PAGE_REGISTRY_ID,
 } from "./page-registry-plugin";
 import { projectModule } from "./projection";
@@ -164,6 +165,75 @@ describe("clientPageRegistry — virtual module id contract", () => {
 
     expect(source).toContain(`export const ${CLIENT_REGISTRY_EXPORT_NAME}`);
     expect(source).not.toContain(`import("`);
+  });
+});
+
+describe("invalidateClientPageRegistry", () => {
+  function viteWithRegistryNode(registryNode: object | undefined) {
+    const getModuleById = vi.fn(() => registryNode);
+    const invalidateModule = vi.fn();
+    const send = vi.fn();
+    const vite = {
+      environments: { client: { moduleGraph: { getModuleById, invalidateModule } } },
+      hot: { send },
+    } as any;
+
+    return { vite, getModuleById, invalidateModule, send };
+  }
+
+  it("looks up and invalidates only the resolved client registry node, then sends one full reload", () => {
+    const registryNode = { id: RESOLVED_CLIENT_PAGE_REGISTRY_ID };
+    const { vite, getModuleById, invalidateModule, send } = viteWithRegistryNode(registryNode);
+
+    invalidateClientPageRegistry(vite);
+
+    expect(getModuleById).toHaveBeenCalledOnce();
+    expect(getModuleById).toHaveBeenCalledWith(RESOLVED_CLIENT_PAGE_REGISTRY_ID);
+    expect(invalidateModule).toHaveBeenCalledOnce();
+    expect(invalidateModule).toHaveBeenCalledWith(registryNode);
+    expect(send).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith({ type: "full-reload", path: "*" });
+  });
+
+  it("still sends one full reload when the registry node is absent", () => {
+    const { vite, getModuleById, invalidateModule, send } = viteWithRegistryNode(undefined);
+
+    expect(() => invalidateClientPageRegistry(vite)).not.toThrow();
+
+    expect(getModuleById).toHaveBeenCalledWith(RESOLVED_CLIENT_PAGE_REGISTRY_ID);
+    expect(invalidateModule).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith({ type: "full-reload", path: "*" });
+  });
+
+  it("generates registry content from the page tree after add/delete invalidation", () => {
+    const appRoot = makeAppRoot();
+    const deletedPage = path.join(appRoot, "src/web/deleted.page.tsx");
+    const addedPage = path.join(appRoot, "src/web/added.page.tsx");
+    const plugin = clientPageRegistry({ appRoot });
+    const registryNode = { id: RESOLVED_CLIENT_PAGE_REGISTRY_ID };
+    const { vite, invalidateModule, send } = viteWithRegistryNode(registryNode);
+
+    writeFile(
+      deletedPage,
+      pageSource("/deleted", "export default function Deleted() {\n  return null;\n}\n"),
+    );
+    const before = callHook<string>(plugin, "load", RESOLVED_CLIENT_PAGE_REGISTRY_ID);
+    expect(before).toContain(`path: "/deleted"`);
+    expect(before).not.toContain(`path: "/added"`);
+
+    fs.unlinkSync(deletedPage);
+    writeFile(
+      addedPage,
+      pageSource("/added", "export default function Added() {\n  return null;\n}\n"),
+    );
+    invalidateClientPageRegistry(vite);
+
+    const after = callHook<string>(plugin, "load", RESOLVED_CLIENT_PAGE_REGISTRY_ID);
+    expect(after).toContain(`path: "/added"`);
+    expect(after).not.toContain(`path: "/deleted"`);
+    expect(invalidateModule).toHaveBeenCalledWith(registryNode);
+    expect(send).toHaveBeenCalledWith({ type: "full-reload", path: "*" });
   });
 });
 

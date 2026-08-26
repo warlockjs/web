@@ -14,7 +14,7 @@
 import { parse } from "@babel/parser";
 import MagicString from "magic-string";
 import path from "node:path";
-import type { Plugin } from "vite";
+import type { Plugin, ViteDevServer } from "vite";
 import { discoverPages, toPosix } from "../build/discover-pages";
 import { generateClientRegistry } from "../build/generate-client-registry";
 import { SERVER_EXPORT_NAMES } from "./projection";
@@ -34,6 +34,23 @@ export const CLIENT_PAGE_REGISTRY_ID = "virtual:warlock/pages";
  * (and no filesystem watcher) mistakes it for a real path.
  */
 export const RESOLVED_CLIENT_PAGE_REGISTRY_ID = `\0${CLIENT_PAGE_REGISTRY_ID}`;
+
+/**
+ * Evicts the client registry so its next request re-runs page discovery, then
+ * reloads the document so hydration consumes that fresh registry.
+ *
+ * Vite 7 keeps separate module graphs per environment. Pages are imported by
+ * the browser, so only the resolved virtual module in the client graph is the
+ * cache entry this operation owns.
+ */
+export function invalidateClientPageRegistry(vite: ViteDevServer): void {
+  const moduleGraph = vite.environments.client.moduleGraph;
+  const registryModule = moduleGraph.getModuleById(RESOLVED_CLIENT_PAGE_REGISTRY_ID);
+
+  if (registryModule) moduleGraph.invalidateModule(registryModule);
+
+  vite.hot.send({ type: "full-reload", path: "*" });
+}
 
 export type ClientPageRegistryPluginOptions = {
   /** Absolute path to the application root. Defaults to `process.cwd()`, matching Vite's own default `root` and Gate A's `appRoot` default. */
