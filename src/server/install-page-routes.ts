@@ -297,39 +297,41 @@ export async function installPageRoutes(
 
     fileByPath.set(effectivePath, pageFile);
 
-    router.get(
-      effectivePath,
-      // The handler itself is `createPageRouteHandler`
-      // (`web/src/server/create-page-route-handler.ts`) — a named seam a
-      // future `type: "page"` route can bind to, and testable without a Vite
-      // server. Vite appears here only as the dev answer to "how do I load a
-      // module"; the handler takes that as an input and knows nothing else
-      // about it.
-      createPageRouteHandler({
-        path: effectivePath,
-        name,
-        appFile,
-        pageFile,
-        layoutFile,
-        // The layout slot's id resolves to the COMPOSED level — every layout's
-        // middleware, in chain order — and every other id goes straight to
-        // Vite. A one-layout chain has nothing to compose, so it is left to
-        // resolve as the exact module Vite hands back, untouched.
-        loadModule:
-          layoutLevel.chain.length > 1 && layoutFile !== undefined
-            ? moduleId =>
-                moduleId === layoutFile
-                  ? composeLayoutLevel({ ...layoutLevel, layoutFile }, loadLayout)
-                  : vite.ssrLoadModule(moduleId)
-            : moduleId => vite.ssrLoadModule(moduleId),
-        hydrationClientModuleUrl,
-        stylesheetUrls,
-        applyBufferedCookie,
-      }),
-      // `isPage` marks this route as SSR-served. Pages and API routes share one
-      // router and one route-name namespace, so the router's duplicate-name
-      // error reads this flag to say which claimant is the page.
-      { name, isPage: true },
+    await router.withSourceFile(sourceFile, () =>
+      router.get(
+        effectivePath,
+        // The handler itself is `createPageRouteHandler`
+        // (`web/src/server/create-page-route-handler.ts`) — a named seam a
+        // future `type: "page"` route can bind to, and testable without a Vite
+        // server. Vite appears here only as the dev answer to "how do I load a
+        // module"; the handler takes that as an input and knows nothing else
+        // about it.
+        createPageRouteHandler({
+          path: effectivePath,
+          name,
+          appFile,
+          pageFile,
+          layoutFile,
+          // The layout slot's id resolves to the COMPOSED level — every layout's
+          // middleware, in chain order — and every other id goes straight to
+          // Vite. A one-layout chain has nothing to compose, so it is left to
+          // resolve as the exact module Vite hands back, untouched.
+          loadModule:
+            layoutLevel.chain.length > 1 && layoutFile !== undefined
+              ? moduleId =>
+                  moduleId === layoutFile
+                    ? composeLayoutLevel({ ...layoutLevel, layoutFile }, loadLayout)
+                    : vite.ssrLoadModule(moduleId)
+              : moduleId => vite.ssrLoadModule(moduleId),
+          hydrationClientModuleUrl,
+          stylesheetUrls,
+          applyBufferedCookie,
+        }),
+        // `isPage` marks this route as SSR-served. Pages and API routes share one
+        // router and one route-name namespace, so the router's duplicate-name
+        // error reads this flag to say which claimant is the page.
+        { name, isPage: true },
+      ),
     );
 
     installed.push({ path: effectivePath, name, file: pageFile, layoutFile });
@@ -360,37 +362,47 @@ export async function installPageRoutes(
       }
     }
 
-    router.get(
-      NOT_FOUND_ROUTE_PATH,
-      createNotFoundRouteHandler({
-        renderPage:
-          notFoundPageFile === undefined
-            ? undefined
-            : createPageRouteHandler({
-                path: NOT_FOUND_ROUTE_PATH,
-                name: NOT_FOUND_ROUTE_NAME,
-                appFile,
-                pageFile: notFoundPageFile,
-                // NO LAYOUT, deliberately, and it is the same trade as "no
-                // loader on the 404 page": a layout brings its whole chain's
-                // middleware with it, and a guard that redirects or throws on
-                // the not-found path turns a missing page into an incident. The
-                // page renders inside the application root and nothing else.
-                layoutFile: undefined,
-                loadModule: (moduleId) => vite.ssrLoadModule(moduleId),
-                hydrationClientModuleUrl,
-                stylesheetUrls,
-                applyBufferedCookie,
-                // The URL that missed IS this route's pattern for this request.
-                matchPath: (requestPath) => requestPath,
-                statusForRenderedOk: 404,
-              }),
-      }),
-      // `isPage` for the same reason every other page route carries it: the
-      // router's duplicate-name error reads the flag to say which claimant is
-      // the page.
-      { name: NOT_FOUND_ROUTE_NAME, isPage: true },
-    );
+    const registerNotFoundRoute = () =>
+      router.get(
+        NOT_FOUND_ROUTE_PATH,
+        createNotFoundRouteHandler({
+          renderPage:
+            notFoundPageFile === undefined
+              ? undefined
+              : createPageRouteHandler({
+                  path: NOT_FOUND_ROUTE_PATH,
+                  name: NOT_FOUND_ROUTE_NAME,
+                  appFile,
+                  pageFile: notFoundPageFile,
+                  // NO LAYOUT, deliberately, and it is the same trade as "no
+                  // loader on the 404 page": a layout brings its whole chain's
+                  // middleware with it, and a guard that redirects or throws on
+                  // the not-found path turns a missing page into an incident. The
+                  // page renders inside the application root and nothing else.
+                  layoutFile: undefined,
+                  loadModule: (moduleId) => vite.ssrLoadModule(moduleId),
+                  hydrationClientModuleUrl,
+                  stylesheetUrls,
+                  applyBufferedCookie,
+                  // The URL that missed IS this route's pattern for this request.
+                  matchPath: (requestPath) => requestPath,
+                  statusForRenderedOk: 404,
+                }),
+        }),
+        // `isPage` for the same reason every other page route carries it: the
+        // router's duplicate-name error reads the flag to say which claimant is
+        // the page.
+        { name: NOT_FOUND_ROUTE_NAME, isPage: true },
+      );
+
+    if (notFoundPageFile === undefined) {
+      registerNotFoundRoute();
+    } else {
+      await router.withSourceFile(
+        canonicalSourceFileFor(notFoundPageFile, appSrcRoot),
+        registerNotFoundRoute,
+      );
+    }
   }
 
   /*

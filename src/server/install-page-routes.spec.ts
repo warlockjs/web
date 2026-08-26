@@ -51,7 +51,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-type RegisteredRoute = { path: string; options: { name?: string; isPage?: boolean } };
+type RegisteredRoute = {
+  path: string;
+  options: { name?: string; isPage?: boolean };
+  sourceFile?: string;
+};
 
 /**
  * A router double that records every registration; the whole observable output
@@ -66,20 +70,47 @@ type RegisteredRoute = { path: string; options: { name?: string; isPage?: boolea
 function recordingRouter() {
   const registered: RegisteredRoute[] = [];
   const notFound: (RegisteredRoute & { handler: PageRouteHandler })[] = [];
+  let sourceFile: string | undefined;
 
   const router = {
     get(routePath: string, handler: PageRouteHandler, options: RegisteredRoute["options"]) {
       if (routePath === NOT_FOUND_ROUTE_PATH) {
-        notFound.push({ path: routePath, options, handler });
+        notFound.push({ path: routePath, options, handler, sourceFile });
       } else {
-        registered.push({ path: routePath, options });
+        registered.push({ path: routePath, options, sourceFile });
       }
 
       return router;
     },
+    async withSourceFile<T>(file: string, callback: () => T | Promise<T>) {
+      sourceFile = file;
+
+      try {
+        return await callback();
+      } finally {
+        sourceFile = undefined;
+      }
+    },
+    removeRoutesBySourceFile(file: string) {
+      for (const routes of [registered, notFound]) {
+        for (let index = routes.length - 1; index >= 0; index--) {
+          if (routes[index]?.sourceFile === file) {
+            routes.splice(index, 1);
+          }
+        }
+      }
+    },
     list: () => [
-      ...registered.map((route) => ({ path: route.path, isPage: route.options.isPage })),
-      ...notFound.map((route) => ({ path: route.path, isPage: route.options.isPage })),
+      ...registered.map((route) => ({
+        path: route.path,
+        isPage: route.options.isPage,
+        sourceFile: route.sourceFile,
+      })),
+      ...notFound.map((route) => ({
+        path: route.path,
+        isPage: route.options.isPage,
+        sourceFile: route.sourceFile,
+      })),
     ],
   } as unknown as Router;
 
@@ -124,8 +155,72 @@ function install(
       ...overrides,
     });
 
-  return { run, registered, notFound };
+  return { run, router, registered, notFound };
 }
+
+describe("installPageRoutes — source-file ownership", () => {
+  it("removes only the page owned by an exact canonical source key", async () => {
+    const appRoot = makeAppTree({
+      "src/web/account.page.tsx": "",
+      "src/web/home.page.tsx": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+    const accountFile = path.join(appSrcRoot, "web", "account.page.tsx");
+    const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
+    const vite = fakeVite({
+      [accountFile]: { route: "/account" },
+      [homeFile]: { route: "/" },
+    });
+
+    const { run, router } = install(appSrcRoot, vite);
+    await run();
+
+    expect(router.list()).toEqual([
+      { path: "/account", isPage: true, sourceFile: "src/web/account.page.tsx" },
+      { path: "/", isPage: true, sourceFile: "src/web/home.page.tsx" },
+      { path: NOT_FOUND_ROUTE_PATH, isPage: true, sourceFile: undefined },
+    ]);
+
+    router.removeRoutesBySourceFile("src/web/account.page.tsx");
+
+    expect(router.list()).toEqual([
+      { path: "/", isPage: true, sourceFile: "src/web/home.page.tsx" },
+      { path: NOT_FOUND_ROUTE_PATH, isPage: true, sourceFile: undefined },
+    ]);
+  });
+
+  it("tracks the application 404 catch-all under the 404 page's own source key", async () => {
+    const appRoot = makeAppTree({
+      "src/web/404.page.tsx": "",
+      "src/web/home.page.tsx": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+    const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
+    const notFoundFile = path.join(appSrcRoot, "web", "404.page.tsx");
+    const vite = fakeVite({
+      [homeFile]: { route: "/" },
+      [notFoundFile]: { default: () => null },
+    });
+
+    const { run, router } = install(appSrcRoot, vite);
+    await run();
+
+    expect(router.list()).toEqual([
+      { path: "/", isPage: true, sourceFile: "src/web/home.page.tsx" },
+      {
+        path: NOT_FOUND_ROUTE_PATH,
+        isPage: true,
+        sourceFile: "src/web/404.page.tsx",
+      },
+    ]);
+
+    router.removeRoutesBySourceFile("src/web/404.page.tsx");
+
+    expect(router.list()).toEqual([
+      { path: "/", isPage: true, sourceFile: "src/web/home.page.tsx" },
+    ]);
+  });
+});
 
 describe("installPageRoutes — the global root, alongside a module root", () => {
   it("registers a page under src/web/** and a page under src/app/<module>/web/**, from ONE subject list", async () => {
