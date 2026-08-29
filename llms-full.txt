@@ -2,17 +2,7 @@
 
 > Package: `@warlock.js/web`
 
-> SSR React pages served by the same Warlock HTTP server that serves the API — a backend framework that renders React, not a React framework.
-
-> First published release: 5.0.0. `@warlock.js/web` had never been published to npm before this release.
-
-> Use 5.1 or newer. In an installed 5.0.0–5.0.2 app no client JavaScript ran at all: the dev server served `react-dom/client` as raw CommonJS, so `hydrateRoot` was missing and hydration failed on import — dead `useState`, no HMR, `<Link>` falling back to full page loads. Pages still server-rendered, which is why it looked like a React problem.
-
-> Consumer entry points: `@warlock.js/web`, `@warlock.js/web/client/runtime`, `@warlock.js/web/connector`, and `@warlock.js/web/vite`. The published `@warlock.js/web/hydration` subpath is a framework build input; application code never imports it.
-
-> Deliberate non-goals: server actions are a v2 design decision rather than a missing v1 feature; page routes reject regex parameters, optional parameters, and multiple parameters in one segment.
-
-> Hand-maintained. Concatenates every SKILL.md and reference file under `@warlock.js/web/skills/`. Update this file by hand when the package's public API changes.
+> Generated artifact. Concatenates every SKILL.md and reference file under `@warlock.js/web/skills/`. Re-run `node scripts/generate-llms.mjs` after any change.
 
 ## add-web-to-an-app  `@warlock.js/web/add-web-to-an-app/SKILL.md`
 
@@ -124,16 +114,16 @@ The desired result is one page route at `/` and, when the stock JSON route exist
 
 ---
 name: create-a-page
-description: 'Create an SSR React page under `src/web/**` or `src/app/<module>/web/**` with a literal `route`, a default component, an optional typed `loader`, and page `metadata`; know when a dev edit gets Fast Refresh vs. a full reload. Triggers: `*.page.tsx`, `route`, `PageLoader`, `PageProps`, `PageMetadata`, Fast Refresh, HMR; "create a page", "add an SSR route", "make a React page", "type page loader data", "why did my edit reload the page"; typical import `import type { PageLoader, PageProps } from "@warlock.js/web"`. Skip: root document shell — `@warlock.js/web/write-the-root/SKILL.md`; layout wrappers and prefixes — `@warlock.js/web/use-layouts/SKILL.md`; loader lifecycle and `shared` — `@warlock.js/web/load-page-data/SKILL.md`; competing frameworks `next`, `remix`, `react-router` file routes.'
+description: 'Create an SSR React page under `src/web/**`, with either a literal `route` or a filesystem-derived one, a default component, an optional typed `loader`, page `metadata`, the `error.page.tsx` boundary, and the universal `register()` hook. Triggers: `*.page.tsx`, `route`, `PageLoader`, `PageProps`, `PageMetadata`, `error.page.tsx`, `register`; "create a page", "add an SSR route", "make a React page", "type page loader data", "add an error boundary"; typical import `import type { PageLoader, PageProps } from "@warlock.js/web"`. Skip: root document shell — `@warlock.js/web/write-the-root/SKILL.md`; layout wrappers and prefixes — `@warlock.js/web/use-layouts/SKILL.md`; loader lifecycle and `shared` — `@warlock.js/web/load-page-data/SKILL.md`; competing frameworks `next`, `remix`, `react-router` file routes.'
 ---
 
 # Warlock — create a page
 
-A page is any `*.page.tsx` beneath the global `src/web/` tree or a module's `src/app/<module>/web/` tree. Its URL is declared by `route`; its default export renders React.
+A page is any `*.page.tsx` beneath `src/web/` — the only page root. (A per-module `src/app/<module>/web/` tree is not scanned; move any page that lived there into `src/web/`, a subdirectory if you like.) Its URL is either a declared `route` or one derived from its own location; its default export renders React.
 
 ## The shape
 
-```tsx title="src/app/products/web/product-details.page.tsx"
+```tsx title="src/web/products/product-details.page.tsx"
 import type { PageLoader, PageMetadata, PageProps } from "@warlock.js/web";
 
 export const route = {
@@ -186,9 +176,9 @@ export default function ContactPage() {
 }
 ```
 
-The `route` export is required, and a page without one is **refused, not skipped**. `warlock dev` and the production discovery pass throw the same `MissingRouteExportError`, naming the file, because a page with no route is a page nothing can ever reach.
+`route` is optional. A page that omits it derives both its path and its name from where the file sits beneath `src/web` ([filesystem routing](#filesystem-routing), below). A page that declares `route` uses that instead — an explicit `route` always wins over the derived one, for both the path and (when it sets `name`) the name.
 
-Changed in 5.1: through 5.0.2 the dev server silently skipped a route-less page, so the file you had just written 404'd with nothing said. Dev and build now reach the same verdict from the same condition.
+Changed in 5.2: through 5.1 an omitted `route` was refused — `warlock dev` and the production discovery pass threw `MissingRouteExportError`, naming the file. That error class is gone; the same file now resolves to a real, browsable URL.
 
 ## Route declarations
 
@@ -205,11 +195,23 @@ export const route = {
 } as const;
 ```
 
-Prefer an explicit stable `name` for links. Without one, Warlock derives a name from the module and declared path: a module page gets `<module>.<path-as-dots>`, a global root page gets `index`, and another global page gets its dotted path.
+Prefer an explicit stable `name` for links. Without one, Warlock derives a name from the declared path — a global root page gets `index`, another global page gets its dotted path — the same derivation [filesystem routing](#filesystem-routing) uses when there is no `route` at all.
 
-**Only the route NAME is ever derived — never the route PATH.** There is no filename-to-URL convention in Warlock and there never has been. Omitting `route` does not fall back to the file's location; it fails (see above). Every segment of a page's URL is written down somewhere: the page's own `route.path`, prefixed by the literal `prefix` exports of the positional layouts above it ([use-layouts](../use-layouts/SKILL.md)). Where the file sits decides which layouts are above it — never what the path spells.
+Every segment of a page's URL is written down somewhere: `route.path` (or the derived filesystem path), prefixed by the literal `prefix` exports of the positional layouts above it ([use-layouts](../use-layouts/SKILL.md)). Where the file sits always decides which layouts are above it, and — only when `route` is absent — the path segments too.
 
 The build reads `route` without executing application code. Declare it directly with `export const` and literal strings. Variables, function calls, computed object keys, spreads, and `export { route }` are refused.
+
+## Filesystem routing
+
+Omit `route` and the URL comes from the page's own path beneath `src/web`:
+
+- Every directory contributes a segment, in order — `src/web/products/featured.page.tsx` derives `/products/featured`.
+- A `(group)` directory — parentheses, not braces — contributes nothing to the URL, only to organization: `src/web/(marketing)/pricing.page.tsx` derives `/pricing`.
+- `index.page.tsx` claims its own directory rather than adding a segment: `src/web/products/index.page.tsx` derives `/products`. This is the ONLY filename with special meaning — `home.page.tsx` is not magic and derives `/home`.
+- `[id]` becomes `:id`: `src/web/products/[id].page.tsx` derives `/products/:id`.
+- A layout `prefix` on the page's ancestry composes in front of the derived path exactly as it does for an explicit `route.path` ([use-layouts](../use-layouts/SKILL.md)).
+
+Two pages that derive (or declare) the same effective path is a build error naming both files.
 
 ## Page-route grammar
 
@@ -240,6 +242,39 @@ export const metadata: PageMetadata = {
 
 Supported fields are `title`, `description`, `keywords`, `canonical`, `robots`, `openGraph`, and `twitter`. Function metadata runs after a successful loader. If a loader fails, Warlock uses error metadata instead of calling the page function with missing data.
 
+## The error boundary — `error.page.tsx`
+
+`error.page.tsx` anywhere beneath `src/web` is the application's one error boundary — exactly two page filenames are special in Warlock, this and `404.page.tsx`. A second `error.page.tsx` is a build error naming both files. Like `404.page.tsx`, it declares no `route` — it has no URL of its own and is reached only when something throws.
+
+```tsx title="src/web/error.page.tsx"
+import type { ErrorPageProps } from "@warlock.js/web";
+
+export default function ErrorPage({ error, status }: ErrorPageProps) {
+  return (
+    <main>
+      <h1>Something went wrong</h1>
+      <p>Status: {status}</p>
+    </main>
+  );
+}
+```
+
+During SSR the component receives the real thrown value in `error`. After hydration it receives the JSON-safe `{ name, message, stack? }` shape instead — the original value does not survive the wire. `robots: noindex` is a framework default on this path that an app-supplied `metadata` cannot remove.
+
+If the failure happens before any page module could even load — a module-load or `register()` throw — there is no trustworthy server composition left to hydrate against, so Warlock renders a plain framework fallback (your `error.page.tsx` if it can still be loaded, otherwise a minimal built-in boundary) with no hydration script at all rather than risk hydrating client code against markup nothing can vouch for.
+
+## The `register()` hook
+
+`root.tsx`, `layout.tsx`, and `*.page.tsx` may each export `register`: a synchronous, no-argument, side-effect hook that runs once per module namespace instance, on both the server and the browser, before that module's middleware or loader. Unlike `route`/`middleware`/`validation`/`loader`/`metadata`, it is not stripped from the client — it is meant to run on both sides.
+
+```tsx
+export function register() {
+  // one-time setup for this module namespace; must not return a Promise
+}
+```
+
+Returning a Promise (or anything thenable) throws — `register()` must finish before the module is usable.
+
 ## The client boundary
 
 The browser boundary is decided by the import graph, not by the file's location. A `*.page.tsx` is universal:
@@ -259,13 +294,19 @@ Keep server-only repository and service reads inside `loader`. Do not read them 
 - **A `metadata`-only edit reloads the document.** `metadata` sits outside the skeleton's masked region, so the edit moves it. Warlock sends a full reload, which re-runs SSR and rebuilds `<head>`. Component state is lost — that is the price of seeing the new `<title>` without touching the browser.
 - **Any module-level change reloads, not just `metadata`.** An edited import, a module-level declaration, or an edit confined to `route`, `middleware`, `validation`, or `loader` all move the skeleton the same way and take the same full-reload path.
 - **A helper function used only by the JSX still reloads if it is declared at module level.** The rule does not try to prove which half of a shared declaration the edit was "really" for — it over-approximates deliberately, because a false reload only costs component state, while a missed one ships a stale `<head>` and calls it a hot update.
-- Creating or deleting a page file is page-graph churn, not an in-place edit; Vite handles it on its own.
+- Creating, deleting, or renaming a page file, or editing its `route` export, is page-GRAPH churn, not a skeleton edit — see below, not Fast Refresh.
 
 Changed in 5.1: a metadata-only edit previously left a stale `<head>` until you refreshed the browser by hand. The current skeleton-comparison rule replaces that earlier, narrower "metadata-only" special case.
 
+## Route-table changes in development
+
+Creating a page, deleting one, or editing its `route` export's path is a different kind of dev edit from the skeleton comparison above — it changes which URLs exist, not just how one already-registered URL renders. `warlock dev` re-registers the affected route(s) in the live route table, atomically and with no dev-server restart, so the new file (or new path) is reachable on the very next request with no manual restart.
+
+Changed in 5.2: through 5.1 the route table was built once at boot and never again. Creating a page 404'd forever; deleting one kept it reachable at its old URL; editing `route` served the OLD path from the old file and 404'd the new one — the running server silently disagreed with the source on disk. All three are now live.
+
 ## Gotchas
 
-- **Do not expect URLs to be derived from filenames.** No such convention exists. The file's location chooses discovery and which layout prefixes apply; `route` chooses the rest of the public URL. A page with no `route` is refused, not mounted at its path.
+- **A page with no `route` is not unreachable.** It derives a real URL from its file location — see [Filesystem routing](#filesystem-routing). Nothing about a route-less page is refused anymore.
 - **Keep `route` literal.** A computed route cannot be discovered without executing app code and is refused.
 - **Do not annotate the loader with `: PageLoader`.** That erases the return type `PageProps` needs.
 - **Components receive data, not HTTP objects.** `request` and `response` belong to loaders; the component also renders in the browser.
@@ -293,7 +334,7 @@ Loaders run on the server and return serializable data to their own component le
 
 ## The shape
 
-```tsx title="src/app/products/web/product-details.page.tsx"
+```tsx title="src/web/products/product-details.page.tsx"
 import { v } from "@warlock.js/seal";
 import type { PageLoader, PageProps } from "@warlock.js/web";
 
@@ -576,7 +617,7 @@ export function CheckoutButtons() {
 
 The public primitive is `refresh()`. There is no `revalidate()` export.
 
-```tsx title="src/app/products/web/delete-product-button.tsx"
+```tsx title="src/web/products/delete-product-button.tsx"
 import { refresh } from "@warlock.js/web";
 
 export function DeleteProductButton({ id }: { id: string }) {
@@ -721,7 +762,7 @@ Root imports ending in `.css`, `.scss`, `.sass`, `.less`, or `.styl` are recogni
 
 A page may import CSS directly:
 
-```tsx title="src/app/products/web/products.page.tsx"
+```tsx title="src/web/products/products.page.tsx"
 import "./products.css";
 
 export const route = {
@@ -738,7 +779,7 @@ export default function ProductsPage() {
 }
 ```
 
-```css title="src/app/products/web/products.css"
+```css title="src/web/products/products.css"
 .products-page {
   display: grid;
   gap: 1rem;
@@ -747,7 +788,7 @@ export default function ProductsPage() {
 
 Recognized asset imports survive the page's client projection. The client boundary is determined by the import graph, not by the file living under `web/`.
 
-In development, only root stylesheet imports are converted into render-blocking document links. A page-local import is loaded by Vite's client module graph around hydration, so it still applies but is not guaranteed before first paint. Move above-the-fold or site-wide rules into a stylesheet imported by `root.tsx` when avoiding a flash matters.
+For each matched handler, Warlock builds one ordered CSS chain: `[root, ...matched layouts, page]`. A stylesheet imported directly by any member of that chain becomes a render-blocking link in the initial document in both development and production. Unrelated pages and layouts do not contribute CSS to this response.
 
 ## Production delivery
 
@@ -757,9 +798,9 @@ The production client build enables Vite's manifest. Vite records emitted CSS ag
 <build.outdir>/client/.vite/manifest.json
 ```
 
-It collects every valid `css` asset across all manifest entries, deduplicates them in manifest order, and emits each as a render-blocking link before `</head>`.
+For each source in the matched handler chain, Warlock finds that source's manifest entry, collects its own CSS plus CSS from statically imported chunks, and emits the ordered, deduplicated result as render-blocking links before `</head>`. It does not follow `dynamicImports`, because doing so would pull unrelated lazy pages into the response.
 
-That means both root-imported and page-imported CSS are linked in the initial production document. The current implementation collects across the whole client manifest rather than selecting only the matched route's CSS, so every page receives the emitted stylesheet set.
+That means root-, matched-layout-, and page-imported CSS are linked in the initial production document without shipping another page's stylesheet set.
 
 Only manifest URLs under the one client asset prefix are emitted; a stylesheet outside the mounted asset directory is dropped instead of producing a dead link.
 
@@ -780,17 +821,16 @@ The hydration entry is built from the projected client graph. CSS imports are kn
 
 ## Diagnose missing or late CSS
 
-1. For global CSS in development, confirm `root.tsx` uses a bare import such as `import "./app.css";`.
+1. In development, confirm the root, matched layout, or page imports the stylesheet directly with a bare import such as `import "./app.css";`.
 2. Confirm the rendered document contains a closing `</head>` and a stylesheet URL ending in `?direct`.
-3. For page-local CSS in development, expect Vite's client graph to apply it after hydration; move critical rules to the root import if first paint matters.
-4. In production, confirm `.vite/manifest.json` has `css` arrays and the referenced files live under the client asset prefix.
+3. If CSS is imported indirectly through another JavaScript module in development, Vite's client graph still applies it, but Warlock's source scan cannot promote it to a render-blocking link; import critical CSS directly from a chain member.
+4. In production, confirm `.vite/manifest.json` has a source entry for the matched root/layout/page and that its `css` arrays reference files under the client asset prefix.
 5. Do not hand-author a link to a hashed production asset; its name belongs to the Vite manifest.
 
 ## Gotchas
 
-- **Root CSS and page CSS differ in dev.** Root imports are render-blocking; page imports are client-injected.
-- **Production currently links all emitted CSS on every page.** It is safe for first paint but not route-minimal.
-- **Use a bare root import.** `devStylesheetUrls` scans `import "./app.css"`, not a bound CSS-module import.
+- **CSS is scoped to the matched handler chain.** Root CSS is shared; only the current route's matched layouts and page add their direct imports.
+- **Use a bare direct import.** `devStylesheetUrls` scans `import "./app.css"` in each chain member, not a bound CSS-module import or an import hidden behind another JavaScript module.
 - **Keep a closing `</head>`.** Automatic link installation has nowhere safe to write without it.
 - **Do not remove `?direct` from a dev stylesheet link.** Vite otherwise responds with JavaScript.
 - **Do not import the hydration entry yourself.** The connector owns dev serving and production asset URLs.
@@ -805,7 +845,7 @@ The hydration entry is built from the projected client graph. CSS imports are kn
 
 ---
 name: use-layouts
-description: 'Wrap pages with positional `layout.tsx` modules, compose literal `prefix` exports, load typed layout data with `LayoutLoader` / `LayoutProps`, preserve layout state during client navigation, and know why `404.page.tsx` never receives a layout. Triggers: `layout.tsx`, `prefix`, `LayoutLoader`, `LayoutProps`, `children`, `404.page.tsx`; "add a page layout", "share navigation between pages", "prefix page routes", "keep a layout mounted", "404 page has no layout". Skip: full-document root — `@warlock.js/web/write-the-root/SKILL.md`; page route export — `@warlock.js/web/create-a-page/SKILL.md`; loader and shared lifecycle — `@warlock.js/web/load-page-data/SKILL.md`; competing layout systems `next/layout`, React Router outlets, Remix nested routes.'
+description: 'Wrap pages with positional `layout.tsx` modules, compose literal `prefix` exports, load typed layout data with `LayoutLoader` / `LayoutProps`, and preserve layout state during client navigation. Triggers: `layout.tsx`, `prefix`, `LayoutLoader`, `LayoutProps`, `children`; "add a page layout", "share navigation between pages", "prefix page routes", "keep a layout mounted". Skip: full-document root — `@warlock.js/web/write-the-root/SKILL.md`; page route export — `@warlock.js/web/create-a-page/SKILL.md`; loader and shared lifecycle — `@warlock.js/web/load-page-data/SKILL.md`; competing layout systems `next/layout`, React Router outlets, Remix nested routes.'
 ---
 
 # Warlock — use layouts
@@ -814,7 +854,7 @@ A positional `layout.tsx` applies to pages in its directory and descendant direc
 
 ## The shape
 
-```tsx title="src/app/products/web/layout.tsx"
+```tsx title="src/web/products/layout.tsx"
 import type { LayoutLoader, LayoutProps } from "@warlock.js/web";
 
 export const prefix = "/products";
@@ -849,7 +889,7 @@ export default function ProductsLayout({
 
 A page beside it can declare its path relative to the prefix:
 
-```tsx title="src/app/products/web/index.page.tsx"
+```tsx title="src/web/products/index.page.tsx"
 export const route = {
   path: "/",
   name: "products.index",
@@ -864,17 +904,17 @@ The effective URL is `/products`. A page with `route.path = "/:id"` under the sa
 
 ## Prefix composition
 
-Every positional layout on the page's directory ancestry may export a literal `prefix`. Prefixes compose outermost first, then the page's own route path.
+Every positional layout on the page's directory ancestry may export a literal `prefix`. Prefixes compose outermost first, then the page's own route path — never appended to the directory's own name, so a layout `prefix` OVERRIDES its directory's segment rather than adding to it.
 
-```tsx title="src/app/users/web/layout.tsx"
+```tsx title="src/web/users/layout.tsx"
 export const prefix = "/users";
 ```
 
-```tsx title="src/app/users/web/account/layout.tsx"
+```tsx title="src/web/users/account/layout.tsx"
 export const prefix = "/account";
 ```
 
-```tsx title="src/app/users/web/account/settings.page.tsx"
+```tsx title="src/web/users/account/settings.page.tsx"
 export const route = {
   path: "/settings",
   name: "users.account.settings",
@@ -903,6 +943,8 @@ A `404.page.tsx` renders with no layouts, even when it sits in a directory with 
 
 This is scoped to the not-found page: an ordinary page in the same directory still gets its full layout chain, and nested-layout refusal on the 404's own path is still enforced exactly as it is for any other page.
 
+`error.page.tsx` — the application's other special page, its one error boundary ([create-a-page](../create-a-page/SKILL.md)) — is excluded from discovery's layout-chain analysis the same way: neither special page has a layout chain of its own.
+
 ## Why layout state persists
 
 Client navigation rebuilds the Layout + Page element tree at the same `#root` position. When the next page uses the same layout component type in the same position, React reconciles it instead of remounting it. Layout state such as open menus, scroll containers, and media survives.
@@ -915,11 +957,15 @@ Client navigation rebuilds the Layout + Page element tree at the same `#root` po
 
 Use `shared` when multiple levels need one request-derived value, and write it in middleware before loaders run. See [load-page-data](../load-page-data/SKILL.md).
 
+## The client boundary
+
+A layout is projected for the browser the same way a page is: `prefix`, `middleware`, `loader`, and (page-only) `validation`/`route` never reach the client bundle — `prefix` joins that stripped set for a layout the way `route` does for a page. The default export and any other surviving exports form the client graph. `register()` is the one export that is NOT stripped — it runs once per module namespace on both the server and the browser; see [create-a-page](../create-a-page/SKILL.md).
+
 ## Gotchas
 
 - **`layout.tsx` is positional.** It applies by directory ancestry; moving a page can change its layout and URL prefix together.
 - **Only one layout on a path may render.** Multiple prefix/middleware-only layouts are fine; multiple default exports are not.
-- **A layout prefix changes the registered URL.** Check the composed path, not only the page's `route.path`.
+- **A layout prefix changes the registered URL, and overrides its directory's segment rather than adding to it.** Check the composed path, not only the page's `route.path`.
 - **Keep `prefix` literal.** The build parses it without executing the module.
 - **Use `LayoutProps<typeof loader>`.** Bare `LayoutProps` is for a layout with no loader and gives `data` as `undefined`.
 - **Layout persistence is type-and-position based.** Changing to another layout component remounts it, as normal React reconciliation requires.
@@ -982,6 +1028,8 @@ The browser hydrates `#root`, not the whole document. The client tree deliberate
 Because App is outside the hydrated subtree, put client state that must survive navigation in a layout or component beneath `#root`, not in the document root.
 
 **Requires 5.1 in an installed app.** In 5.0.0–5.0.2 the dev server handed the browser `react-dom/client` as raw CommonJS, so `hydrateRoot` was not there as a named export and the hydration entry died on import — no client JavaScript ran at all. The symptoms were a page that server-rendered correctly but had dead `useState`, no HMR, and `<Link>` doing full page loads. The fix pre-bundles React through Vite's `optimizeDeps`. If you are debugging this against a checkout of the framework itself, note that the defect never reproduced there: inside the monorepo the hydration entry resolves outside `node_modules` and React was always optimized normally.
+
+If `root.tsx` (or any module it needs) fails to load or its `register()` throws, there is no trustworthy Layout+Page composition left to hydrate — Warlock falls back to a plain document with no hydration script at all rather than hydrate the browser against markup nothing can vouch for. See [create-a-page](../create-a-page/SKILL.md) for the app's own `error.page.tsx` boundary, which is tried first.
 
 ## `<Head />`
 

@@ -106,7 +106,7 @@ export function CheckoutButtons() {
 
 The public primitive is `refresh()`. There is no `revalidate()` export.
 
-```tsx title="src/app/products/web/delete-product-button.tsx"
+```tsx title="src/web/products/delete-product-button.tsx"
 import { refresh } from "@warlock.js/web";
 
 export function DeleteProductButton({ id }: { id: string }) {

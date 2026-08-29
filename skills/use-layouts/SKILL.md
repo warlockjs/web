@@ -9,7 +9,7 @@ A positional `layout.tsx` applies to pages in its directory and descendant direc
 
 ## The shape
 
-```tsx title="src/app/products/web/layout.tsx"
+```tsx title="src/web/products/layout.tsx"
 import type { LayoutLoader, LayoutProps } from "@warlock.js/web";
 
 export const prefix = "/products";
@@ -44,7 +44,7 @@ export default function ProductsLayout({
 
 A page beside it can declare its path relative to the prefix:
 
-```tsx title="src/app/products/web/index.page.tsx"
+```tsx title="src/web/products/index.page.tsx"
 export const route = {
   path: "/",
   name: "products.index",
@@ -59,17 +59,17 @@ The effective URL is `/products`. A page with `route.path = "/:id"` under the sa
 
 ## Prefix composition
 
-Every positional layout on the page's directory ancestry may export a literal `prefix`. Prefixes compose outermost first, then the page's own route path.
+Every positional layout on the page's directory ancestry may export a literal `prefix`. Prefixes compose outermost first, then the page's own route path — never appended to the directory's own name, so a layout `prefix` OVERRIDES its directory's segment rather than adding to it.
 
-```tsx title="src/app/users/web/layout.tsx"
+```tsx title="src/web/users/layout.tsx"
 export const prefix = "/users";
 ```
 
-```tsx title="src/app/users/web/account/layout.tsx"
+```tsx title="src/web/users/account/layout.tsx"
 export const prefix = "/account";
 ```
 
-```tsx title="src/app/users/web/account/settings.page.tsx"
+```tsx title="src/web/users/account/settings.page.tsx"
 export const route = {
   path: "/settings",
   name: "users.account.settings",
@@ -98,6 +98,8 @@ A `404.page.tsx` renders with no layouts, even when it sits in a directory with 
 
 This is scoped to the not-found page: an ordinary page in the same directory still gets its full layout chain, and nested-layout refusal on the 404's own path is still enforced exactly as it is for any other page.
 
+`error.page.tsx` — the application's other special page, its one error boundary ([create-a-page](../create-a-page/SKILL.md)) — is excluded from discovery's layout-chain analysis the same way: neither special page has a layout chain of its own.
+
 ## Why layout state persists
 
 Client navigation rebuilds the Layout + Page element tree at the same `#root` position. When the next page uses the same layout component type in the same position, React reconciles it instead of remounting it. Layout state such as open menus, scroll containers, and media survives.
@@ -110,11 +112,15 @@ Client navigation rebuilds the Layout + Page element tree at the same `#root` po
 
 Use `shared` when multiple levels need one request-derived value, and write it in middleware before loaders run. See [load-page-data](../load-page-data/SKILL.md).
 
+## The client boundary
+
+A layout is projected for the browser the same way a page is: `prefix`, `middleware`, `loader`, and (page-only) `validation`/`route` never reach the client bundle — `prefix` joins that stripped set for a layout the way `route` does for a page. The default export and any other surviving exports form the client graph. `register()` is the one export that is NOT stripped — it runs once per module namespace on both the server and the browser; see [create-a-page](../create-a-page/SKILL.md).
+
 ## Gotchas
 
 - **`layout.tsx` is positional.** It applies by directory ancestry; moving a page can change its layout and URL prefix together.
 - **Only one layout on a path may render.** Multiple prefix/middleware-only layouts are fine; multiple default exports are not.
-- **A layout prefix changes the registered URL.** Check the composed path, not only the page's `route.path`.
+- **A layout prefix changes the registered URL, and overrides its directory's segment rather than adding to it.** Check the composed path, not only the page's `route.path`.
 - **Keep `prefix` literal.** The build parses it without executing the module.
 - **Use `LayoutProps<typeof loader>`.** Bare `LayoutProps` is for a layout with no loader and gives `data` as `undefined`.
 - **Layout persistence is type-and-position based.** Changing to another layout component remounts it, as normal React reconciliation requires.

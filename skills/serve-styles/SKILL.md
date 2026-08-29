@@ -64,7 +64,7 @@ Root imports ending in `.css`, `.scss`, `.sass`, `.less`, or `.styl` are recogni
 
 A page may import CSS directly:
 
-```tsx title="src/app/products/web/products.page.tsx"
+```tsx title="src/web/products/products.page.tsx"
 import "./products.css";
 
 export const route = {
@@ -81,7 +81,7 @@ export default function ProductsPage() {
 }
 ```
 
-```css title="src/app/products/web/products.css"
+```css title="src/web/products/products.css"
 .products-page {
   display: grid;
   gap: 1rem;
@@ -90,7 +90,7 @@ export default function ProductsPage() {
 
 Recognized asset imports survive the page's client projection. The client boundary is determined by the import graph, not by the file living under `web/`.
 
-In development, only root stylesheet imports are converted into render-blocking document links. A page-local import is loaded by Vite's client module graph around hydration, so it still applies but is not guaranteed before first paint. Move above-the-fold or site-wide rules into a stylesheet imported by `root.tsx` when avoiding a flash matters.
+For each matched handler, Warlock builds one ordered CSS chain: `[root, ...matched layouts, page]`. A stylesheet imported directly by any member of that chain becomes a render-blocking link in the initial document in both development and production. Unrelated pages and layouts do not contribute CSS to this response.
 
 ## Production delivery
 
@@ -100,9 +100,9 @@ The production client build enables Vite's manifest. Vite records emitted CSS ag
 <build.outdir>/client/.vite/manifest.json
 ```
 
-It collects every valid `css` asset across all manifest entries, deduplicates them in manifest order, and emits each as a render-blocking link before `</head>`.
+For each source in the matched handler chain, Warlock finds that source's manifest entry, collects its own CSS plus CSS from statically imported chunks, and emits the ordered, deduplicated result as render-blocking links before `</head>`. It does not follow `dynamicImports`, because doing so would pull unrelated lazy pages into the response.
 
-That means both root-imported and page-imported CSS are linked in the initial production document. The current implementation collects across the whole client manifest rather than selecting only the matched route's CSS, so every page receives the emitted stylesheet set.
+That means root-, matched-layout-, and page-imported CSS are linked in the initial production document without shipping another page's stylesheet set.
 
 Only manifest URLs under the one client asset prefix are emitted; a stylesheet outside the mounted asset directory is dropped instead of producing a dead link.
 
@@ -123,17 +123,16 @@ The hydration entry is built from the projected client graph. CSS imports are kn
 
 ## Diagnose missing or late CSS
 
-1. For global CSS in development, confirm `root.tsx` uses a bare import such as `import "./app.css";`.
+1. In development, confirm the root, matched layout, or page imports the stylesheet directly with a bare import such as `import "./app.css";`.
 2. Confirm the rendered document contains a closing `</head>` and a stylesheet URL ending in `?direct`.
-3. For page-local CSS in development, expect Vite's client graph to apply it after hydration; move critical rules to the root import if first paint matters.
-4. In production, confirm `.vite/manifest.json` has `css` arrays and the referenced files live under the client asset prefix.
+3. If CSS is imported indirectly through another JavaScript module in development, Vite's client graph still applies it, but Warlock's source scan cannot promote it to a render-blocking link; import critical CSS directly from a chain member.
+4. In production, confirm `.vite/manifest.json` has a source entry for the matched root/layout/page and that its `css` arrays reference files under the client asset prefix.
 5. Do not hand-author a link to a hashed production asset; its name belongs to the Vite manifest.
 
 ## Gotchas
 
-- **Root CSS and page CSS differ in dev.** Root imports are render-blocking; page imports are client-injected.
-- **Production currently links all emitted CSS on every page.** It is safe for first paint but not route-minimal.
-- **Use a bare root import.** `devStylesheetUrls` scans `import "./app.css"`, not a bound CSS-module import.
+- **CSS is scoped to the matched handler chain.** Root CSS is shared; only the current route's matched layouts and page add their direct imports.
+- **Use a bare direct import.** `devStylesheetUrls` scans `import "./app.css"` in each chain member, not a bound CSS-module import or an import hidden behind another JavaScript module.
 - **Keep a closing `</head>`.** Automatic link installation has nowhere safe to write without it.
 - **Do not remove `?direct` from a dev stylesheet link.** Vite otherwise responds with JavaScript.
 - **Do not import the hydration entry yourself.** The connector owns dev serving and production asset URLs.

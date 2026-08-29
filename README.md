@@ -76,8 +76,8 @@ production.
   compile error.
 - **Loaders that are controllers.** Full request context, guards, DI, and the
   ability to set headers, cookies and status during the render.
-- **`revalidate()`.** POST to your own API, call it, and the page's loaders
-  re-run.
+- **`refresh()`.** POST to your own API, call it, and the page's loaders
+  re-run without pushing history. There is no `revalidate()` export.
 - **Return values are Resources, never models.** A model does not survive the
   wire: it carries methods, a connector handle and every column.
 
@@ -85,11 +85,30 @@ production.
 
 | Server-only | Runs twice (server + browser) |
 |---|---|
-| `route`, `middleware`, `validation`, `loader`, `metadata` | `Layout`, `ErrorBoundary`, default `Page` |
+| `route`, `middleware`, `validation`, `loader`, `metadata`, `prefix` (layouts only) | default `Page` / `Layout`, `register` |
 
 The server half is stripped before anything reaches the browser. The runs-twice
 half never receives `request` or `response` — it also executes in a browser,
 where neither exists — and is never `async`.
+
+## Routing
+
+A page's URL is its `route` export when it declares one. A page with no
+`route` derives its URL from its own location beneath `src/web`: directories
+contribute segments, `(group)` directories contribute nothing, `index.page.tsx`
+claims its directory, and `[id]` becomes `:id`. A layout's `prefix` still
+composes in front of either form. `route`, when present, always wins.
+
+`src/web` is the only page root — a per-module `src/app/<module>/web/` tree is
+not scanned.
+
+Exactly two page filenames are special: `404.page.tsx` (the not-found page,
+reached by not matching, never declares `route`, renders with no layout) and
+`error.page.tsx` (the application's one error boundary, also declares no
+`route`). There is no `500.page.tsx`; an unmatched URL is not an error.
+
+In development, creating, deleting, or editing a page's `route` export updates
+the live route table without restarting `warlock dev`.
 
 ## Where things live
 

@@ -9,7 +9,7 @@ Loaders run on the server and return serializable data to their own component le
 
 ## The shape
 
-```tsx title="src/app/products/web/product-details.page.tsx"
+```tsx title="src/web/products/product-details.page.tsx"
 import { v } from "@warlock.js/seal";
 import type { PageLoader, PageProps } from "@warlock.js/web";
 

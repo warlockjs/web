@@ -2,6 +2,65 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## Unreleased
+
+### Added
+
+- **`error.page.tsx`** — the application's one error boundary. It renders when
+  a middleware, loader, or component throws; declares no `route`, exactly like
+  `404.page.tsx`; and a second `error.page.tsx` anywhere beneath `src/web` is a
+  build error. Its component receives `{ error, status }` — the real thrown
+  value during SSR, a JSON-safe `{ name, message, stack? }` after hydration.
+  `robots: noindex` is a framework default on this path and cannot be
+  overridden away. If the failure happens before any page module could load —
+  a module-load or `register()` throw — the response falls back further, to a
+  framework-owned boundary with no application code at all, and is served
+  without a hydration script rather than risk hydrating against markup nothing
+  can vouch for.
+- **A page's `route` export is now optional.** A `*.page.tsx` with no `route`
+  derives its path and its name from its location beneath `src/web`:
+  directories contribute segments, `(group)` directories contribute nothing,
+  `index.page.tsx` claims its own directory, and `[id]` becomes `:id`. An
+  explicit `route` still always wins over the derived one. This replaces the
+  5.1 behaviour, where an omitted `route` threw `MissingRouteExportError` at
+  install time — that error class no longer exists.
+- **Live page-route re-registration in `warlock dev`.** Creating, deleting, or
+  editing a page's `route` export used to require a manual restart to take
+  effect — the route table was built once at boot and never again, so a
+  renamed route kept serving its old path and a deleted page kept 404-ing at
+  its old URL forever. The dev connector now re-registers the affected routes
+  in place, atomically, with no dev-server restart and no loss of Vite's HMR
+  state. A component-body-only edit still takes the ordinary Fast Refresh
+  path; only membership and route-identity changes go through this path.
+- **A dev-only diagnostic for a page file that exists but isn't reachable.**
+  When a request 404s, Warlock checks whether an unregistered `*.page.tsx`
+  under `src/web` would have matched it, and if so, warns naming the file.
+  This is the case that used to be silent: a page created after boot, or one
+  whose `route` was edited to a path nothing else claims, previously 404'd
+  with no explanation anywhere in the terminal.
+- **`export const register`** — an optional, synchronous, no-argument hook on
+  `root.tsx`, `layout.tsx`, and `*.page.tsx`. It runs once per module
+  namespace instance, on both the server and the browser, before that
+  module's middleware or loader — the seam for one-time setup a page or
+  layout needs on both sides of hydration. It must not return a Promise;
+  returning one throws.
+
+### Changed
+
+- **Initial stylesheet links are route-scoped in development and production.**
+  Each response now links the ordered, deduplicated CSS chain for its own
+  `[root, ...matched layouts, page]`. Production follows those source entries
+  and their static imports in Vite's manifest instead of collecting CSS across
+  the whole application; development promotes direct stylesheet imports from
+  the matched page and layouts as well as the root. Unrelated page CSS no
+  longer ships on every response, and page-local critical CSS no longer waits
+  for hydration in development.
+- **`src/web` is the only page root.** A per-module `src/app/<module>/web/`
+  tree is no longer discovered, walked, or installed as a page root by either
+  `warlock dev` or `warlock build`. Move any page, layout, or root file that
+  lived under `src/app/<module>/web/` into `src/web/` (a subdirectory is
+  fine — it still contributes a route segment the same way).
+
 ## 5.1.0
 
 > **Upgrade if you installed 5.0.0, 5.0.1 or 5.0.2.** React did not execute at all in
