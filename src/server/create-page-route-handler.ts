@@ -20,17 +20,54 @@
  * Scope: this file creates a seam and nothing else. It does not implement
  * `type: "page"` routing, HTML error pages, or any other new capability.
  */
-import type { HttpContext, Response } from "@warlock.js/core";
+import { Response, type HttpContext } from "@warlock.js/core";
 
 import {
   DATA_RESPONSE_CONTENT_TYPE,
   isDataRequest,
   WARLOCK_DATA_REQUEST_HEADER,
 } from "../routing/data-request";
+import {
+  registerModules,
+  type RegisterableModuleNamespace,
+} from "../runtime/register-modules";
 import { buildHydrationPayload } from "./build-hydration-payload";
-import type { BufferedCookie } from "./buffered-response";
-import type { PageRouteEntry, PageTripleModule } from "./execute-page-request";
-import { renderPageRequest } from "./render-page";
+import type { BufferedCookie, PageRouteEntry, PageTripleModule } from "./execute-page-request";
+import { isNonHydrating } from "./page-render-bundle";
+import { renderPageFailure, renderPageRequest, type RenderedPage } from "./render-page";
+import type { ErrorPageModuleLoader } from "./error-page";
+
+/**
+ * Replay ONE committed cookie through core's own `Response.cookie()` — the
+ * same serializer every ordinary controller's cookie goes through, so there
+ * is nothing here for a second implementation to drift from. The one-liner
+ * `dev-server.ts` wires as the production default; passed in (`applyBufferedCookie`
+ * option, below) rather than imported so this file stays free of anything
+ * Vite-shaped.
+ */
+function defaultApplyBufferedCookie(response: Response, cookie: BufferedCookie): void {
+  response.cookie(cookie.name, cookie.value as never, cookie.options ?? {});
+}
+
+/**
+ * Stage 10a — apply the stage 7 commit (headers, then cookies) to the LIVE
+ * response, once, before either terminal write (10b: `html()` or `send()`).
+ * Both the document and data representations of a page route go through this
+ * so a client navigation never drops a `Set-Cookie` a full load would have
+ * kept (`create-page-route-handler.spec.ts` — "applies committed cookies and
+ * headers exactly as the document path does").
+ */
+function applyCommit(
+  response: Response,
+  rendered: Pick<RenderedPage, "headers" | "cookies">,
+  applyBufferedCookie: (response: Response, cookie: BufferedCookie) => void,
+): void {
+  response.headers(rendered.headers ?? {});
+
+  for (const cookie of rendered.cookies ?? []) {
+    applyBufferedCookie(response, cookie);
+  }
+}
 
 /**
  * How the handler obtains a page/layout/app module, by the same id
@@ -52,6 +89,16 @@ export type PageRouteHandlerOptions = {
   /** The page's own-directory `layout.tsx`, when it has one. */
   layoutFile?: string | undefined;
   loadModule: PageModuleLoader;
+  /** Optional lazy application `error.page.tsx` loader. Never called on success. */
+  loadErrorPage?: ErrorPageModuleLoader;
+  /**
+   * Load the REAL layout module namespaces, outermost first, for universal
+   * registration. This stays separate from `loadModule(layoutFile)` because
+   * dev may answer that id with a synthetic wrapper whose middleware is the
+   * composition of several layouts. That wrapper is a render-pipeline detail,
+   * not a module identity, and must never enter `registerModules`' WeakSet.
+   */
+  loadRegistrationLayouts?: () => Promise<readonly RegisterableModuleNamespace[]>;
   /** Browser module appended after the server-rendered document. */
   hydrationClientModuleUrl?: string;
   /**
@@ -61,7 +108,6 @@ export type PageRouteHandlerOptions = {
    */
   stylesheetUrls?: readonly string[];
   /** Same helper `dev-server.ts` exports — passed in, never imported. */
-  applyBufferedCookie: (response: Response, cookie: BufferedCookie) => void;
   /**
    * The pattern stage 1 matches `request.path` against, when it differs from
    * the REGISTERED path. Defaults to `path`, which is right for every route
@@ -89,9 +135,16 @@ export type PageRouteHandlerOptions = {
    * a redirect — and overwriting it would report a broken page as a missing one.
    */
   statusForRenderedOk?: number;
+  /**
+   * Replays one committed cookie through core's `Response.cookie()`. Defaults
+   * to doing exactly that (`defaultApplyBufferedCookie`, above); injectable so
+   * a caller with a different `Response` shape (or a test) can observe/replace
+   * the call.
+   */
+  applyBufferedCookie?: (response: Response, cookie: BufferedCookie) => void;
 };
 
-export type PageRouteHandler = (context: HttpContext) => Promise<void>;
+export type PageRouteHandler = (context: HttpContext) => Promise<void | Response>;
 
 function escapeHtmlAttribute(value: string): string {
   return value.replace(/[&<>"']/g, (character) => {
@@ -170,13 +223,14 @@ function installStylesheets(html: string, stylesheetUrls: readonly string[]): st
 /**
  * Build the handler for ONE page route. Per request it loads the App + layout
  * + page triple (concurrently, in that order), renders the URL through
- * `renderPageRequest`, splices in the hydration module, applies the committed
- * cookies and headers, and flushes the document.
+ * `renderPageRequest`, splices in the hydration module, and flushes the
+ * document.
  *
  * No try/catch, deliberately: loader/render throws are already absorbed by the
  * pipeline's boundary machinery inside `renderPageRequest`, and anything that
- * escapes (a module-load failure, the missing-`</body>` throw above) belongs to
- * the router's error path — which is exactly where it went before.
+ * escapes (a module-load or register failure, the missing-`</body>` throw
+ * above) belongs to the router's error path — which is exactly where it went
+ * before.
  */
 export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRouteHandler {
   const {
@@ -186,18 +240,35 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     pageFile,
     layoutFile,
     loadModule,
+    loadErrorPage,
+    loadRegistrationLayouts,
     hydrationClientModuleUrl,
     stylesheetUrls,
-    applyBufferedCookie,
     matchPath,
     statusForRenderedOk,
+    applyBufferedCookie = defaultApplyBufferedCookie,
   } = options;
 
   return async ({ request, response }: HttpContext) => {
-    const [appModule, layoutModule, ownPageModule] = await Promise.all([
+    const wantsData = isDataRequest(request.header(WARLOCK_DATA_REQUEST_HEADER, undefined));
+
+    try {
+    const [appModule, layoutModule, ownPageModule, registrationLayouts] = await Promise.all([
       loadModule(appFile),
       layoutFile ? loadModule(layoutFile) : Promise.resolve({}),
       loadModule(pageFile),
+      loadRegistrationLayouts?.() ?? Promise.resolve([]),
+    ]);
+
+    // Registration is the first lifecycle action after all module namespaces
+    // have loaded and before `renderPageRequest` can run middleware, loaders or
+    // render. App/page are already their real namespaces. Layouts deliberately
+    // come from the separate raw chain above, never from `layoutModule`, which
+    // may be the synthetic composed middleware wrapper used by dev.
+    registerModules([
+      appModule as RegisterableModuleNamespace,
+      ...registrationLayouts,
+      ownPageModule as RegisterableModuleNamespace,
     ]);
 
     const triple: PageRouteEntry["triple"] = {
@@ -214,12 +285,13 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     // it is the same route, the same match and the same pipeline — and differs
     // only in what gets written at the end. Decided here, before the render, so
     // the branch is visibly about REPRESENTATION and not about behaviour.
-    const wantsData = isDataRequest(request.header(WARLOCK_DATA_REQUEST_HEADER, undefined));
-
     const rendered = await renderPageRequest(request.path, {
       routes,
       createHttp: () => ({ request, response }),
+      loadErrorPage,
     });
+
+    if (rendered instanceof Response) return rendered;
 
     // See `statusForRenderedOk`: a settled 200 is the only status this route is
     // allowed to restate, and both the document and the data branch below must
@@ -230,18 +302,12 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         ? statusForRenderedOk
         : rendered.status;
 
+    // Stage 10a: the stage 7 commit (headers, then cookies), applied ONCE,
+    // identically for the document and the data representation — see
+    // `applyCommit`.
+    applyCommit(response, rendered, applyBufferedCookie);
+
     if (wantsData) {
-      // Cookies and headers FIRST, exactly as the document path does below and
-      // for the same reason: a client navigation must be able to log a user in,
-      // set a flash cookie or be redirected, and dropping those on this path
-      // would make a navigation behave differently from a page load of the same
-      // URL — the one difference this branch is not allowed to introduce.
-      for (const cookie of rendered.cookies) {
-        applyBufferedCookie(response, cookie);
-      }
-
-      response.headers(rendered.headers);
-
       // So a shared cache can never serve a document to a client that asked for
       // JSON, or the reverse. See `data-request.ts` on why this stays even
       // while page responses are `no-store`.
@@ -292,21 +358,56 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       hydrationClientModuleUrl === undefined ? undefined : request.nonce,
     );
 
-    // THE single site that puts a committed cookie on the wire. The commit
-    // stage used to mirror the same list onto the live response as well
-    // (`commitBuffers`, execute-page-request.ts), and because fastify's
-    // `setCookie` APPENDS rather than sets, every page response carried two
-    // identical `Set-Cookie` headers — happy path included. The mirror's
-    // cookie half is gone; this loop is what remains, and it is the right
-    // one: it runs at stage 10a, after the render, alongside the headers and
-    // the final status, so it applies the answer the pipeline actually
-    // settled on rather than the one it had at stage 7.
-    for (const cookie of rendered.cookies) {
-      applyBufferedCookie(response, cookie);
-    }
-
-    response.headers(rendered.headers);
-
     await response.html(html, status);
+    } catch (thrown) {
+      // This is outside the page pipeline: loading/registering a module can
+      // fail before a triple exists for its authored boundaries to handle.
+      // Reuse this request/response pair so headers, nonce and response
+      // ownership remain exactly the same as the ordinary path.
+      //
+      // Nested try/catch, deliberately: this block's own job is to render a
+      // NICER answer for `thrown` — it must never let a failure IN THAT
+      // ATTEMPT (`renderPageFailure` itself throwing, or misbehaving) replace
+      // `thrown` with a less useful error. If rendering the failure page
+      // fails too, the original throw escapes exactly as it would have with
+      // no try/catch at all (the file header's stated contract) — the
+      // router's own error path is still the answer, just one throw later.
+      try {
+      const rendered = await renderPageFailure({
+        name,
+        path: request.path,
+        request,
+        response,
+        thrown,
+        loadErrorPage,
+      });
+
+      applyCommit(response, rendered, applyBufferedCookie);
+
+      if (wantsData) {
+        response.header("Vary", WARLOCK_DATA_REQUEST_HEADER);
+        response.setContentType(DATA_RESPONSE_CONTENT_TYPE);
+        await response.send(JSON.stringify(buildHydrationPayload(rendered.bundle!)), 500);
+        return;
+      }
+
+      const styled = installStylesheets(rendered.html, stylesheetUrls ?? []);
+
+      // `renderPageFailure` marks its bundle non-hydrating (page-render-bundle.ts):
+      // there is no triple, so there is nothing on the client the hydration
+      // module could attach to. Injecting it anyway would ship a script that
+      // hydrates against a composition the server never trusted.
+      const html = isNonHydrating(rendered.bundle)
+        ? styled
+        : installHydrationClientModule(
+            styled,
+            hydrationClientModuleUrl,
+            hydrationClientModuleUrl === undefined ? undefined : request.nonce,
+          );
+      await response.html(html, 500);
+      } catch {
+        throw thrown;
+      }
+    }
   };
 }

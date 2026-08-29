@@ -14,7 +14,11 @@
  * answer exists yet.
  */
 import { createElement, type ComponentType, type ReactNode } from "react";
-import type { HydrationDocumentPayloadSource } from "../hydration-payload";
+import type {
+  HydrationDocumentPayloadSource,
+  SerializedErrorPageProps,
+} from "../hydration-payload";
+import { registerModules } from "../runtime/register-modules";
 import { loadClientRouteComposition } from "./runtime";
 import type { ClientPageEntry, ClientProjectedModule } from "./runtime/types";
 
@@ -57,6 +61,23 @@ export class UnknownHydrationPageNameError extends Error {
   }
 }
 
+/**
+ * The server selected an app error page, but this browser graph cannot load it.
+ * Substituting the ordinary page would execute the component that already
+ * failed and hydrate markup the server did not render, so this path fails
+ * closed just like an unknown route name.
+ */
+export class MissingHydrationErrorPageError extends Error {
+  public constructor(public readonly pageName: string) {
+    super(
+      `Warlock hydration aborted: the server selected error.page.tsx for route ` +
+        `${JSON.stringify(pageName)}, but that route's client composition has no ErrorPage ` +
+        "module. Rebuild the client page registry so it projects the discovered error page.",
+    );
+    this.name = "MissingHydrationErrorPageError";
+  }
+}
+
 function findEntryByName(
   pages: readonly ClientPageEntry[],
   name: string,
@@ -81,13 +102,13 @@ function findEntryByName(
  * markup React is hydrating against — introducing a level here that the server
  * did not render is a hydration mismatch, not a repair.
  */
-function componentOf(
+function componentOf<Props extends object>(
   module: ClientProjectedModule,
-): ComponentType<HydratedLevelProps> | undefined {
+): ComponentType<Props> | undefined {
   const component = module.default;
 
   return typeof component === "function"
-    ? (component as ComponentType<HydratedLevelProps>)
+    ? (component as ComponentType<Props>)
     : undefined;
 }
 
@@ -97,7 +118,7 @@ function wrap(
   shared: unknown,
   children: ReactNode,
 ): ReactNode {
-  const Component = componentOf(module);
+  const Component = componentOf<HydratedLevelProps>(module);
 
   if (Component === undefined) return children;
 
@@ -106,9 +127,10 @@ function wrap(
 
 /**
  * Compose the tree the server rendered inside `#root`: ordered layouts wrapping
- * the Page, layouts OUTERMOST FIRST as `ClientRouteComposition` declares them,
- * each level receiving `{ data, shared }` and every wrapper additionally
- * `children`.
+ * the selected Page or ErrorPage leaf, layouts OUTERMOST FIRST as
+ * `ClientRouteComposition` declares them. Ordinary levels receive
+ * `{ data, shared }`; the error leaf receives the serialized `{ error, status
+ * }` payload shape.
  *
  * ── THE APP LEVEL IS DELIBERATELY ABSENT, AND MUST STAY ABSENT ──────────────
  * `ClientRouteComposition.App` and `payload.appData` still exist and are still
@@ -139,11 +161,36 @@ export async function buildHydratedTree(
 ): Promise<ReactNode> {
   const entry = findEntryByName(pages, payload.name);
   const composition = await loadClientRouteComposition(entry);
-  const { shared } = payload;
+  const errorPageProps = payload.errorPage;
+  const selectedPageModule =
+    errorPageProps === undefined ? composition.Page : composition.ErrorPage;
 
-  const Page = componentOf(composition.Page);
-  let element: ReactNode =
-    Page === undefined ? null : createElement(Page, { data: payload.pageData, shared });
+  if (selectedPageModule === undefined) {
+    throw new MissingHydrationErrorPageError(payload.name);
+  }
+
+  // Registration is the first lifecycle action after the real namespaces have
+  // loaded. Keep server order: root/App, layouts outermost-to-innermost, page.
+  // On the error path the selected error module replaces the ordinary Page in
+  // that order; registering Page as well would run code the server did not run.
+  // Component extraction and React element creation intentionally happen only
+  // after every registration hook has completed synchronously.
+  registerModules([
+    ...(composition.App === undefined ? [] : [composition.App]),
+    ...composition.layouts,
+    selectedPageModule,
+  ]);
+
+  const { shared } = payload;
+  let element: ReactNode;
+
+  if (errorPageProps === undefined) {
+    const Page = componentOf<HydratedLevelProps>(selectedPageModule);
+    element = Page === undefined ? null : createElement(Page, { data: payload.pageData, shared });
+  } else {
+    const ErrorPage = componentOf<SerializedErrorPageProps>(selectedPageModule);
+    element = ErrorPage === undefined ? null : createElement(ErrorPage, errorPageProps);
+  }
 
   // Innermost layout wraps the page, so walk the outermost-first list backwards.
   for (let index = composition.layouts.length - 1; index >= 0; index -= 1) {

@@ -1,15 +1,15 @@
 /**
  * Gate C — emitted-output verification.
  *
- * Projection removes the five server exports before the client graph forms.
+ * Projection removes the six server exports before the client graph forms.
  * Gate A refuses forbidden import PATHS. Gate B refuses inline secret reads.
  * All three act BEFORE or DURING the build, on source or the module graph —
  * none of them ever looks at what actually came out the other end. Gate C
  * is that check: a build-time assertion on the EMITTED client bundle for
  * every page, verifying:
  *
- *   1. The emitted code contains none of the five server export names
- *      (`route`, `middleware`, `validation`, `loader`, `metadata`) as a
+ *   1. The emitted code contains none of the six server export names
+ *      (`route`, `middleware`, `validation`, `loader`, `metadata`, `prefix`) as a
  *      top-level binding, exported or not — `findLeakedServerExports`.
  *   2. The emitted module graph (Rollup's `OutputBundle`, as seen in
  *      `generateBundle`) contains no import edge into a
@@ -129,7 +129,7 @@ export class UnverifiableChunkError extends Error {
         `Warlock stopped this build: a file in your client bundle could not be checked for server-only code.`,
         ``,
         `File: ${fileName}`,
-        `Cause: this file could not be parsed as JavaScript, so the client/server boundary check could not be performed on it. Warlock cannot confirm that the server-only exports (route, middleware, validation, loader, metadata) were kept out of it.`,
+        `Cause: this file could not be parsed as JavaScript, so the client/server boundary check could not be performed on it. Warlock cannot confirm that the server-only exports (route, middleware, validation, loader, metadata, prefix) were kept out of it.`,
         `Fix: the build is being stopped rather than passed, because a file that was never checked is not a file known to be safe. This emitted file is outside the JavaScript syntax Warlock can currently verify. Two things commonly put it there, and this error cannot tell which: the output uses syntax newer than the parser Warlock ships with, or a plugin or loader emitted non-standard syntax into the client bundle. Check the compatibility of whatever produced this file, then build again.`,
       ].join("\n"),
     );
@@ -318,7 +318,7 @@ export function gateCVerify(options: GateCOptions = {}): Plugin {
             ``,
             `File: ${exportLeak.fileName}${exportLeak.line ? `:${exportLeak.line}` : ""}`,
             `Export: ${exportLeak.exportName}`,
-            `Cause: "${exportLeak.exportName}" is one of the five server exports (route, middleware, validation, loader, metadata) and is still present as a top-level binding in the EMITTED client chunk — projection and/or Gate A should have removed or refused it before the bundle was written.`,
+            `Cause: "${exportLeak.exportName}" is one of the six server exports (route, middleware, validation, loader, metadata, prefix) and is still present as a top-level binding in the EMITTED client chunk — projection and/or Gate A should have removed or refused it before the bundle was written.`,
             `Fix: this should already be impossible if projection and Gate A ran correctly — investigate why "${exportLeak.exportName}" reached the emitted output (a projection bug, a build config that bypasses these plugins, or a plugin ordering change) rather than assuming this build is a one-off; Gate C is defense in depth, not the primary fence.`,
           ].join("\n"),
         );

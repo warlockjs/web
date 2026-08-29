@@ -20,13 +20,11 @@
  * `route` and each layout's declared `prefix` by PARSING the source
  * ({@link readRouteExports}). It still imports no application module.
  *
- * The route a page is served under is the one the page DECLARES, not the one
- * its directory suggests, so that is the route discovery reports. The
- * composition — EVERY layout `prefix` on the page's path, outermost first, plus
- * the page's own `route` path — and the fallback used when a route omits its
- * name are mirrored from the server's installer (`installPageRoutes`),
- * deliberately and in one direction: build and boot agree because one of them
- * copies the other, not because two conventions were written to match.
+ * An explicit `route` export wins. Otherwise the URL is derived from the page's
+ * path beneath `src/web`: directories contribute segments, `(groups)` do not,
+ * `index.page.tsx` claims its directory, and `[id]` becomes `:id`. A layout
+ * `prefix` replaces its own directory segment. The same recipe is emitted to
+ * every provider so build and boot cannot drift.
  *
  * Discovery also CLASSIFIES each layout — does its module have a default
  * export, does it export `middleware` — because the layout policy
@@ -59,6 +57,10 @@ import {
 // get from a type: the list of keys a page is allowed to write.
 import { METADATA_KEYS, OPEN_GRAPH_KEYS, TWITTER_KEYS } from "../metadata";
 import { NestedLayoutsNotSupportedError, selectPageLayout } from "../routing/layout-policy";
+import {
+  deriveFilesystemRouteName,
+  deriveFilesystemRoutePath,
+} from "../routing/filesystem-route";
 import { deriveFallbackRouteName } from "../routing/route-identity";
 import type { RouteExportsReadResult } from "./read-route-exports";
 import { NonLiteralRouteExportError, readRouteExports } from "./read-route-exports";
@@ -70,27 +72,22 @@ export type DiscoverPagesOptions = {
   srcDir?: string;
 };
 
-export type DiscoveredPage = {
+export type DiscoveredRoutablePage = {
+  /** A browsable page. Error pages are deliberately a different discovery kind. */
+  type: "page";
   /**
-   * The page's route name: the `name` its `route` export declares, or the
-   * server's own fallback derivation — `<module>.<declared path with dots>` for
-   * a page in a module's web tree, the dotted path alone for one in the global
-   * tree, and `index` when neither has anything to say.
+   * The page's route name: the `name` its `route` export declares, or its
+   * filesystem identity as dotted segments, with groups omitted.
    *
    * Unique across the whole graph — {@link discoverPages} refuses to return a
    * result where it is not.
    */
   routeName: string;
   /**
-   * The page's EFFECTIVE route path: the declared `prefix` of EVERY layout on
-   * its path — outermost first, wherever in the ancestry each lives — composed
-   * in order with the page's own declared `route` path, which is the path the
-   * server registers it under. A layout that declares no `prefix` contributes
-   * nothing. Always `/`-prefixed.
-   *
-   * Every layout, not just the rendering one: a `prefix`-only layout is a real
-   * segment of the URL its subtree lives under, and skipping it would serve the
-   * subtree from a path nobody wrote down.
+   * The page's effective route path. Explicit routes retain their existing
+   * layout-prefix composition. Derived routes use filesystem segments, with
+   * each declared layout prefix replacing that layout directory's segment.
+   * Always `/`-prefixed.
    */
   routePath: string;
   /** Absolute path to the `*.page.tsx` file. */
@@ -116,6 +113,44 @@ export type DiscoveredPage = {
   appFile?: string;
 };
 
+/** The one application error boundary. It deliberately has no route identity. */
+export type DiscoveredErrorPage = {
+  type: "error";
+  /** Absolute path to the sole `error.page.tsx` beneath `src/web`. */
+  pageFile: string;
+  webRoot: string;
+  appFile?: string;
+};
+
+/** The complete static web graph: routable leaves plus the optional error boundary. */
+export type DiscoveredPage = DiscoveredRoutablePage | DiscoveredErrorPage;
+
+export function isDiscoveredRoutablePage(page: DiscoveredPage): page is DiscoveredRoutablePage {
+  return page.type === "page";
+}
+
+export function isErrorPageFile(file: string): boolean {
+  return path.basename(file) === "error.page.tsx";
+}
+
+export class DuplicateErrorPageError extends Error {
+  public constructor(firstFile: string, secondFile: string) {
+    super(
+      `Two error pages were found: "${firstFile}" and "${secondFile}". An application may own exactly one \`error.page.tsx\` anywhere beneath src/web.`,
+    );
+    this.name = "DuplicateErrorPageError";
+  }
+}
+
+export class ErrorPageDeclaresRouteError extends Error {
+  public constructor(pageFile: string) {
+    super(
+      `The error page "${pageFile}" exports \`route\`. error.page.tsx is an error boundary, not a browsable page; remove the route export.`,
+    );
+    this.name = "ErrorPageDeclaresRouteError";
+  }
+}
+
 /** Raised when two pages claim one route name. */
 export class DuplicatePageRouteNameError extends Error {
   public constructor(
@@ -130,6 +165,22 @@ export class DuplicatePageRouteNameError extends Error {
         "its directory gives it a different route name.",
     );
     this.name = "DuplicatePageRouteNameError";
+  }
+}
+
+/** Raised when two different page files resolve to one effective URL. */
+export class DuplicatePageRoutePathError extends Error {
+  public constructor(
+    public readonly routePath: string,
+    public readonly firstFile: string,
+    public readonly secondFile: string,
+  ) {
+    super(
+      `Two pages resolve to the same route path "${routePath}": "${firstFile}" and ` +
+        `"${secondFile}". Each URL may identify exactly one page. Rename or move one file, ` +
+        "or give one page an explicit route with a different path.",
+    );
+    this.name = "DuplicatePageRoutePathError";
   }
 }
 
@@ -154,33 +205,13 @@ export function isFile(candidate: string): boolean {
 }
 
 /**
- * The two page roots: the global `src/web/**` tree and each
- * module's `src/app/<module>/web/**` tree. Both are optional; a project with
- * neither has zero pages, which is a legal empty state.
+ * The page root. It is optional; a project without it has zero pages, which is
+ * a legal empty state.
  */
 export function discoverWebRoots(srcRoot: string): string[] {
-  const roots: string[] = [];
-  const globalRoot = path.join(srcRoot, "web");
+  const webRoot = path.join(srcRoot, "web");
 
-  if (isDirectory(globalRoot)) {
-    roots.push(globalRoot);
-  }
-
-  const appDir = path.join(srcRoot, "app");
-
-  if (isDirectory(appDir)) {
-    for (const entry of fs.readdirSync(appDir, { withFileTypes: true }).sort(byName)) {
-      if (!entry.isDirectory()) continue;
-
-      const moduleWebRoot = path.join(appDir, entry.name, "web");
-
-      if (isDirectory(moduleWebRoot)) {
-        roots.push(moduleWebRoot);
-      }
-    }
-  }
-
-  return roots;
+  return isDirectory(webRoot) ? [webRoot] : [];
 }
 
 function byName(left: { name: string }, right: { name: string }): number {
@@ -195,7 +226,7 @@ export type DiscoveredPageFile = {
 };
 
 /**
- * The subject list: every `*.page.tsx` under BOTH web roots, one call for the
+ * The subject list: every `*.page.tsx` under the page root, one call for the
  * whole graph.
  *
  * Unlike {@link discoverPages}, this reads no `route` or `prefix` export and
@@ -294,7 +325,7 @@ function comparePages(left: DiscoveredPage, right: DiscoveredPage): number {
   return compareStrings(toPosix(left.pageFile), toPosix(right.pageFile));
 }
 
-function assertUniqueRouteNames(pages: readonly DiscoveredPage[], appRoot: string): void {
+function assertUniqueRouteNames(pages: readonly DiscoveredRoutablePage[], appRoot: string): void {
   const fileByRouteName = new Map<string, string>();
 
   for (const page of pages) {
@@ -309,15 +340,35 @@ function assertUniqueRouteNames(pages: readonly DiscoveredPage[], appRoot: strin
   }
 }
 
-/** Raised when a `*.page.tsx` declares no `route` export. */
-export class MissingRouteExportError extends Error {
-  public constructor(public readonly pageFile: string) {
-    super(
-      `"${pageFile}" is a page file but declares no \`route\` export. A page with no route is a ` +
-        "page nothing can ever reach, so both the dev server and the build refuse it instead of " +
-        `serving a silent 404. For example: export const route = "/list";`,
-    );
-    this.name = "MissingRouteExportError";
+/**
+ * A page's declared `route.path` is a choice its author made deliberately, so
+ * two pages that both declare the same path are the author's call, not an
+ * accident — {@link assertUniqueRouteNames} is what keeps each of them
+ * reachable by name. What this refuses is a COLLISION NOBODY CHOSE: at least
+ * one side's path is filesystem-derived, which is exactly the case a rename
+ * or a new file can produce without anyone noticing two pages now answer the
+ * same URL. The reserved not-found path (`"*"`) is never a candidate here
+ * either way — it identifies no browsable URL, and {@link assertUniqueRouteNames}
+ * already refuses a second `404.page.tsx` by its own reserved name.
+ */
+function assertUniqueRoutePaths(
+  pages: readonly DiscoveredRoutablePage[],
+  appRoot: string,
+  explicitFiles: ReadonlySet<string>,
+): void {
+  const fileByRoutePath = new Map<string, string>();
+
+  for (const page of pages) {
+    if (page.routePath === NOT_FOUND_ROUTE_PATH) continue;
+
+    const existing = fileByRoutePath.get(page.routePath);
+    const relative = toPosix(path.relative(appRoot, page.pageFile));
+
+    if (existing !== undefined && !(explicitFiles.has(existing) && explicitFiles.has(relative))) {
+      throw new DuplicatePageRoutePathError(page.routePath, existing, relative);
+    }
+
+    if (existing === undefined) fileByRoutePath.set(page.routePath, relative);
   }
 }
 
@@ -346,9 +397,8 @@ export type UnknownMetadataKey = {
  * missing one — and no error is raised anywhere, at build or at runtime, ever.
  *
  * So the check lives HERE instead, at the gate every page already passes
- * through, where a `route`-less page is refused by name for the same reason: a
- * page that silently does not work is worse than a build that stops and says
- * which line to fix.
+ * through: a page that silently omits requested metadata is worse than a build
+ * that stops and says which line to fix.
  *
  * The alternative considered and rejected was a `defineMetadata({...})` wrapper,
  * which would infer the type for free. It also puts framework ceremony in every
@@ -774,13 +824,12 @@ function readLayoutShape(layoutFile: string, cache: Map<string, LayoutShape>): L
 }
 
 /**
- * Scans both web roots and returns the pages in a defined total order.
+ * Scans the page root and returns the pages in a defined total order.
  *
  * Zero pages is a legal result, not an error: a project may be configured
  * with web and have nothing to serve yet. What is an error is a `*.page.tsx`
- * with no `route` export, which is refused rather than silently omitted — an
- * artefact that leaves a page out is a page the dev server still serves and
- * production 404s on; two pages claiming one route name, which this refuses
+ * with a route or metadata export that cannot be read statically; two pages
+ * claiming one effective path or route name, which this refuses
  * to return at all — the alternative is an artefact in which one of them is
  * silently unreachable; a `route` or `prefix` that cannot be read without
  * running the application, which is refused before any page is reported at
@@ -801,20 +850,31 @@ export function discoverPages(options: DiscoverPagesOptions): DiscoveredPage[] {
   const relativeToApp = (file: string) => toPosix(path.relative(appRoot, file));
 
   const pages: DiscoveredPage[] = [];
+  const explicitRouteFiles = new Set<string>();
+  let errorPage: DiscoveredErrorPage | undefined;
 
   for (const webRoot of webRoots) {
     for (const pageFile of walkFiles(webRoot, (fileName) => fileName.endsWith(".page.tsx"))) {
       const pageSource = fs.readFileSync(pageFile, "utf-8");
       const { route } = readDeclarations(pageFile, declarations, pageSource);
+      if (isErrorPageFile(pageFile)) {
+        if (route !== undefined) throw new ErrorPageDeclaresRouteError(relativeToApp(pageFile));
+
+        if (errorPage !== undefined) {
+          throw new DuplicateErrorPageError(relativeToApp(errorPage.pageFile), relativeToApp(pageFile));
+        }
+
+        errorPage = { type: "error", pageFile, webRoot, ...(hasAppFile ? { appFile } : {}) };
+        continue;
+      }
       const isNotFoundPage = isNotFoundPageFile(pageFile);
 
       // THE NOT-FOUND PAGE IS THE ONE PAGE WITH NO URL, in both directions.
       //
-      // A missing `route` is refused for every other page because a page
-      // nothing can reach is a page that was written by mistake. `404.page.tsx`
-      // is reached by NOT matching, so the premise does not hold for it — and
-      // the opposite is the error: a `route` export here reads as a promise
-      // that some path is browsable, which the installers never keep.
+      // Every ordinary page may derive its URL from the filesystem.
+      // `404.page.tsx` is reached by NOT matching, so the opposite remains the
+      // error: a `route` export here reads as a promise that some path is
+      // browsable, which the installers never keep.
       //
       // Discovery still reports it, with the SAME reserved identity both
       // installers register it under, so the emitted artefacts agree with the
@@ -824,18 +884,13 @@ export function discoverPages(options: DiscoverPagesOptions): DiscoveredPage[] {
         throw new NotFoundPageDeclaresRouteError(relativeToApp(pageFile));
       }
 
-      if (route === undefined && !isNotFoundPage) {
-        throw new MissingRouteExportError(relativeToApp(pageFile));
-      }
-
       // The page contract is not only `route`. `metadata` is the other export
       // every page may declare, and it is the one with no compiler behind it
       // unless the author opted in to a type annotation — so it is checked
       // here, by name, exactly like the route above.
       //
-      // AFTER the route check on purpose: a page nothing can reach is a bigger
-      // problem than a page reached with the wrong `<head>`, and reporting the
-      // smaller one first would send the developer to the wrong line.
+      // AFTER the reserved-404 route check on purpose: an impossible 404 route
+      // contract is more fundamental than a malformed `<head>` declaration.
       const unknownMetadataKeys = readMetadataKeys(relativeToApp(pageFile), pageSource);
 
       if (unknownMetadataKeys.length > 0) {
@@ -876,22 +931,43 @@ export function discoverPages(options: DiscoverPagesOptions): DiscoveredPage[] {
         "/",
       );
 
+      const relativePageFile = toPosix(path.relative(webRoot, pageFile));
+      const layoutPrefixes = Object.fromEntries(
+        layouts.flatMap((layoutFile) => {
+          const prefix = readDeclarations(layoutFile, declarations).prefix;
+          if (prefix === undefined) return [];
+
+          const directory = toPosix(path.relative(webRoot, path.dirname(layoutFile)));
+          return [[directory, prefix]];
+        }),
+      );
+      const effectiveRoutePath = isNotFoundPage
+        ? NOT_FOUND_ROUTE_PATH
+        : route
+          ? composeRoutePath(layoutPrefix, route.path)
+          : deriveFilesystemRoutePath({ pageFile: relativePageFile, layoutPrefixes });
+
+      if (!isNotFoundPage && route !== undefined) {
+        explicitRouteFiles.add(relativeToApp(pageFile));
+      }
+
       pages.push({
+        type: "page",
         routeName: isNotFoundPage
           ? NOT_FOUND_ROUTE_NAME
           : (route?.name ??
-            deriveFallbackRouteName({
-              routePath: route?.path ?? "/",
-              sourceFile: relativeToApp(pageFile),
-            })),
+              (route
+                ? deriveFallbackRouteName({
+                    routePath: route.path,
+                    sourceFile: relativeToApp(pageFile),
+                  })
+                : deriveFilesystemRouteName(relativePageFile))),
         // The catch-all, which the client route matcher already understands as
         // a terminal `catch-all` token sorted LAST by specificity
         // (`../client/runtime/matcher.ts`) — so the browser resolves the
         // not-found page for a URL that matched nothing, exactly as the server
         // did, and never in preference to a real page.
-        routePath: isNotFoundPage
-          ? NOT_FOUND_ROUTE_PATH
-          : composeRoutePath(layoutPrefix, route?.path ?? "/"),
+        routePath: effectiveRoutePath,
         pageFile,
         webRoot,
         // THE NOT-FOUND PAGE RENDERS INSIDE THE APPLICATION ROOT AND NOTHING
@@ -922,9 +998,16 @@ export function discoverPages(options: DiscoverPagesOptions): DiscoveredPage[] {
     }
   }
 
+  // The error page is captured separately above so a second one can be
+  // compared against the first before either is trusted — it joins the
+  // returned graph here, once discovery knows there is exactly one.
+  if (errorPage !== undefined) pages.push(errorPage);
+
   pages.sort(comparePages);
 
-  assertUniqueRouteNames(pages, appRoot);
+  const routablePages = pages.filter(isDiscoveredRoutablePage);
+  assertUniqueRoutePaths(routablePages, appRoot, explicitRouteFiles);
+  assertUniqueRouteNames(routablePages, appRoot);
 
   return pages;
 }

@@ -16,7 +16,15 @@ const aboutPage = path.join(webRoot, "about.page.tsx");
 const notFoundPage = path.join(webRoot, "404.page.tsx");
 
 function discoveredPage(pageFile: string, routePath: string) {
-  return { pageFile, routePath, webRoot };
+  return {
+    type: "page" as const,
+    routeName: path.basename(pageFile, ".page.tsx"),
+    routePath,
+    pageFile,
+    webRoot,
+    layouts: [],
+    middlewareLayouts: [],
+  };
 }
 
 describe("findUnregisteredPageFiles", () => {

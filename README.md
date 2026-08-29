@@ -94,16 +94,14 @@ where neither exists — and is never `async`.
 ## Where things live
 
 ```
-src/web/                    app-level web layer, and a page root
+src/web/                    app-level web layer and page root
   root.tsx                  owns <html>, renders #root
   layouts/                  shared layouts
   middleware/
-src/app/<module>/web/       that module's own pages
 ```
 
-Both are page roots. All client code lives in a `web/` folder, and nothing
-outside one may import from one — so `rm -rf src/web src/app/*/web` removes the
-page layer and leaves a working API.
+All client code lives in `src/web/`, so `rm -rf src/web` removes the page layer
+and leaves a working API.
 
 **`web/` means the web layer, not the browser.** Loaders and page middleware
 inside it are server code.

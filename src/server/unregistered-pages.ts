@@ -1,6 +1,7 @@
 import path from "node:path";
 import {
   discoverPages,
+  isDiscoveredRoutablePage,
   toPosix,
   type DiscoverPagesOptions,
   type DiscoveredPage,
@@ -8,8 +9,8 @@ import {
 import { matchPath } from "./match-page-route";
 import { isNotFoundPageFile } from "./not-found-page";
 
-type DiscoveredGlobalPage = Pick<DiscoveredPage, "pageFile" | "routePath" | "webRoot">;
-type DiscoverPages = (options: DiscoverPagesOptions) => readonly DiscoveredGlobalPage[];
+type DiscoveredGlobalPage = Extract<DiscoveredPage, { type: "page" }>;
+type DiscoverPages = (options: DiscoverPagesOptions) => readonly DiscoveredPage[];
 
 export type UnregisteredPagesOptions = {
   appRoot: string;
@@ -30,12 +31,14 @@ function findUnregisteredPages(options: UnregisteredPagesOptions): DiscoveredGlo
   const registered = new Set(registeredPageFiles().map(fileKey));
   const webRoot = path.resolve(appSrcRoot, "web");
 
-  return discover({ appRoot, srcDir: path.relative(appRoot, appSrcRoot) }).filter(
-    (page) =>
+  return discover({ appRoot, srcDir: path.relative(appRoot, appSrcRoot) })
+    .filter(isDiscoveredRoutablePage)
+    .filter(
+      (page) =>
       path.resolve(page.webRoot) === webRoot &&
       !isNotFoundPageFile(page.pageFile) &&
       !registered.has(fileKey(page.pageFile)),
-  );
+    );
 }
 
 export function findUnregisteredPageFiles(options: UnregisteredPagesOptions): string[] {

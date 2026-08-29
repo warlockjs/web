@@ -1,6 +1,23 @@
 import type { SharedContext } from "./index";
 
 /**
+ * Vite's own `ImportMetaEnv` augmentation ships with the `vite/client` triple-slash
+ * types, which this package does not pull in (`shared.ts` compiles standalone, not
+ * inside a Vite app). This narrows only the one key `sealShared` reads — the literal
+ * `import.meta.env?.DEV` expression below is load-bearing (see the comment at its
+ * call site) and must stay untouched, so the fix lives in the type, not the syntax.
+ */
+declare global {
+  interface ImportMetaEnv {
+    readonly DEV?: boolean;
+  }
+
+  interface ImportMeta {
+    readonly env?: ImportMetaEnv;
+  }
+}
+
+/**
  * The runtime behind `shared` — the per-request, ALS-backed audit surface.
  *
  * `shared` is syntactically global for DX but semantically request-scoped: the
@@ -28,13 +45,14 @@ import type { SharedContext } from "./index";
  */
 
 /**
- * Untyped view of the per-request target. `SharedContext` declares the
- * framework keys (`can`, `locale`, `dir`, `nonce`) the pipeline's middleware
- * writes into the target before any app code reads them, so the runtime writes
- * through this shape and the public surface casts at the boundary — through
- * `unknown`, because the two types share no declared members.
+ * The per-request target's runtime shape. `SharedContext` (index.ts:17) is the
+ * app-augmentable public surface — apps declaration-merge their own keys onto
+ * it — so `SharedTarget` intersects it in rather than replacing it: every
+ * `SharedContext` member is structurally a `SharedTarget` member too, which is
+ * what lets `enterSharedScope` and `shared` below hand back a `SharedTarget`
+ * value where a `SharedContext` is expected with no cast at the boundary.
  */
-type SharedTarget = Record<string | symbol, unknown>;
+type SharedTarget = SharedContext & Record<string | symbol, unknown>;
 
 /**
  * The pipeline's per-request store, structurally. At runtime this IS core's
@@ -44,9 +62,9 @@ type SharedTarget = Record<string | symbol, unknown>;
  * store already carries the instance, which is how seal reaches it without web
  * importing core.
  */
-export interface SharedStore {
+export type SharedStore = {
   response?: { parse(value: unknown): Promise<unknown> };
-}
+};
 
 /**
  * Returns the CURRENT request's store, or undefined outside a request. The
@@ -169,7 +187,7 @@ export function enterSharedScope(store: SharedStore): SharedContext {
 
   sharedScopes.set(store, { target, sealed: false });
 
-  return target as unknown as SharedContext;
+  return target;
 }
 
 function rejectAtGate(path: string, offender: string): never {
@@ -260,7 +278,7 @@ function freezeBrowserSnapshot(value: object, seen: Set<object>): void {
  * recursively frozen in place and retained wholesale so every consumer
  * observes the same identity; this never reads or writes the server ALS scope.
  */
-export function installBrowserSharedSnapshot(value: unknown): void {
+export function hydrateShared(value: unknown): void {
   if (value !== null && typeof value === "object") {
     freezeBrowserSnapshot(value, new Set<object>());
   }
@@ -269,17 +287,12 @@ export function installBrowserSharedSnapshot(value: unknown): void {
   browserSharedInstalled = true;
 }
 
-/** Compatibility alias; browser snapshot ownership lives in the installer above. */
-export function hydrateShared(value: unknown): void {
-  installBrowserSharedSnapshot(value);
-}
-
 function readBrowserSharedSnapshot(): Readonly<SharedContext> {
   if (!browserSharedInstalled) {
     throw new Error(
       "Cannot read `shared` via useShared(): the browser snapshot has not been " +
         "installed (web/src/shared.ts). Hydration must validate the complete " +
-        "#__WARLOCK_DATA__ payload and call installBrowserSharedSnapshot() " +
+        "#__WARLOCK_DATA__ payload and call hydrateShared() " +
         "before constructing the React tree.",
     );
   }
@@ -357,12 +370,17 @@ export async function sealShared(store?: SharedStore): Promise<Readonly<SharedCo
 
     `import.meta.env` is injected by a BUNDLER. When this package is compiled
     into an app's server bundle — what happens in this checkout — esbuild's
-    `define` (build/generate-pages-barrel.ts:59-62) replaces the whole
-    expression and the question never arises. When `@warlock.js/web` is
-    INSTALLED, it is external to that bundle, nothing replaces anything, and
-    plain `import.meta.env.DEV` threw `Cannot read properties of undefined`
-    on EVERY page render. `?.` is what makes the absent case falsy instead
-    of fatal.
+    `define` (`WEB_ESBUILD_PATCH.define` in
+    `src/build/generate-pages-barrel.ts`) does a literal text-level
+    match on `import.meta.env.DEV` and replaces it verbatim wherever it
+    appears, `?.` or not — proven against esbuild's real `transform()`, not
+    assumed (vite/gate-b-secrets.spec.ts, "WEB_ESBUILD_PATCH.define" describe
+    block): `import.meta.env?.DEV` compiles to `false`, same as the
+    non-optional form, and no `import.meta` survives in either case. When
+    `@warlock.js/web` is INSTALLED, it is external to that bundle, nothing
+    replaces anything, and plain `import.meta.env.DEV` threw `Cannot read
+    properties of undefined` on EVERY page render. `?.` is what makes the
+    absent case falsy instead of fatal.
 
     A `globalThis.process?.env?.NODE_ENV` fallback was tried and REJECTED:
     Gate B matches `process.env` only when the object is the bare identifier
@@ -449,7 +467,7 @@ export const shared: SharedContext = new Proxy({} as SharedTarget, {
 
     return true;
   },
-}) as unknown as SharedContext;
+});
 
 /**
  * The READ half for components at depth. On the server it preserves the live

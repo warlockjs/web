@@ -23,18 +23,20 @@
  * handler is a lookup over the same table, not an evaluation step.
  */
 import { composeRoutePath } from "../routing/compose-route-path";
+import { deriveFilesystemRouteName, deriveFilesystemRoutePath } from "../routing/filesystem-route";
 import { NestedLayoutsNotSupportedError, selectPageLayout } from "../routing/layout-policy";
 import { canonicalizeRouteExport, deriveFallbackRouteName } from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
-import type { Response, Router } from "@warlock.js/core";
-import type { BufferedCookie } from "./buffered-response";
+import { Response, type Router } from "@warlock.js/core";
 import { createPageModuleLoader } from "./create-page-module-loader";
+import type { ErrorPageModule } from "./error-page";
 import {
   createPageRouteHandler,
   type PageRouteHandler,
   type PageRouteHandlerOptions,
 } from "./create-page-route-handler";
-import type { PipelineMiddleware } from "./execute-page-request";
+import type { PipelineLoader, PipelineMiddleware } from "./execute-page-request";
+import { productionStylesheetUrls } from "./stylesheet-urls";
 import {
   createNotFoundRouteHandler,
   DuplicateNotFoundPageError,
@@ -67,6 +69,7 @@ type LayoutModuleShape = {
   default?: unknown;
   /** The layout's guards, in the order it declared them. */
   middleware?: readonly PipelineMiddleware[];
+  loader?: PipelineLoader;
 };
 
 /**
@@ -95,23 +98,78 @@ export type InstallPageRoutesFromManifestOptions = {
   manifest: PageManifest;
   /** Browser module loaded after the server-rendered application and payload. */
   hydrationClientModuleUrl?: string;
-  /** Stylesheet URLs emitted into every page's `<head>`. */
-  stylesheetUrls?: readonly string[];
+  /**
+   * Where the client build wrote its output — `productionStylesheetUrls`'s own
+   * `clientDir` argument, forwarded here rather than pre-read into a flat list:
+   * each registered handler needs its OWN chain
+   * (`[root, ...outer-to-inner matched layouts, page]`, matched by the
+   * manifest's own `sourceFile` ids), not one list shared by every page.
+   *
+   * OPTIONAL for the same reason `PageManifest.clientDir` is: a build that
+   * discovered zero pages emits no client bundle, so there is no directory to
+   * read stylesheets from — and no page that could need one either.
+   */
+  clientDir?: string;
   /** Same helper `dev-server.ts` exports — passed in, never imported. */
-  applyBufferedCookie: (response: Response, cookie: BufferedCookie) => void;
   createHandler?: PageRouteHandlerFactory;
 };
 
+/**
+ * `sourceFile`'s path relative to the web root — `src/web/**`, the only page
+ * root discovery enumerates (`discoverWebRoots`,
+ * `web/src/build/discover-pages.ts:210-213`). Manifest `sourceFile`s are
+ * app-root-relative (`"src/web/..."`, `page-manifest.ts`'s own doc comment),
+ * so dropping the first two segments — `<srcDir>`, then the literal `"web"` —
+ * recovers exactly what `deriveFilesystemRoutePath`/`deriveFilesystemRouteName`
+ * expect: the same value dev computes as `filesystemPageFileFor`
+ * (`install-page-routes.ts:101-103`).
+ */
+function webRelativeSourceFile(sourceFile: string): string {
+  return sourceFile.split("/").slice(2).join("/");
+}
+
 function resolveRoute(
-  routeExport: PageRouteExport,
+  routeExport: PageRouteExport | undefined,
   sourceFile: string,
 ): { path: string; name: string } {
+  if (routeExport === undefined) {
+    const pageFile = webRelativeSourceFile(sourceFile);
+
+    return {
+      path: deriveFilesystemRoutePath({ pageFile }),
+      name: deriveFilesystemRouteName(pageFile),
+    };
+  }
+
   const canonical = canonicalizeRouteExport(routeExport);
 
   return {
     path: canonical.path,
     name: canonical.name ?? deriveFallbackRouteName({ routePath: canonical.path, sourceFile }),
   };
+}
+
+/**
+ * Every layout's declared `prefix`, keyed by its directory relative to the
+ * web root — the same table dev builds as `LayoutLevel.prefixesByDirectory`
+ * (`install-page-routes.ts:214-222`) and the one
+ * {@link deriveFilesystemRoutePath} uses to let a directory's own layout
+ * rename the URL segment a bare directory name would otherwise contribute.
+ */
+function layoutPrefixesOf(page: PageManifestPageEntry): Record<string, string> {
+  return Object.fromEntries(
+    page.layouts.flatMap((layout) => {
+      const prefix = (layout.module as LayoutModuleShape).prefix;
+
+      if (prefix === undefined) return [];
+
+      const relative = webRelativeSourceFile(layout.sourceFile);
+      const slashIndex = relative.lastIndexOf("/");
+      const directory = slashIndex === -1 ? "" : relative.slice(0, slashIndex);
+
+      return [[directory, prefix]];
+    }),
+  );
 }
 
 /**
@@ -198,11 +256,25 @@ function composeLayoutLevel(
   page: PageManifestPageEntry,
   host: PageManifestLayoutEntry,
 ): Record<string, unknown> {
+  const hostIndex = page.layouts.indexOf(host);
+
   return {
     ...host.module,
     middleware: page.layouts.flatMap((layout) => [
       ...((layout.module as LayoutModuleShape).middleware ?? []),
     ]),
+    loader: async (context: Parameters<NonNullable<LayoutModuleShape["loader"]>>[0]) => {
+      let hostData: unknown;
+
+      for (let index = 0; index < page.layouts.length; index++) {
+        const value = await (page.layouts[index].module as LayoutModuleShape).loader?.(context);
+
+        if (value instanceof Response) return value;
+        if (index === hostIndex) hostData = value;
+      }
+
+      return hostData;
+    },
   };
 }
 
@@ -227,8 +299,7 @@ export function installPageRoutesFromManifest(
     router,
     manifest,
     hydrationClientModuleUrl,
-    stylesheetUrls,
-    applyBufferedCookie,
+    clientDir,
     createHandler = createPageRouteHandler,
   } = options;
 
@@ -250,6 +321,11 @@ export function installPageRoutesFromManifest(
   // joining or swapping separators on one side of that comparison would turn
   // every lookup into a miss.
   const loadModule = createPageModuleLoader(manifest);
+  // The namespace is already statically imported by the generated barrel, but
+  // do not hand it to the render pipeline until a request actually fails.
+  const loadErrorPage = manifest.errorPage === undefined
+    ? undefined
+    : async () => manifest.errorPage!.module as ErrorPageModule;
 
   // Same partition development makes, on the same rule (the filename), so the
   // two modes cannot disagree about which file is the not-found page. It is
@@ -275,12 +351,20 @@ export function installPageRoutesFromManifest(
     const { host: layout, prefix: layoutPrefix } = layoutLevelOf(page);
     const routeExport = (page.module as PageModuleShape).route;
 
-    // A page that declares no route has no public URL to be registered under —
-    // the same page discovery skips in development.
-    if (routeExport === undefined) continue;
-
     const { path: routePath, name } = resolveRoute(routeExport, page.sourceFile);
-    const effectivePath = composeRoutePath(layoutPrefix, routePath);
+
+    // Explicit wins; otherwise the path is derived from the page's own source
+    // location and the layouts on its path — the same rule dev applies at
+    // registration (`install-page-routes.ts:377-382`) and discovery applies at
+    // build (`discover-pages.ts:925-935`), read here off the manifest's own
+    // `sourceFile`s instead of the filesystem.
+    const effectivePath =
+      routeExport === undefined
+        ? deriveFilesystemRoutePath({
+            pageFile: webRelativeSourceFile(page.sourceFile),
+            layoutPrefixes: layoutPrefixesOf(page),
+          })
+        : composeRoutePath(layoutPrefix, routePath);
     const existingFile = fileByPath.get(effectivePath);
 
     if (existingFile) {
@@ -303,6 +387,23 @@ export function installPageRoutesFromManifest(
         ? composeLayoutLevel(page, layout)
         : undefined;
 
+    // Every registered handler gets ITS OWN immutable, ordered, deduped CSS
+    // chain: root, then every matched layout outer to inner (`page.layouts`,
+    // the manifest's own chain — the same one dev walks as
+    // `layoutLevel.chain`), then the page. `PageManifest.clientDir` is present
+    // whenever `pages` is non-empty (`page-manifest.ts`), which this loop only
+    // ever reaches when it is — `clientDir === undefined` is handled anyway,
+    // rather than trusted away, because a caller can still pass this function
+    // a manifest that violates its own generator's invariant.
+    const stylesheetUrls =
+      clientDir === undefined
+        ? []
+        : productionStylesheetUrls(clientDir, [
+            app.sourceFile,
+            ...page.layouts.map((pageLayout) => pageLayout.sourceFile),
+            page.sourceFile,
+          ]);
+
     router.get(
       effectivePath,
       createHandler({
@@ -318,9 +419,11 @@ export function installPageRoutesFromManifest(
                 moduleId === layout?.sourceFile
                   ? Promise.resolve(composedLayout)
                   : loadModule(moduleId),
+        loadRegistrationLayouts: () =>
+          Promise.resolve(page.layouts.map((layout) => layout.module)),
         hydrationClientModuleUrl,
+        loadErrorPage,
         stylesheetUrls,
-        applyBufferedCookie,
       }),
       // `isPage` marks this route as SSR-served. Pages and API routes share one
       // router and one route-name namespace, so the router's duplicate-name
@@ -360,8 +463,13 @@ export function installPageRoutesFromManifest(
               layoutFile: undefined,
               loadModule,
               hydrationClientModuleUrl,
-              stylesheetUrls,
-              applyBufferedCookie,
+              loadErrorPage,
+              // NO LAYOUT means no layout CSS either — just root and the
+              // not-found page's own stylesheets, same reasoning as above.
+              stylesheetUrls:
+                clientDir === undefined
+                  ? []
+                  : productionStylesheetUrls(clientDir, [app.sourceFile, notFoundPage.sourceFile]),
               matchPath: (requestPath) => requestPath,
               statusForRenderedOk: 404,
             }),

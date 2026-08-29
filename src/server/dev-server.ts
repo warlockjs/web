@@ -1,44 +1,7 @@
-/**
- * Two small pieces of the dev/SSR page plumbing that `./web-connector.ts` wires
- * but deliberately does not own: the buffered-cookie commit, and the DEV-ONLY
- * error transport that stops a refused module from reaching the browser as a
- * bare 404 (see {@link devErrorTransportPlugin}).
- *
- * ---
- *
- * Commits one buffered cookie (`BufferedCookie`, from `./buffered-response.ts`)
- * onto the live Warlock `Response` — the single place in the SSR page pipeline
- * where a cookie the loader buffered turns into a real `Set-Cookie` header.
- *
- * It delegates to core's `Response.cookie()` rather than talking to fastify.
- * That method already owns everything this file used to reimplement: it takes
- * core's own `CookieOptions`, JSON-stringifies the value unless `{ raw: true }`,
- * strips the core-only `raw` flag, and layers the framework's secure-cookie
- * defaults and the `http.cookies.options` config under the per-call options.
- * Going through it means the SSR page path and every ordinary controller emit
- * cookies by the exact same code, so the two cannot drift apart.
- *
- * The helper is passed INTO `installPageRoutes`/`createPageRouteHandler` as an
- * option rather than imported by them, which is what keeps this module out of a
- * cycle with the page-route installer.
- */
+/** Development-only transport for Vite transform failures. */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { stripVTControlCharacters } from "node:util";
 import type { Connect, Plugin } from "vite";
-import type { Response } from "@warlock.js/core";
-import type { BufferedCookie } from "./buffered-response";
-
-/**
- * Replay a buffered cookie onto the response that will actually be sent.
- *
- * `BufferedCookie.options` is a loosely-typed bag (`Record<string, unknown>`)
- * because the buffer is written by loader code before any response exists; the
- * cast hands it to `Response.cookie()`, which is where the option shape is
- * defined and enforced for every other caller in the framework.
- */
-export function applyBufferedCookie(response: Response, cookie: BufferedCookie): void {
-  response.cookie(cookie.name, cookie.value as never, (cookie.options ?? {}) as never);
-}
 
 /**
  * Where a captured transform/resolve failure rides from Vite's connect stack to
@@ -53,6 +16,13 @@ export function applyBufferedCookie(response: Response, cookie: BufferedCookie):
  * server, and so the two halves cannot drift onto two different keys.
  */
 export const DEV_TRANSFORM_ERROR_BODY = Symbol.for("warlock.web.devTransformErrorBody");
+
+/**
+ * Re-exported so a dev-only caller can reach the cookie commit seam through
+ * this module without a second import path into `./buffered-response`, which
+ * is where the implementation actually lives.
+ */
+export { applyBufferedCookie, type BufferedCookie } from "./buffered-response";
 
 type DevTransformErrorCarrier = { [DEV_TRANSFORM_ERROR_BODY]?: string };
 

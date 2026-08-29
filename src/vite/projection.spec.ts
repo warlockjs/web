@@ -77,8 +77,8 @@ async function refusalMessage(source: string, baseName: string): Promise<string>
   throw new Error(`expected ${baseName} to be refused, but it transformed cleanly`);
 }
 
-describe("projection — strip the 5 server exports (real transform hook, real output)", () => {
-  it("case 1: a shared import between loader and the component survives; all 5 server exports are gone", async () => {
+describe("projection — strip the 6 server exports (real transform hook, real output)", () => {
+  it("case 1: a shared import between loader and the component survives; all 5 declared server exports are gone", async () => {
     const code = await transformedCode("case1-shared-import.page.tsx");
 
     expect(code).toContain('from "./helper"');
@@ -131,7 +131,7 @@ describe("projection — strip the 5 server exports (real transform hook, real o
     expect(code).toContain("export default function BlogPage");
   });
 
-  it("skips the SSR build entirely — the server still needs all 5 exports intact", async () => {
+  it("skips the SSR build entirely — the server still needs all 6 exports intact", async () => {
     const { result } = await runTransform("case1-shared-import.page.tsx", { ssr: true });
     expect(result).toBeNull();
   });
@@ -163,14 +163,14 @@ describe("projection — strip the 5 server exports (real transform hook, real o
     expect(code).toContain("export default function App");
   });
 
-  it("does NOT strip `revalidate` — the sixth server export projection does not know about", () => {
+  it("does NOT strip `revalidate` — the seventh server export projection does not know about", () => {
     /*
       A CHARACTERIZATION TEST: this asserts what the code does today, not what
       it ought to do, and it is here so the gap is visible in the suite instead
       of only in a card.
 
-      Projection strips five exports — route, middleware, validation, loader,
-      metadata. The page contract documents `revalidate` as a SERVER export too,
+      Projection strips six exports — route, middleware, validation, loader,
+      metadata, prefix. The page contract documents `revalidate` as a SERVER export too,
       and the reference app's root says so in as many words ("The SIXTH server
       export, and it is documented as one"). Projection has never been told.
 
@@ -203,6 +203,146 @@ describe("projection — strip the 5 server exports (real transform hook, real o
     // fails on prose rather than on what projection removed.
     expect(code).not.toMatch(/from ["']\.\/server-only-helper["']/);
     expect(code).toContain('from "./helper"');
+  });
+});
+
+/**
+ * `export * from "./source"` was previously treated as always-safe alongside
+ * every other export form — but unlike a NAMED export, a star re-export
+ * forwards whatever the source module exports, sight unseen. A page that
+ * re-exports `* from "./shared-loaders"` would leak `loader`/`middleware`/
+ * etc. straight past the 6-name check below it, since projection never opens
+ * the source file to see what it actually exports (`304fcc57`). It is now
+ * refused the same way any other attribution-ambiguous statement is —
+ * through `ProjectionAmbiguityError`, not a second resolution path.
+ */
+describe("projection — refuses a star re-export rather than assuming it is safe", () => {
+  it("refuses `export * from \"./source\"`, naming the leak risk as the cause", async () => {
+    const message = await refusalMessage(
+      [
+        `export * from "./shared-loaders";`,
+        ``,
+        `export default function BlogPage() {`,
+        `  return <h1>Blog</h1>;`,
+        `}`,
+      ].join("\n"),
+      "blog.page.tsx",
+    );
+
+    expect(message).toContain('export * from "./shared-loaders"');
+    expect(message).toContain("server-only binding");
+    expect(message).toContain("Fix:");
+  });
+
+  it("refuses `export * as ns from \"./source\"` the same way", async () => {
+    const message = await refusalMessage(
+      [
+        `export * as sharedLoaders from "./shared-loaders";`,
+        ``,
+        `export default function BlogPage() {`,
+        `  return <h1>Blog</h1>;`,
+        `}`,
+      ].join("\n"),
+      "blog.page.tsx",
+    );
+
+    expect(message).toContain('export * as sharedLoaders from "./shared-loaders"');
+    expect(message).toContain("server-only binding");
+  });
+
+  it("still strips the 6 named server exports declared directly, unaffected by the star-reexport refusal", async () => {
+    const code = await transformedCode("case1-shared-import.page.tsx");
+
+    expect(code).not.toMatch(/export const route/);
+    expect(code).not.toMatch(/export const loader/);
+  });
+});
+
+/**
+ * `register` is a client-and-server lifecycle hook, not a sixth server export.
+ * Projection therefore keeps its named declaration and every dependency the
+ * body reads, while still removing the server-only exports beside it. Pin all
+ * three projectable entry-point shapes: a basename regression otherwise turns
+ * into a hook that works for pages but silently disappears from layouts or the
+ * root.
+ */
+describe("projection — register lifecycle hook", () => {
+  it.each([
+    ["page", "account.page.tsx"],
+    ["layout", "layout.tsx"],
+    ["root", "root.tsx"],
+  ])("keeps register and its referenced import/declaration in a %s module", async (_kind, baseName) => {
+    const code = await transformSource(
+      [
+        `import { install } from "./universal-static";`,
+        ``,
+        `const registrationName = "catalog";`,
+        ``,
+        `export const loader = async () => ({ hidden: true });`,
+        ``,
+        `export function register() {`,
+        `  install(registrationName);`,
+        `}`,
+        ``,
+        `export default function Entry() {`,
+        `  return <main />;`,
+        `}`,
+      ].join("\n"),
+      baseName,
+    );
+
+    expect(code).toContain('from "./universal-static"');
+    expect(code).toContain('const registrationName = "catalog"');
+    expect(code).toContain("export function register()");
+    expect(code).toContain("install(registrationName)");
+    expect(code).not.toMatch(/export const loader/);
+  });
+
+  it.each([
+    ["page", "account.page.tsx"],
+    ["layout", "layout.tsx"],
+    ["root", "root.tsx"],
+  ])("self-accepts a %s replacement through the once-per-namespace registration guard", async (_kind, baseName) => {
+    const code = await transformSource(
+      `export function register() {}\nexport default function Entry() { return <main />; }`,
+      baseName,
+    );
+
+    expect(code).toContain(
+      'import { registerModules as __warlockRegisterModules } from "@warlock.js/web/client/runtime";',
+    );
+    expect(code).toContain(
+      "if (import.meta.hot) import.meta.hot.accept((replacement) => { if (replacement) __warlockRegisterModules([replacement]); });",
+    );
+    expect(code).not.toContain("replacement?.register?.()");
+    expect(code).not.toContain("import.meta.hot.accept(register)");
+  });
+
+  it("keeps projected HMR out of SSR and non-projectable modules, so Vite performs its normal full reload", async () => {
+    const ssr = await runTransform("case1-shared-import.page.tsx", { ssr: true });
+    const nonProjectable = await runTransform("helper.ts");
+
+    expect(ssr.result).toBeNull();
+    expect(nonProjectable.result).toBeNull();
+  });
+
+  it("teaches register at every ambiguity diagnostic surface", async () => {
+    const bareStatement = await refusalMessage(
+      `install();\nexport default function Page() { return <main />; }`,
+      "register.page.tsx",
+    );
+    const executableInitializer = await refusalMessage(
+      `const installed = install();\nexport default function Page() { return <main />; }`,
+      "register.page.tsx",
+    );
+    const bareImport = await refusalMessage(
+      `import "./universal-static";\nexport default function Page() { return <main />; }`,
+      "register.page.tsx",
+    );
+
+    expect(bareStatement).toContain("export function register()");
+    expect(executableInitializer).toContain("export function register()");
+    expect(bareImport).toContain("export function register()");
   });
 });
 
@@ -415,7 +555,7 @@ describe("projection — attributing a module-scope declaration by who reads it"
   it("never attributes a non-server-named export — it survives unread", async () => {
     const code = await transformSource(
       [
-        `export const prefix = "/products";`,
+        `export const title = "/products";`,
         ``,
         `export const middleware = [];`,
         ``,
@@ -426,7 +566,52 @@ describe("projection — attributing a module-scope declaration by who reads it"
       "layout.tsx",
     );
 
-    expect(code).toContain('export const prefix = "/products"');
+    expect(code).toContain('export const title = "/products"');
     expect(code).not.toMatch(/export const middleware/);
+  });
+});
+
+/**
+ * `prefix` joined `route`/`middleware`/`validation`/`loader`/`metadata` as a
+ * 6th server export (`c438ae61`): a layout's route-prefix declaration is
+ * server-side routing data, not something the client needs to read, and
+ * until now it survived projection unread — the exact shape the export-list
+ * check above pins in the OTHER direction.
+ */
+describe("projection — strips the `prefix` server export", () => {
+  it("removes `export const prefix` and does not attribute it as a survivor", async () => {
+    const code = await transformSource(
+      [
+        `export const prefix = "/products";`,
+        ``,
+        `export default function ProductsLayout() {`,
+        `  return <main />;`,
+        `}`,
+      ].join("\n"),
+      "layout.tsx",
+    );
+
+    expect(code).not.toMatch(/export const prefix/);
+    expect(code).toContain("export default function ProductsLayout");
+  });
+
+  it("removes an import held alive only by `prefix`, same as the other 5 server exports", async () => {
+    const code = await transformSource(
+      [
+        `import { basePrefix } from "./server-only-helper";`,
+        `import { formatTitle } from "./helper";`,
+        ``,
+        `export const prefix = basePrefix;`,
+        ``,
+        `export default function ProductsLayout({ data }) {`,
+        `  return <h1>{formatTitle(data.title)}</h1>;`,
+        `}`,
+      ].join("\n"),
+      "layout.tsx",
+    );
+
+    expect(code).not.toMatch(/export const prefix/);
+    expect(code).not.toMatch(/from ["']\.\/server-only-helper["']/);
+    expect(code).toContain('from "./helper"');
   });
 });

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { NonLiteralRouteExportError, readRouteExports } from "./read-route-exports";
 
 /** The reader takes the source directly, so no fixture ever touches the disk here. */
-function read(source: string, sourceFile = "src/app/shop/web/list.page.tsx") {
+function read(source: string, sourceFile = "src/web/shop/list.page.tsx") {
   return readRouteExports(sourceFile, source);
 }
 
@@ -27,7 +27,7 @@ describe("readRouteExports — the literal forms it accepts", () => {
   });
 
   it("reads a layout prefix", () => {
-    expect(read('export const prefix = "/shop";', "src/app/shop/web/layout.tsx")).toEqual({
+    expect(read('export const prefix = "/shop";', "src/web/shop/layout.tsx")).toEqual({
       ok: true,
       prefix: "/shop",
     });
@@ -99,7 +99,7 @@ describe("readRouteExports — the forms it rejects", () => {
       if (result.ok) return;
 
       expect(result.rejection.exportName).toBe(exportName);
-      expect(result.rejection.sourceFile).toBe("src/app/shop/web/list.page.tsx");
+      expect(result.rejection.sourceFile).toBe("src/web/shop/list.page.tsx");
       expect(result.rejection.detail).not.toBe("");
     });
   }
@@ -115,14 +115,14 @@ describe("NonLiteralRouteExportError — what the app developer is told", () => 
 
     const message = new NonLiteralRouteExportError(result.rejection).message;
 
-    expect(message).toContain("src/app/shop/web/list.page.tsx");
+    expect(message).toContain("src/web/shop/list.page.tsx");
     expect(message).toContain("route");
     expect(message).toContain("without running your application code");
     expect(message).toContain('export const route = "/list"');
   });
 
   it("shows a prefix example when it is the prefix that could not be read", () => {
-    const result = read("export const prefix = base;", "src/app/shop/web/layout.tsx");
+    const result = read("export const prefix = base;", "src/web/shop/layout.tsx");
 
     expect(result.ok).toBe(false);
 
@@ -130,7 +130,7 @@ describe("NonLiteralRouteExportError — what the app developer is told", () => 
 
     const message = new NonLiteralRouteExportError(result.rejection).message;
 
-    expect(message).toContain("src/app/shop/web/layout.tsx");
+    expect(message).toContain("src/web/shop/layout.tsx");
     expect(message).toContain('export const prefix = "/shop"');
   });
 });

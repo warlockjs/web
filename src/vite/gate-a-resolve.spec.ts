@@ -761,12 +761,11 @@ describe("gateAResolve — rule 2 and type-only imports (verbatimModuleSyntax fi
  * (case 28), and an extension the completion can produce that rule 4's own
  * regex must also recognize (case 32).
  *
- * DELIBERATELY NOT COVERED: specifiers carrying a Vite query suffix
- * (`./helper?raw`, `./thing?worker`). Completion skips them entirely — the
- * query changes what the id MEANS to Vite, and guessing at that is a separate
- * decision from this one. `?raw`/`?worker` therefore remain an open route past
- * rule 4, reported as a followup rather than widened here. Traversal that
- * leaves `appRoot` altogether is not re-tested: case 13 already builds a
+ * NOT COVERED HERE: specifiers carrying a Vite query suffix (`./helper?raw`,
+ * `./thing?worker`, `./thing?url`) — that gap is closed separately, in the
+ * "query-suffix hardening" suite below (cases 40-43), which pins the query
+ * split against rule 3's server-only-file detection specifically. Traversal
+ * that leaves `appRoot` altogether is not re-tested: case 13 already builds a
  * sibling package whose own internals import `./helper` extensionless, and it
  * must keep passing (it does).
  */
@@ -1415,6 +1414,167 @@ describe("gateAResolve — the verdict follows the FILE, not the spelling", () =
     expect(alias.report).toBe("would-refuse");
     expect(relative.report).toBe("refused");
     expect(alias.message).toContain("server/ folder");
+  });
+});
+
+/**
+ * QUERY-SUFFIX HARDENING (Gate A card `fbd456c9`).
+ *
+ * `resolveId` sees the specifier BEFORE Vite consumes a trailing `?raw`,
+ * `?worker` or `?url` — those are Vite's own convention for "load this same
+ * file, but hand back a raw string / a Worker constructor / a public URL
+ * instead of its normal module exports", not a different file. Gate A judges
+ * a path it derives itself (`path.resolve` on the raw specifier), and rule
+ * 3's `.server` filename check is ANCHORED at the end of that string
+ * (`\.server(\.[jt]sx?)?$`) — so a query suffix still attached at judgement
+ * time slides the real file name out from under the `$` anchor:
+ * `./case2.server.ts?raw` no longer ends in `.server.ts`, it ends in `?raw`.
+ *
+ * Measured on this exact fixture before the fix: cases 40 and 41 below both
+ * BUILT CLEAN, with the server file's contents inlined into the client chunk
+ * by Vite's `?raw` handling. The fix splits the query off before completion
+ * and judgement (`completeLocalModulePath`) and strips it again defensively
+ * inside `isServerFile` itself, so judgement always runs on the bare path
+ * Vite will actually load — the query is preserved in the id `completeLocalModulePath`
+ * returns (case 43 shows a query suffix is not, by itself, suspicious), but it
+ * is never part of what a policy check pattern-matches against.
+ *
+ * Case 42 pins the OTHER rule-3 half — the plain `server/` FOLDER check —
+ * with a query suffix attached; it was never actually escapable this way
+ * (that check is a substring test on the path, not anchored at the end), but
+ * it is pinned here rather than assumed, next to the filename cases it sits
+ * beside in `isServerFile`.
+ */
+describe("gateAResolve — query-suffix hardening (?raw / ?worker / ?url cannot bypass rule 3)", () => {
+  const QUERY_PAGE_DIR = path.join(PAGE_DIR, "query-gen");
+  /** A dedicated server/ folder target, outside any web/ folder — rule 3's other half. */
+  const QUERY_SERVICES_DIR = path.join(FIXTURE_ROOT, "app", "blog", "query-services");
+  const QUERY_SERVER_TARGET = path.join(QUERY_SERVICES_DIR, "server", "plain.ts");
+
+  beforeAll(() => {
+    writeFixture(QUERY_SERVER_TARGET, `export const queryPlain = "query-plain-value";\n`);
+  });
+
+  afterAll(() => {
+    rmSync(QUERY_PAGE_DIR, { recursive: true, force: true });
+    rmSync(QUERY_SERVICES_DIR, { recursive: true, force: true });
+  });
+
+  /** Writes a throwaway page whose only job is to hold one import, and builds it. */
+  async function buildQueryPage(name: string, specifier: string, binding: string) {
+    const file = path.join(QUERY_PAGE_DIR, `${name}.page.tsx`);
+    writeFixture(
+      file,
+      [
+        `import ${binding} from "${specifier}";`,
+        ``,
+        `export default function Page() {`,
+        `  return ${binding};`,
+        `}`,
+        ``,
+      ].join("\n"),
+    );
+    return buildEntry(file);
+  }
+
+  it("case 40: a .server.ts file imported with ?raw is still refused — the query cannot slide the filename check", async () => {
+    try {
+      await buildQueryPage("query40-raw", "./case2.server?raw", "raw");
+      expect.unreachable("expected the build to fail");
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).toContain("Import chain: query40-raw.page.tsx → ./case2.server?raw");
+      expect(message).toContain("is a server-only file");
+      expect(message).toContain("Fix:");
+    }
+  });
+
+  it("case 41: the same file, extension spelled out and ?worker instead, is refused identically", async () => {
+    try {
+      await buildQueryPage("query41-worker", "./case2.server.ts?worker", "Worker");
+      expect.unreachable("expected the build to fail");
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).toContain("Import chain: query41-worker.page.tsx → ./case2.server.ts?worker");
+      expect(message).toContain("is a server-only file");
+    }
+  });
+
+  it("case 42: a plain server/ folder target imported with ?url is refused too", async () => {
+    try {
+      await buildQueryPage("query42-url", "../../query-services/server/plain?url", "url");
+      expect.unreachable("expected the build to fail");
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).toContain(
+        "Import chain: query42-url.page.tsx → ../../query-services/server/plain?url",
+      );
+      expect(message).toContain("is a server-only file");
+      expect(message).toContain("server/ folder");
+    }
+  });
+
+  it("case 43 (SAFE CLIENT CONTROL): a universal sibling imported with ?raw still builds — the query itself is not the violation", async () => {
+    const result = await buildQueryPage("query43-safe", "../helper?raw", "raw");
+    // `?raw` inlines the target file's own source text as a string; `formatTitle`
+    // is what proves the untouched, universal helper.ts was the file loaded.
+    expect(firstChunkCode(result)).toContain("formatTitle");
+  });
+});
+
+/**
+ * THE SSR SELF-GUARD.
+ *
+ * Gate A is a CLIENT-build fence (see the file header). `resolveOptions.ssr`
+ * is the same signal Gate B already reads in `transform` (`options?.ssr`)
+ * and Gate C already reads in `generateBundle`
+ * (`this.environment?.config?.consumer === "server"`) — this gate was the
+ * one sibling still missing its own copy of that carve-out, so an SSR build
+ * sharing this plugin instance would have refused the server its own
+ * server-only imports.
+ *
+ * Exercised BARE — the plugin's `resolveId` hook called directly, no Vite
+ * `build()` involved — because the claim under test is about the hook's
+ * OWN early return, not about anything a real bundler does around it. A
+ * fake `this.error` that throws is the only context the guard needs: the
+ * `ssr: true` branch returns before touching `this` at all, so case 37
+ * would still pass even with no stub; cases 38/39 need it to observe the
+ * refusal a real Rollup build would raise via `this.error`.
+ */
+describe("gateAResolve — SSR self-guard (bare, direct resolveId call)", () => {
+  function directResolveId() {
+    const plugin = gateAResolve({ appRoot: FIXTURE_ROOT });
+    const hook = plugin.resolveId as unknown as (
+      this: { error(message: string | { message: string }): never },
+      source: string,
+      importer: string | undefined,
+      options: { ssr?: boolean } | undefined,
+    ) => Promise<unknown>;
+    const context = {
+      error(message: string | { message: string }): never {
+        throw new Error(typeof message === "string" ? message : message.message);
+      },
+    };
+    return hook.bind(context);
+  }
+
+  it("case 37: resolveOptions.ssr === true short-circuits before rule 1 ever runs — a Node builtin resolves to null instead of being refused", async () => {
+    const resolveId = directResolveId();
+    await expect(resolveId("node:fs", undefined, { ssr: true })).resolves.toBeNull();
+  });
+
+  it("case 38 (NEGATIVE CONTROL): the identical bare call with no resolveOptions still refuses — the guard narrows nothing about client resolution", async () => {
+    const resolveId = directResolveId();
+    await expect(resolveId("node:fs", undefined, undefined)).rejects.toThrow(
+      '"node:fs" is a Node.js builtin module',
+    );
+  });
+
+  it("case 39 (NEGATIVE CONTROL): resolveOptions.ssr === false behaves exactly like the client build — still refuses", async () => {
+    const resolveId = directResolveId();
+    await expect(resolveId("node:fs", undefined, { ssr: false })).rejects.toThrow(
+      '"node:fs" is a Node.js builtin module',
+    );
   });
 });
 

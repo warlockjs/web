@@ -292,6 +292,6 @@ export function createNotFoundRouteHandler(
       return;
     }
 
-    await renderPage(context);
+    return renderPage(context);
   };
 }

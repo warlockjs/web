@@ -158,7 +158,7 @@ function isServerPageModule(file: string): boolean {
  *
  * A page module carries TWO halves. The CLIENT half is the projected code the
  * browser actually runs; Fast Refresh can hot-swap it with zero reloads. The
- * SERVER half — `metadata`, `loader`, `route`, `middleware`, `validation`, plus
+ * SERVER half — `metadata`, `loader`, `route`, `middleware`, `validation`, `prefix`, plus
  * the imports/locals orphaned with them — is stripped by projection
  * (`projection.ts:49`) and set to `undefined` on hydration
  * (`client/hydrate-page.tsx`), so the browser never holds it and there is
@@ -211,11 +211,11 @@ function isServerPageModule(file: string): boolean {
 type SkeletonCache = Map<string, string>;
 
 /**
- * What replaces a component body in the skeleton. Its content is irrelevant —
+ * What replaces a refresh-safe body in the skeleton. Its content is irrelevant —
  * only that it is CONSTANT, so two sources that differ solely inside a masked
  * body serialise identically.
  */
-const MASKED_COMPONENT_BODY = "/*warlock:component-body*/";
+const MASKED_REFRESH_BODY = "/*warlock:refresh-body*/";
 
 /** React's own convention, and the one `react-refresh` itself uses: components are PascalCase. */
 function isComponentName(name: string | undefined): boolean {
@@ -281,7 +281,7 @@ function topLevelBoundNames(stmt: any): Set<string> {
 }
 
 /**
- * Every module-scope name reachable from one of the five server exports.
+ * Every module-scope name reachable from one of the six server exports.
  *
  * Used ONLY to UNMASK: a PascalCase function that `metadata` or `loader` can
  * reach is not a component for this purpose, it is a server-side helper that
@@ -327,13 +327,16 @@ function serverReachableNames(body: any[]): Set<string> {
 
 /**
  * The body node to mask for a top-level statement, or `undefined` if this
- * statement is not a component declaration.
+ * statement is neither a component declaration nor an exported `register`
+ * declaration.
  *
  * Recognised shapes, and only these:
  *   - `export default function () {…}` / `export default () => …` — the page
  *     component, whatever it is called.
  *   - `function Name() {…}` / `const Name = () => …` (PascalCase, optionally
  *     `export`ed) — a component declared alongside it.
+ *   - `export function register() {…}` / `export const register = () => …` —
+ *     the lifecycle hook whose replacement namespace is invoked by projection.
  *
  * Everything else — `memo(...)`/`forwardRef(...)` wrappers, classes,
  * lowercase helpers, every server export — is left UNMASKED and therefore
@@ -342,6 +345,19 @@ function serverReachableNames(body: any[]): Set<string> {
  */
 function componentBodyToMask(stmt: any, serverReachable: Set<string>): any | undefined {
   if (stmt.type === "ExportDefaultDeclaration") return functionBody(stmt.declaration);
+
+  if (stmt.type === "ExportNamedDeclaration") {
+    const exported = stmt.declaration;
+    if (exported?.type === "FunctionDeclaration" && exported.id?.name === "register") {
+      return functionBody(exported);
+    }
+    if (exported?.type === "VariableDeclaration" && exported.declarations.length === 1) {
+      const declarator = exported.declarations[0];
+      if (declarator.id?.type === "Identifier" && declarator.id.name === "register") {
+        return functionBody(declarator.init);
+      }
+    }
+  }
 
   const declaration = stmt.type === "ExportNamedDeclaration" ? stmt.declaration : stmt;
   if (!declaration) return undefined;
@@ -361,13 +377,13 @@ function componentBodyToMask(stmt: any, serverReachable: Set<string>): any | und
 }
 
 /**
- * The module source with every component body replaced by a constant — the
- * ONE value the reload decision compares across an edit.
+ * The module source with every component and exported `register` body replaced
+ * by a constant — the ONE value the reload decision compares across an edit.
  *
- * Everything outside a component body survives verbatim: imports, module-level
- * declarations, all five server exports, and the comments and whitespace
- * between them. So the skeleton is unchanged iff the save touched nothing but
- * component bodies, which is exactly the ruling.
+ * Everything outside those bodies survives verbatim: imports, signatures,
+ * module-level declarations, all six server exports, and the comments and
+ * whitespace between them. So the skeleton is unchanged iff the save touched
+ * nothing but refresh-safe bodies.
  *
  * Returns `undefined` when the source does not parse — a half-typed file whose
  * error Vite is already reporting from projection's real `transform`. The
@@ -391,7 +407,7 @@ function captureSkeleton(code: string): string | undefined {
     if (!bodyNode) continue;
     const start = bodyNode.start as number;
     const end = bodyNode.end as number;
-    if (end > start) magic.overwrite(start, end, MASKED_COMPONENT_BODY);
+    if (end > start) magic.overwrite(start, end, MASKED_REFRESH_BODY);
   }
 
   return magic.toString();
@@ -419,7 +435,7 @@ export function clientPageRegistry(options: ClientPageRegistryPluginOptions = {}
   const appRoot = path.resolve(options.appRoot ?? process.cwd());
 
   // Per-plugin-instance, so two composed pipelines never cross-contaminate.
-  // Holds the last captured SKELETON (source with component bodies masked) of
+  // Holds the last captured SKELETON (source with refresh-safe bodies masked) of
   // each server page module the client environment transformed — the "before"
   // side of the comparison in `hotUpdate`. See `captureSkeleton` above.
   const skeletonCache: SkeletonCache = new Map();
@@ -456,7 +472,7 @@ export function clientPageRegistry(options: ClientPageRegistryPluginOptions = {}
     },
     /**
      * Applies the ruling (canon `6b240682`): Fast Refresh ONLY when the only
-     * changes are inside component bodies.
+     * changes are inside component or exported `register` bodies.
      *
      *   - Skeleton moved (an import, a module-level declaration, ANY server
      *     export — with or without a simultaneous JSX change) → full reload.

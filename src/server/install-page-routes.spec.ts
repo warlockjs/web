@@ -22,13 +22,13 @@ import {
 
 /**
  * `installPageRoutes` no longer walks the filesystem itself — every subject
- * (which `*.page.tsx` files exist, under which web root) comes from
+ * (which `*.page.tsx` files exist under `src/web/**`, the ONLY page root —
+ * `src/app/*\/web` was retired as one) comes from
  * {@link discoverPagesModule.discoverPageFiles}, the same enumeration
- * production's build shares. This file proves three things about that: the
- * global root (`src/web/**`) is now served exactly like a module's
- * (`src/app/<module>/web/**`); the shared enumerator is consulted exactly
- * once per install; and the installer has no fallback walk of its own — a
- * real page file the enumerator does not report is never served.
+ * production's build shares. This file proves two things about that: the
+ * shared enumerator is consulted exactly once per install; and the installer
+ * has no fallback walk of its own — a real page file the enumerator does not
+ * report is never served.
  */
 
 const temporaryDirectories: string[] = [];
@@ -140,7 +140,6 @@ function fakeVite(moduleByFile: Record<string, unknown>): InstallPageRoutesOptio
   } as unknown as InstallPageRoutesOptions["vite"];
 }
 
-const applyBufferedCookie = vi.fn() as InstallPageRoutesOptions["applyBufferedCookie"];
 
 function install(
   appSrcRoot: string,
@@ -155,7 +154,6 @@ function install(
       vite,
       appSrcRoot,
       appFile: path.join(appSrcRoot, "web/root.tsx"),
-      applyBufferedCookie,
       ...overrides,
     });
 
@@ -250,15 +248,15 @@ describe("installPageRoutes — source-file ownership", () => {
   });
 });
 
-describe("installPageRoutes — the global root, alongside a module root", () => {
-  it("registers a page under src/web/** and a page under src/app/<module>/web/**, from ONE subject list", async () => {
+describe("installPageRoutes — the global root", () => {
+  it("registers every page under src/web/**, from ONE subject list", async () => {
     const appRoot = makeAppTree({
       "src/web/dashboard.page.tsx": "",
-      "src/app/main/web/home.page.tsx": "",
+      "src/web/home.page.tsx": "",
     });
     const appSrcRoot = path.join(appRoot, "src");
     const dashboardFile = path.join(appSrcRoot, "web", "dashboard.page.tsx");
-    const homeFile = path.join(appSrcRoot, "app", "main", "web", "home.page.tsx");
+    const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
 
     const vite = fakeVite({
       [dashboardFile]: { route: "/dashboard" },
@@ -275,7 +273,7 @@ describe("installPageRoutes — the global root, alongside a module root", () =>
 });
 
 describe("installPageRoutes — a page with no route export", () => {
-  it("refuses it by name, with the same error the build throws, instead of silently skipping it", async () => {
+  it("derives its route path and name from the filesystem", async () => {
     const appRoot = makeAppTree({
       "src/web/contact-us.page.tsx": "",
       "src/web/home.page.tsx": "",
@@ -291,10 +289,43 @@ describe("installPageRoutes — a page with no route export", () => {
 
     const { run, registered } = install(appSrcRoot, vite);
 
-    await expect(run()).rejects.toThrowError(discoverPagesModule.MissingRouteExportError);
-    await expect(run()).rejects.toThrowError(/contact-us\.page\.tsx/);
-    // The boot fails; it does not half-register the rest of the app behind a warning.
-    expect(registered).toEqual([]);
+    const installed = await run();
+
+    expect(registered.map((route) => [route.path, route.options.name])).toEqual([
+      ["/contact-us", "contact-us"],
+      ["/", "home"],
+    ]);
+    expect(installed.map((page) => [page.declaredPath, page.path, page.name])).toEqual([
+      ["/contact-us", "/contact-us", "contact-us"],
+      ["/", "/", "home"],
+    ]);
+  });
+
+  it("omits groups, converts dynamic segments and lets a layout prefix replace its directory", async () => {
+    const appRoot = makeAppTree({
+      "src/web/(shop)/layout.tsx": "",
+      "src/web/(shop)/products/[id].page.tsx": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+    const layoutFile = path.join(appSrcRoot, "web", "(shop)", "layout.tsx");
+    const pageFile = path.join(appSrcRoot, "web", "(shop)", "products", "[id].page.tsx");
+    const vite = fakeVite({
+      [layoutFile]: { prefix: "/catalog" },
+      [pageFile]: {},
+    });
+
+    const { run, registered } = install(appSrcRoot, vite);
+    const [installed] = await run();
+
+    expect(registered[0]).toMatchObject({
+      path: "/catalog/products/:id",
+      options: { name: "products.id", isPage: true },
+    });
+    expect(installed).toMatchObject({
+      declaredPath: "/products/:id",
+      path: "/catalog/products/:id",
+      name: "products.id",
+    });
   });
 });
 
@@ -302,13 +333,13 @@ describe("installPageRoutes — the shared enumerator is called exactly once", (
   it("calls discoverPageFiles(appSrcRoot) exactly once and registers exactly its returned records", async () => {
     const appRoot = makeAppTree({
       "src/web/dashboard.page.tsx": "",
-      "src/app/main/web/home.page.tsx": "",
-      "src/app/shop/web/items.page.tsx": "",
+      "src/web/home.page.tsx": "",
+      "src/web/items.page.tsx": "",
     });
     const appSrcRoot = path.join(appRoot, "src");
     const dashboardFile = path.join(appSrcRoot, "web", "dashboard.page.tsx");
-    const homeFile = path.join(appSrcRoot, "app", "main", "web", "home.page.tsx");
-    const itemsFile = path.join(appSrcRoot, "app", "shop", "web", "items.page.tsx");
+    const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
+    const itemsFile = path.join(appSrcRoot, "web", "items.page.tsx");
 
     const vite = fakeVite({
       [dashboardFile]: { route: "/dashboard" },
@@ -338,11 +369,11 @@ describe("installPageRoutes — the shared enumerator is called exactly once", (
 describe("installPageRoutes — ancestor layout composition", () => {
   it("composes against the nearest ancestor layout's prefix when the page's own directory has none", async () => {
     const appRoot = makeAppTree({
-      "src/app/main/web/layout.tsx": "",
-      "src/app/main/web/settings/dashboard.page.tsx": "",
+      "src/web/layout.tsx": "",
+      "src/web/settings/dashboard.page.tsx": "",
     });
     const appSrcRoot = path.join(appRoot, "src");
-    const webRoot = path.join(appSrcRoot, "app", "main", "web");
+    const webRoot = path.join(appSrcRoot, "web");
     const layoutFile = path.join(webRoot, "layout.tsx");
     const pageFile = path.join(webRoot, "settings", "dashboard.page.tsx");
 
@@ -443,14 +474,49 @@ async function runLayoutMiddleware(handlerOptions: PageRouteHandlerOptions) {
 }
 
 describe("installPageRoutes — the layout middleware chain", () => {
-  it("runs EVERY layout's middleware, outermost first — the outer layout renders, the inner one only guards", async () => {
+  it("carries real layout namespaces in order, separate from the composed wrapper", async () => {
     const appRoot = makeAppTree({
-      "src/app/users/web/layout.tsx": "",
-      "src/app/users/web/account/layout.tsx": "",
-      "src/app/users/web/account/settings.page.tsx": "",
+      "src/web/layout.tsx": "",
+      "src/web/account/layout.tsx": "",
+      "src/web/account/settings.page.tsx": "",
     });
     const appSrcRoot = path.join(appRoot, "src");
-    const webRoot = path.join(appSrcRoot, "app", "users", "web");
+    const webRoot = path.join(appSrcRoot, "web");
+    const outerFile = path.join(webRoot, "layout.tsx");
+    const innerFile = path.join(webRoot, "account", "layout.tsx");
+    const pageFile = path.join(webRoot, "account", "settings.page.tsx");
+    const outer = { default: () => null, middleware: [() => undefined] };
+    const inner = { middleware: [() => undefined] };
+
+    const captured = captureHandlerOptions();
+    const { run } = install(
+      appSrcRoot,
+      fakeVite({
+        [pageFile]: { route: "/settings" },
+        [outerFile]: outer,
+        [innerFile]: inner,
+      }),
+    );
+    await run();
+
+    const handler = captured[0];
+    const composed = await handler.loadModule(handler.layoutFile as string);
+    const registrationLayouts = await handler.loadRegistrationLayouts?.();
+
+    expect(registrationLayouts).toEqual([outer, inner]);
+    expect(registrationLayouts?.[0]).toBe(outer);
+    expect(registrationLayouts?.[1]).toBe(inner);
+    expect(registrationLayouts).not.toContain(composed);
+  });
+
+  it("runs EVERY layout's middleware, outermost first — the outer layout renders, the inner one only guards", async () => {
+    const appRoot = makeAppTree({
+      "src/web/layout.tsx": "",
+      "src/web/account/layout.tsx": "",
+      "src/web/account/settings.page.tsx": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+    const webRoot = path.join(appSrcRoot, "web");
     const usersLayoutFile = path.join(webRoot, "layout.tsx");
     const accountLayoutFile = path.join(webRoot, "account", "layout.tsx");
     const pageFile = path.join(webRoot, "account", "settings.page.tsx");
@@ -502,11 +568,11 @@ describe("installPageRoutes — the layout middleware chain", () => {
 
   it("leaves a page under ONE layout exactly as it was — that layout's middleware, that layout's prefix", async () => {
     const appRoot = makeAppTree({
-      "src/app/main/web/layout.tsx": "",
-      "src/app/main/web/settings/dashboard.page.tsx": "",
+      "src/web/layout.tsx": "",
+      "src/web/settings/dashboard.page.tsx": "",
     });
     const appSrcRoot = path.join(appRoot, "src");
-    const webRoot = path.join(appSrcRoot, "app", "main", "web");
+    const webRoot = path.join(appSrcRoot, "web");
     const layoutFile = path.join(webRoot, "layout.tsx");
     const pageFile = path.join(webRoot, "settings", "dashboard.page.tsx");
 
@@ -537,9 +603,9 @@ describe("installPageRoutes — the layout middleware chain", () => {
   });
 
   it("leaves a page under NO layout exactly as it was — no layout level, no middleware", async () => {
-    const appRoot = makeAppTree({ "src/app/main/web/contact-us.page.tsx": "" });
+    const appRoot = makeAppTree({ "src/web/contact-us.page.tsx": "" });
     const appSrcRoot = path.join(appRoot, "src");
-    const pageFile = path.join(appSrcRoot, "app", "main", "web", "contact-us.page.tsx");
+    const pageFile = path.join(appSrcRoot, "web", "contact-us.page.tsx");
 
     const vite = fakeVite({ [pageFile]: { route: "/contact-us" } });
 
@@ -555,12 +621,12 @@ describe("installPageRoutes — the layout middleware chain", () => {
 
   it("a layout that exports no middleware contributes nothing and does not break the chain", async () => {
     const appRoot = makeAppTree({
-      "src/app/shop/web/layout.tsx": "",
-      "src/app/shop/web/admin/layout.tsx": "",
-      "src/app/shop/web/admin/orders.page.tsx": "",
+      "src/web/layout.tsx": "",
+      "src/web/admin/layout.tsx": "",
+      "src/web/admin/orders.page.tsx": "",
     });
     const appSrcRoot = path.join(appRoot, "src");
-    const webRoot = path.join(appSrcRoot, "app", "shop", "web");
+    const webRoot = path.join(appSrcRoot, "web");
     const shopLayoutFile = path.join(webRoot, "layout.tsx");
     const adminLayoutFile = path.join(webRoot, "admin", "layout.tsx");
     const pageFile = path.join(webRoot, "admin", "orders.page.tsx");
@@ -594,12 +660,12 @@ describe("installPageRoutes — the layout middleware chain", () => {
 
   it("refuses a chain with two RENDERING layouts, with the layout policy's one error contract", async () => {
     const appRoot = makeAppTree({
-      "src/app/shop/web/layout.tsx": "",
-      "src/app/shop/web/admin/layout.tsx": "",
-      "src/app/shop/web/admin/orders.page.tsx": "",
+      "src/web/layout.tsx": "",
+      "src/web/admin/layout.tsx": "",
+      "src/web/admin/orders.page.tsx": "",
     });
     const appSrcRoot = path.join(appRoot, "src");
-    const webRoot = path.join(appSrcRoot, "app", "shop", "web");
+    const webRoot = path.join(appSrcRoot, "web");
     const pageFile = path.join(webRoot, "admin", "orders.page.tsx");
 
     const vite = fakeVite({
@@ -619,13 +685,12 @@ describe("installPageRoutes — dev's URL is discovery's URL", () => {
     // Real sources: discovery PARSES these, so the fixture has to be the thing
     // it reads, not a module double.
     const appRoot = makeAppTree({
-      "src/app/users/web/layout.tsx":
-        'export const prefix = "/users";\nexport default () => null;\n',
-      "src/app/users/web/account/layout.tsx": 'export const prefix = "/account";\n',
-      "src/app/users/web/account/settings.page.tsx": 'export const route = "/settings";\n',
+      "src/web/layout.tsx": 'export const prefix = "/users";\nexport default () => null;\n',
+      "src/web/account/layout.tsx": 'export const prefix = "/account";\n',
+      "src/web/account/settings.page.tsx": 'export const route = "/settings";\n',
     });
     const appSrcRoot = path.join(appRoot, "src");
-    const webRoot = path.join(appSrcRoot, "app", "users", "web");
+    const webRoot = path.join(appSrcRoot, "web");
     const pageFile = path.join(webRoot, "account", "settings.page.tsx");
 
     const vite = fakeVite({
@@ -637,7 +702,9 @@ describe("installPageRoutes — dev's URL is discovery's URL", () => {
     const { run } = install(appSrcRoot, vite);
     const installed = await run();
 
-    const discovered = discoverPagesModule.discoverPages({ appRoot });
+    const discovered = discoverPagesModule
+      .discoverPages({ appRoot })
+      .filter(discoverPagesModule.isDiscoveredRoutablePage);
 
     expect(discovered.map(page => page.routePath)).toEqual([installed[0]?.path]);
     expect(installed[0]?.path).toBe("/users/account/settings");
@@ -723,6 +790,7 @@ describe("installPageRoutes — the not-found page", () => {
     // A layout brings its whole chain's middleware, and a guard that redirects
     // on the not-found path turns a missing page into an incident.
     expect(handler?.layoutFile).toBeUndefined();
+    expect(handler?.loadRegistrationLayouts).toBeUndefined();
     expect(handler?.statusForRenderedOk).toBe(404);
     expect(handler?.matchPath?.("/anything/at/all")).toBe("/anything/at/all");
   });
@@ -777,7 +845,7 @@ describe("installPageRoutes — the not-found page", () => {
   it("refuses two not-found pages by name rather than letting walk order pick one", async () => {
     const appRoot = makeAppTree({
       "src/web/404.page.tsx": "",
-      "src/app/shop/web/404.page.tsx": "",
+      "src/web/shop/404.page.tsx": "",
     });
     const appSrcRoot = path.join(appRoot, "src");
 
@@ -801,5 +869,132 @@ describe("installPageRoutes — the not-found page", () => {
     await expect(run()).rejects.toThrowError(NotFoundPageDeclaresRouteError);
     // Refused at boot, not on the first request that misses.
     expect(notFound).toEqual([]);
+  });
+});
+
+/**
+ * ROUTE-LOCAL SSR CSS, development half.
+ *
+ * `devHandlerStylesheetUrls` (`stylesheet-urls.ts`) is unit-tested on its own;
+ * these specs prove the WIRING — that `installPageRoutes` calls it per page
+ * with the right `[root, ...outer-to-inner matched layouts, page]` chain,
+ * against the real files on disk `makeAppTree` wrote, and that the not-found
+ * page never gets a layout's CSS it never got a layout's middleware from.
+ */
+describe("installPageRoutes — route-local CSS", () => {
+  it("gives a page with no layout only root's and its own stylesheets", async () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": 'import "./root.css";\nexport default function Root() {}\n',
+      "src/web/root.css": "",
+      "src/web/contact-us.page.tsx":
+        'import "./contact-us.css";\nexport default function ContactUs() {}\n',
+      "src/web/contact-us.css": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+    const pageFile = path.join(appSrcRoot, "web", "contact-us.page.tsx");
+
+    const captured = captureHandlerOptions();
+    const { run } = install(
+      appSrcRoot,
+      fakeVite({ [pageFile]: { route: "/contact-us" } }),
+    );
+    await run();
+
+    expect(captured[0]?.stylesheetUrls).toEqual([
+      "/src/web/root.css?direct",
+      "/src/web/contact-us.css?direct",
+    ]);
+  });
+
+  it("carries every matched layout's stylesheets, outer to inner, between root and the page", async () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": 'import "./root.css";\n',
+      "src/web/root.css": "",
+      "src/web/users/layout.tsx":
+        'import "./outer.css";\nexport default function UsersLayout() {}\n',
+      "src/web/users/outer.css": "",
+      "src/web/users/account/layout.tsx": 'import "./inner.css";\n',
+      "src/web/users/account/inner.css": "",
+      "src/web/users/account/settings.page.tsx": 'import "./settings.css";\n',
+      "src/web/users/account/settings.css": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+    const webRoot = path.join(appSrcRoot, "web", "users");
+    const pageFile = path.join(webRoot, "account", "settings.page.tsx");
+
+    const captured = captureHandlerOptions();
+    const { run } = install(
+      appSrcRoot,
+      fakeVite({
+        [pageFile]: { route: "/settings" },
+        [path.join(webRoot, "layout.tsx")]: { default: () => null },
+        [path.join(webRoot, "account", "layout.tsx")]: {},
+      }),
+    );
+    await run();
+
+    expect(captured[0]?.stylesheetUrls).toEqual([
+      "/src/web/root.css?direct",
+      "/src/web/users/outer.css?direct",
+      "/src/web/users/account/inner.css?direct",
+      "/src/web/users/account/settings.css?direct",
+    ]);
+  });
+
+  it("dedupes a stylesheet shared by root and the page, keeping its first position", async () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": 'import "./shared.css";\n',
+      "src/web/shared.css": "",
+      "src/web/home.page.tsx": 'import "./shared.css";\nimport "./home.css";\n',
+      "src/web/home.css": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+    const pageFile = path.join(appSrcRoot, "web", "home.page.tsx");
+
+    const captured = captureHandlerOptions();
+    const { run } = install(appSrcRoot, fakeVite({ [pageFile]: { route: "/" } }));
+    await run();
+
+    expect(captured[0]?.stylesheetUrls).toEqual([
+      "/src/web/shared.css?direct",
+      "/src/web/home.css?direct",
+    ]);
+  });
+
+  it("gives the not-found page's handler root and its own stylesheets, never a sibling layout's", async () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": 'import "./root.css";\n',
+      "src/web/root.css": "",
+      "src/web/layout.tsx": 'import "./layout.css";\n',
+      "src/web/layout.css": "",
+      "src/web/home.page.tsx": "",
+      "src/web/404.page.tsx": 'import "./404.css";\n',
+      "src/web/404.css": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+    const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
+    const notFoundFile = path.join(appSrcRoot, "web", "404.page.tsx");
+
+    const built: PageRouteHandlerOptions[] = [];
+    vi.spyOn(createPageRouteHandlerModule, "createPageRouteHandler").mockImplementation(
+      (options: PageRouteHandlerOptions): PageRouteHandler => {
+        built.push(options);
+        return async () => undefined;
+      },
+    );
+
+    const { run } = install(
+      appSrcRoot,
+      fakeVite({
+        [homeFile]: { route: "/" },
+        [notFoundFile]: { default: () => null },
+        [path.join(appSrcRoot, "web", "layout.tsx")]: { default: () => null },
+      }),
+    );
+    await run();
+
+    const handler = built.find((options) => options.pageFile === notFoundFile);
+
+    expect(handler?.stylesheetUrls).toEqual(["/src/web/root.css?direct", "/src/web/404.css?direct"]);
   });
 });

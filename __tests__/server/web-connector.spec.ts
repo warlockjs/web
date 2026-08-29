@@ -661,7 +661,6 @@ describe("WebConnector — module identity of the pipeline barrel", () => {
       appSrcRoot: string;
       appFile: string;
       hydrationClientModuleUrl: string;
-      applyBufferedCookie: unknown;
     };
 
     // One router, one Vite — pages must render through the SAME dev server
@@ -670,7 +669,6 @@ describe("WebConnector — module identity of the pipeline barrel", () => {
     expect(options.router).toBe(router);
     expect(options.vite).toBe(harness.vite);
     expect(options.hydrationClientModuleUrl.startsWith("/@fs/")).toBe(true);
-    expect(options.applyBufferedCookie).toBeTypeOf("function");
 
     /*
       THE APP ROOT PATH, asserted rather than merely destructured.

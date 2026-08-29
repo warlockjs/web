@@ -52,6 +52,7 @@ export function buildHydrationPayload(bundle: PageDataBundle): HydrationDocument
     // `<Head/>` renders every member of `MetadataOutput`, so anything narrowed
     // out here is a tag the first request has and a navigation does not.
     ...(bundle.metadata === undefined ? {} : { metadata: bundle.metadata }),
+    ...(bundle.errorPage === undefined ? {} : { errorPage: bundle.errorPage }),
     // The matched entry's own name, carried untransformed from stage 1
     // (`bundle.route.name` IS `matched.entry.name`, execute-page-request.ts).
     // The browser reads it to look up the page the server resolved rather than

@@ -50,6 +50,11 @@ export function isPageFilePath(file: string, appSrcRoot: string): boolean {
   );
 }
 
+/** Error boundaries participate in reload tracking but never in router ownership. */
+export function isErrorPageFilePath(file: string): boolean {
+  return path.basename(file) === "error.page.tsx";
+}
+
 export function classifyPageFileChanges(
   changedFiles: readonly string[],
   options: PageFileChangeOptions,
@@ -73,14 +78,15 @@ export function classifyPageFileChanges(
     seen.add(key);
 
     const isInstalled = installed.has(key);
+    const isErrorPage = isErrorPageFilePath(file);
     if (!fileExists(file)) {
-      if (isInstalled) {
+      if (isInstalled || isErrorPage) {
         classified.removed.push(file);
       }
       continue;
     }
 
-    if (isInstalled) {
+    if (isInstalled || isErrorPage) {
       classified.inspectionNeeded.push(file);
     } else {
       classified.added.push(file);

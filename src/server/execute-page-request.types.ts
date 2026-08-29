@@ -1,21 +1,16 @@
+import type { HttpContext, Request, Response } from "@warlock.js/core";
 import type { BaseValidator } from "@warlock.js/seal";
-import type { WebRequest } from "../context";
 import type { SharedContext } from "../index";
 import type { MetadataOutput, PageMetadata } from "../metadata";
+import type { SerializedErrorPageProps } from "../components/document-context";
 import type { SharedStore } from "../shared";
-import type { BufferedCookie, BufferedHeader, BufferedWebResponse } from "./buffered-response";
+import type { BufferedResponse } from "./settle-page-response";
 
-/** At runtime this IS core's `RequestContextStore` (request-context.ts:10-13). */
 export type PipelineStore = SharedStore & {
-  request: unknown;
-  response: unknown;
+  request: Request;
+  response: Response;
 };
 
-/**
- * Core's `requestContext` satisfies this as-is — `run`/`getStore` are the
- * inherited `Context` delegates and `buildStore` is `RequestContext.buildStore`,
- * the same function core's http path feeds through `contextManager.buildStores`.
- */
 export type PageContextRunner = {
   run<T>(store: PipelineStore, callback: () => Promise<T>): Promise<T>;
   getStore(): PipelineStore | undefined;
@@ -24,56 +19,29 @@ export type PageContextRunner = {
 
 export type PageLevelName = "app" | "layout" | "page";
 
-/**
- * The request members the pipeline touches, declared explicitly rather than
- * imported from core: `WebRequest` is the loader-facing minimal facade and does
- * not carry the validation sources.
- *
- * `query`/`params` are core's own parses (request.ts:1010,1026) and the ONLY
- * ones the pipeline reads. Stage 4 used to take them from a match object built
- * by re-parsing the URL — `resolve-validation-data.ts` records what that cost.
- */
-export type PipelineRequest = WebRequest & {
-  body?: Record<string, unknown>;
-  headers?: Record<string, unknown>;
-  query?: Record<string, unknown>;
-  params?: Record<string, unknown>;
-  setValidatedData?(data: Record<string, unknown>): void;
-};
+export type PipelineMiddleware = (ctx: HttpContext) => unknown | Promise<unknown>;
 
 /**
- * Standalone rather than based on `WebResponse`: that facade's
- * `redirect`/`notFound` return the branded short-circuit signal, which core's
- * real `Response` never carries — basing this on it would reject the very
- * instances the seam exists to admit.
+ * A loader never sees the live `Response` — stage 6 hands it a per-level
+ * `BufferedResponse` (`execute-page-request.ts`, `createBufferedResponse`),
+ * so its own type says that, rather than the core `Response` a middleware
+ * receives.
  */
-export type PipelineResponse = {
-  header(key: string, value: string): PipelineResponse;
-  cookie(name: string, value: unknown, options?: Record<string, unknown>): PipelineResponse;
-  setStatusCode(statusCode: number): PipelineResponse;
-  parse(value: unknown): Promise<unknown>;
-};
-
-/** Pass-through is `undefined` — core's exact rule (`Request.executeMiddleware`). */
-export type PipelineMiddleware = (ctx: {
-  request: PipelineRequest;
-  response: PipelineResponse;
-}) => unknown | Promise<unknown>;
-
-export type PipelineLoader = (ctx: {
-  request: PipelineRequest;
-  response: BufferedWebResponse;
+export type PipelineLoaderContext = {
+  request: Request;
+  response: BufferedResponse;
   shared: SharedContext;
-}) => unknown | Promise<unknown>;
+};
 
-/** The server half of a page/layout/App module. */
+export type PipelineLoader = (ctx: PipelineLoaderContext) => unknown | Promise<unknown>;
+
 export type PageTripleModule = {
+  register?: () => unknown;
   route?: string | { readonly path: string; readonly name?: string };
   middleware?: readonly PipelineMiddleware[];
   validation?: { schema?: BaseValidator; validating?: readonly string[] };
   loader?: PipelineLoader;
   metadata?: PageMetadata<PipelineLoader>;
-  /** Runs-twice half — carried through untouched; the render slice consumes them. */
   default?: unknown;
   ErrorBoundary?: unknown;
 };
@@ -95,33 +63,15 @@ export type PageRouteMatch = {
 };
 
 export type ExecutePageRequestOptions<TResult = PageDataBundle> = {
-  /** Path + optional query string, e.g. `/products/42?tab=specs`. */
   url: string;
   routes: readonly PageRouteEntry[];
-  /**
-   * Construct the Request/Response pair for this match, mirroring core's
-   * `handleRoute` body (router.ts:924-932).
-   */
-  createHttp(match: PageRouteMatch): { request: PipelineRequest; response: PipelineResponse };
-  /**
-   * The render seam — continues stages 9-10 inside the exact ALS store and
-   * shared scope that middleware and loaders used.
-   */
+  createHttp(match: PageRouteMatch): HttpContext;
   finish?(bundle: PageDataBundle): TResult | Promise<TResult>;
 };
 
 export type PageBoundaryDesignation = {
   throwingLevel: PageLevelName;
-  /** Nearest boundary at or rootward of the throw; `app` is the terminal fallback. */
   boundaryLevel: PageLevelName;
-};
-
-export type PageResponseCommit = {
-  /** Final per-key state, root→leaf: a leafward write wins its key. */
-  headers: BufferedHeader[];
-  cookies: BufferedCookie[];
-  statusCode?: number;
-  committedLevels: PageLevelName[];
 };
 
 export type PageShortCircuit =
@@ -129,24 +79,13 @@ export type PageShortCircuit =
       stage: "middleware";
       level: PageLevelName;
       value: unknown;
-      /** Captured at stage 3, so `finishRender` stays a pure function of (triple, bundle). */
       statusCode?: number;
     }
-  | { stage: "validation"; status: number; errors: unknown }
-  | {
-      stage: "loaders";
-      level: PageLevelName;
-      kind: "redirect" | "notFound";
-      statusCode: number;
-      url?: string;
-      body?: unknown;
-    };
+  | { stage: "validation"; status: number; errors: unknown };
 
-/**
- * What a throw becomes once it enters the bundle. `scrubbed` says whether
- * `error` is the raw thrown value or a production surrogate standing in for it.
- */
 export type PageErrorRecord = {
+  /** Never serialized; preserves the actual thrown value for server error.page.tsx. */
+  originalError: unknown;
   error: unknown;
   boundary: PageBoundaryDesignation;
   digest: string;
@@ -158,24 +97,21 @@ export type PageDataBundle = {
     name: string;
     path: string;
     params: Record<string, string>;
-    /**
-     * ⚠ Re-parsed from the URL by `match-page-route.ts`, NOT core's parse, so it
-     * is flat and last-wins: `?tags=a&tags=b&filter[status]=active` arrives as
-     * `{ tags: "b", "filter[status]": "active" }`.
-     *
-     * Nothing in `web` reads it — stage 4 was the last consumer. It survives
-     * only as part of this public type and goes away with the second matcher.
-     * **Read `request.query`.**
-     */
     query: Record<string, string>;
   };
   appData?: unknown;
   layoutData?: unknown;
   pageData?: unknown;
-  /** `sealShared()`'s RETURN — the sealed target, never a proxy re-read. */
   shared?: Readonly<SharedContext>;
   metadata?: MetadataOutput;
-  commit?: PageResponseCommit;
   shortCircuit?: PageShortCircuit;
   error?: PageErrorRecord;
+  /**
+   * Selected only for the framework-owned application error-page terminal —
+   * already the JSON-safe shape (`hydrationErrorPageProps` produces this, not
+   * the raw `ErrorPageProps` an authored `error.page.tsx` renders from during
+   * SSR), because this field's only consumer is the hydration payload
+   * (`build-hydration-payload.ts`), never a component prop.
+   */
+  errorPage?: SerializedErrorPageProps;
 };

@@ -16,9 +16,14 @@
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface SharedContext {}
 
-export type { PageContext } from "./context";
+export type { HttpContext, PageContext } from "./context";
 export type { PageLoader, LayoutLoader, AppLoader } from "./loaders";
 export type { PageProps, LayoutProps, AppProps } from "./props";
+export type {
+  ErrorPageProps,
+  SerializedErrorPageProps,
+  SerializedPageError,
+} from "./components/document-context";
 export type { PageMetadata } from "./metadata";
 export { shared, useShared } from "./shared";
 export { href } from "./routing/route-table";

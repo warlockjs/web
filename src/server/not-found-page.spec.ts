@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { HttpContext } from "@warlock.js/core";
+import { Response, type HttpContext } from "@warlock.js/core";
 import type { PageRouteHandler } from "./create-page-route-handler";
 import {
   acceptsHtmlExplicitly,
@@ -165,6 +165,18 @@ describe("createNotFoundRouteHandler — the three answers", () => {
     expect(sent[0].status).toBe(404);
     expect(sent[0].body).toBe(frameworkDefaultNotFoundDocument());
     expect(String(sent[0].body)).toContain(NOT_FOUND_PAGE_FILENAME);
+  });
+
+  it("preserves the exact terminal core Response returned by the application's page", async () => {
+    const terminal = new Response();
+    const renderPage = vi.fn(async () => terminal) as unknown as PageRouteHandler;
+    const handler = createNotFoundRouteHandler({ renderPage });
+    const { context, sent } = fakeContext("GET", "/prodcts", BROWSER_ACCEPT);
+
+    const result = await handler(context);
+
+    expect(result).toBe(terminal);
+    expect(sent).toEqual([]);
   });
 
   it("still answers a fetch() with JSON when the application ships no 404 page", async () => {

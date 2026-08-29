@@ -62,8 +62,8 @@ vi.mock("../../../core/src/production/resolve-build-config", () => ({
 const appSrcRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "fixtures/app-root");
 
 /** The one export `installPageRoutesFromManifest` reads off a page module namespace. */
-function pageModule(route: string) {
-  return { route, default: () => null };
+function pageModule(path: string, name?: string) {
+  return { route: name === undefined ? path : { path, name }, default: () => null };
 }
 
 const appEntry = {
@@ -81,8 +81,8 @@ function manifestWithOnePage(): PageManifest {
     app: appEntry,
     pages: [
       {
-        module: pageModule("/products"),
-        sourceFile: "src/app/main/web/products.page.tsx",
+        module: pageModule("/products", "main.products"),
+        sourceFile: "src/web/main/products.page.tsx",
         layouts: [],
       },
     ],
@@ -222,9 +222,10 @@ describe("WebConnector — production page serving", () => {
     ]);
     expect(connector.getInstalledPages()).toEqual([
       {
+        declaredPath: "/products",
         path: "/products",
         name: "main.products",
-        file: "src/app/main/web/products.page.tsx",
+        file: "src/web/main/products.page.tsx",
         layoutFile: undefined,
       },
     ]);
@@ -288,24 +289,27 @@ describe("WebConnector — production page serving", () => {
     expect(createServerMock).not.toHaveBeenCalled();
   });
 
-  it("refuses a manifest page whose module declares no route, naming the file", async () => {
-    // A valid build cannot produce this — page discovery only emits modules it
-    // read a `route` off. A stale or hand-edited artifact can, and the answer
-    // must not be a page table that silently shrinks: the operator would see a
-    // clean boot log and a 404 on a page that is demonstrably in the bundle.
+  it("installs a manifest page whose module declares no route, under its derived filesystem path", async () => {
+    // File-system routing (v5.2): a page module that declares no `route`
+    // export is no longer a refused, half-built artifact — it installs under
+    // the path its own `sourceFile` derives, the same fallback
+    // `install-page-routes-from-manifest.spec.ts` pins directly against the
+    // installer ("registers a page module with no route export under the
+    // derived filesystem path and dotted name").
     const graph = await freshWebGraph();
 
     graph.providePageManifest({
+      clientDir: path.join(buildOutdir.current, "client"),
       app: appEntry,
       pages: [
         {
-          module: pageModule("/products"),
-          sourceFile: "src/app/main/web/products.page.tsx",
+          module: pageModule("/products", "main.products"),
+          sourceFile: "src/web/main/products.page.tsx",
           layouts: [],
         },
         {
           module: { default: () => null },
-          sourceFile: "src/app/main/web/orphan.page.tsx",
+          sourceFile: "src/web/main/orphan.page.tsx",
           layouts: [],
         },
       ],
@@ -316,12 +320,20 @@ describe("WebConnector — production page serving", () => {
     const registered = recordRoutes(graph);
     const connector = new graph.WebConnector({ appSrcRoot });
 
-    await expect(connector.boot()).rejects.toThrow(/orphan\.page\.tsx/);
-    await expect(connector.boot()).rejects.toThrow(/route/i);
+    await connector.boot();
 
-    // It refuses BEFORE registering anything: a half-installed page table is a
-    // worse outcome than a refused boot, because it serves.
-    expect(registered).toEqual([]);
+    expect(registered).toEqual([
+      { path: "/products", name: "main.products" },
+      { path: "/main/orphan", name: "main.orphan" },
+      { path: "*", name: "warlock.not-found" },
+    ]);
+    expect(connector.getInstalledPages()).toContainEqual({
+      declaredPath: "/main/orphan",
+      path: "/main/orphan",
+      name: "main.orphan",
+      file: "src/web/main/orphan.page.tsx",
+      layoutFile: undefined,
+    });
   });
 });
 

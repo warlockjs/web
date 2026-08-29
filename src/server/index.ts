@@ -6,16 +6,6 @@
  */
 export { connectSharedStore } from "../shared";
 export {
-  createBufferedResponse,
-  isLoaderShortCircuit,
-  LOADER_SHORT_CIRCUIT,
-  type BufferedCookie,
-  type BufferedHeader,
-  type BufferedWebResponse,
-  type LoaderShortCircuitSignal,
-  type ResponseBuffer,
-} from "./buffered-response";
-export {
   connectPageRoutes,
   escapePayload,
   PAYLOAD_SCRIPT_ID,
@@ -28,9 +18,11 @@ export {
 } from "./render-page";
 export {
   connectPageContext,
-  connectPageSharedScope,
   executePageRequest,
+  type BufferedCookie,
+  type BufferedHeader,
   type ExecutePageRequestOptions,
+  type LoaderShortCircuitKind,
   type PageBoundaryDesignation,
   type PageContextRunner,
   type PageDataBundle,

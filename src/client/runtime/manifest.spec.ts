@@ -78,6 +78,19 @@ describe("validateClientRouteManifest", () => {
     ).toThrow(/endpoint/);
   });
 
+  it("continues to reject an error entry type instead of changing the page manifest", () => {
+    expect(() =>
+      validateClientRouteManifest([
+        {
+          type: "error",
+          name: "error",
+          path: "/__warlock/error",
+          load: async () => validComposition(),
+        },
+      ]),
+    ).toThrow(/error/);
+  });
+
   it.each([
     ["the manifest is not an array", {}],
     ["an entry is an array", [[]]],
@@ -137,6 +150,19 @@ describe("loadClientRouteComposition", () => {
     expect(first.App).toBe(composition.App);
   });
 
+  it("accepts and preserves an optional projected ErrorPage module", async () => {
+    const ErrorPage = { default: () => null };
+    const composition = { ...validComposition(), ErrorPage };
+    const [entry] = validateClientRouteManifest([
+      validEntry({ load: async () => composition }),
+    ]);
+
+    const loaded = await loadClientRouteComposition(entry);
+
+    expect(loaded).toBe(composition);
+    expect(loaded.ErrorPage).toBe(ErrorPage);
+  });
+
   it.each([
     ["a blank result", undefined],
     ["an array result", []],
@@ -146,6 +172,7 @@ describe("loadClientRouteComposition", () => {
     ["non-array layouts", { Page: {}, layouts: {} }],
     ["a blank layout", { Page: {}, layouts: [null] }],
     ["an explicitly blank App", { Page: {}, layouts: [], App: undefined }],
+    ["an explicitly blank ErrorPage", { Page: {}, layouts: [], ErrorPage: undefined }],
     ["an extra composition key", { Page: {}, layouts: [], providerId: "dev" }],
   ])("rejects %s rather than returning fallback data", async (_caseName, value) => {
     const [entry] = validateClientRouteManifest([

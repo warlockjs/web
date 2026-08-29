@@ -218,6 +218,18 @@ function compileRoutes(entries: readonly ClientPageEntry[]): readonly CompiledRo
   return routes.sort(compareSpecificity);
 }
 
+/**
+ * @deprecated Do not adopt for new code. This client-side matcher duplicates the
+ * route grammar the server already evaluates, and divergence between the two is
+ * silent (wrong page, not an error). It is superseded by navigation consuming the
+ * server-returned page composition/page swap: the client requests loader data and
+ * the matched page's identity rides back on that same response.
+ *
+ * Delete only after the server-answered page swap is proven working in production
+ * use — not before. Deleting earlier leaves neither implementation in place.
+ * Removing this export (and the `@warlock.js/web/client/runtime` re-export) is a
+ * breaking change to a published subpath and must be announced as one.
+ */
 export function matchClientRoute(
   entries: readonly ClientPageEntry[],
   pathname: string,

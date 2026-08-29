@@ -28,21 +28,6 @@ export function connectPageContext(
   return previous;
 }
 
-/**
- * Connect an additional shared-module instance that must enter every request.
- * Production has one module graph and needs none; the dev server uses this seam
- * for the Vite SSR graph that evaluates app code.
- */
-export function connectPageSharedScope(
-  enter: ((store: PipelineStore) => void) | undefined,
-): ((store: PipelineStore) => void) | undefined {
-  const previous = additionalSharedScopeEntry;
-
-  additionalSharedScopeEntry = enter;
-
-  return previous;
-}
-
 export function enterAdditionalSharedScope(store: PipelineStore): void {
   additionalSharedScopeEntry?.(store);
 }

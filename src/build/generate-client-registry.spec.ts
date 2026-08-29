@@ -2,7 +2,7 @@ import { transform } from "esbuild";
 import { describe, expect, it } from "vitest";
 import type { ClientPageEntry, ClientRouteComposition } from "../client/runtime/types";
 import { validateClientRouteManifest } from "../client/runtime/manifest";
-import type { DiscoveredPage } from "./discover-pages";
+import type { DiscoveredPage, DiscoveredRoutablePage } from "./discover-pages";
 import {
   CLIENT_REGISTRY_EXPORT_NAME,
   DuplicateClientPageNameError,
@@ -23,7 +23,11 @@ function toDataUrl(source: string): string {
 
 /** An identity-ish mapper: the specifier is a module that reports its own source file. */
 function stubSpecifier(absoluteFilePath: string): string {
-  return toDataUrl(`export const sourceFile = ${JSON.stringify(absoluteFilePath)};`);
+  return toDataUrl(
+    `export const sourceFile = ${JSON.stringify(absoluteFilePath)};\n` +
+      "export function register() {}\n" +
+      "export default function Component() {}",
+  );
 }
 
 async function importModule(specifier: string): Promise<Record<string, unknown>> {
@@ -47,12 +51,13 @@ function sourceFilesOf(composition: ClientRouteComposition) {
   };
 }
 
-function aPage(overrides: Partial<DiscoveredPage> = {}): DiscoveredPage {
+function aPage(overrides: Partial<DiscoveredRoutablePage> = {}): DiscoveredRoutablePage {
   return {
+    type: "page",
     routeName: "main.home",
     routePath: "/",
-    pageFile: "C:/app/src/app/main/web/home.page.tsx",
-    webRoot: "C:/app/src/app/main/web",
+    pageFile: "C:/app/src/web/main/home.page.tsx",
+    webRoot: "C:/app/src/web",
     layouts: [],
     middlewareLayouts: [],
     ...overrides,
@@ -68,8 +73,8 @@ describe("generateClientRegistry", () => {
       aPage({
         routeName: "products.list",
         routePath: "/products",
-        pageFile: "C:/app/src/app/products/web/products.page.tsx",
-        layouts: ["C:/app/src/app/products/web/layout.tsx"],
+        pageFile: "C:/app/src/web/products/products.page.tsx",
+        layouts: ["C:/app/src/web/products/layout.tsx"],
       }),
     ]);
 
@@ -79,8 +84,8 @@ describe("generateClientRegistry", () => {
     expect(entry.name).toBe("products.list");
     expect(entry.path).toBe("/products");
     expect(sourceFilesOf(await entry.load())).toEqual({
-      Page: "C:/app/src/app/products/web/products.page.tsx",
-      layouts: ["C:/app/src/app/products/web/layout.tsx"],
+      Page: "C:/app/src/web/products/products.page.tsx",
+      layouts: ["C:/app/src/web/products/layout.tsx"],
     });
   });
 
@@ -89,7 +94,7 @@ describe("generateClientRegistry", () => {
     const composition = await entry.load();
 
     expect(composition.layouts).toEqual([]);
-    expect(composition.Page.sourceFile).toBe("C:/app/src/app/main/web/home.page.tsx");
+    expect(composition.Page.sourceFile).toBe("C:/app/src/web/main/home.page.tsx");
   });
 
   it("includes App only when the page has an appFile", async () => {
@@ -111,7 +116,7 @@ describe("generateClientRegistry", () => {
     const [entry] = await evaluate(
       generate([
         aPage({
-          layouts: ["C:/app/src/app/main/web/layout.tsx"],
+          layouts: ["C:/app/src/web/main/layout.tsx"],
           appFile: "C:/app/src/web/root.tsx",
         }),
       ]),
@@ -131,18 +136,66 @@ describe("generateClientRegistry", () => {
     const [entry] = await evaluate(
       generate([
         aPage({
-          pageFile: "C:/app/src/app/users/web/account/settings.page.tsx",
+          pageFile: "C:/app/src/web/users/account/settings.page.tsx",
           layouts: [
-            "C:/app/src/app/users/web/layout.tsx",
-            "C:/app/src/app/users/web/account/layout.tsx",
+            "C:/app/src/web/users/layout.tsx",
+            "C:/app/src/web/users/account/layout.tsx",
           ],
         }),
       ]),
     );
 
     expect((await entry.load()).layouts.map((layout) => layout.sourceFile)).toEqual([
-      "C:/app/src/app/users/web/layout.tsx",
-      "C:/app/src/app/users/web/account/layout.tsx",
+      "C:/app/src/web/users/layout.tsx",
+      "C:/app/src/web/users/account/layout.tsx",
+    ]);
+  });
+
+  it("retains real namespaces in registration order alongside default components", async () => {
+    const [entry] = await evaluate(
+      generate([
+        aPage({
+          pageFile: "C:/app/src/web/account.page.tsx",
+          layouts: ["C:/app/src/web/layout.tsx", "C:/app/src/web/account/layout.tsx"],
+          appFile: "C:/app/src/web/root.tsx",
+        }),
+      ]),
+    );
+
+    const composition = await entry.load();
+    const modules = [composition.App!, ...composition.layouts, composition.Page];
+
+    expect(modules.map((module) => module.sourceFile)).toEqual([
+      "C:/app/src/web/root.tsx",
+      "C:/app/src/web/layout.tsx",
+      "C:/app/src/web/account/layout.tsx",
+      "C:/app/src/web/account.page.tsx",
+    ]);
+    expect(modules.every((module) => typeof module.default === "function")).toBe(true);
+    expect(modules.every((module) => typeof module.register === "function")).toBe(true);
+    expect(modules.every((module) => Object.prototype.toString.call(module) === "[object Module]"))
+      .toBe(true);
+  });
+
+  it("preserves 404 and error entries on the ordinary client registry path", async () => {
+    const entries = await evaluate(
+      generate([
+        aPage({
+          routeName: "404",
+          routePath: "/__warlock/not-found",
+          pageFile: "C:/app/src/web/404.page.tsx",
+        }),
+        aPage({
+          routeName: "error",
+          routePath: "/__warlock/error",
+          pageFile: "C:/app/src/web/error.page.tsx",
+        }),
+      ]),
+    );
+
+    expect(entries.map(({ name, path }) => ({ name, path }))).toEqual([
+      { name: "404", path: "/__warlock/not-found" },
+      { name: "error", path: "/__warlock/error" },
     ]);
   });
 

@@ -41,8 +41,8 @@ describe("generatePagesBarrel", () => {
   it("writes named namespace imports and a route-free manifest call", async () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/app/main/web/layout.tsx": LAYOUT,
-      "src/app/main/web/home.page.tsx": PAGE,
+      "src/web/main/layout.tsx": LAYOUT,
+      "src/web/main/home.page.tsx": PAGE,
     });
     const productionDir = path.join(appRoot, ".warlock", "production");
 
@@ -57,24 +57,25 @@ describe("generatePagesBarrel", () => {
       'import { providePageManifest } from "@warlock.js/web/connector";',
     );
     expect(contents).toContain('import * as app from "../../src/web/root";');
-    expect(contents).toContain('import * as l0 from "../../src/app/main/web/layout";');
-    expect(contents).toContain('import * as p0 from "../../src/app/main/web/home.page";');
+    expect(contents).toContain('import * as l0 from "../../src/web/main/layout";');
+    expect(contents).toContain('import * as p0 from "../../src/web/main/home.page";');
     expect(contents).toContain('app: { module: app, sourceFile: "src/web/root.tsx" }');
-    expect(contents).toContain('sourceFile: "src/app/main/web/home.page.tsx"');
+    expect(contents).toContain('sourceFile: "src/web/main/home.page.tsx"');
     expect(contents).toContain(
-      'layouts: [{ module: l0, sourceFile: "src/app/main/web/layout.tsx" }]',
+      'layouts: [{ module: l0, sourceFile: "src/web/main/layout.tsx" }]',
     );
     // No route paths in the table — they are read off the modules at boot.
     expect(contents).not.toContain("path:");
   });
 
-  it("collects pages from BOTH web roots when each page has at most one layout", async () => {
+  it("collects pages from src/web when each page has at most one layout", async () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/web/layout.tsx": LAYOUT,
-      "src/web/dashboard.page.tsx": PAGE,
-      "src/app/users/web/account/layout.tsx": LAYOUT,
-      "src/app/users/web/account/settings.page.tsx": PAGE,
+      "src/web/dashboard.page.tsx":
+        'export const route = "/dashboard";\nexport default function Page() { return null; }\n',
+      "src/web/users/account/layout.tsx": LAYOUT,
+      "src/web/users/account/settings.page.tsx":
+        'export const route = "/users/account/settings";\nexport default function Page() { return null; }\n',
     });
     const productionDir = path.join(appRoot, ".warlock", "production");
 
@@ -83,7 +84,7 @@ describe("generatePagesBarrel", () => {
 
     expect(result.pageCount).toBe(2);
     expect(contents).toContain('sourceFile: "src/web/dashboard.page.tsx"');
-    expect(contents).toContain('sourceFile: "src/app/users/web/account/settings.page.tsx"');
+    expect(contents).toContain('sourceFile: "src/web/users/account/settings.page.tsx"');
 
     const nested = contents
       .split("\n")
@@ -91,16 +92,16 @@ describe("generatePagesBarrel", () => {
 
     expect(nested).toBeDefined();
     expect(nested as string).toMatch(
-      /layouts: \[\{ module: \w+, sourceFile: "src\/app\/users\/web\/account\/layout\.tsx" \}\]/,
+      /layouts: \[\{ module: \w+, sourceFile: "src\/web\/users\/account\/layout\.tsx" \}\]/,
     );
   });
 
   it("refuses to emit a page whose layout chain has more than one layout, naming the page and every layout", async () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/app/users/web/layout.tsx": LAYOUT,
-      "src/app/users/web/account/layout.tsx": LAYOUT,
-      "src/app/users/web/account/settings.page.tsx": PAGE,
+      "src/web/users/layout.tsx": LAYOUT,
+      "src/web/users/account/layout.tsx": LAYOUT,
+      "src/web/users/account/settings.page.tsx": PAGE,
     });
     const productionDir = path.join(appRoot, ".warlock", "production");
 
@@ -112,11 +113,11 @@ describe("generatePagesBarrel", () => {
 
   it("layoutChainFor walks web root -> page dir, outermost first", () => {
     const appRoot = makeAppTree({
-      "src/app/users/web/layout.tsx": LAYOUT,
-      "src/app/users/web/account/layout.tsx": LAYOUT,
-      "src/app/users/web/account/settings.page.tsx": PAGE,
+      "src/web/users/layout.tsx": LAYOUT,
+      "src/web/users/account/layout.tsx": LAYOUT,
+      "src/web/users/account/settings.page.tsx": PAGE,
     });
-    const webRoot = path.join(appRoot, "src/app/users/web");
+    const webRoot = path.join(appRoot, "src/web/users");
 
     expect(layoutChainFor(path.join(webRoot, "account/settings.page.tsx"), webRoot)).toEqual([
       path.join(webRoot, "layout.tsx"),
@@ -173,7 +174,7 @@ describe("generatePagesBarrel", () => {
   });
 
   it("fails when pages exist but the app root component does not", async () => {
-    const appRoot = makeAppTree({ "src/app/main/web/home.page.tsx": PAGE });
+    const appRoot = makeAppTree({ "src/web/main/home.page.tsx": PAGE });
 
     await expect(
       generatePagesBarrel({ appRoot, productionDir: path.join(appRoot, ".warlock/production"), clientDir: "dist/client" }),
@@ -214,7 +215,7 @@ describe("the Vite-switch tripwire", () => {
     it(`fires on ${label}, naming the file and the specifier`, async () => {
       const appRoot = makeAppTree({
         "src/web/root.tsx": APP,
-        "src/app/main/web/home.page.tsx": `${source}${PAGE}`,
+        "src/web/main/home.page.tsx": `${source}${PAGE}`,
       });
 
       try {
@@ -227,7 +228,7 @@ describe("the Vite-switch tripwire", () => {
       } catch (error) {
         expect(error).toBeInstanceOf(WebPageGraphUnsupportedImportError);
         const message = (error as Error).message;
-        expect(message).toContain("src/app/main/web/home.page.tsx");
+        expect(message).toContain("src/web/main/home.page.tsx");
         expect(message).toContain(specifier);
         // The message must stand on its own for an app author: what the build
         // cannot do, and what to change in their file.
@@ -240,7 +241,7 @@ describe("the Vite-switch tripwire", () => {
   it("fires on import.meta.url even without an import specifier", async () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/app/main/web/home.page.tsx": `const here = import.meta.url;\n${PAGE}`,
+      "src/web/main/home.page.tsx": `const here = import.meta.url;\n${PAGE}`,
     });
 
     await expect(
@@ -252,7 +253,7 @@ describe("the Vite-switch tripwire", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
       "src/web/components/button.tsx": 'import icon from "./button.svg";\nexport const Button = icon;\n',
-      "src/app/main/web/home.page.tsx": PAGE,
+      "src/web/main/home.page.tsx": PAGE,
     });
     const productionDir = path.join(appRoot, ".warlock/production");
 
@@ -265,7 +266,7 @@ describe("the Vite-switch tripwire", () => {
   it("lets an ordinary relative or package import through", async () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/app/main/web/home.page.tsx": `import { useState } from "react";\nimport { helper } from "../utils/helper";\n${PAGE}`,
+      "src/web/main/home.page.tsx": `import { useState } from "react";\nimport { helper } from "../utils/helper";\n${PAGE}`,
       "src/app/main/utils/helper.ts": "export const helper = 1;\n",
     });
 
@@ -277,7 +278,7 @@ describe("the Vite-switch tripwire", () => {
   it("lets a stylesheet import through from a page, and writes the barrel", async () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/app/main/web/home.page.tsx": `import "./home.css";\n${PAGE}`,
+      "src/web/main/home.page.tsx": `import "./home.css";\n${PAGE}`,
     });
     const productionDir = path.join(appRoot, ".warlock/production");
 
@@ -291,7 +292,7 @@ describe("the Vite-switch tripwire", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": `import "./app.css";\n${APP}`,
       "src/web/components/button.tsx": 'import "./button.scss";\nexport const Button = null;\n',
-      "src/app/main/web/home.page.tsx": PAGE,
+      "src/web/main/home.page.tsx": PAGE,
     });
 
     await expect(
@@ -302,7 +303,7 @@ describe("the Vite-switch tripwire", () => {
   it("still fires on every non-stylesheet hazard reached through a stylesheet-importing file", async () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/app/main/web/home.page.tsx": `import "./home.css";\nimport logo from "./logo.svg";\n${PAGE}`,
+      "src/web/main/home.page.tsx": `import "./home.css";\nimport logo from "./logo.svg";\n${PAGE}`,
     });
 
     await expect(

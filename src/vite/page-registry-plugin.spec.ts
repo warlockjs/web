@@ -2,6 +2,7 @@ import { parse } from "@babel/parser";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { build } from "vite";
 import type { Plugin } from "vite";
 import { afterAll, describe, expect, it, vi } from "vitest";
@@ -14,6 +15,8 @@ import {
   RESOLVED_CLIENT_PAGE_REGISTRY_ID,
 } from "./page-registry-plugin";
 import { projectModule } from "./projection";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Fixture trees are built in a temp dir rather than checked in under
@@ -75,6 +78,49 @@ function metadataPageSource(routePath: string, title: string, bodyText: string):
   ].join("\n");
 }
 
+function registerPageSource(signature: string, registerBody: string, componentText: string): string {
+  return [
+    `export const route = { path: "/registered" };`,
+    ``,
+    `export function register${signature} {`,
+    `  ${registerBody}`,
+    `}`,
+    ``,
+    `export default function Page() {`,
+    `  return ${JSON.stringify(componentText)};`,
+    `}`,
+    ``,
+  ].join("\n");
+}
+
+function constRegisterPageSource(registerBody: string, componentText: string): string {
+  return [
+    `export const route = { path: "/registered" };`,
+    ``,
+    `export const register = () => {`,
+    `  ${registerBody}`,
+    `};`,
+    ``,
+    `export default function Page() {`,
+    `  return ${JSON.stringify(componentText)};`,
+    `}`,
+    ``,
+  ].join("\n");
+}
+
+function declaredRegisterPageSource(declaration: string, componentText: string): string {
+  return [
+    `export const route = { path: "/registered" };`,
+    ``,
+    declaration,
+    ``,
+    `export default function Page() {`,
+    `  return ${JSON.stringify(componentText)};`,
+    `}`,
+    ``,
+  ].join("\n");
+}
+
 describe("clientPageRegistry — virtual module id contract", () => {
   it("resolveId returns the \\0 id for the public id and undefined for anything else", () => {
     const plugin = clientPageRegistry({ appRoot: makeAppRoot() });
@@ -100,11 +146,11 @@ describe("clientPageRegistry — virtual module id contract", () => {
   it("load on the \\0 id emits the registry export and one import() per discovered page, in discovery order", () => {
     const appRoot = makeAppRoot();
     writeFile(
-      path.join(appRoot, "src/app/blog/web/article.page.tsx"),
+      path.join(appRoot, "src/web/blog/article.page.tsx"),
       pageSource("/blog/article", "export default function Article() {\n  return null;\n}\n"),
     );
     writeFile(
-      path.join(appRoot, "src/app/shop/web/item.page.tsx"),
+      path.join(appRoot, "src/web/shop/item.page.tsx"),
       pageSource("/shop/item", "export default function Item() {\n  return null;\n}\n"),
     );
 
@@ -239,11 +285,11 @@ describe("invalidateClientPageRegistry", () => {
 
 /**
  * The server-vs-client reload seam. `transform` captures the module SKELETON
- * (the source with every component body masked) as the "before"; `hotUpdate`
- * compares the "after". Anything that moves outside a component body — an
- * import, a module-level declaration, any server export — forces a full
- * reload, whether or not the JSX moved in the same save. A change confined to
- * component bodies falls through to Fast Refresh untouched.
+ * (the source with every component and exported `register` body masked) as the
+ * "before"; `hotUpdate` compares the "after". Anything that moves outside
+ * those bodies — an import, a module-level declaration, a register signature,
+ * or any server export — forces a full reload. Body-only changes fall through
+ * to the projected module's self-accept and React Fast Refresh untouched.
  */
 describe("clientPageRegistry — the server half wins: metadata edits force a full reload, pure JSX edits do not", () => {
   const PAGE = "/app/blog/web/article.page.tsx";
@@ -333,6 +379,120 @@ describe("clientPageRegistry — the server half wins: metadata edits force a fu
     expect(sent).toEqual([]);
     // No return value: Vite performs its normal Fast Refresh update.
     expect(result).toBeUndefined();
+  });
+
+  it("a register function body edit sends nothing and defers to the projected self-accept", async () => {
+    const plugin = clientPageRegistry({ appRoot: makeAppRoot() });
+    callHookWith(plugin, "transform", transformContext(), registerPageSource("()", "installFirst();", "hello"), PAGE);
+
+    const { thisArg, sent } = hotUpdateContext();
+    const result = await callHookWith<Promise<any>>(
+      plugin,
+      "hotUpdate",
+      thisArg,
+      hotUpdateOptions(PAGE, registerPageSource("()", "installSecond();", "hello")),
+    );
+
+    expect(sent).toEqual([]);
+    expect(result).toBeUndefined();
+  });
+
+  it("a register and component body edit in one save defers to self-accept and Fast Refresh", async () => {
+    const plugin = clientPageRegistry({ appRoot: makeAppRoot() });
+    callHookWith(plugin, "transform", transformContext(), registerPageSource("()", "installFirst();", "hello"), PAGE);
+
+    const { thisArg, sent } = hotUpdateContext();
+    const result = await callHookWith<Promise<any>>(
+      plugin,
+      "hotUpdate",
+      thisArg,
+      hotUpdateOptions(PAGE, registerPageSource("()", "installSecond();", "goodbye")),
+    );
+
+    expect(sent).toEqual([]);
+    expect(result).toBeUndefined();
+  });
+
+  it("masks the body of a one-declarator exported const register", async () => {
+    const plugin = clientPageRegistry({ appRoot: makeAppRoot() });
+    callHookWith(plugin, "transform", transformContext(), constRegisterPageSource("installFirst();", "hello"), PAGE);
+
+    const { thisArg, sent } = hotUpdateContext();
+    const result = await callHookWith<Promise<any>>(
+      plugin,
+      "hotUpdate",
+      thisArg,
+      hotUpdateOptions(PAGE, constRegisterPageSource("installSecond();", "hello")),
+    );
+
+    expect(sent).toEqual([]);
+    expect(result).toBeUndefined();
+  });
+
+  it("a register signature edit forces a full reload", async () => {
+    const plugin = clientPageRegistry({ appRoot: makeAppRoot() });
+    callHookWith(plugin, "transform", transformContext(), registerPageSource("()", "install();", "hello"), PAGE);
+
+    const { thisArg, sent } = hotUpdateContext();
+    const result = await callHookWith<Promise<any>>(
+      plugin,
+      "hotUpdate",
+      thisArg,
+      hotUpdateOptions(PAGE, registerPageSource("(scope: string)", "install();", "hello")),
+    );
+
+    expect(sent).toEqual([{ type: "full-reload", path: "*" }]);
+    expect(result).toEqual([]);
+  });
+
+  it("does not mask a non-exported register body", async () => {
+    const plugin = clientPageRegistry({ appRoot: makeAppRoot() });
+    callHookWith(
+      plugin,
+      "transform",
+      transformContext(),
+      declaredRegisterPageSource(`function register() { installFirst(); }`, "hello"),
+      PAGE,
+    );
+
+    const { thisArg, sent } = hotUpdateContext();
+    const result = await callHookWith<Promise<any>>(
+      plugin,
+      "hotUpdate",
+      thisArg,
+      hotUpdateOptions(
+        PAGE,
+        declaredRegisterPageSource(`function register() { installSecond(); }`, "hello"),
+      ),
+    );
+
+    expect(sent).toEqual([{ type: "full-reload", path: "*" }]);
+    expect(result).toEqual([]);
+  });
+
+  it("does not mask register inside a multi-declarator export", async () => {
+    const plugin = clientPageRegistry({ appRoot: makeAppRoot() });
+    callHookWith(
+      plugin,
+      "transform",
+      transformContext(),
+      declaredRegisterPageSource(`export const register = () => { installFirst(); }, version = 1;`, "hello"),
+      PAGE,
+    );
+
+    const { thisArg, sent } = hotUpdateContext();
+    const result = await callHookWith<Promise<any>>(
+      plugin,
+      "hotUpdate",
+      thisArg,
+      hotUpdateOptions(
+        PAGE,
+        declaredRegisterPageSource(`export const register = () => { installSecond(); }, version = 1;`, "hello"),
+      ),
+    );
+
+    expect(sent).toEqual([{ type: "full-reload", path: "*" }]);
+    expect(result).toEqual([]);
   });
 
   it("a mixed edit (BOTH metadata and JSX changed in one save) reloads — the server half wins over Fast Refresh", async () => {
@@ -628,9 +788,9 @@ const COMPONENT_MARKER = "WARLOCK_PROOF_COMPONENT_TEXT_d4e5f6";
 
 function makeProofAppRoot(): string {
   const appRoot = makeAppRoot();
-  const webDir = path.join(appRoot, "src/app/blog/web");
+  const webDir = path.join(appRoot, "src/web/blog");
 
-  // A plain module inside the module's own web/ folder: Gate A permits this
+  // A plain module inside the app's web/ folder: Gate A permits this
   // import (rule 4's `$module/web/` allowance), so projection is the ONLY
   // thing that can keep the marker out of the client bundle. If the import
   // were, say, `./repository.server`, Gate A would refuse it and the test
@@ -690,6 +850,23 @@ describe("clientPageRegistry — projection covers every module the registry imp
     const result = await build({
       root: appRoot,
       logLevel: "silent",
+      // `appRoot` is a bare temp directory with no `package.json` of its own, so
+      // Node's self-reference resolution (which `index.spec.ts`'s in-repo
+      // fixtures get for free by walking up to `web/package.json`) never finds
+      // this package's name here. `projection()`'s HMR wrapper imports
+      // `@warlock.js/web/client/runtime` unconditionally, so the build needs an
+      // explicit alias to the real source instead.
+      resolve: {
+        alias: {
+          "@warlock.js/web/client/runtime": path.join(
+            __dirname,
+            "..",
+            "client",
+            "runtime",
+            "index.ts",
+          ),
+        },
+      },
       plugins: [warlockClientBoundary({ appRoot })],
       build: {
         write: false,

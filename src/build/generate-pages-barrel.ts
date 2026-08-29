@@ -22,7 +22,19 @@ import fs from "node:fs";
 import path from "node:path";
 import { parse } from "@babel/parser";
 import type { ConnectorEsbuildPatch } from "@warlock.js/core";
-import { discoverPages, discoverWebRoots, isFile, toPosix, walkFiles } from "./discover-pages";
+import {
+  discoverPages,
+  discoverWebRoots,
+  isDiscoveredRoutablePage,
+  isFile,
+  toPosix,
+  walkFiles,
+} from "./discover-pages";
+import {
+  isNotFoundPageFile,
+  NOT_FOUND_ROUTE_NAME,
+  NOT_FOUND_ROUTE_PATH,
+} from "../server/not-found-page";
 
 // Re-exported, not redefined: discovery's helpers were this module's before the
 // split, and the callers that already reach for them here should keep getting
@@ -124,12 +136,26 @@ export type GeneratePagesBarrelOptions = {
 };
 
 export type GeneratePagesBarrelResult = {
-  /** How many `*.page.tsx` files discovery found across both web roots. */
+  /** How many `*.page.tsx` files discovery found under the page root. */
   pageCount: number;
   /** Absolute path of the written barrel. Always written when this runs at all. */
   barrelFile: string;
   /** The written barrel source. */
   contents: string;
+  /** The build-time route surface persisted beside the production output. */
+  pageRoutes: PageRoutesManifest;
+};
+
+export type PageRouteManifestEntry = {
+  method: "GET";
+  path: string;
+  name: string;
+  source: string;
+};
+
+export type PageRoutesManifest = {
+  version: 1;
+  routes: PageRouteManifestEntry[];
 };
 
 /** Raised by the Vite-switch tripwire. */
@@ -308,11 +334,11 @@ function quote(value: string): string {
   return JSON.stringify(value);
 }
 
-interface BarrelPage {
+type BarrelPage = {
   identifier: string;
   sourceFile: string;
   layouts: { identifier: string; sourceFile: string }[];
-}
+};
 
 /** Header of every generated barrel — the banner plus the one runtime import. */
 const BARREL_HEADER = [
@@ -369,6 +395,8 @@ export async function generatePagesBarrel(
   const srcRoot = path.join(appRoot, options.srcDir ?? "src");
   const webRoots = discoverWebRoots(srcRoot);
   const discovered = discoverPages({ appRoot, srcDir: options.srcDir });
+  const routablePages = discovered.filter(isDiscoveredRoutablePage);
+  const errorPage = discovered.find((page) => page.type === "error");
 
   if (discovered.length === 0) {
     console.log("web configured, 0 pages");
@@ -377,6 +405,7 @@ export async function generatePagesBarrel(
       pageCount: 0,
       barrelFile: await writeBarrel(productionDir, EMPTY_BARREL_CONTENTS),
       contents: EMPTY_BARREL_CONTENTS,
+      pageRoutes: { version: 1, routes: [] },
     };
   }
 
@@ -384,7 +413,7 @@ export async function generatePagesBarrel(
 
   const appFile = path.join(srcRoot, "web", "root.tsx");
 
-  if (!isFile(appFile)) {
+  if (routablePages.length > 0 && !isFile(appFile)) {
     throw new Error(
       `Cannot generate the page barrel: ${discovered.length} page(s) were discovered but the application root ` +
         `component "${toPosix(path.relative(appRoot, appFile))}" does not exist. Every page renders inside it.`,
@@ -393,8 +422,27 @@ export async function generatePagesBarrel(
 
   const layoutIdentifiers = new Map<string, string>();
   const pages: BarrelPage[] = [];
+  const pageRoutes: PageRoutesManifest = {
+    version: 1,
+    routes: [
+      ...routablePages.filter((page) => !isNotFoundPageFile(page.pageFile)).map((page) => ({
+      method: "GET" as const,
+      path: page.routePath,
+      name: page.routeName,
+      source: toPosix(path.relative(appRoot, page.pageFile)),
+      })),
+      {
+        method: "GET" as const,
+        path: NOT_FOUND_ROUTE_PATH,
+        name: NOT_FOUND_ROUTE_NAME,
+        source: routablePages.find((page) => isNotFoundPageFile(page.pageFile)) === undefined
+          ? "\u0000warlock:framework-default-404"
+          : toPosix(path.relative(appRoot, routablePages.find((page) => isNotFoundPageFile(page.pageFile))!.pageFile)),
+      },
+    ],
+  };
 
-  for (const [index, page] of discovered.entries()) {
+  for (const [index, page] of routablePages.entries()) {
     const layouts = page.layouts.map((layoutFile) => {
       let identifier = layoutIdentifiers.get(layoutFile);
 
@@ -410,7 +458,12 @@ export async function generatePagesBarrel(
   }
 
   const importLines = [
-    `import * as app from ${quote(importSpecifierFor(productionDir, appFile))};`,
+    ...(routablePages.length === 0
+      ? []
+      : [`import * as app from ${quote(importSpecifierFor(productionDir, appFile))};`]),
+    ...(errorPage === undefined
+      ? []
+      : [`import * as errorPage from ${quote(importSpecifierFor(productionDir, errorPage.pageFile))};`]),
     ...[...layoutIdentifiers.entries()].map(
       ([layoutFile, identifier]) =>
         `import * as ${identifier} from ${quote(importSpecifierFor(productionDir, layoutFile))};`,
@@ -442,8 +495,11 @@ export async function generatePagesBarrel(
     ...importLines,
     "",
     "providePageManifest({",
-    `  clientDir: ${quote(clientDir)},`,
-    `  app: { module: app, sourceFile: ${relativeToApp(appFile)} },`,
+    ...(routablePages.length === 0 ? [] : [`  clientDir: ${quote(clientDir)},`]),
+    ...(routablePages.length === 0 ? [] : [`  app: { module: app, sourceFile: ${relativeToApp(appFile)} },`]),
+    ...(errorPage === undefined
+      ? []
+      : [`  errorPage: { module: errorPage, sourceFile: ${relativeToApp(errorPage.pageFile)} },`]),
     "  pages: [",
     ...pageEntries.map((entry) =>
       entry
@@ -460,5 +516,6 @@ export async function generatePagesBarrel(
     pageCount: pages.length,
     barrelFile: await writeBarrel(productionDir, contents),
     contents,
+    pageRoutes,
   };
 }

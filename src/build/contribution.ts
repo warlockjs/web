@@ -233,6 +233,10 @@ export function createWebBuildContribution(
   }
 
   let pageCount = 0;
+  let pageRoutes: import("./generate-pages-barrel").PageRoutesManifest = {
+    version: 1,
+    routes: [],
+  };
 
   return {
     async generate(context: ConnectorBuildContext): Promise<ConnectorBuildGenerateResult | void> {
@@ -279,6 +283,7 @@ export function createWebBuildContribution(
       });
 
       pageCount = result.pageCount;
+      pageRoutes = result.pageRoutes;
 
       // Contributed unconditionally, zero pages included: the barrel is always
       // written, and the entry has to IMPORT it for the empty table to reach
@@ -289,9 +294,7 @@ export function createWebBuildContribution(
     },
 
     async emit(context: ConnectorBuildContext): Promise<void> {
-      if (pageCount === 0) {
-        return;
-      }
+      if (pageCount > 0) {
 
       const { buildWarlockHydrationClient } = await import("../vite");
       const { appConventionAliases } = await import("../vite/app-convention-aliases");
@@ -315,6 +318,10 @@ export function createWebBuildContribution(
         ],
         external: options.external,
       });
+      }
+
+      const { writePageRoutesManifest } = await import("./page-routes-manifest");
+      await writePageRoutesManifest(path.resolve(context.appRoot, context.options.outdir), pageRoutes);
     },
   };
 }

@@ -17,18 +17,11 @@
  * the one import that has to happen at boot is a dynamic one and why it names
  * the pipeline barrel and nothing else.
  */
-import type { Response, Router } from "@warlock.js/core";
+import type { Router } from "@warlock.js/core";
 import type { SharedStoreResolver } from "../shared";
-import type { BufferedCookie } from "./buffered-response";
 import type { PageContextRunner } from "./execute-page-request";
 import type { InstalledManifestPageRoute } from "./install-page-routes-from-manifest";
-import { isNotFoundPageFile } from "./not-found-page";
 import type { PageManifest } from "./page-manifest";
-
-/** The only export this module reads off a page module namespace. */
-type PageModuleShape = {
-  route?: unknown;
-};
 
 export type InstallProductionPageRoutesOptions = {
   router: Router;
@@ -43,7 +36,6 @@ export type InstallProductionPageRoutesOptions = {
   /** Reads the current request's store out of {@link pageContext}. */
   sharedStore: SharedStoreResolver;
   /** Same helper `dev-server.ts` exports — passed in, never imported. */
-  applyBufferedCookie: (response: Response, cookie: BufferedCookie) => void;
   /**
    * Where the browser fetches the hydration entry from.
    *
@@ -54,10 +46,12 @@ export type InstallProductionPageRoutesOptions = {
    */
   resolveHydrationClientModuleUrl: () => string;
   /**
-   * Where the client build wrote its output. The stylesheets every page must
-   * link are read from the manifest inside it — resolved HERE rather than by
-   * the caller, because the barrel that owns that reader is the one this
-   * function already imports at boot.
+   * Where the client build wrote its output. Forwarded to
+   * `installPageRoutesFromManifest`, never read here: every registered
+   * handler needs its OWN stylesheet chain
+   * (`[root, ...outer-to-inner matched layouts, page]`), and the installer is
+   * the one place that already walks the manifest's per-page layout chains to
+   * build one.
    *
    * OPTIONAL for the same reason `PageManifest.clientDir` is: a build that
    * discovered zero pages emits no client bundle, so there is no directory to
@@ -65,50 +59,6 @@ export type InstallProductionPageRoutesOptions = {
    */
   clientDir?: string;
 };
-
-/**
- * A manifest page whose module namespace carries no `route` export.
- *
- * Page discovery only emits a module it read a `route` off, so a valid build
- * cannot produce this — a stale artifact or a hand-edited barrel can. The
- * alternative to refusing it is a page table that silently shrinks: the
- * operator gets a clean boot log and a 404 on a page that is demonstrably in
- * the bundle, with nothing anywhere naming the file. The file is named here
- * because it is the entire diagnosis.
- */
-export class PageManifestEntryMissingRouteError extends Error {
-  public constructor(sourceFile: string) {
-    super(
-      `Cannot serve pages: the page manifest entry for "${sourceFile}" has no \`route\` export, ` +
-        "so it has no URL to be registered under. This build's generated `pages.ts` barrel does " +
-        "not match the sources it was generated from — re-run `warlock build`, and if the page is " +
-        "meant to be served, give it a `route` export.",
-    );
-    this.name = "PageManifestEntryMissingRouteError";
-  }
-}
-
-/**
- * Refuse the whole table before any of it is registered.
- *
- * Checked in one pass UP FRONT rather than per page inside the registration
- * loop: a half-installed page table is worse than a refused boot, because it
- * serves.
- */
-function assertEveryPageDeclaresRoute(manifest: PageManifest): void {
-  for (const page of manifest.pages) {
-    // THE ONE EXEMPTION, and it is not a relaxation of the rule — it is the
-    // rule's premise not applying. Every other page needs a `route` because a
-    // page with no URL is a page nothing can reach; `404.page.tsx` is reached by
-    // NOT matching, so a `route` on it would be the error instead
-    // (`install-page-routes-from-manifest.ts` refuses that one).
-    if (isNotFoundPageFile(page.sourceFile)) continue;
-
-    if ((page.module as PageModuleShape).route === undefined) {
-      throw new PageManifestEntryMissingRouteError(page.sourceFile);
-    }
-  }
-}
 
 /**
  * Register every page the manifest carries, and connect the pipeline the
@@ -127,12 +77,9 @@ export async function installProductionPageRoutes(
     manifest,
     pageContext,
     sharedStore,
-    applyBufferedCookie,
     resolveHydrationClientModuleUrl,
     clientDir,
   } = options;
-
-  assertEveryPageDeclaresRoute(manifest);
 
   if (manifest.pages.length === 0) return [];
 
@@ -151,8 +98,6 @@ export async function installProductionPageRoutes(
     router,
     manifest,
     hydrationClientModuleUrl: resolveHydrationClientModuleUrl(),
-    stylesheetUrls:
-      clientDir === undefined ? [] : webServer.productionStylesheetUrls(clientDir),
-    applyBufferedCookie,
+    clientDir,
   });
 }

@@ -1,11 +1,15 @@
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import {
+  MissingHydrationErrorPageError,
   UnknownHydrationPageNameError,
   buildHydratedTree,
 } from "./build-hydrated-tree";
 import type { ClientPageEntry, ClientRouteComposition } from "./runtime/types";
-import type { HydrationDocumentPayloadSource } from "../hydration-payload";
+import type {
+  HydrationDocumentPayloadSource,
+  SerializedErrorPageProps,
+} from "../hydration-payload";
 
 type LevelProps = { data: unknown; shared: unknown; children?: ReactNode };
 
@@ -13,6 +17,7 @@ const Page = (_props: LevelProps): null => null;
 const OuterLayout = (_props: LevelProps): null => null;
 const InnerLayout = (_props: LevelProps): null => null;
 const App = (_props: LevelProps): null => null;
+const ErrorPage = (_props: SerializedErrorPageProps): null => null;
 
 /** A module NAMESPACE, which is what the registry's `load()` resolves to. */
 const moduleOf = (component: unknown) => ({ default: component });
@@ -27,6 +32,16 @@ function payloadFor(name: string): HydrationDocumentPayloadSource {
   };
 }
 
+function errorPayloadFor(name: string): HydrationDocumentPayloadSource {
+  return {
+    ...payloadFor(name),
+    errorPage: {
+      error: { name: "Error", message: "page exploded", stack: "Error: page exploded" },
+      status: 503,
+    },
+  };
+}
+
 function entry(
   name: string,
   load: () => ClientRouteComposition | Promise<ClientRouteComposition>,
@@ -35,12 +50,12 @@ function entry(
 }
 
 /** Narrow a ReactNode to an element so props can be read without `any`. */
-function asElement(node: ReactNode): ReactElement<LevelProps> {
+function asElement<Props extends object = LevelProps>(node: ReactNode): ReactElement<Props> {
   if (!isValidElement(node)) {
     throw new Error(`Expected a React element, received ${String(node)}.`);
   }
 
-  return node as ReactElement<LevelProps>;
+  return node as ReactElement<Props>;
 }
 
 /**
@@ -84,6 +99,37 @@ describe("buildHydratedTree", () => {
     expect(page.props.data).toBe(payload.pageData);
     expect(page.props.shared).toBe(payload.shared);
     expect(page.props.children).toBeUndefined();
+  });
+
+  it("hydrates the server-selected ErrorPage instead of the ordinary Page", async () => {
+    const pages = [
+      entry("main.home", () => ({
+        Page: moduleOf(Page),
+        ErrorPage: moduleOf(ErrorPage),
+        layouts: [moduleOf(OuterLayout), moduleOf(InnerLayout)],
+        App: moduleOf(App),
+      })),
+    ];
+    const payload = errorPayloadFor("main.home");
+
+    const outer = asElement(await buildHydratedTree(pages, payload));
+    const inner = asElement(outer.props.children);
+    const errorPage = asElement<SerializedErrorPageProps>(inner.props.children);
+
+    expect(levelTypesOf(outer)).toEqual([OuterLayout, InnerLayout, ErrorPage]);
+    expect(errorPage.type).toBe(ErrorPage);
+    expect(errorPage.props).toEqual(payload.errorPage);
+    expect(levelTypesOf(outer)).not.toContain(Page);
+  });
+
+  it("fails closed when the server selected an error page absent from the client graph", async () => {
+    const pages = [
+      entry("main.home", () => ({ Page: moduleOf(Page), layouts: [] })),
+    ];
+
+    await expect(
+      buildHydratedTree(pages, errorPayloadFor("main.home")),
+    ).rejects.toBeInstanceOf(MissingHydrationErrorPageError);
   });
 
   /**
@@ -217,5 +263,66 @@ describe("buildHydratedTree", () => {
     await buildHydratedTree([entry("main.home", load)], payloadFor("main.home"));
 
     expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it("registers real namespaces rootward-to-leaf before extracting components", async () => {
+    const events: string[] = [];
+    const registeredModule = (name: string, component: unknown) => ({
+      register: () => events.push(`register:${name}`),
+      get default() {
+        events.push(`component:${name}`);
+        return component;
+      },
+    });
+    const app = registeredModule("app", App);
+    const outer = registeredModule("outer", OuterLayout);
+    const inner = registeredModule("inner", InnerLayout);
+    const page = registeredModule("page", Page);
+    const load = vi.fn(() => ({ Page: page, layouts: [outer, inner], App: app }));
+
+    await buildHydratedTree([entry("main.home", load)], payloadFor("main.home"));
+
+    expect(events).toEqual([
+      "register:app",
+      "register:outer",
+      "register:inner",
+      "register:page",
+      "component:page",
+      "component:inner",
+      "component:outer",
+    ]);
+  });
+
+  it("registers the selected error leaf instead of the ordinary page", async () => {
+    const events: string[] = [];
+    const registeredModule = (name: string, component: unknown) => ({
+      register: () => events.push(`register:${name}`),
+      get default() {
+        events.push(`component:${name}`);
+        return component;
+      },
+    });
+    const app = registeredModule("app", App);
+    const layout = registeredModule("layout", OuterLayout);
+    const page = registeredModule("page", Page);
+    const errorPage = registeredModule("error", ErrorPage);
+    const pages = [
+      entry("main.home", () => ({
+        Page: page,
+        ErrorPage: errorPage,
+        layouts: [layout],
+        App: app,
+      })),
+    ];
+
+    await buildHydratedTree(pages, errorPayloadFor("main.home"));
+
+    expect(events).toEqual([
+      "register:app",
+      "register:layout",
+      "register:error",
+      "component:error",
+      "component:layout",
+    ]);
   });
 });

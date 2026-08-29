@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { discoverPages, toPosix } from "../build/discover-pages";
+import { discoverPages, isDiscoveredRoutablePage, toPosix } from "../build/discover-pages";
 import { NestedLayoutsNotSupportedError } from "../routing/layout-policy";
 import { href, resetRouteTable, routeTablePublisher } from "../routing/route-table";
 import type { PageRouteHandler, PageRouteHandlerOptions } from "./create-page-route-handler";
@@ -75,7 +75,6 @@ function recordingHandlerFactory() {
   return { createHandler, built };
 }
 
-const applyBufferedCookie = vi.fn() as InstallPageRoutesFromManifestOptions["applyBufferedCookie"];
 
 const temporaryDirectories: string[] = [];
 
@@ -91,6 +90,18 @@ function makeAppTree(files: Record<string, string>): string {
   }
 
   return appRoot;
+}
+
+/** Writes `<root>/.vite/manifest.json` under a fresh client dir and returns the client dir. */
+function makeClientDir(manifest: Record<string, unknown>): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "warlock-install-from-manifest-client-"));
+  temporaryDirectories.push(root);
+
+  const viteDir = path.join(root, ".vite");
+  fs.mkdirSync(viteDir, { recursive: true });
+  fs.writeFileSync(path.join(viteDir, "manifest.json"), JSON.stringify(manifest), "utf-8");
+
+  return root;
 }
 
 afterEach(() => {
@@ -139,7 +150,6 @@ function install(
     installPageRoutesFromManifest({
       router,
       manifest,
-      applyBufferedCookie,
       createHandler,
       ...overrides,
     });
@@ -233,17 +243,50 @@ describe("production page route installation", () => {
     expect(registered[0].options.name).toBe("main.blog.latest");
   });
 
-  it("skips a page module that exports no route, exactly as development discovery does", () => {
+  it("registers a page module with no route export under the derived filesystem path and dotted name", () => {
     const page: PageManifestPageEntry = {
       module: { default: () => null },
-      sourceFile: "src/app/main/web/draft.page.tsx",
+      sourceFile: "src/web/main/draft.page.tsx",
       layouts: [],
+    };
+
+    const { run, registered, built } = install(manifestOf([page]));
+
+    const installed = run();
+
+    expect(registered).toHaveLength(1);
+    expect(registered[0].path).toBe("/main/draft");
+    expect(registered[0].options.name).toBe("main.draft");
+    expect(installed).toEqual([
+      {
+        declaredPath: "/main/draft",
+        path: "/main/draft",
+        name: "main.draft",
+        file: "src/web/main/draft.page.tsx",
+        layoutFile: undefined,
+      },
+    ]);
+  });
+
+  it("derives the path for an unrouted page under a prefix-exporting layout at the prefix-replaced path, not doubled", () => {
+    const docsLayout = {
+      module: { default: () => null, prefix: "/docs" },
+      sourceFile: "src/web/docs/layout.tsx",
+    };
+
+    const page: PageManifestPageEntry = {
+      module: { default: () => null },
+      sourceFile: "src/web/docs/guide.page.tsx",
+      layouts: [docsLayout],
     };
 
     const { run, registered } = install(manifestOf([page]));
 
-    expect(run()).toEqual([]);
-    expect(registered).toHaveLength(0);
+    run();
+
+    expect(registered).toHaveLength(1);
+    expect(registered[0].path).toBe("/docs/guide");
+    expect(registered[0].options.name).toBe("docs.guide");
   });
 
   it("hands each handler the manifest's own source file strings, byte for byte", () => {
@@ -274,7 +317,7 @@ describe("production page route installation", () => {
     await expect(loadModule(appFile)).resolves.toBe(appModule);
   });
 
-  it("forwards the hydration client module url and the cookie applier to each handler", () => {
+  it("forwards the hydration client module url to each handler", () => {
     const { run, built } = install(manifestOf([homePage]), {
       hydrationClientModuleUrl: "/assets/hydrate.js",
     });
@@ -282,7 +325,6 @@ describe("production page route installation", () => {
     run();
 
     expect(built[0].hydrationClientModuleUrl).toBe("/assets/hydrate.js");
-    expect(built[0].applyBufferedCookie).toBe(applyBufferedCookie);
   });
 
   it("refuses a page whose layout chain is nested, naming the page and its layouts", () => {
@@ -374,6 +416,24 @@ describe("installPageRoutesFromManifest — the layout middleware chain", () => 
   it("runs EVERY layout's middleware, outermost first — the outer layout renders, the inner one only guards", async () => {
     const calls: string[] = [];
 
+    const outerModule = {
+      default: () => null,
+      prefix: "/users",
+      middleware: [
+        () => {
+          calls.push("optionalAuth");
+        },
+      ],
+    };
+    const innerModule = {
+      prefix: "/account",
+      middleware: [
+        () => {
+          calls.push("gate");
+        },
+      ],
+    };
+
     const guardedPage: PageManifestPageEntry = {
       module: { default: () => null, route: "/settings" },
       sourceFile: "src/app/users/web/account/settings.page.tsx",
@@ -381,29 +441,14 @@ describe("installPageRoutesFromManifest — the layout middleware chain", () => 
         // Renders, and resolves the identity the gate below has nothing to
         // check without.
         {
-          module: {
-            default: () => null,
-            prefix: "/users",
-            middleware: [
-              () => {
-                calls.push("optionalAuth");
-              },
-            ],
-          },
+          module: outerModule,
           sourceFile: "src/app/users/web/layout.tsx",
         },
         // No default export: a pure authorization boundary, the shape a
         // `middleware`-only layout has. Classified by the module, so it does
         // NOT count as a second rendering layout.
         {
-          module: {
-            prefix: "/account",
-            middleware: [
-              () => {
-                calls.push("gate");
-              },
-            ],
-          },
+          module: innerModule,
           sourceFile: "src/app/users/web/account/layout.tsx",
         },
       ],
@@ -423,6 +468,14 @@ describe("installPageRoutesFromManifest — the layout middleware chain", () => 
     // chain walk, not two.
     expect(registered.map((route) => route.path)).toEqual(["/users/account/settings"]);
     expect(installed[0]?.layoutFile).toBe("src/app/users/web/layout.tsx");
+
+    const registrationLayouts = await built[0].loadRegistrationLayouts?.();
+    expect(registrationLayouts).toHaveLength(2);
+    expect(registrationLayouts?.[0]).toBe(outerModule);
+    expect(registrationLayouts?.[1]).toBe(innerModule);
+    await expect(built[0].loadModule("src/app/users/web/layout.tsx")).resolves.not.toBe(
+      outerModule,
+    );
   });
 
   it("hosts the chain on the NEAREST layout when none of them renders", async () => {
@@ -541,6 +594,7 @@ describe("installPageRoutesFromManifest — the layout middleware chain", () => 
     expect(registered[0].path).toBe("/contact-us");
     expect(built[0].layoutFile).toBeUndefined();
     await expect(layoutMiddlewareOf(built[0])).resolves.toEqual([]);
+    await expect(built[0].loadRegistrationLayouts?.()).resolves.toEqual([]);
   });
 
   it("composes the same effective path discoverPages() computes for the same tree", () => {
@@ -549,18 +603,17 @@ describe("installPageRoutesFromManifest — the layout middleware chain", () => 
     // which is exactly what the generated barrel does — so the two sides are
     // answering for the same tree rather than for two hand-written guesses.
     const appRoot = makeAppTree({
-      "src/app/users/web/layout.tsx":
-        'export const prefix = "/users";\nexport default () => null;\n',
-      "src/app/users/web/account/layout.tsx":
+      "src/web/layout.tsx": 'export const prefix = "/users";\nexport default () => null;\n',
+      "src/web/account/layout.tsx":
         'export const prefix = "/account";\nexport const middleware = [() => undefined];\n',
-      "src/app/users/web/account/settings.page.tsx":
+      "src/web/account/settings.page.tsx":
         'export const route = "/settings";\nexport default () => null;\n',
     });
 
-    const discovered = discoverPages({ appRoot });
+    const discovered = discoverPages({ appRoot }).filter(isDiscoveredRoutablePage);
     const moduleByLayoutFile: Record<string, Record<string, unknown>> = {
-      "src/app/users/web/layout.tsx": { default: () => null, prefix: "/users" },
-      "src/app/users/web/account/layout.tsx": {
+      "src/web/layout.tsx": { default: () => null, prefix: "/users" },
+      "src/web/account/layout.tsx": {
         prefix: "/account",
         middleware: [() => undefined],
       },
@@ -696,6 +749,7 @@ describe("installPageRoutesFromManifest — the not-found page", () => {
 
     expect(handler).toBeDefined();
     expect(handler?.layoutFile).toBeUndefined();
+    expect(handler?.loadRegistrationLayouts).toBeUndefined();
     expect(handler?.name).toBe(NOT_FOUND_ROUTE_NAME);
     expect(handler?.statusForRenderedOk).toBe(404);
     expect(handler?.matchPath?.("/anything/at/all")).toBe("/anything/at/all");
@@ -776,5 +830,107 @@ describe("installPageRoutesFromManifest — the not-found page", () => {
         body: { error: "Route not found", path: "/api/uzers", method: "GET" },
       },
     ]);
+  });
+});
+
+/**
+ * ROUTE-LOCAL SSR CSS, production half.
+ *
+ * `productionStylesheetUrls` (`stylesheet-urls.ts`) is unit-tested on its own;
+ * these specs prove the WIRING — that `installPageRoutesFromManifest` calls it
+ * per page with the manifest's own `[app.sourceFile, ...layouts, page]` chain,
+ * against a real `.vite/manifest.json` on disk, and that the not-found page
+ * never gets a sibling layout's CSS it never got that layout's middleware
+ * from.
+ */
+describe("installPageRoutesFromManifest — route-local CSS", () => {
+  it("gives a page with no layout only root's and its own stylesheets", () => {
+    const contactPage: PageManifestPageEntry = {
+      module: { default: () => null, route: "/contact-us" },
+      sourceFile: "src/app/main/web/contact-us.page.tsx",
+      layouts: [],
+    };
+    const clientDir = makeClientDir({
+      "src/web/root.tsx": { file: "assets/root.js", css: ["assets/root.css"] },
+      "src/app/main/web/contact-us.page.tsx": {
+        file: "assets/contact-us.page.js",
+        css: ["assets/contact-us.page.css"],
+      },
+    });
+
+    const { run, built } = install(manifestOf([contactPage]), { clientDir });
+
+    run();
+
+    expect(built[0].stylesheetUrls).toEqual(["/assets/root.css", "/assets/contact-us.page.css"]);
+  });
+
+  it("carries every matched layout's stylesheets, outer to inner, between root and the page", () => {
+    const guardedPage: PageManifestPageEntry = {
+      module: { default: () => null, route: "/settings" },
+      sourceFile: "src/app/users/web/account/settings.page.tsx",
+      layouts: [
+        { module: { default: () => null }, sourceFile: "src/app/users/web/layout.tsx" },
+        { module: {}, sourceFile: "src/app/users/web/account/layout.tsx" },
+      ],
+    };
+    const clientDir = makeClientDir({
+      "src/web/root.tsx": { file: "assets/root.js", css: ["assets/root.css"] },
+      "src/app/users/web/layout.tsx": { file: "assets/outer.js", css: ["assets/outer.css"] },
+      "src/app/users/web/account/layout.tsx": {
+        file: "assets/inner.js",
+        css: ["assets/inner.css"],
+      },
+      "src/app/users/web/account/settings.page.tsx": {
+        file: "assets/settings.page.js",
+        css: ["assets/settings.page.css"],
+      },
+    });
+
+    const { run, built } = install(manifestOf([guardedPage]), { clientDir });
+
+    run();
+
+    expect(built[0].stylesheetUrls).toEqual([
+      "/assets/root.css",
+      "/assets/outer.css",
+      "/assets/inner.css",
+      "/assets/settings.page.css",
+    ]);
+  });
+
+  it("gives the not-found page's handler root and its own stylesheets, never a sibling layout's", () => {
+    const clientDir = makeClientDir({
+      "src/web/root.tsx": { file: "assets/root.js", css: ["assets/root.css"] },
+      "src/app/main/web/layout.tsx": { file: "assets/layout.js", css: ["assets/layout.css"] },
+      "src/app/main/web/home.page.tsx": { file: "assets/home.page.js", css: ["assets/home.page.css"] },
+      "src/app/main/web/404.page.tsx": { file: "assets/404.page.js", css: ["assets/404.page.css"] },
+    });
+
+    const notFoundPage: PageManifestPageEntry = {
+      module: { default: () => null },
+      sourceFile: "src/app/main/web/404.page.tsx",
+      layouts: [homeLayout],
+    };
+
+    const { run, built } = install(manifestOf([homePage, notFoundPage]), { clientDir });
+
+    run();
+
+    const homeHandler = built.find((options) => options.pageFile === homePage.sourceFile);
+    const notFoundHandler = built.find((options) => options.pageFile === notFoundPage.sourceFile);
+
+    expect(homeHandler?.stylesheetUrls).toEqual(["/assets/root.css", "/assets/layout.css", "/assets/home.page.css"]);
+    // No `/assets/layout.css` here — the not-found page renders inside the
+    // application root and nothing else, exactly as it has no layout middleware.
+    expect(notFoundHandler?.stylesheetUrls).toEqual(["/assets/root.css", "/assets/404.page.css"]);
+  });
+
+  it("gives every page no stylesheets when the build carried no client bundle", () => {
+    const { run, built } = install(manifestOf([homePage]));
+
+    run();
+
+    expect(built[0].stylesheetUrls).toEqual([]);
   });
 });

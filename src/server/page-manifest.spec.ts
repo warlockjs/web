@@ -6,8 +6,8 @@ const manifest: PageManifest = {
   pages: [
     {
       module: { route: "/" },
-      sourceFile: "src/app/main/web/home.page.tsx",
-      layouts: [{ module: { prefix: "/" }, sourceFile: "src/app/main/web/layout.tsx" }],
+      sourceFile: "src/web/main/home.page.tsx",
+      layouts: [{ module: { prefix: "/" }, sourceFile: "src/web/main/layout.tsx" }],
     },
   ],
 };

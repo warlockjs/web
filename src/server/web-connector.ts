@@ -55,7 +55,7 @@ import {
   warlockClientBoundary,
 } from "../vite";
 import { CLIENT_ASSET_URL_PREFIX } from "./client-asset-url-prefix";
-import { applyBufferedCookie, devErrorTransportPlugin, sendCapturedDevError } from "./dev-server";
+import { devErrorTransportPlugin, sendCapturedDevError } from "./dev-server";
 import { resolveHydrationClientUrl } from "./hydration-client-url";
 import type { InstalledPageRoute } from "./install-page-routes";
 import { installProductionPageRoutes } from "./install-production-page-routes";
@@ -399,7 +399,6 @@ export class WebConnector extends BaseConnector {
         manifest: this.pageManifest,
         pageContext: requestContext,
         sharedStore: () => requestContext.getStore(),
-        applyBufferedCookie,
         // The URL is resolved lazily, by the production path, only if there are
         // pages to hydrate — see the option's own note.
         resolveHydrationClientModuleUrl: () => this.resolveHydrationClientModuleUrl(),
@@ -532,7 +531,6 @@ export class WebConnector extends BaseConnector {
       // module graph loads. A render-blocking <link> in <head> is what makes
       // the page arrive styled instead of arriving and then correcting itself.
       stylesheetUrls: webServerSsr.devStylesheetUrls(paths.appRoot, paths.appFile),
-      applyBufferedCookie,
     });
 
     this.installedPages = await this.installDevPageRoutes();

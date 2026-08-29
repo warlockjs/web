@@ -23,7 +23,11 @@
  * hashed chunk urls, no HMR metadata — reaches the emitted entry, and every
  * other property stays testable with a trivial mapper.
  */
-import type { DiscoveredPage } from "./discover-pages";
+import {
+  isDiscoveredRoutablePage,
+  type DiscoveredPage,
+  type DiscoveredRoutablePage,
+} from "./discover-pages";
 
 export type GenerateClientRegistryOptions = {
   /**
@@ -91,7 +95,7 @@ const HEADER = [
   `import type { ClientPageEntry } from ${quote(CLIENT_RUNTIME_SPECIFIER)};`,
 ];
 
-function assertUniqueNames(pages: readonly DiscoveredPage[]): void {
+function assertUniqueNames(pages: readonly DiscoveredRoutablePage[]): void {
   const pageFileByName = new Map<string, string>();
 
   for (const page of pages) {
@@ -114,8 +118,15 @@ function assertUniqueNames(pages: readonly DiscoveredPage[]): void {
  * already module-cached by the bundler, so the correct implementation is to
  * let the cache do the caching.
  */
-function loadSource(page: DiscoveredPage, toImportSpecifier: (file: string) => string): string[] {
-  const bindings = ["Page"];
+function loadSource(
+  page: DiscoveredRoutablePage,
+  errorPageFile: string | undefined,
+  toImportSpecifier: (file: string) => string,
+): string[] {
+  // These bindings deliberately retain the REAL module namespace objects
+  // returned by import(). The client lifecycle registers exports on those
+  // namespaces before the tree builder extracts their default components.
+  const bindings = ["PageModule"];
   const specifiers = [toImportSpecifier(page.pageFile)];
 
   // Outermost first, exactly as discovery enumerated the chain — the order IS
@@ -128,20 +139,26 @@ function loadSource(page: DiscoveredPage, toImportSpecifier: (file: string) => s
   // second convention waiting to disagree with the server's, which is the same
   // reason `routePath` below is not re-composed either.
   const layoutBindings = page.layouts.map((layoutFile, index) => {
-    bindings.push(`layout${index}`);
+    bindings.push(`layoutModule${index}`);
     specifiers.push(toImportSpecifier(layoutFile));
 
-    return `layout${index}`;
+    return `layoutModule${index}`;
   });
 
   if (page.appFile !== undefined) {
-    bindings.push("App");
+    bindings.push("AppModule");
     specifiers.push(toImportSpecifier(page.appFile));
+  }
+
+  if (errorPageFile !== undefined) {
+    bindings.push("ErrorPageModule");
+    specifiers.push(toImportSpecifier(errorPageFile));
   }
 
   // `App` is OMITTED, never emitted as `App: undefined`: the runtime validator
   // reads an own `App` key as a promise that a module namespace is behind it.
-  const app = page.appFile === undefined ? "" : ", App";
+  const app = page.appFile === undefined ? "" : ", App: AppModule";
+  const errorPage = errorPageFile === undefined ? "" : ", ErrorPage: ErrorPageModule";
 
   return [
     "    load: async () => {",
@@ -149,13 +166,14 @@ function loadSource(page: DiscoveredPage, toImportSpecifier: (file: string) => s
     ...specifiers.map((specifier) => `        import(${quote(specifier)}),`),
     "      ]);",
     "",
-    `      return { Page, layouts: [${layoutBindings.join(", ")}]${app} };`,
+    `      return { Page: PageModule, layouts: [${layoutBindings.join(", ")}]${app}${errorPage} };`,
     "    },",
   ];
 }
 
 function entrySource(
-  page: DiscoveredPage,
+  page: DiscoveredRoutablePage,
+  errorPageFile: string | undefined,
   toImportSpecifier: (file: string) => string,
 ): string[] {
   return [
@@ -167,7 +185,7 @@ function entrySource(
     // convention waiting to disagree with the server's.
     `    name: ${quote(page.routeName)},`,
     `    path: ${quote(page.routePath)},`,
-    ...loadSource(page, toImportSpecifier),
+    ...loadSource(page, errorPageFile, toImportSpecifier),
     "  },",
   ];
 }
@@ -181,12 +199,14 @@ function entrySource(
  */
 export function generateClientRegistry(options: GenerateClientRegistryOptions): string {
   const { pages, toImportSpecifier } = options;
+  const routablePages = pages.filter(isDiscoveredRoutablePage);
+  const errorPageFile = pages.find((page) => page.type === "error")?.pageFile;
 
-  assertUniqueNames(pages);
+  assertUniqueNames(routablePages);
 
   const declaration = `export const ${CLIENT_REGISTRY_EXPORT_NAME}: readonly ClientPageEntry[] =`;
 
-  if (pages.length === 0) {
+  if (routablePages.length === 0) {
     return [...HEADER, "", `${declaration} [];`, ""].join("\n");
   }
 
@@ -194,7 +214,7 @@ export function generateClientRegistry(options: GenerateClientRegistryOptions): 
     ...HEADER,
     "",
     `${declaration} [`,
-    ...pages.flatMap((page) => entrySource(page, toImportSpecifier)),
+    ...routablePages.flatMap((page) => entrySource(page, errorPageFile, toImportSpecifier)),
     "];",
     "",
   ].join("\n");

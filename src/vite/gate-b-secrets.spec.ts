@@ -1,7 +1,9 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { transformSync } from "esbuild";
 import { build } from "vite";
 import { describe, expect, it } from "vitest";
+import { WEB_ESBUILD_PATCH } from "../build/generate-pages-barrel";
 import { gateBSecrets } from "./gate-b-secrets";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -301,5 +303,34 @@ describe("gateBSecrets — Gate B inline-secret transform gate (real Vite builds
       const code = firstChunkCode(result);
       expect(code).toContain("Case20Component");
     });
+  });
+});
+
+/**
+ * Not Gate B — this is `WEB_ESBUILD_PATCH.define` (build/generate-pages-barrel.ts),
+ * esbuild's own `transform()`, no Vite involved. It lives here because the claim
+ * under test is the load-bearing one behind `shared.ts`'s `import.meta.env?.DEV`
+ * comment (shared.ts:373-378), and this is the nearest executable-esbuild-behavior
+ * spec in the tree.
+ */
+describe("WEB_ESBUILD_PATCH.define — real esbuild transform, not Vite", () => {
+  it("replaces `import.meta.env?.DEV` (optional chaining) with the defined literal, whole expression gone", () => {
+    const { code } = transformSync("if (import.meta.env?.DEV) { doSomething(); }", {
+      define: WEB_ESBUILD_PATCH.define as Record<string, string>,
+      loader: "ts",
+    });
+
+    expect(code).not.toContain("import.meta");
+    expect(code).toContain("if (false)");
+  });
+
+  it("replaces plain `import.meta.env.DEV` (no optional chaining) the same way", () => {
+    const { code } = transformSync("if (import.meta.env.DEV) { doSomething(); }", {
+      define: WEB_ESBUILD_PATCH.define as Record<string, string>,
+      loader: "ts",
+    });
+
+    expect(code).not.toContain("import.meta");
+    expect(code).toContain("if (false)");
   });
 });

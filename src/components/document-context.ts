@@ -1,6 +1,47 @@
 import { createContext, useContext } from "react";
 import type { MetadataOutput } from "../metadata";
 
+/**
+ * The JSON-safe error shape carried from the server document to browser
+ * hydration.
+ *
+ * This is deliberately NOT the original thrown object. Error prototypes,
+ * identity, non-enumerable fields and arbitrary custom values do not survive a
+ * JSON boundary reliably. The server renders `ErrorPageProps` with the
+ * original value, then normalizes it to this lossy representation only for the
+ * hydration payload. Normalization also owns disclosure: `stack` is optional
+ * and must be omitted or redacted when server internals are not safe to expose
+ * to the browser.
+ */
+export type SerializedPageError = {
+  readonly name: string;
+  readonly message: string;
+  readonly stack?: string;
+};
+
+/**
+ * Props received by the application-owned `error.page.tsx` during SSR.
+ *
+ * Deliberately preserve the thrown value here. An application can use its own
+ * error classes, symbols, or structured values while rendering on the server;
+ * this public component contract is not a JSON boundary.
+ */
+export type ErrorPageProps = {
+  readonly error: unknown;
+  readonly status: number;
+};
+
+/**
+ * The JSON-safe counterpart of {@link ErrorPageProps}, used only after the
+ * document crosses from SSR into browser hydration. Keeping this distinct
+ * prevents a serialized approximation from being mistaken for the original
+ * thrown value available to the server render.
+ */
+export type SerializedErrorPageProps = {
+  readonly error: SerializedPageError;
+  readonly status: number;
+};
+
 export type HydrationDocumentPayloadSource = {
   readonly appData: unknown;
   readonly layoutData: unknown;
@@ -46,6 +87,17 @@ export type HydrationDocumentPayloadSource = {
    * still throws; only ABSENT is accepted.
    */
   readonly metadata?: MetadataOutput;
+  /**
+   * Present only when the server selected the application-owned error page for
+   * this response. Atomic rather than two independently optional top-level
+   * fields: a status without an error (or the reverse) cannot describe a tree
+   * the browser can hydrate.
+   *
+   * `name` above intentionally remains the ORIGINAL matched route. This field
+   * selects the `ErrorPage` module projected into that route's client
+   * composition; it does not turn the error page into a second browsable route.
+   */
+  readonly errorPage?: SerializedErrorPageProps;
 };
 
 export const PAYLOAD_SCRIPT_ID = "__WARLOCK_DATA__";

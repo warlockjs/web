@@ -245,7 +245,16 @@ function normalize(filePath: string): string {
 const APP_SERVER_SEGMENT = /(^|\/)server(\/|$)/;
 
 function isServerFile(resolvedPath: string, appRoot: string): boolean {
-  const normalized = normalize(resolvedPath);
+  // A Vite query suffix (`?raw`, `?worker`, `?url`, ...) changes how the
+  // resolved id is CONSUMED, never which file on disk it names — the two
+  // anchored patterns below test the END of the string, so a suffix still
+  // attached at judgement time slides `.server`/`.server.ts` out from under
+  // the `$` anchor and the file reads as clean. Stripped here, once, rather
+  // than trusted to every caller: `bare` is what every check below judges,
+  // matching `completeLocalModulePath`'s own bare/query split for the same
+  // specifier (see its note).
+  const bare = resolvedPath.split("?")[0];
+  const normalized = normalize(bare);
   // `.server` may or may not carry an extension by the time Gate A judges it
   // — a bare specifier like `./blog.server` (extension resolved later by
   // Vite) must be caught just as `./blog.server.ts` is.
@@ -258,8 +267,8 @@ function isServerFile(resolvedPath: string, appRoot: string): boolean {
   // sources in `web/src/server/` — so judging it everywhere would refuse the
   // framework itself. `isAppSourcePath` is the same app-source/dependency
   // distinction rule 4 draws, not a second one.
-  if (isAppSourcePath(resolvedPath, appRoot)) {
-    if (APP_SERVER_SEGMENT.test(normalize(path.relative(appRoot, resolvedPath)))) return true;
+  if (isAppSourcePath(bare, appRoot)) {
+    if (APP_SERVER_SEGMENT.test(normalize(path.relative(appRoot, bare)))) return true;
   }
   return false;
 }
@@ -378,21 +387,37 @@ function isFile(candidate: string): boolean {
  * stale in watch mode exactly when a file is created or deleted — which is the
  * moment a fence must not be answering from memory.
  *
- * Three early exits, each a case where completion has nothing to add or no
+ * Two early exits, each a case where completion has nothing to add or no
  * business guessing:
  *   - a non-absolute path (a bare package specifier — rules 1/2's business)
  *     or a virtual `\0` id;
- *   - a query suffix (`./helper?raw`, `./thing?worker`). The query changes what
- *     the id MEANS to Vite, and inventing a file for it is a separate decision
- *     from this one. Rule 4 still does not judge these — a known gap, narrower
- *     than the one being closed here, and not widened by guesswork;
  *   - a path that already carries a code extension, or that already exists as a
  *     real non-code file (an asset — `./theme.css`), where the path on hand is
  *     the answer.
+ *
+ * A Vite query suffix (`./helper?raw`, `./thing?worker`, `./thing?url`) is
+ * split off BEFORE any of that: the query changes what the id MEANS to Vite,
+ * never which file on disk answers to it, so completion and every downstream
+ * policy check (`isServerFile`) judge the BARE path — `./blog.server?raw`
+ * must be caught exactly as `./blog.server` is, and used to slip through
+ * here because the whole path, query included, was handed back unexamined.
+ * The suffix is reattached to whatever this returns, because that IS the id
+ * Vite will actually load (`resolve.extensions` completion happens first,
+ * the query is consumed after) — nothing downstream should have to re-derive
+ * it from the original specifier.
  */
 function completeLocalModulePath(judgedPath: string): string {
   if (!path.isAbsolute(judgedPath)) return judgedPath;
-  if (judgedPath.includes("?") || judgedPath.includes("\0")) return judgedPath;
+  if (judgedPath.includes("\0")) return judgedPath;
+
+  const queryIndex = judgedPath.indexOf("?");
+  const barePath = queryIndex === -1 ? judgedPath : judgedPath.slice(0, queryIndex);
+  const querySuffix = queryIndex === -1 ? "" : judgedPath.slice(queryIndex);
+
+  return `${completeBareLocalModulePath(barePath)}${querySuffix}`;
+}
+
+function completeBareLocalModulePath(judgedPath: string): string {
   if (LOCAL_MODULE_EXTENSIONS.test(judgedPath)) return judgedPath;
   if (path.extname(judgedPath) !== "" && isFile(judgedPath)) return judgedPath;
 
@@ -1141,6 +1166,17 @@ export function gateAResolve(options: GateAOptions = {}): Plugin {
       return id === TYPE_ONLY_ERASED_ID ? "export {};" : null;
     },
     async resolveId(source, importer, resolveOptions) {
+      // Gate A is a CLIENT-build fence — see the header note and Gate B/Gate
+      // C's identical carve-outs (`gate-b-secrets.ts`'s `options?.ssr` guard
+      // in `transform`, Gate C's `this.environment?.config?.consumer ===
+      // "server"` in `generateBundle`). The SSR/server build resolves the
+      // same specifiers this app's client build does — a server-only import
+      // is exactly what that build is FOR — so refusing them there would
+      // refuse the server its own legitimate dependencies. Judged first and
+      // unconditionally: nothing below this line has a file to weigh in on
+      // an SSR resolution before this returns.
+      if (resolveOptions?.ssr) return null;
+
       // Compute the path Gate A judges: for relative/absolute specifiers,
       // resolve against the importer's directory ourselves (filename-only
       // check, zero AST parsing, per `c604f0bc` §4) rather than delegating

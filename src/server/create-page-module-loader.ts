@@ -57,6 +57,10 @@ export function createPageModuleLoader(manifest: PageManifest): PageModuleLoader
     modulesById.set(manifest.app.sourceFile, manifest.app.module);
   }
 
+  if (manifest.errorPage) {
+    modulesById.set(manifest.errorPage.sourceFile, manifest.errorPage.module);
+  }
+
   for (const page of manifest.pages) {
     modulesById.set(page.sourceFile, page.module);
 

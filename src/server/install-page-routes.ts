@@ -35,18 +35,25 @@ import path from "node:path";
 import type { ViteDevServer } from "vite";
 import {
   discoverPageFiles,
+  ErrorPageDeclaresRouteError,
+  isErrorPageFile,
   layoutChainFor,
-  MissingRouteExportError,
   toPosix,
 } from "../build/discover-pages";
+import { NonLiteralRouteExportError, readRouteExports } from "../build/read-route-exports";
 import { composeRoutePath } from "../routing/compose-route-path";
+import {
+  deriveFilesystemRouteName,
+  deriveFilesystemRoutePath,
+} from "../routing/filesystem-route";
 import { NestedLayoutsNotSupportedError, selectPageLayout } from "../routing/layout-policy";
-import { canonicalizeRouteExport, deriveFallbackRouteName } from "../routing/route-identity";
+import { canonicalizeRouteExport } from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
-import type { Response, Router } from "@warlock.js/core";
-import type { BufferedCookie } from "./buffered-response";
+import { Response, type Router } from "@warlock.js/core";
 import { createPageRouteHandler } from "./create-page-route-handler";
-import type { PipelineMiddleware } from "./execute-page-request";
+import type { ErrorPageModule } from "./error-page";
+import type { PipelineLoader, PipelineMiddleware } from "./execute-page-request";
+import { devHandlerStylesheetUrls } from "./stylesheet-urls";
 import {
   createNotFoundRouteHandler,
   DuplicateNotFoundPageError,
@@ -83,28 +90,16 @@ export type InstalledPageRoute = {
 export const FRAMEWORK_DEFAULT_NOT_FOUND_SOURCE_FILE = "\0warlock:framework-default-404";
 
 /**
- * The page's app-root-relative POSIX source path, e.g.
- * ".../v5/app/src/app/main/web/home.page.tsx" with appSrcRoot
- * ".../v5/app/src" -> "src/app/main/web/home.page.tsx" — the canonical form
- * `deriveFallbackRouteName` (`../routing/route-identity`) requires. The first
- * segment's actual name is arbitrary to that function (it only inspects the
- * segment AFTER it), so `appSrcRoot`'s own basename is used rather than
- * discovering the true app root.
+ * The page's application-source-relative POSIX source path used as the router's
+ * stable ownership key. `appSrcRoot`'s own basename preserves the existing
+ * `src/web/...` source-file convention.
  */
 function canonicalSourceFileFor(pageFile: string, appSrcRoot: string): string {
   return `${path.basename(appSrcRoot)}/${toPosix(path.relative(appSrcRoot, pageFile))}`;
 }
 
-function resolveRoute(
-  routeExport: PageRouteExport,
-  sourceFile: string,
-): { path: string; name: string } {
-  const canonical = canonicalizeRouteExport(routeExport);
-
-  return {
-    path: canonical.path,
-    name: canonical.name ?? deriveFallbackRouteName({ routePath: canonical.path, sourceFile }),
-  };
+function filesystemPageFileFor(pageFile: string, appSrcRoot: string): string {
+  return toPosix(path.relative(path.join(appSrcRoot, "web"), pageFile));
 }
 
 /**
@@ -114,17 +109,30 @@ function resolveRoute(
  * `/settings`, not with the effective `/admin/settings` route.
  */
 export function resolvePageRouteIdentity(
-  routeExport: PageRouteExport,
+  routeExport: PageRouteExport | undefined,
   pageFile: string,
   appSrcRoot: string,
 ): Pick<InstalledPageRoute, "declaredPath" | "name"> {
-  const sourceFile = canonicalSourceFileFor(pageFile, appSrcRoot);
-  const route = resolveRoute(routeExport, sourceFile);
+  const filesystemPageFile = filesystemPageFileFor(pageFile, appSrcRoot);
 
-  return { declaredPath: route.path, name: route.name };
+  if (routeExport === undefined) {
+    return {
+      declaredPath: deriveFilesystemRoutePath({ pageFile: filesystemPageFile }),
+      name: deriveFilesystemRouteName(filesystemPageFile),
+    };
+  }
+
+  const route = canonicalizeRouteExport(routeExport);
+
+  return {
+    declaredPath: route.path,
+    name: route.name ?? deriveFilesystemRouteName(filesystemPageFile),
+  };
 }
 
 export type LayoutModuleShape = {
+  /** Universal registration hook; invoked on this real namespace, never a composed wrapper. */
+  register?: () => unknown;
   prefix?: string;
   /**
    * The default export — the thing that puts an element in the document, and
@@ -135,6 +143,7 @@ export type LayoutModuleShape = {
   default?: unknown;
   /** The layout's guards, in the order it declared them. */
   middleware?: readonly PipelineMiddleware[];
+  loader?: PipelineLoader;
 };
 
 /** How this module gets a layout module namespace — `vite.ssrLoadModule`, in practice. */
@@ -173,6 +182,8 @@ type LayoutLevel = {
   layoutFile: string | undefined;
   /** Every layout's `prefix`, composed outermost first — `discoverPages`' own reduction. */
   prefix: string;
+  /** Declared prefixes keyed by layout directory relative to this page's web root. */
+  prefixesByDirectory: Readonly<Record<string, string>>;
 };
 
 async function resolveLayoutLevel(
@@ -200,6 +211,15 @@ async function resolveLayoutLevel(
       (composed, layoutModule) => composeRoutePath(composed, layoutModule.prefix ?? "/"),
       "/",
     ),
+    prefixesByDirectory: Object.fromEntries(
+      chain.flatMap((layoutFile, index) => {
+        const prefix = modules[index].prefix;
+
+        return prefix === undefined
+          ? []
+          : [[toPosix(path.relative(webRoot, path.dirname(layoutFile))), prefix]];
+      }),
+    ),
   };
 }
 
@@ -218,11 +238,24 @@ async function composeLayoutLevel(
   loadLayout: LoadLayout,
 ): Promise<LayoutModuleShape> {
   const modules = await Promise.all(level.chain.map(loadLayout));
-  const host = modules[level.chain.indexOf(level.layoutFile)];
+  const hostIndex = level.chain.indexOf(level.layoutFile);
+  const host = modules[hostIndex];
 
   return {
     ...host,
     middleware: modules.flatMap(layoutModule => [...(layoutModule.middleware ?? [])]),
+    loader: async (context) => {
+      let hostData: unknown;
+
+      for (let index = 0; index < modules.length; index++) {
+        const value = await modules[index].loader?.(context);
+
+        if (value instanceof Response) return value;
+        if (index === hostIndex) hostData = value;
+      }
+
+      return hostData;
+    },
   };
 }
 
@@ -233,17 +266,34 @@ export type InstallPageRoutesOptions = {
   appSrcRoot: string;
   /** v5/app/src/web/root.tsx — the single global app-root file. */
   appFile: string;
+  /**
+   * The application root Vite's dev server serves from — `dev-server.ts`'s
+   * `paths.appRoot`, i.e. `<appRoot>/src === appSrcRoot` by default. Every
+   * handler's stylesheet URLs are expressed relative to THIS, because that is
+   * the root Vite's dev server actually resolves `/…` URLs against
+   * (`stylesheet-urls.ts`'s `devStylesheetUrls`) — not `appSrcRoot`, which is
+   * one directory level in.
+   *
+   * OPTIONAL and defaulted to `path.dirname(appSrcRoot)`: the caller that
+   * wires dev boot (`web-connector.ts`) does not pass this field today, and
+   * that default is exactly the relationship it constructs `appSrcRoot` from
+   * (`appSrcRoot = path.join(appRoot, "src")`) — correct for every actual
+   * deployment, and overridable by a caller with a non-default layout.
+   */
+  appRoot?: string;
   /** Browser module loaded after the server-rendered application and payload. */
   hydrationClientModuleUrl?: string;
   /**
-   * Stylesheet URLs emitted into every page's `<head>`.
-   *
-   * In dev these are Vite source URLs; see `devStylesheetUrls` for why they
-   * carry `?direct`.
+   * UNUSED. Retained on this type only because `web-connector.ts` still builds
+   * an options object naming it (`devStylesheetUrls(paths.appRoot,
+   * paths.appFile)`, computed once for the whole application). Each handler
+   * now computes its OWN stylesheet chain — `[root, ...outer-to-inner matched
+   * layouts, page]`, via `devHandlerStylesheetUrls` — inside the registration
+   * loop below, because a single application-wide list cannot express "this
+   * page's own CSS" without also carrying every other page's.
    */
   stylesheetUrls?: readonly string[];
   /** Same helper `dev-server.ts` exports — passed in, not imported, to avoid a dev-server.ts <-> this-file cycle. */
-  applyBufferedCookie: (response: Response, cookie: BufferedCookie) => void;
 };
 
 /**
@@ -252,10 +302,8 @@ export type InstallPageRoutesOptions = {
  * `route.path` — a registration-time failure, not a runtime 404 one of them
  * silently loses.
  *
- * Pages with no `route` export are REFUSED, not skipped, with the same
- * `MissingRouteExportError` the build throws: discovery cannot invent a public
- * URL for an undeclared page, and a dev server that silently drops the file you
- * just wrote is indistinguishable from a typo in the URL.
+ * Pages with no `route` export derive their path and name from their location
+ * below `src/web`, using the same pure filesystem-routing helper as the build.
  */
 export async function installPageRoutes(
   options: InstallPageRoutesOptions,
@@ -266,9 +314,10 @@ export async function installPageRoutes(
     appSrcRoot,
     appFile,
     hydrationClientModuleUrl,
-    stylesheetUrls,
-    applyBufferedCookie,
   } = options;
+  // See `InstallPageRoutesOptions.appRoot` for why this default, not
+  // `appSrcRoot` itself, is the root every handler's CSS is resolved against.
+  const stylesheetRoot = options.appRoot ?? path.dirname(appSrcRoot);
   const discovered = [...discoverPageFiles(appSrcRoot)].sort((left, right) =>
     left.pageFile < right.pageFile ? -1 : left.pageFile > right.pageFile ? 1 : 0,
   );
@@ -278,8 +327,28 @@ export async function installPageRoutes(
   // to check — every step below is about a page with a URL, and `404.page.tsx`
   // does not have one. Registering it here would put it at `/404`, which is not
   // a page anybody asked to be able to visit.
+  const errorPageFiles = discovered.filter((page) => isErrorPageFile(page.pageFile));
   const notFoundPageFiles = discovered.filter((page) => isNotFoundPageFile(page.pageFile));
-  const pageFiles = discovered.filter((page) => !isNotFoundPageFile(page.pageFile));
+  const pageFiles = discovered.filter(
+    (page) => !isNotFoundPageFile(page.pageFile) && !isErrorPageFile(page.pageFile),
+  );
+
+  if (errorPageFiles.length > 1) {
+    throw new Error(`Two error pages were found: ${errorPageFiles.map((page) => page.pageFile).join(", ")}.`);
+  }
+
+  const errorPageFile = errorPageFiles[0]?.pageFile;
+
+  // Parse only: the error boundary must remain lazy until a request actually
+  // fails, while a route export is still rejected at install time.
+  if (errorPageFile !== undefined) {
+    const declarations = readRouteExports(errorPageFile);
+    if (!declarations.ok) throw new NonLiteralRouteExportError(declarations.rejection);
+    if (declarations.route !== undefined) throw new ErrorPageDeclaresRouteError(errorPageFile);
+  }
+  const loadErrorPage = errorPageFile === undefined
+    ? undefined
+    : () => vite.ssrLoadModule(errorPageFile) as Promise<ErrorPageModule>;
 
   if (notFoundPageFiles.length > 1) {
     throw new DuplicateNotFoundPageError(notFoundPageFiles.map((page) => page.pageFile));
@@ -293,14 +362,7 @@ export async function installPageRoutes(
 
     const sourceFile = canonicalSourceFileFor(pageFile, appSrcRoot);
 
-    // Same condition, same error, same wording the build already throws
-    // (`MissingRouteExportError`, `web/src/build/discover-pages.ts`) — dev used
-    // to `continue` here, so a page you had just written vanished into a
-    // not-found with nothing said. One condition, one verdict.
-    if (pageModule.route === undefined) {
-      throw new MissingRouteExportError(sourceFile);
-    }
-
+    // Route identity is explicit when declared and filesystem-derived otherwise.
     const { declaredPath: routePath, name } = resolvePageRouteIdentity(
       pageModule.route,
       pageFile,
@@ -312,7 +374,12 @@ export async function installPageRoutes(
     const layoutLevel = await resolveLayoutLevel(pageFile, webRoot, loadLayout);
     const { layoutFile, prefix: layoutPrefix } = layoutLevel;
 
-    const effectivePath = composeRoutePath(layoutPrefix, routePath);
+    const effectivePath = pageModule.route === undefined
+      ? deriveFilesystemRoutePath({
+          pageFile: filesystemPageFileFor(pageFile, appSrcRoot),
+          layoutPrefixes: layoutLevel.prefixesByDirectory,
+        })
+      : composeRoutePath(layoutPrefix, routePath);
 
     const existingFile = fileByPath.get(effectivePath);
 
@@ -326,6 +393,19 @@ export async function installPageRoutes(
     }
 
     fileByPath.set(effectivePath, pageFile);
+
+    // Every registered handler gets ITS OWN immutable, ordered, deduped CSS
+    // chain: root, then every matched layout outer to inner
+    // (`layoutLevel.chain`), then the page — the same order the render
+    // pipeline loads that chain in, so cascade order matches load order.
+    // Computed once here, at registration, not per request: dev re-registers
+    // on every restart, so a stale chain cannot outlive the source edit that
+    // changed it.
+    const stylesheetUrls = devHandlerStylesheetUrls(stylesheetRoot, [
+      appFile,
+      ...layoutLevel.chain,
+      pageFile,
+    ]);
 
     await router.withSourceFile(sourceFile, () =>
       router.get(
@@ -353,9 +433,14 @@ export async function installPageRoutes(
                     ? composeLayoutLevel({ ...layoutLevel, layoutFile }, loadLayout)
                     : vite.ssrLoadModule(moduleId)
               : moduleId => vite.ssrLoadModule(moduleId),
+          // Registration tracks real module namespaces, not the composed
+          // layout wrapper above. Loading the raw chain per request also lets
+          // Vite hand over a replacement namespace after an HMR update; the
+          // helper's WeakSet then gives that new identity its one invocation.
+          loadRegistrationLayouts: () => Promise.all(layoutLevel.chain.map(loadLayout)),
           hydrationClientModuleUrl,
+          loadErrorPage,
           stylesheetUrls,
-          applyBufferedCookie,
         }),
         // `isPage` marks this route as SSR-served. Pages and API routes share one
         // router and one route-name namespace, so the router's duplicate-name
@@ -384,7 +469,7 @@ export async function installPageRoutes(
     gets the right STATUS from the first request, and adding the file later
     changes the body and nothing else.
   */
-  if (discovered.length > 0) {
+  if (pageFiles.length > 0 || notFoundPageFiles.length > 0) {
     const notFoundPageFile = notFoundPageFiles[0]?.pageFile;
 
     // Read at INSTALL time, so a `route` export on the not-found page is
@@ -418,8 +503,13 @@ export async function installPageRoutes(
                   layoutFile: undefined,
                   loadModule: (moduleId) => vite.ssrLoadModule(moduleId),
                   hydrationClientModuleUrl,
-                  stylesheetUrls,
-                  applyBufferedCookie,
+                  loadErrorPage,
+                  // NO LAYOUT means no layout CSS either — just root and the
+                  // not-found page's own stylesheets, same reasoning as above.
+                  stylesheetUrls: devHandlerStylesheetUrls(stylesheetRoot, [
+                    appFile,
+                    notFoundPageFile,
+                  ]),
                   // The URL that missed IS this route's pattern for this request.
                   matchPath: (requestPath) => requestPath,
                   statusForRenderedOk: 404,

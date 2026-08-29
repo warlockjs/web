@@ -1,18 +1,16 @@
 import type { ReactNode } from "react";
-import type { LoaderShortCircuit } from "./context";
+import type { Response } from "@warlock.js/core";
 import type { SharedContext } from "./index";
 
 /** Any loader authored with `satisfies` — the concrete function type. */
 export type LoaderFunction = (...args: any[]) => unknown;
 
 /**
- * The loader's literal return shape MINUS the branded short-circuits:
- * `response.notFound()` / `response.redirect()` never union into `data`
- * (product-details.page.tsx:45-57, login.page.tsx:71-84). No loader → no
- * data.
+ * The loader's literal return shape minus core Response. Returning that exact
+ * class is terminal; every other value is data.
  */
 export type LoaderData<TLoader> = TLoader extends LoaderFunction
-  ? Exclude<Awaited<ReturnType<TLoader>>, LoaderShortCircuit>
+  ? Exclude<Awaited<ReturnType<TLoader>>, Response>
   : undefined;
 
 /**
@@ -41,4 +39,14 @@ export type AppProps<TLoader extends LoaderFunction | undefined = undefined> = {
   data: LoaderData<TLoader>;
   shared: Readonly<SharedContext>;
   children: ReactNode;
+};
+
+/**
+ * Props passed only while the server renders an application `error.page.tsx`.
+ * The thrown value intentionally remains intact here; its browser counterpart
+ * is normalized at the hydration boundary.
+ */
+export type ServerErrorPageProps = {
+  error: unknown;
+  status: number;
 };

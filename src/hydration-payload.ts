@@ -4,6 +4,11 @@ import {
 } from "./components/document-context";
 
 export type { HydrationDocumentPayloadSource } from "./components/document-context";
+export type {
+  ErrorPageProps,
+  SerializedErrorPageProps,
+  SerializedPageError,
+} from "./components/document-context";
 
 /**
  * Exported so a payload-shape assertion can be written against the contract
@@ -32,11 +37,11 @@ function malformedPayload(): never {
 /**
  * The keys that are allowed to be ABSENT but not allowed to be wrong.
  *
- * `metadata` and `params` are optional because the server is right not to
+ * `metadata`, `params` and `errorPage` are optional because the server is right
  * always produce them — a page with no `metadata` export resolves none, and a
- * payload written by a build that predates these keys carries neither. Failing
- * a whole page over an absent accessor would turn a cosmetic gap into a blank
- * screen, so absence is accepted and the readers default it.
+ * older payload carries none of these additions. Failing a whole page over an
+ * absent accessor would turn a compatible payload into a blank screen, so
+ * absence is accepted.
  *
  * Present-but-not-an-object is a different claim entirely: it means something
  * produced a payload with these names meaning something else, and every reader
@@ -44,10 +49,56 @@ function malformedPayload(): never {
  * rule the required keys live by, so it throws. Arrays included — `typeof []`
  * is `"object"`, and an array of params is not params.
  */
-export const OPTIONAL_OBJECT_PAYLOAD_KEYS = ["metadata", "params"] as const;
+export const OPTIONAL_OBJECT_PAYLOAD_KEYS = ["metadata", "params", "errorPage"] as const;
 
 function isPlainObject(value: unknown): boolean {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactStringKeys(
+  value: Record<PropertyKey, unknown>,
+  required: readonly string[],
+  optional: readonly string[] = [],
+): boolean {
+  const allowed = new Set([...required, ...optional]);
+  const keys = Reflect.ownKeys(value);
+
+  return (
+    required.every((key) => Object.prototype.hasOwnProperty.call(value, key)) &&
+    keys.every((key) => typeof key === "string" && allowed.has(key))
+  );
+}
+
+/**
+ * Validate the explicit serialization boundary, not an `Error` instance.
+ * `JSON.stringify(new Error("boom"))` is normally `{}` because its useful
+ * fields are non-enumerable; accepting that would hydrate an error page with a
+ * different contract from the one the server rendered.
+ */
+function requireErrorPagePayload(value: unknown): void {
+  if (!isPlainObject(value)) malformedPayload();
+
+  const errorPage = value as Record<PropertyKey, unknown>;
+
+  if (!hasExactStringKeys(errorPage, ["error", "status"])) malformedPayload();
+  if (!isPlainObject(errorPage.error)) malformedPayload();
+
+  const error = errorPage.error as Record<PropertyKey, unknown>;
+
+  if (!hasExactStringKeys(error, ["name", "message"], ["stack"])) malformedPayload();
+  if (typeof error.name !== "string" || typeof error.message !== "string") {
+    malformedPayload();
+  }
+  if (error.stack !== undefined && typeof error.stack !== "string") malformedPayload();
+
+  if (
+    typeof errorPage.status !== "number" ||
+    !Number.isInteger(errorPage.status) ||
+    errorPage.status < 500 ||
+    errorPage.status > 599
+  ) {
+    malformedPayload();
+  }
 }
 
 function requireHydrationPayload(value: unknown): HydrationDocumentPayloadSource {
@@ -63,6 +114,9 @@ function requireHydrationPayload(value: unknown): HydrationDocumentPayloadSource
     if (optional !== undefined && !isPlainObject(optional)) malformedPayload();
   }
 
+  const errorPage = (value as Record<string, unknown>).errorPage;
+  if (errorPage !== undefined) requireErrorPagePayload(errorPage);
+
   return value as HydrationDocumentPayloadSource;
 }
 
@@ -70,9 +124,10 @@ function requireHydrationPayload(value: unknown): HydrationDocumentPayloadSource
  * Read the fixed payload script without changing the server-rendered root.
  *
  * Extra fields are ignored. The gate owns the FIVE required keys — absent or
- * malformed, both throw — plus a shape check on the two optional ones
+ * malformed, both throw — plus a shape check on the three optional ones
  * ({@link OPTIONAL_OBJECT_PAYLOAD_KEYS}); it deliberately does not require
- * those to be present.
+ * those to be present. `errorPage`, when present, is additionally validated as
+ * one atomic `{ error, status }` selection with a serialized error and a 5xx.
  */
 export function readHydrationPayload(documentNode: Document): HydrationDocumentPayloadSource {
   const element = documentNode.getElementById(PAYLOAD_SCRIPT_ID);

@@ -1,4 +1,5 @@
 import { createElement, type ComponentType, type ReactNode } from "react";
+import { Response, type Request } from "@warlock.js/core";
 import DefaultApp from "../components/default-app";
 import {
   DocumentContext,
@@ -8,28 +9,57 @@ import {
 } from "../components/document-context";
 import type { SharedContext } from "../index";
 import { buildHydrationPayload } from "./build-hydration-payload";
-import type { BufferedCookie } from "./buffered-response";
+import {
+  hydrationErrorPageProps,
+  resolveErrorPageMetadata,
+  type ErrorPageModule,
+  type ErrorPageModuleLoader,
+} from "./error-page";
+import { ERROR_PAGE_METADATA } from "./resolve-page-metadata";
+import { registerModules, type RegisterableModuleNamespace } from "../runtime/register-modules";
+import { markNonHydrating } from "./page-render-bundle";
+import type { ServerErrorPageProps } from "../props";
 import {
   buildErrorRecord,
   designateBoundary,
   executePageRequest,
+  type BufferedCookie,
   type ExecutePageRequestOptions,
   type PageDataBundle,
   type PageErrorRecord,
   type PageLevelName,
+  type PageResponseCommit,
   type PageRouteEntry,
   type PageRouteMatch,
   type PageTripleModule,
-  type PipelineRequest,
-  type PipelineResponse,
 } from "./execute-page-request";
 
 export { escapePayload, PAYLOAD_SCRIPT_ID };
+export type { BufferedCookie };
+
+/** Widens `PageDataBundle` with the stage 7 commit record — see `execute-page-request.ts`. */
+type Bundle = PageDataBundle & { commit?: PageResponseCommit };
+
+/** Reads the stage 7 commit into the lowercased header map `RenderedPage` carries. */
+function committedHeaders(bundle: PageDataBundle): Record<string, string> {
+  const headers: Record<string, string> = {};
+
+  for (const header of (bundle as Bundle).commit?.headers ?? []) {
+    headers[header.key.toLowerCase()] = header.value;
+  }
+
+  return headers;
+}
+
+/** Reads the stage 7 commit into the cookie list `RenderedPage` carries. */
+function committedCookies(bundle: PageDataBundle): BufferedCookie[] {
+  return (bundle as Bundle).commit?.cookies ?? [];
+}
 
 /**
  * Pipeline stages 9–10: RENDER the page tree from the
  * data bundle stages 1–8 produced, then return finalized { html, status,
- * headers, cookies }. Stage 10 happens at the CALL SITE in two halves —
+ * headers }. Stage 10 happens at the CALL SITE in two halves —
  * 10a the caller applies status + headers (the single live-response write,
  * after render, before anything flushes), 10b it flushes
  * the document. Nothing in this module writes the live response. It never
@@ -85,6 +115,8 @@ export type RenderPageOptions = {
   /** Per-call overrides of the connected registry (tests, mostly). */
   routes?: readonly PageRouteEntry[];
   createHttp?: ExecutePageRequestOptions["createHttp"];
+  /** Loaded only after the ordinary boundary chain has been exhausted. */
+  loadErrorPage?: ErrorPageModuleLoader;
 };
 
 /**
@@ -100,13 +132,7 @@ export type RenderedPage = {
   status: number;
   /** Committed response headers, lowercased key → value. */
   headers: Record<string, string>;
-  /**
-   * Committed cookies in commit order, attribute-faithful: each entry carries
-   * the loader's raw value (pre-serialization) AND its options
-   * (`httpOnly`/`secure`/`sameSite`/`path`/`expires`/…). Never flattened to a
-   * name→value map — a map cannot express the attributes, and a Set-Cookie
-   * built without them is a security defect, not a convenience.
-   */
+  /** Committed response cookies, in commit order — stage 7's `bundle.commit.cookies`. */
   cookies: BufferedCookie[];
   /**
    * The PAGE loader's data — `data.product.name` reads as the dx story
@@ -120,6 +146,15 @@ export type RenderedPage = {
    * `renderPage` always carries one (its no-match throws instead).
    */
   bundle: PageDataBundle | undefined;
+};
+
+export type RenderPageFailureOptions = {
+  name: string;
+  path: string;
+  request: Request;
+  response: Response;
+  thrown: unknown;
+  loadErrorPage?: ErrorPageModuleLoader;
 };
 
 function requireRegistry(
@@ -184,6 +219,14 @@ function buildUrl(
  */
 function FrameworkRootBoundary(): ReactNode {
   return createElement("main", { role: "alert" }, "Something went wrong.");
+}
+
+function errorPageElement(module: ErrorPageModule, props: ServerErrorPageProps): ReactNode {
+  const ErrorPage = module.default as ((input: ServerErrorPageProps) => ReactNode) | undefined;
+  if (!ErrorPage) {
+    throw new Error("The application error.page.tsx module has no default export.");
+  }
+  return createElement(ErrorPage, props);
 }
 
 type LevelProps = {
@@ -324,15 +367,14 @@ function emitDocument(body: string): string {
 
 /**
  * The real request/response pair `capturingCreateHttp` captured for this
- * call. `finishRender` itself no longer takes this (D1: the short-circuit
- * status now lives on `bundle.shortCircuit`/`bundle.commit`) — it is used at
+ * call. It is used at
  * the two orchestrator call sites for the `as` impersonation write
  * (`state.captured.request.user = as`, below) and to read the document
  * slots (`documentSlotsFrom`, below).
  */
 type CapturedHttp = {
-  request: PipelineRequest;
-  response: PipelineResponse;
+  request: Request;
+  response: Response;
 };
 
 /**
@@ -357,7 +399,11 @@ function capturingCreateHttp(
       state.match = match;
       state.captured = registry.createHttp(match);
 
-      if (as !== undefined) state.captured.request.user = as;
+      // `!= null` (not just `!== undefined`): `Request.user` is `RequestUser
+      // | undefined` (core/src/http/request.ts:93) — it has no `null` member,
+      // so an explicit `as: null` is treated the same as "no impersonation"
+      // rather than written through.
+      if (as != null) state.captured.request.user = as;
 
       return state.captured;
     },
@@ -377,17 +423,9 @@ type DocumentSlots = {
   lang?: string;
 };
 
-/**
- * Structural read of the two core `Request` fields the slots need. Neither
- * `nonce` nor `locale` is declared on `PipelineRequest`/`WebRequest` (the
- * loader-facing facade only declares `validated`/`input`/`user`,
- * context.ts:30-68) — a narrow typed intersection at the one call site that
- * needs it, the same pattern `execute-page-request.ts` uses for its own
- * `(response as PipelineResponse & { statusCode?: number })` read
- * (execute-page-request.ts:517).
- */
+/** Reads document slots directly from core's Request. */
 function documentSlotsFrom(captured: CapturedHttp | undefined): DocumentSlots {
-  const request = captured?.request as (PipelineRequest & { nonce?: string; locale?: string }) | undefined;
+  const request = captured?.request;
 
   return { nonce: request?.nonce, lang: request?.locale };
 }
@@ -396,38 +434,28 @@ async function finishRender(
   triple: PageRouteEntry["triple"],
   bundle: PageDataBundle,
   documentSlots: DocumentSlots,
+  response: Response,
+  loadErrorPage: ErrorPageModuleLoader | undefined,
 ): Promise<RenderedPage> {
-  const headers: Record<string, string> = {};
+  // Read from the stage 7 commit, never live off `response` — this function
+  // writes (and now reads) the live response zero times. A bundle with no
+  // commit (no loader ran at all) simply has no headers/cookies to report.
+  const headers = committedHeaders(bundle);
+  const cookies = committedCookies(bundle);
 
-  for (const header of bundle.commit?.headers ?? []) {
-    headers[header.key.toLowerCase()] = header.value;
-  }
-
-  // The commit already deduplicated per name and ordered root→leaf
-  // (execute-page-request.ts settle/commit) — pass it through untransformed so
-  // every attribute survives to the caller's Set-Cookie.
-  const cookies: BufferedCookie[] = bundle.commit?.cookies ?? [];
-
-  // Short-circuit paths emit no document: the status IS the answer
-  // (redirect/notFound/guard/422 — P1 §4), nothing renders to describe.
+  // Middleware and validation short-circuits emit no document. Loader-returned
+  // Response instances never reach this function.
   if (bundle.shortCircuit) {
     const status =
       bundle.shortCircuit.stage === "validation"
         ? bundle.shortCircuit.status
-        : bundle.shortCircuit.stage === "loaders"
-          ? bundle.shortCircuit.statusCode
-          // D1: the middleware variant now carries its own statusCode,
-          // captured at stage 3 where the pipeline legitimately touches the
-          // live response (execute-page-request.ts:514-518) — no live read here.
-          : (bundle.shortCircuit.statusCode ?? 200);
-
+        : (bundle.shortCircuit.statusCode ?? 200);
     return { html: "", status, headers, cookies, data: bundle.pageData, bundle };
   }
 
   // The framework's closed-by-default answer (README rule 8): every document
   // is `Cache-Control: private` unless a loader's committed headers already
-  // answered for the key. Map-only — `finishRender` never writes the live
-  // response; the caller applies the returned headers.
+  // answered for the key. Map-only — the caller applies the returned headers.
   if (headers["cache-control"] === undefined) {
     headers["cache-control"] = "private";
   }
@@ -445,7 +473,7 @@ async function finishRender(
   // The payload comes from `buildHydrationPayload` rather than being assembled
   // here, so that this document and the `_loader` route hand the browser the
   // SAME object. See that module for why the two must not drift.
-  const documentValue: DocumentContextValue = {
+  let documentValue: DocumentContextValue = {
     metadata: bundle.metadata,
     payload: buildHydrationPayload(bundle),
     nonce: documentSlots.nonce,
@@ -465,8 +493,60 @@ async function finishRender(
   let renderTimeThrow = false;
   let body: string;
 
+  const renderFrameworkRoot = (): string =>
+    renderWithContext(createElement(DefaultApp, { children: createElement(FrameworkRootBoundary, {}) }));
+  const renderFrameworkAfterErrorPageFailure = (): string => {
+    bundle.errorPage = undefined;
+    bundle.metadata = ERROR_PAGE_METADATA;
+    documentValue = {
+      ...documentValue,
+      metadata: bundle.metadata,
+      payload: buildHydrationPayload(bundle),
+    };
+    return renderFrameworkRoot();
+  };
+
+  const renderErrorPage = async (
+    thrown: unknown,
+    serializableError: unknown = thrown,
+  ): Promise<string | undefined> => {
+    if (!loadErrorPage) return undefined;
+
+    const props: ServerErrorPageProps = { error: thrown, status: 500 };
+    const module = await loadErrorPage();
+    registerModules([module as RegisterableModuleNamespace]);
+    const errorPage = hydrationErrorPageProps(props, serializableError);
+    bundle.errorPage = errorPage;
+    bundle.metadata = resolveErrorPageMetadata(module, props);
+    documentValue = {
+      ...documentValue,
+      metadata: bundle.metadata,
+      payload: buildHydrationPayload(bundle),
+    };
+    return renderWithContext(
+      wrapRootward(triple, bundle, "page", errorPageElement(module, props)),
+    );
+  };
+
   for (;;) {
     try {
+      // The application error page is the framework terminal, never a rival
+      // to an authored boundary. It is reached only after no app boundary
+      // exists (or after that boundary has itself thrown below).
+      if (currentError?.boundary.boundaryLevel === "app" && !triple.app.ErrorBoundary) {
+        try {
+          body =
+            (await renderErrorPage(
+              currentError.originalError ?? currentError.error,
+              currentError.error,
+            )) ?? renderFrameworkRoot();
+        } catch {
+          body = renderFrameworkAfterErrorPageFailure();
+        }
+        renderTimeThrow = true;
+        break;
+      }
+
       const element = currentError
         ? buildBoundaryElement(triple, bundle, currentError)
         : buildPageElement(triple, bundle);
@@ -484,7 +564,11 @@ async function finishRender(
         // what just failed — wrapped in DefaultApp so the response is still
         // a complete `<html>` document (default-app.tsx:22-46) rather than
         // a bare `<main>` fragment.
-        body = renderWithContext(createElement(DefaultApp, { children: createElement(FrameworkRootBoundary, {}) }));
+        try {
+          body = (await renderErrorPage(thrown)) ?? renderFrameworkRoot();
+        } catch {
+          body = renderFrameworkAfterErrorPageFailure();
+        }
         break;
       }
 
@@ -501,25 +585,82 @@ async function finishRender(
 
   // Status is chosen after render — the last thing that can change the
   // outcome — and RETURNED, never applied: `finishRender` writes the live
-  // response zero times (and now zero live response READS either — D1 deleted the last one). The caller applies
-  // status + headers at one site and flushes immediately after (stage
-  // 10a/10b). A render-time throw follows the same status rule as a
-  // pre-render one: a NESTED boundary catch
-  // (page/layout) keeps the committed status; the app boundary or the
-  // framework terminal forces 500. Without a render-time throw, the
-  // pre-render designation already carries this rule — P1's commit forces
-  // 500 only when it designated `app` (execute-page-request.ts:625-637).
-  const status = renderTimeThrow
-    ? currentError!.boundary.boundaryLevel === "app"
-      ? 500
-      : (bundle.commit?.statusCode ?? 200)
-    : bundle.error
-      ? (bundle.commit?.statusCode ?? 500)
-      : (bundle.commit?.statusCode ?? 200);
+  // response zero times. The caller applies status + headers at one site and
+  // flushes immediately after (stage 10a/10b). "The framework owns the status
+  // whenever a boundary renders" (design/request-lifecycle.md stage 7): ANY
+  // boundary — nested or app-level, discovered pre-render or escalated during
+  // render — forces 500. The boundary's LEVEL only decides which component
+  // renders, never the status; the committed status from stage 7
+  // (`bundle.commit.statusCode`) stands only for a page with no error at all
+  // — read off the commit, never off the live `response`, same as `headers`
+  // above. No committed status (no loader called `setStatusCode`) is the
+  // ordinary 200.
+  const status = currentError ? 500 : ((bundle as Bundle).commit?.statusCode ?? 200);
 
   const html = emitDocument(body);
 
   return { html, status, headers, cookies, data: bundle.pageData, bundle };
+}
+
+/**
+ * Render failures that happen before the page pipeline has a triple (notably a
+ * module-load or registration throw). This deliberately owns one terminal
+ * attempt: an error-page failure falls straight to FrameworkRootBoundary.
+ *
+ * There is no triple yet, so there is no trustworthy server composition for
+ * the browser to hydrate against — every response this function produces is
+ * marked `markNonHydrating` (page-render-bundle.ts), on both the bundle and
+ * the document payload, whether or not it managed to render the app's own
+ * `error.page.tsx`. A normal app error page reached through `finishRender`
+ * renders inside a real triple and stays hydratable; this path never does.
+ */
+export async function renderPageFailure(options: RenderPageFailureOptions): Promise<RenderedPage> {
+  const { request, response, name, path, thrown, loadErrorPage } = options;
+  const bundle: PageDataBundle = markNonHydrating({
+    route: { name, path, params: {}, query: {} },
+  });
+  // No pipeline ran (there is no triple), so there is no commit to read —
+  // never a live `response.getHeaders()` read either; see `finishRender`.
+  const headers: Record<string, string> = { "cache-control": "private" };
+
+  const { renderToString } = await import("react-dom/server");
+  const slots = documentSlotsFrom({ request, response });
+  const frameworkPayload = markNonHydrating(buildHydrationPayload(bundle));
+  let value: DocumentContextValue = {
+    metadata: undefined,
+    payload: frameworkPayload,
+    nonce: slots.nonce,
+    lang: slots.lang,
+  };
+  const renderWithContext = (element: ReactNode): string =>
+    renderToString(createElement(DocumentContext.Provider, { value, children: element }));
+  let body: string;
+
+  try {
+    if (!loadErrorPage) throw new Error("No application error page is configured.");
+    const props: ServerErrorPageProps = { error: thrown, status: 500 };
+    const module = await loadErrorPage();
+    registerModules([module as RegisterableModuleNamespace]);
+    const errorPage = hydrationErrorPageProps(props);
+    bundle.errorPage = errorPage;
+    value = {
+      ...value,
+      metadata: resolveErrorPageMetadata(module, props),
+      payload: markNonHydrating({ ...frameworkPayload, errorPage }),
+    };
+    body = renderWithContext(createElement(DefaultApp, { children: errorPageElement(module, props) }));
+  } catch {
+    bundle.errorPage = undefined;
+    bundle.metadata = ERROR_PAGE_METADATA;
+    value = {
+      ...value,
+      metadata: bundle.metadata,
+      payload: markNonHydrating(buildHydrationPayload(bundle)),
+    };
+    body = renderWithContext(createElement(DefaultApp, { children: createElement(FrameworkRootBoundary, {}) }));
+  }
+
+  return { html: emitDocument(body), status: 500, headers, cookies: [], data: undefined, bundle };
 }
 
 // ---------------------------------------------------------------------------
@@ -529,7 +670,7 @@ async function finishRender(
 export async function renderPage(
   routeName: string,
   options: RenderPageOptions = {},
-): Promise<RenderedPage> {
+): Promise<RenderedPage | Response> {
   const registry = requireRegistry(options);
   const entry = registry.routes.find(candidate => candidate.name === routeName);
 
@@ -551,7 +692,14 @@ export async function renderPage(
     url,
     routes: registry.routes,
     createHttp,
-    finish: bundle => finishRender(entry.triple, bundle, documentSlotsFrom(state.captured)),
+    finish: bundle =>
+      finishRender(
+        entry.triple,
+        bundle,
+        documentSlotsFrom(state.captured),
+        state.captured!.response,
+        options.loadErrorPage,
+      ),
   });
 
   if (!rendered) {
@@ -578,7 +726,7 @@ export async function renderPage(
 export async function renderPageRequest(
   url: string,
   options: RenderPageRequestOptions = {},
-): Promise<RenderedPage> {
+): Promise<RenderedPage | Response> {
   const registry = requireRegistry(options);
   const { state, createHttp } = capturingCreateHttp(registry, options.as);
 
@@ -586,7 +734,14 @@ export async function renderPageRequest(
     url,
     routes: registry.routes,
     createHttp,
-    finish: bundle => finishRender(state.match!.entry.triple, bundle, documentSlotsFrom(state.captured)),
+    finish: bundle =>
+      finishRender(
+        state.match!.entry.triple,
+        bundle,
+        documentSlotsFrom(state.captured),
+        state.captured!.response,
+        options.loadErrorPage,
+      ),
   });
 
   if (!rendered) {

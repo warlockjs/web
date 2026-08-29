@@ -86,7 +86,6 @@ describe("pageRoutesNeedReplacement", () => {
   it.each([
     ["declared path", { route: "/profile" }],
     ["resolved name", { route: { path: "/settings", name: "account.settings" } }],
-    ["missing route", { default: () => null }],
   ])("requests replacement for a changed %s", async (_label, pageModule) => {
     const harness = fakeVite(pageModule);
 
@@ -96,6 +95,17 @@ describe("pageRoutesNeedReplacement", () => {
         { vite: harness.vite, appSrcRoot, installedPages: [installed()] },
       ),
     ).resolves.toBe(true);
+  });
+
+  it("keeps a filesystem-derived page body edit in HMR", async () => {
+    const harness = fakeVite({ default: () => null });
+
+    await expect(
+      pageRoutesNeedReplacement(
+        { added: [], removed: [], inspectionNeeded: [pageFile] },
+        { vite: harness.vite, appSrcRoot, installedPages: [installed({ path: "/settings" })] },
+      ),
+    ).resolves.toBe(false);
   });
 
   it("keeps a valid custom 404 body edit in HMR and inspects an illegal route export", async () => {

@@ -22,6 +22,15 @@ const fullPayload = {
   name: "home",
 };
 
+const serializedErrorPage = {
+  error: {
+    name: "TypeError",
+    message: "Cannot read properties of undefined",
+    stack: "TypeError: Cannot read properties of undefined\n    at home.page.tsx:10:3",
+  },
+  status: 500,
+};
+
 describe("readHydrationPayload", () => {
   it("parses and returns a payload object with all five keys", () => {
     const documentNode = makeDocument(JSON.stringify(fullPayload));
@@ -66,8 +75,8 @@ describe("readHydrationPayload", () => {
   });
 
   /**
-   * `metadata` and `params` are OPTIONAL, and the two cases below are the whole
-   * of that decision: absent is a valid payload, wrong-typed is not.
+   * `metadata`, `params` and `errorPage` are OPTIONAL: absent is a valid
+   * payload, wrong-typed is not.
    *
    * They are ungated on purpose. The five gated keys are the ones the browser
    * cannot build a page without — no `name`, no page to look up; no `shared`,
@@ -76,7 +85,7 @@ describe("readHydrationPayload", () => {
    * `server/execute-page-request.ts:296`), so requiring the key would make the
    * gate throw on a payload the server is right to have produced.
    */
-  it("accepts a payload that carries neither metadata nor params", () => {
+  it("accepts an ordinary payload without metadata, params or errorPage", () => {
     const documentNode = makeDocument(JSON.stringify(fullPayload));
 
     expect(() => readHydrationPayload(documentNode)).not.toThrow();
@@ -92,6 +101,50 @@ describe("readHydrationPayload", () => {
     const documentNode = makeDocument(JSON.stringify(withBoth));
 
     expect(readHydrationPayload(documentNode)).toEqual(withBoth);
+  });
+
+  it("returns a JSON-round-tripped serialized error-page selection", () => {
+    const withErrorPage = { ...fullPayload, errorPage: serializedErrorPage };
+    const documentNode = makeDocument(JSON.stringify(withErrorPage));
+
+    expect(readHydrationPayload(documentNode)).toEqual(withErrorPage);
+  });
+
+  it("rejects a raw Error that serialized without its non-enumerable fields", () => {
+    const documentNode = makeDocument(
+      JSON.stringify({
+        ...fullPayload,
+        errorPage: { error: new Error("boom"), status: 500 },
+      }),
+    );
+
+    expect(() => readHydrationPayload(documentNode)).toThrow(
+      /Warlock hydration payload was found at #.* but could not be read\./,
+    );
+  });
+
+  it.each([
+    ["a missing error", { status: 500 }],
+    ["a missing status", { error: serializedErrorPage.error }],
+    ["a non-object error", { error: "boom", status: 500 }],
+    ["a missing error name", { error: { message: "boom" }, status: 500 }],
+    ["a missing error message", { error: { name: "Error" }, status: 500 }],
+    [
+      "a non-string stack",
+      { error: { name: "Error", message: "boom", stack: [] }, status: 500 },
+    ],
+    [
+      "an extra serialized error field",
+      { error: { name: "Error", message: "boom", cause: "raw" }, status: 500 },
+    ],
+    ["a non-5xx status", { error: serializedErrorPage.error, status: 404 }],
+    ["a non-integer status", { error: serializedErrorPage.error, status: 500.5 }],
+  ])("rejects errorPage with %s", (_caseName, errorPage) => {
+    const documentNode = makeDocument(JSON.stringify({ ...fullPayload, errorPage }));
+
+    expect(() => readHydrationPayload(documentNode)).toThrow(
+      /Warlock hydration payload was found at #.* but could not be read\./,
+    );
   });
 
   it("throws the malformed message when params is present but is not an object", () => {

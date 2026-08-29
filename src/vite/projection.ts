@@ -1,14 +1,15 @@
 /**
  * Projection — the compile-time AST transform that strips a page module's
- * five server exports before the CLIENT graph forms.
+ * six server exports before the CLIENT graph forms.
  *
- * Removes `export const route/middleware/validation/loader/metadata = ...`
+ * Removes `export const route/middleware/validation/loader/metadata/prefix = ...`
  * (const-arrow form) and `export async function loader(...) {...}`
  * (function-declaration form — a page declares these as separate named
  * exports, not one fused object, so both forms are real), plus any import
  * OR top-level declaration that becomes
  * unreferenced ONLY as a result of that removal. The default export (the
- * page component) and every other non-server-named export survive
+ * page component) and every other non-server-named export — including the
+ * synchronous, no-argument `register()` lifecycle hook — survive
  * unconditionally, regardless of what they reference — classification is by
  * FILE, not by what an export does with data (`c604f0bc` §9).
  *
@@ -46,7 +47,7 @@ import type { Plugin } from "vite";
  * rather than hand-typing a second copy that could drift from projection's
  * own list.
  */
-export const SERVER_EXPORT_NAMES = new Set(["route", "middleware", "validation", "loader", "metadata"]);
+export const SERVER_EXPORT_NAMES = new Set(["route", "middleware", "validation", "loader", "metadata", "prefix"]);
 
 /**
  * Recognized client-safe assets that always survive projection untouched,
@@ -62,14 +63,18 @@ const ASSET_EXTENSION_RE =
 /**
  * Top-level statement types that need no ambiguity check and are never
  * touched by removal: import declarations are handled by their own
- * survives/orphaned logic below, and every export (other than the 5 server
+ * survives/orphaned logic below, and every export (other than the 6 server
  * names) plus type-only declarations survive unconditionally per
  * `c604f0bc` §9 ("classify FILES, not the data they touch").
+ *
+ * `ExportAllDeclaration` (`export * from "./x"` / `export * as ns from
+ * "./x"`) is deliberately NOT in this set — it can forward ANY name from its
+ * source module, including a server export, and is refused explicitly below
+ * rather than assumed safe.
  */
 const ALWAYS_SAFE_STATEMENT_TYPES = new Set([
   "ExportNamedDeclaration",
   "ExportDefaultDeclaration",
-  "ExportAllDeclaration",
   "TSInterfaceDeclaration",
   "TSTypeAliasDeclaration",
   "EmptyStatement",
@@ -153,7 +158,7 @@ function isServerExportDeclaration(stmt: any): boolean {
  * Generic duck-typed AST walk (no `@babel/traverse` dependency — this
  * package only needs `@babel/parser` + `@babel/types`-shaped nodes).
  * Collects every `Identifier`/`JSXIdentifier` name reachable from `node`,
- * used to decide whether an import binding still has a reader once the 5
+ * used to decide whether an import binding still has a reader once the 6
  * server exports are gone. Over-collecting (e.g. counting an object
  * property key as a "use") only ever biases toward KEEPING an import, never
  * toward dropping one that is still needed — the safe direction for a
@@ -314,7 +319,7 @@ function statementSnippet(code: string, node: any): string {
 }
 
 /**
- * The transform itself: parse, remove the 5 server exports and every import
+ * The transform itself: parse, remove the 6 server exports and every import
  * orphaned only by that removal, fail closed on anything attribution-
  * ambiguous. `filePath` is only used for error messages (`c604f0bc` §7 —
  * fence errors must name the file).
@@ -337,6 +342,34 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
       importDeclarations.push(stmt);
       continue;
     }
+    const isNamespaceReexport =
+      stmt.type === "ExportNamedDeclaration" &&
+      stmt.source != null &&
+      (stmt.specifiers as any[] | undefined)?.some(
+        (specifier) => specifier.type === "ExportNamespaceSpecifier",
+      );
+
+    if (stmt.type === "ExportAllDeclaration" || isNamespaceReexport) {
+      // `export * from "./source"` (and `export * as ns from "./source"`,
+      // which Babel parses as an `ExportNamedDeclaration` carrying an
+      // `ExportNamespaceSpecifier` rather than as `ExportAllDeclaration` —
+      // hence the second check above) re-exports every name the source
+      // module exports, sight unseen.
+      // Projection classifies by file (`c604f0bc` §9) and never opens a
+      // second file to resolve what a re-export actually forwards — doing so
+      // would mean parsing and walking the source module too, i.e. a second
+      // parser. Whether the source exports one of the 6 server names is
+      // therefore unknowable here, so this is attribution-ambiguous the same
+      // way an unrecognized top-level statement is, and gets the same
+      // refusal rather than an assumption that it is safe.
+      throw new ProjectionAmbiguityError(
+        filePath,
+        statementSnippet(code, stmt),
+        stmt.loc.start.line,
+        `a star re-export forwards every name the source module exports, including possibly one of the 6 known server exports (route, middleware, validation, loader, metadata, prefix) — projection cannot inspect the source module's exports without parsing a second file, so it can't tell whether this leaks a server-only binding into the client bundle`,
+        `replace the star re-export with explicit named re-exports (export { ComponentA, ComponentB } from "./source"), listing only the client-safe names`,
+      );
+    }
     if (isServerExportDeclaration(stmt)) {
       removedServerExports.push(stmt);
       continue;
@@ -354,7 +387,7 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
       continue;
     }
 
-    // Attribution-IMPOSSIBLE: not an import, not one of the 5 known server
+    // Attribution-IMPOSSIBLE: not an import, not one of the 6 known server
     // exports, not another export, not a type-only declaration, and it binds
     // no name for a reader to point at. Fail closed rather than guess which
     // side of the fence it belongs on (`c604f0bc` §3).
@@ -362,8 +395,8 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
       filePath,
       statementSnippet(code, stmt),
       stmt.loc.start.line,
-      `top-level executable code that declares nothing — outside the 5 known server exports (route, middleware, validation, loader, metadata), and binding no name, so projection has no reader to attribute it by and can't tell whether it belongs to the server or the client`,
-      `mark it with an explicit .server/.client file, or move it inside one of the 5 declared server exports (if server-only) or the default export/a component (if client-safe)`,
+      `top-level executable code that declares nothing — outside the 6 known server exports (route, middleware, validation, loader, metadata, prefix), and binding no name, so projection has no reader to attribute it by and can't tell whether it belongs to the server or the client`,
+      `move universal static declarations and their imports into export function register(), or mark the code with an explicit .server/.client file; server-only work can instead move inside one of the 6 declared server exports`,
     );
   }
 
@@ -423,7 +456,7 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
       statementSnippet(code, local.stmt),
       local.stmt.loc.start.line,
       `a top-level declaration read only by the server exports being removed, but whose initializer executes code rather than just defining a value — projection can't tell whether that work is server-only or a side effect the client depends on`,
-      `move the initializer inside the server export that reads it, or split it into an explicit .server/.client file`,
+      `move universal static declarations and their imports into export function register(), move a server-only initializer inside the export that reads it, or split it into an explicit .server/.client file`,
     );
   }
 
@@ -440,7 +473,7 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
         statementSnippet(code, decl),
         decl.loc.start.line,
         `a bare side-effect import with no recognized client-safe asset extension — projection can't tell if it belongs only to the server exports being removed or must ship to the client`,
-        `mark it with an explicit .server/.client file, or move it inside one of the 5 declared server exports if it's server-only`,
+        `move universal static declarations and their imports into export function register(), or mark it with an explicit .server/.client file; server-only work can instead move inside one of the 6 declared server exports`,
       );
     }
 
@@ -488,10 +521,30 @@ function isProjectableFile(id: string): boolean {
   return false;
 }
 
+const HMR_RUNTIME_SPECIFIER = "@warlock.js/web/client/runtime";
+
+/**
+ * The projected module shares its scope with application source, so the helper
+ * import must not redeclare a name the application already owns. A suffix is
+ * only needed for the deliberately unlikely collision, but making it
+ * deterministic keeps the generated HMR module valid for every page shape.
+ */
+function hmrRegisterModulesBinding(code: string): string {
+  const base = "__warlockRegisterModules";
+  let binding = base;
+  let index = 2;
+
+  while (new RegExp(`\\b${binding}\\b`).test(code)) {
+    binding = `${base}${index++}`;
+  }
+
+  return binding;
+}
+
 /**
  * The client-build Vite plugin. Scoped to `*.page.tsx`/`layout.tsx`/`root.tsx`
  * and skipped entirely for the SSR build (`options.ssr`) — the server still
- * needs `route`/`middleware`/`validation`/`loader`/`metadata` intact.
+ * needs `route`/`middleware`/`validation`/`loader`/`metadata`/`prefix` intact.
  */
 export function projection(): Plugin {
   return {
@@ -503,7 +556,14 @@ export function projection(): Plugin {
 
       try {
         const { code: transformed, map } = projectModule(code, id);
-        return { code: transformed, map };
+        const registerModules = hmrRegisterModulesBinding(transformed);
+        return {
+          code:
+            `import { registerModules as ${registerModules} } from "${HMR_RUNTIME_SPECIFIER}";\n` +
+            `${transformed}\n` +
+            `if (import.meta.hot) import.meta.hot.accept((replacement) => { if (replacement) ${registerModules}([replacement]); });\n`,
+          map,
+        };
       } catch (error) {
         if (error instanceof ProjectionAmbiguityError) {
           this.error(error.message);

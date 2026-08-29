@@ -5,6 +5,7 @@ import type { InstalledPageRoute, PageModuleShape } from "./install-page-routes"
 import { resolvePageRouteIdentity } from "./install-page-routes";
 import { isNotFoundPageFile } from "./not-found-page";
 import type { PageFileChanges } from "./page-file-change";
+import { isErrorPageFilePath } from "./page-file-change";
 
 function pathKey(file: string): string {
   const normalized = path.resolve(file).replace(/\\/g, "/");
@@ -64,6 +65,11 @@ export async function pageRoutesNeedReplacement(
   );
 
   for (const file of changes.inspectionNeeded) {
+    // An error boundary has no installed router route to compare against. Its
+    // namespace is projected into every client composition, so any edit must
+    // replace the generated table; do not load it here just to inspect it.
+    if (isErrorPageFilePath(file)) return true;
+
     options.vite.environments.ssr.moduleGraph.onFileChange(file);
     const pageModule = (await options.vite.ssrLoadModule(file)) as PageModuleShape;
 
@@ -76,7 +82,7 @@ export async function pageRoutesNeedReplacement(
     }
 
     const installed = installedByFile.get(pathKey(file));
-    if (installed === undefined || pageModule.route === undefined) {
+    if (installed === undefined) {
       replace = true;
       continue;
     }

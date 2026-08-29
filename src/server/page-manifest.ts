@@ -13,15 +13,17 @@
  * `@warlock.js/web`.
  *
  * Entries carry MODULES + FILESYSTEM FACTS ONLY — never route paths. A page's
- * route is read off its module (`route` export) at boot and composed with its
- * layout `prefix`, exactly as `install-page-routes.ts:123-129,213-221` does in
- * dev, so explicit-wins semantics live in one place for both modes.
+ * route is read off its module (`route` export) at boot and, when present,
+ * composed with its layout `prefix`; when absent, the path is instead derived
+ * from the page's own `sourceFile` and its layouts' prefixes, exactly as
+ * `install-page-routes.ts:377-382` does in dev and `discover-pages.ts:925-935`
+ * does at build — so explicit-wins semantics live in one place for all three.
  */
 
 export type PageManifestLayoutEntry = {
   /** The imported layout module namespace object (default export = component, optional `prefix`). */
   module: Record<string, unknown>;
-  /** App-root-relative POSIX source path, e.g. "src/app/main/web/layout.tsx". */
+  /** App-root-relative POSIX source path, e.g. "src/web/layout.tsx". */
   sourceFile: string;
 };
 
@@ -29,7 +31,7 @@ export type PageManifestPageEntry = {
   /** The imported page module namespace object (default export = component, optional `route`). */
   module: Record<string, unknown>;
   /**
-   * App-root-relative POSIX source path, e.g. "src/app/main/web/home.page.tsx"
+   * App-root-relative POSIX source path, e.g. "src/web/home.page.tsx"
    * — feeds FS-derived route/name fallback. The anchor is the APP ROOT, not the
    * repo root; the two differ the moment the app does not sit at the repo root.
    * Consumers compare these ids VERBATIM — the barrel that wrote them is the
@@ -39,6 +41,12 @@ export type PageManifestPageEntry = {
   sourceFile: string;
   /** Layout chain, outermost first. */
   layouts: readonly PageManifestLayoutEntry[];
+};
+
+/** The optional application error boundary, kept outside the routable page table. */
+export type PageManifestErrorPageEntry = {
+  module: Record<string, unknown>;
+  sourceFile: string;
 };
 
 export type PageManifest = {
@@ -73,6 +81,8 @@ export type PageManifest = {
    * malformed manifest into a crash deep in rendering instead of a named error.
    */
   app?: { module: Record<string, unknown>; sourceFile: string };
+  /** An application-owned error boundary. It has no route name or path. */
+  errorPage?: PageManifestErrorPageEntry;
   /**
    * The page table. EMPTY IS A REAL STATE, not a missing one: an empty array
    * means "this bundle was built with web, and it has no pages", which is what
