@@ -61,6 +61,14 @@ All notable changes to `@warlock.js/web` are documented here.
   lived under `src/app/<module>/web/` into `src/web/` (a subdirectory is
   fine — it still contributes a route segment the same way).
 
+### Fixed
+
+- **A custom `404.page.tsx` loader no longer executes.** The not-found page
+  still registers and renders its real module namespace, but its request
+  triple omits the page loader in both development and production. A missing
+  URL therefore cannot trigger application data work, redirect, or fail a
+  second time through the fallback itself.
+
 ## 5.1.0
 
 > **Upgrade if you installed 5.0.0, 5.0.1 or 5.0.2.** React did not execute at all in

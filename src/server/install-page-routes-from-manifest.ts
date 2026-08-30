@@ -472,6 +472,7 @@ export function installPageRoutesFromManifest(
                   : productionStylesheetUrls(clientDir, [app.sourceFile, notFoundPage.sourceFile]),
               matchPath: (requestPath) => requestPath,
               statusForRenderedOk: 404,
+              skipPageLoader: true,
             }),
     }),
     // `isPage` for the same reason the dev installer carries it — the router's

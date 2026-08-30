@@ -194,12 +194,13 @@ describe("createPageRouteHandler — universal registration", () => {
 
   it("registers App then the custom 404 page before rendering it, with no layout identity", async () => {
     const calls: string[] = [];
+    const loader = vi.fn(() => ({ shouldNotRun: true }));
     const responseContext = context("/missing/path");
     const handler = createPageRouteHandler(
       handlerOptions(
         {
           "app.tsx": { register: () => calls.push("app") },
-          "404.page.tsx": { register: () => calls.push("404") },
+          "404.page.tsx": { register: () => calls.push("404"), loader },
         },
         {
           path: "*",
@@ -208,6 +209,7 @@ describe("createPageRouteHandler — universal registration", () => {
           pageFile: "404.page.tsx",
           matchPath: requestPath => requestPath,
           statusForRenderedOk: 404,
+          skipPageLoader: true,
         },
       ),
     );
@@ -215,13 +217,33 @@ describe("createPageRouteHandler — universal registration", () => {
     renderPageRequest.mockImplementation(async (_url: string, options: RenderPageRequestOptions) => {
       calls.push("render");
       expect(options.routes?.[0]?.path).toBe("/missing/path");
+      expect(options.routes?.[0]?.triple.page.loader).toBeUndefined();
       return renderedOk();
     });
 
     await handler(responseContext as never);
 
     expect(calls).toEqual(["app", "404", "render"]);
+    expect(loader).not.toHaveBeenCalled();
     expect(responseContext.response.html).toHaveBeenCalledWith("", 404);
+  });
+
+  it("preserves the loader on an ordinary page triple", async () => {
+    const loader = vi.fn(() => ({ account: true }));
+    const handler = createPageRouteHandler(
+      handlerOptions({
+        "app.tsx": {},
+        "composed-layout.tsx": {},
+        "account.page.tsx": { loader },
+      }),
+    );
+
+    renderPageRequest.mockImplementation(async (_url: string, options: RenderPageRequestOptions) => {
+      expect(options.routes?.[0]?.triple.page.loader).toBe(loader);
+      return renderedOk();
+    });
+
+    await handler(context() as never);
   });
 });
 

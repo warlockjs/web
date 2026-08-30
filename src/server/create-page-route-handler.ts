@@ -136,6 +136,13 @@ export type PageRouteHandlerOptions = {
    */
   statusForRenderedOk?: number;
   /**
+   * Exclude the page module's loader from the request triple while preserving
+   * the real namespace for `register()` and rendering. Used only by the
+   * catch-all 404 page: a missing URL must not run application data work or
+   * turn a simple miss into a second failure path.
+   */
+  skipPageLoader?: boolean;
+  /**
    * Replays one committed cookie through core's `Response.cookie()`. Defaults
    * to doing exactly that (`defaultApplyBufferedCookie`, above); injectable so
    * a caller with a different `Response` shape (or a test) can observe/replace
@@ -246,6 +253,7 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     stylesheetUrls,
     matchPath,
     statusForRenderedOk,
+    skipPageLoader = false,
     applyBufferedCookie = defaultApplyBufferedCookie,
   } = options;
 
@@ -271,10 +279,15 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       ownPageModule as RegisterableModuleNamespace,
     ]);
 
+    const pageModule = ownPageModule as PageTripleModule;
     const triple: PageRouteEntry["triple"] = {
       app: appModule as PageTripleModule,
       layout: layoutModule as PageTripleModule,
-      page: ownPageModule as PageTripleModule,
+      // Registration above deliberately receives the REAL namespace. Only the
+      // pipeline view is projected: spreading preserves the component,
+      // metadata, middleware and boundary exports while making a custom 404's
+      // loader uncallable.
+      page: skipPageLoader ? { ...pageModule, loader: undefined } : pageModule,
     };
 
     const routes: PageRouteEntry[] = [

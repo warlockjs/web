@@ -752,6 +752,7 @@ describe("installPageRoutesFromManifest — the not-found page", () => {
     expect(handler?.loadRegistrationLayouts).toBeUndefined();
     expect(handler?.name).toBe(NOT_FOUND_ROUTE_NAME);
     expect(handler?.statusForRenderedOk).toBe(404);
+    expect(handler?.skipPageLoader).toBe(true);
     expect(handler?.matchPath?.("/anything/at/all")).toBe("/anything/at/all");
   });
 

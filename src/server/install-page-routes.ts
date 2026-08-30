@@ -513,6 +513,7 @@ export async function installPageRoutes(
                   // The URL that missed IS this route's pattern for this request.
                   matchPath: (requestPath) => requestPath,
                   statusForRenderedOk: 404,
+                  skipPageLoader: true,
                 }),
         }),
         // `isPage` for the same reason every other page route carries it: the

@@ -792,6 +792,7 @@ describe("installPageRoutes — the not-found page", () => {
     expect(handler?.layoutFile).toBeUndefined();
     expect(handler?.loadRegistrationLayouts).toBeUndefined();
     expect(handler?.statusForRenderedOk).toBe(404);
+    expect(handler?.skipPageLoader).toBe(true);
     expect(handler?.matchPath?.("/anything/at/all")).toBe("/anything/at/all");
   });
 
