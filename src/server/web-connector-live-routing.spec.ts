@@ -131,6 +131,48 @@ describe("WebConnector live page routing", () => {
     },
   );
 
+  it.each([
+    ["changed", "layout.tsx", false, "/admin/settings", "/console/settings"],
+    ["added", "nested/admin.layout.ts", false, "/admin/settings", "/console/settings"],
+    ["deleted", "nested/admin.layout.tsx", true, "/console/settings", "/admin/settings"],
+  ] as const)(
+    "re-derives descendant routes when a nested layout is %s",
+    async (_event, layoutRelative, deleteBeforeUpdate, previousPath, nextPath) => {
+      const files = fixture();
+      const layoutFile = path.join(files.appSrcRoot, "web", layoutRelative);
+      fs.mkdirSync(path.dirname(layoutFile), { recursive: true });
+      fs.writeFileSync(layoutFile, "export const prefix = '/console';");
+      const vite = fakeVite({});
+      const oldPages = [page(files.pageFile, { path: previousPath })];
+      const nextPages = [page(files.pageFile, { path: nextPath })];
+      const install = vi.fn(async () => nextPages);
+      const connector = new LiveRoutingConnector();
+
+      if (deleteBeforeUpdate) fs.rmSync(layoutFile);
+
+      connector.seed({ ...files, vite: vite.vite, installedPages: oldPages, install });
+      vi.spyOn(router, "list").mockReturnValue([
+        { isPage: true, sourceFile: "src/web/settings.page.tsx" },
+        { isPage: true, sourceFile: FRAMEWORK_DEFAULT_NOT_FOUND_SOURCE_FILE },
+      ] as ReturnType<typeof router.list>);
+      const replace = vi
+        .spyOn(router, "replaceRoutesBySourceFiles")
+        .mockImplementation(async (_owners, callback) => callback());
+
+      expect(connector.shouldRestart([layoutFile])).toBe(true);
+      await connector.restart();
+
+      expect(replace).toHaveBeenCalledWith(
+        ["src/web/settings.page.tsx", FRAMEWORK_DEFAULT_NOT_FOUND_SOURCE_FILE],
+        install,
+      );
+      expect(connector.getInstalledPages()).toEqual(nextPages);
+      expect(vite.ssrLoadModule).not.toHaveBeenCalled();
+      expect(vite.invalidateModule).toHaveBeenCalledWith(vite.registryNode);
+      expect(vite.send).toHaveBeenCalledWith({ type: "full-reload", path: "*" });
+    },
+  );
+
   it("leaves a component-only page edit to HMR", async () => {
     const files = fixture();
     const vite = fakeVite({ route: { path: "/settings" } });

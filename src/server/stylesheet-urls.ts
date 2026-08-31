@@ -76,7 +76,7 @@ export function devStylesheetUrls(appRoot: string, sourceFile: string): string[]
   }
 
   const urls: string[] = [];
-  const pattern = /\bimport\s*["']([^"']+)["']/g;
+  const pattern = /\bimport\s*(?:\(\s*)?["']([^"']+)["']/g;
 
   let match = pattern.exec(source);
 

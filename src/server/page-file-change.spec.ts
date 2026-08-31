@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifyPageFileChanges,
   hasPageFileChanges,
+  isPageLayoutFilePath,
   isPageFilePath,
 } from "./page-file-change";
 
@@ -66,17 +67,21 @@ describe("classifyPageFileChanges", () => {
     expect(changes).toEqual({ added: [aboutPage], removed: [], inspectionNeeded: [] });
   });
 
-  it("ignores non-page files", () => {
-    const layout = path.join(webRoot, "layout.tsx");
+  it.each([
+    ["change", "layout.tsx", true, "added"],
+    ["add", "nested/layout.ts", true, "added"],
+    ["delete", "nested/admin.layout.tsx", false, "removed"],
+  ] as const)("forces full derivation for a layout %s", (_event, relative, exists, bucket) => {
+    const layout = path.join(webRoot, relative);
+    const changes = classifyPageFileChanges([layout], {
+      appRoot,
+      appSrcRoot,
+      installedPageFiles: [homePage],
+      fileExists: exists ? existing(layout) : existing(),
+    });
 
-    expect(
-      classifyPageFileChanges([layout], {
-        appRoot,
-        appSrcRoot,
-        installedPageFiles: [],
-        fileExists: existing(layout),
-      }),
-    ).toEqual({ added: [], removed: [], inspectionNeeded: [] });
+    expect(changes[bucket]).toEqual([layout]);
+    expect(hasPageFileChanges(changes)).toBe(true);
   });
 
   it("silently ignores page-like files under src/app", () => {
@@ -121,5 +126,20 @@ describe("isPageFilePath", () => {
       isPageFilePath(path.join(appSrcRoot, "app", "main", "web", "home.page.tsx"), appSrcRoot),
     ).toBe(false);
     expect(isPageFilePath(path.join(webRoot, "home.tsx"), appSrcRoot)).toBe(false);
+  });
+});
+
+describe("isPageLayoutFilePath", () => {
+  it("accepts the page registry's layout lifecycle module forms only below src/web", () => {
+    expect(isPageLayoutFilePath(path.join(webRoot, "layout.ts"), appSrcRoot)).toBe(true);
+    expect(isPageLayoutFilePath(path.join(webRoot, "nested", "admin.layout.tsx"), appSrcRoot)).toBe(
+      true,
+    );
+    expect(isPageLayoutFilePath(path.join(webRoot, "nested", "layout.css"), appSrcRoot)).toBe(
+      false,
+    );
+    expect(
+      isPageLayoutFilePath(path.join(appSrcRoot, "app", "main", "web", "layout.tsx"), appSrcRoot),
+    ).toBe(false);
   });
 });

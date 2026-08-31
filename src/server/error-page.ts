@@ -18,7 +18,9 @@ export function serializePageError(thrown: unknown): SerializedPageError {
     return {
       name: thrown.name || "Error",
       message: thrown.message,
-      ...(typeof thrown.stack === "string" ? { stack: thrown.stack } : {}),
+      ...(process.env.NODE_ENV !== "production" && typeof thrown.stack === "string"
+        ? { stack: thrown.stack }
+        : {}),
     };
   }
 
