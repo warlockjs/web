@@ -35,8 +35,8 @@
     "esm"
   ],
   "scripts": {
-    "build": "vite build && node ../node_modules/typescript/bin/tsc -p tsconfig.json",
-    "typecheck": "node ../node_modules/typescript/bin/tsc -p tsconfig.typecheck.json",
+    "build": "vite build && node node_modules/typescript/bin/tsc -p tsconfig.json",
+    "typecheck": "node node_modules/typescript/bin/tsc -p tsconfig.typecheck.json",
     "test": "vitest run"
   },
   "dependencies": {
@@ -75,10 +75,16 @@
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "@vitejs/plugin-react": "^5.2.0",
-    "@warlock.js/context": "*",
+    "@warlock.js/context": "workspace:^",
+    "@warlock.js/core": "workspace:^",
+    "@warlock.js/seal": "workspace:^",
+    "esbuild": "^0.27.2",
+    "fastify": "^5.6.2",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
+    "typescript": "^5.7.3",
     "vite": "^7.3.5",
     "vitest": "4.1.10"
-  }
+  },
+  "packageManager": "pnpm@11.24.0"
 }
