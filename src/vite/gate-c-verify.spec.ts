@@ -6,10 +6,11 @@
  * sees the runtime value via env → built page output, so assembly changes
  * nothing about what these tests prove.
  */
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "vite";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { warlockClientBoundary } from "./index";
 import { findLeakedServerExports, gateCVerify } from "./gate-c-verify";
 
@@ -86,6 +87,47 @@ function manifestOf(result: BuildResult): Array<{ key: string; value: string | n
   if (!asset || asset.type !== "asset") throw new Error("expected a warlock-env-manifest.json asset in the output");
   return JSON.parse(asset.source as string);
 }
+
+/**
+ * The server-only package the bypass fixtures import.
+ *
+ * Written rather than committed for the same reason as Gate A's: it has to sit
+ * under `FIXTURE_ROOT/node_modules/` for Vite to resolve it the way a real
+ * dependency resolves, and that path is gitignored — so a committed copy is one
+ * git silently drops, and the two bypass cases were red on any fresh clone.
+ *
+ * The marker is the whole fixture: `findLeakedServerImportEdges` asks the
+ * classifier for the package's environment, and only `"server"` is a leak. The
+ * happy-path cases in this file build without it, so if this package were
+ * mis-shaped and classified as anything else, cases 2 and 2-minified would fail
+ * rather than silently passing on a bundle with nothing to find.
+ */
+function writeGateCFixturePackage() {
+  const dir = path.join(FIXTURE_ROOT, "node_modules", "@warlock.js", "fake-server-pkg");
+
+  mkdirSync(dir, { recursive: true });
+
+  writeFileSync(
+    path.join(dir, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "@warlock.js/fake-server-pkg",
+        version: "1.0.0",
+        main: "index.js",
+        warlock: { environment: "server" },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+
+  writeFileSync(
+    path.join(dir, "index.js"),
+    `export const secretServerThing = "fake-server-pkg-value";\n`,
+  );
+}
+
+beforeAll(writeGateCFixturePackage);
 
 describe("gateCVerify — Gate C output verification (real Vite builds)", () => {
   describe("Part 1, item 3: deliberately-bypassed-gate fixtures — Gate C catches a leak independently", () => {

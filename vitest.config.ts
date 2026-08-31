@@ -43,6 +43,23 @@ const alias = [
 export default defineConfig({
   resolve: { alias },
   test: {
+    /**
+     * Pin NODE_ENV for the whole suite.
+     *
+     * Vitest only defaults this to "test" when it is UNSET — an ambient
+     * `NODE_ENV=production` in the developer's shell (or a CI image) is
+     * inherited instead, and the suite then silently exercises production
+     * branches. That is not hypothetical: this machine exports
+     * `NODE_ENV=production`, which put `buildErrorRecord()` on its scrubbing
+     * path and `serializePageError()` on its stack-withholding path, and
+     * `render-page.spec.ts`'s hydratable-error-page case failed for that
+     * reason alone while the code under it was correct.
+     *
+     * A test whose verdict tracks the machine it runs on is worse than a
+     * failing one. Specs that want the production branch should set it
+     * themselves, per-test, and restore it after.
+     */
+    env: { NODE_ENV: "test" },
     environment: "node",
     projects: [
       {

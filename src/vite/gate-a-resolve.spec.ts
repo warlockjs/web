@@ -42,6 +42,87 @@ const SIBLING_PKG_DIR = path.join(
 );
 const SIBLING_PKG_ENTRY = path.join(SIBLING_PKG_DIR, "web", "src", "server", "runtime.ts");
 
+
+/**
+ * The vendor + governed-scope packages the cases below import.
+ *
+ * These are WRITTEN, not committed. They have to live under
+ * `FIXTURE_ROOT/node_modules/` for Vite to resolve them the way a real
+ * dependency resolves — and that path is covered by `.gitignore`, so a
+ * committed copy is a copy git silently drops. Nine cases were therefore red on
+ * any fresh clone: the pages importing these packages were tracked, the
+ * packages themselves could not be.
+ *
+ * Each one encodes exactly the shape its case is about, and nothing else:
+ *
+ *   @mongez/unmarked-pkg        governed scope, NO warlock marker  -> allowed
+ *   @warlock.js/marked-server-pkg  marker environment: server      -> refused
+ *   @warlock.js/framework-like  governed, own src/server/ internals -> allowed
+ *   vendor-node-lib             ungoverned, imports "node:fs"      -> refused
+ *   vendor-bare-node-lib        ungoverned, imports bare "crypto"  -> refused
+ *   vendor-cjs-node-lib         CommonJS, require("os")            -> refused
+ *   vendor-browser-lib          ungoverned, touches no builtin     -> allowed
+ *
+ * The three ALLOWED packages are what stop this from being a rubber stamp: if a
+ * change made Gate A refuse everything, cases 6, 12 and 19 would go red.
+ */
+function writeFixturePackages() {
+  const nm = path.join(FIXTURE_ROOT, "node_modules");
+
+  const pkg = (dir: string, name: string, files: Record<string, string>, extra: object = {}) => {
+    writeFixture(
+      path.join(nm, dir, "package.json"),
+      `${JSON.stringify({ name, version: "1.0.0", main: "index.js", ...extra }, null, 2)}\n`,
+    );
+
+    for (const [rel, contents] of Object.entries(files)) {
+      writeFixture(path.join(nm, dir, rel), contents);
+    }
+  };
+
+  // Governed scope, no marker at all — rule 2 fails OPEN, so this must build.
+  pkg(path.join("@mongez", "unmarked-pkg"), "@mongez/unmarked-pkg", {
+    "index.js": `export const unmarkedPkgValue = "unmarked-pkg-value";\n`,
+  });
+
+  // Governed scope that declares itself server-only — rule 2 must refuse it.
+  pkg(
+    path.join("@warlock.js", "marked-server-pkg"),
+    "@warlock.js/marked-server-pkg",
+    { "index.js": `export const markedServerValue = "marked-server-value";\n` },
+    { warlock: { environment: "server" } },
+  );
+
+  // Governed scope whose OWN internals sit under src/server/. That directory
+  // name must not be read as a boundary inside a dependency — it is the shape
+  // `@warlock.js/web` itself has.
+  pkg(path.join("@warlock.js", "framework-like"), "@warlock.js/framework-like", {
+    "index.js": `export { frameworkValue } from "./src/server/internal.js";\n`,
+    "src/server/internal.js": `export const frameworkValue = "framework-internal-value";\n`,
+  });
+
+  // Ungoverned third party reaching a builtin — prefixed, bare, and CommonJS.
+  // Rule 1 is scope-free, so all three must be refused, and the diagnostic has
+  // to name the VENDOR file: the app's own source never spells the builtin.
+  pkg("vendor-node-lib", "vendor-node-lib", {
+    "index.js": `import { readFileSync } from "node:fs";\n\nexport const readVendorConfig = () => readFileSync("vendor.json", "utf8");\n`,
+  });
+
+  pkg("vendor-bare-node-lib", "vendor-bare-node-lib", {
+    "index.js": `import { createHash } from "crypto";\n\nexport const hashVendorInput = (input) =>\n  createHash("sha256").update(input).digest("hex");\n`,
+  });
+
+  pkg("vendor-cjs-node-lib", "vendor-cjs-node-lib", {
+    "index.js": `const os = require("os");\n\nmodule.exports.vendorHostname = () => os.hostname();\n`,
+  });
+
+  // NEGATIVE CONTROL: same ungoverned shape, no builtin. Must still build, or
+  // the three refusals above prove only that the gate refuses everything.
+  pkg("vendor-browser-lib", "vendor-browser-lib", {
+    "index.js": `export const vendorBrowserValue = "vendor-browser-value";\n`,
+  });
+}
+
 /**
  * Runs a real Vite build (JS API, not npx) for a single
  * fixture page, with Gate A as the only plugin. Verifies the actual emitted
@@ -159,6 +240,10 @@ function firstChunkCode(result: Awaited<ReturnType<typeof buildPage>>): string {
   if (!chunk || chunk.type !== "chunk") throw new Error("expected a JS chunk in the build output");
   return chunk.code;
 }
+
+// File-level: every suite below that imports one of these packages needs them
+// on disk before its build runs, and they are cheap to rewrite.
+beforeAll(writeFixturePackages);
 
 describe("gateAResolve — Gate A resolveId refusal (real Vite builds)", () => {
   // `@warlock.js/core` now declares `"warlock": { "environment": "server" }` in
