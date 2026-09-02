@@ -243,10 +243,14 @@ describe("createPageRouteHandler — constructible without Vite", () => {
     expect(recorded.written.html).toContain('<div id="layout">');
     expect(recorded.written.html).toContain("<h1>Contact us</h1>");
 
-    // Stage 10a: one headers() call with the whole committed map, including
-    // the framework's closed-by-default `cache-control` (README rule 8).
+    // Stage 10a: one headers() call with the loader's committed map — this
+    // page has no loader, so it carries no `cache-control` at all; that key
+    // is decided separately (`applyResponseCacheFloor`, `response-cache-floor.ts`)
+    // via a single `header()` call, the framework's closed-by-default
+    // `no-store` since this page never opted in.
     expect(recorded.appliedHeaders).toHaveLength(1);
-    expect(recorded.appliedHeaders[0]["cache-control"]).toBe("private");
+    expect(recorded.appliedHeaders[0]["cache-control"]).toBeUndefined();
+    expect(recorded.singleHeaders).toContainEqual({ key: "Cache-Control", value: "no-store" });
   });
 
   it("loads no layout module and renders anyway when the page has none", async () => {

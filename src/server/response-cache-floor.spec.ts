@@ -59,11 +59,44 @@ describe("applyResponseCacheFloor", () => {
     expect(response.header).toHaveBeenCalledWith("Cache-Control", "private, no-store");
   });
 
-  it("does nothing when neither authDerived nor a Set-Cookie is present", () => {
+  it("sets no-store (the closed-by-default answer) when neither authDerived nor a Set-Cookie is present and the route declared no cache opt-in", () => {
     const response = responseWithHeader(() => undefined);
 
     applyResponseCacheFloor(response, { authDerived: false });
 
-    expect(response.header).not.toHaveBeenCalled();
+    expect(response.header).toHaveBeenCalledWith("Cache-Control", "no-store");
+  });
+
+  it("sets public, max-age=<maxAge> when the route opted in and neither floor triggers", () => {
+    const response = responseWithHeader(() => undefined);
+
+    applyResponseCacheFloor(response, {
+      authDerived: false,
+      cache: { public: true, maxAge: 120 },
+    });
+
+    expect(response.header).toHaveBeenCalledWith("Cache-Control", "public, max-age=120");
+  });
+
+  it("still sets private, no-store when authDerived is true even though the route opted in — the floor beats the opt-in", () => {
+    const response = responseWithHeader(() => undefined);
+
+    applyResponseCacheFloor(response, {
+      authDerived: true,
+      cache: { public: true, maxAge: 120 },
+    });
+
+    expect(response.header).toHaveBeenCalledWith("Cache-Control", "private, no-store");
+  });
+
+  it("still sets private, no-store when the response carries a Set-Cookie even though the route opted in — the floor beats the opt-in", () => {
+    const response = responseWithHeader(() => "token=abc");
+
+    applyResponseCacheFloor(response, {
+      authDerived: false,
+      cache: { public: true, maxAge: 120 },
+    });
+
+    expect(response.header).toHaveBeenCalledWith("Cache-Control", "private, no-store");
   });
 });

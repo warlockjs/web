@@ -43,7 +43,12 @@ import { NonLiteralRouteExportError, readRouteExports } from "../build/read-rout
 import { composeRoutePath } from "../routing/compose-route-path";
 import { deriveFilesystemRoutePath } from "../routing/filesystem-route";
 import { NestedLayoutsNotSupportedError, selectPageLayout } from "../routing/layout-policy";
-import { canonicalizeRouteExport, resolvePageRouteName } from "../routing/route-identity";
+import {
+  canonicalizeRouteExport,
+  resolvePageRouteCache,
+  resolvePageRouteName,
+  type PageCacheOptIn,
+} from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
 import { Response, type Router } from "@warlock.js/core";
 import { createPageRouteHandler } from "./create-page-route-handler";
@@ -64,7 +69,7 @@ import {
 /** Re-exported so `web/src/server/index.ts`'s existing barrel export keeps resolving. */
 export { composeRoutePath };
 
-export type PageRouteExport = string | { path: string; name?: string };
+export type PageRouteExport = string | { path: string; name?: string; cache?: PageCacheOptIn };
 
 export type PageModuleShape = {
   route?: PageRouteExport;
@@ -238,7 +243,7 @@ async function composeLayoutLevel(
 
   return {
     ...host,
-    middleware: modules.flatMap(layoutModule => [...(layoutModule.middleware ?? [])]),
+    middleware: modules.flatMap((layoutModule) => [...(layoutModule.middleware ?? [])]),
     loader: async (context) => {
       let hostData: unknown;
 
@@ -303,13 +308,7 @@ export type InstallPageRoutesOptions = {
 export async function installPageRoutes(
   options: InstallPageRoutesOptions,
 ): Promise<InstalledPageRoute[]> {
-  const {
-    router,
-    vite,
-    appSrcRoot,
-    appFile,
-    hydrationClientModuleUrl,
-  } = options;
+  const { router, vite, appSrcRoot, appFile, hydrationClientModuleUrl } = options;
   // See `InstallPageRoutesOptions.appRoot` for why this default, not
   // `appSrcRoot` itself, is the root every handler's CSS is resolved against.
   const stylesheetRoot = options.appRoot ?? path.dirname(appSrcRoot);
@@ -329,7 +328,9 @@ export async function installPageRoutes(
   );
 
   if (errorPageFiles.length > 1) {
-    throw new Error(`Two error pages were found: ${errorPageFiles.map((page) => page.pageFile).join(", ")}.`);
+    throw new Error(
+      `Two error pages were found: ${errorPageFiles.map((page) => page.pageFile).join(", ")}.`,
+    );
   }
 
   const errorPageFile = errorPageFiles[0]?.pageFile;
@@ -341,9 +342,10 @@ export async function installPageRoutes(
     if (!declarations.ok) throw new NonLiteralRouteExportError(declarations.rejection);
     if (declarations.route !== undefined) throw new ErrorPageDeclaresRouteError(errorPageFile);
   }
-  const loadErrorPage = errorPageFile === undefined
-    ? undefined
-    : () => vite.ssrLoadModule(errorPageFile) as Promise<ErrorPageModule>;
+  const loadErrorPage =
+    errorPageFile === undefined
+      ? undefined
+      : () => vite.ssrLoadModule(errorPageFile) as Promise<ErrorPageModule>;
 
   if (notFoundPageFiles.length > 1) {
     throw new DuplicateNotFoundPageError(notFoundPageFiles.map((page) => page.pageFile));
@@ -364,17 +366,22 @@ export async function installPageRoutes(
       appSrcRoot,
     );
 
-    const loadLayout: LoadLayout = layoutFile =>
+    // Validated at INSTALL time, with everything else — a malformed `cache`
+    // opt-in fails boot, not the first request that would have served it.
+    const cache = resolvePageRouteCache(pageModule.route, pageFile);
+
+    const loadLayout: LoadLayout = (layoutFile) =>
       vite.ssrLoadModule(layoutFile) as Promise<LayoutModuleShape>;
     const layoutLevel = await resolveLayoutLevel(pageFile, webRoot, loadLayout);
     const { layoutFile, prefix: layoutPrefix } = layoutLevel;
 
-    const effectivePath = pageModule.route === undefined
-      ? deriveFilesystemRoutePath({
-          pageFile: filesystemPageFileFor(pageFile, appSrcRoot),
-          layoutPrefixes: layoutLevel.prefixesByDirectory,
-        })
-      : composeRoutePath(layoutPrefix, routePath);
+    const effectivePath =
+      pageModule.route === undefined
+        ? deriveFilesystemRoutePath({
+            pageFile: filesystemPageFileFor(pageFile, appSrcRoot),
+            layoutPrefixes: layoutLevel.prefixesByDirectory,
+          })
+        : composeRoutePath(layoutPrefix, routePath);
 
     const existingFile = fileByPath.get(effectivePath);
 
@@ -423,11 +430,11 @@ export async function installPageRoutes(
           // resolve as the exact module Vite hands back, untouched.
           loadModule:
             layoutLevel.chain.length > 1 && layoutFile !== undefined
-              ? moduleId =>
+              ? (moduleId) =>
                   moduleId === layoutFile
                     ? composeLayoutLevel({ ...layoutLevel, layoutFile }, loadLayout)
                     : vite.ssrLoadModule(moduleId)
-              : moduleId => vite.ssrLoadModule(moduleId),
+              : (moduleId) => vite.ssrLoadModule(moduleId),
           // Registration tracks real module namespaces, not the composed
           // layout wrapper above. Loading the raw chain per request also lets
           // Vite hand over a replacement namespace after an HMR update; the
@@ -436,6 +443,7 @@ export async function installPageRoutes(
           hydrationClientModuleUrl,
           loadErrorPage,
           stylesheetUrls,
+          cache,
         }),
         // `isPage` marks this route as SSR-served. Pages and API routes share one
         // router and one route-name namespace, so the router's duplicate-name

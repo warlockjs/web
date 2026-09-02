@@ -30,6 +30,7 @@ import {
 import { registerModules, type RegisterableModuleNamespace } from "../runtime/register-modules";
 import { buildHydrationPayload } from "./build-hydration-payload";
 import { applyResponseCacheFloor } from "./response-cache-floor";
+import type { PageCacheOptIn } from "../routing/route-identity";
 import { ensureSetCookieCacheFloorHook, markPageResponse } from "./set-cookie-cache-floor-hook";
 import type { BufferedCookie, PageRouteEntry, PageTripleModule } from "./execute-page-request";
 import { isNonHydrating } from "./page-render-bundle";
@@ -195,6 +196,17 @@ export type PageRouteHandlerOptions = {
    * itself, with no framework connector graph involved.
    */
   httpServer?: FastifyInstance;
+  /**
+   * This route's resolved `cache` opt-in, already validated
+   * ({@link resolvePageRouteCache}) by whichever installer (dev's
+   * `install-page-routes.ts` or production's
+   * `install-page-routes-from-manifest.ts`) built these options — `undefined`
+   * means the route declared no `cache` at all. Read by
+   * `applyResponseCacheFloor` (`response-cache-floor.ts`) at the same seam
+   * that applies the `Set-Cookie`/auth-derived floor, so the document and the
+   * data representation can never disagree on `Cache-Control`.
+   */
+  cache?: PageCacheOptIn;
 };
 
 export type PageRouteHandler = (context: HttpContext) => Promise<void | Response>;
@@ -301,6 +313,7 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     statusForRenderedOk,
     skipPageLoader = false,
     applyBufferedCookie = defaultApplyBufferedCookie,
+    cache,
   } = options;
 
   // Distinguish "not supplied" (fall back to the container, and REQUIRE the
@@ -426,7 +439,10 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       // unit tests hand this handler a plain `{ path, header }` mock with no
       // `locals`, never a real core `Request` — treated the same as "never
       // touched auth state".
-      applyResponseCacheFloor(response, { authDerived: request.locals?.authDerived === true });
+      applyResponseCacheFloor(response, {
+        authDerived: request.locals?.authDerived === true,
+        cache,
+      });
 
       if (wantsData) {
         // So a shared cache can never serve a document to a client that asked for

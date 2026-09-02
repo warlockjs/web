@@ -38,14 +38,85 @@
 
 import { deriveFilesystemRouteName } from "./filesystem-route";
 
+/**
+ * A page's opt-in into shared-cache storage for its document AND its data
+ * representation (`x-warlock-data`) — the two must never diverge, because a
+ * cacheable data payload leaks exactly what an uncacheable document was
+ * protecting (`../server/create-page-route-handler.ts`).
+ *
+ * `public: true` is not a flag with a `false` counterpart: the framework is
+ * closed by default (`../server/response-cache-floor.ts`), so the only
+ * meaningful state this object can express is "yes, cache me" — a page that
+ * wants the default simply omits `cache` entirely. `maxAge` has no framework
+ * default and never will: a route's freshness window is a decision only the
+ * route's author can make safely, and guessing one would be exactly the kind
+ * of silent, environment-dependent behaviour this feature exists to remove.
+ * Both keys are required — see {@link InvalidPageCacheOptInError}.
+ *
+ * Shaped as an object, not a boolean or a bare number, so a later addition
+ * (e.g. CDN surrogate keys) extends it without a breaking change.
+ */
+export type PageCacheOptIn = {
+  public: true;
+  /** Freshness window in seconds, emitted as `Cache-Control: public, max-age=<maxAge>`. */
+  maxAge: number;
+};
+
 /** The shape a page's `route` export may declare — mirrors `PageRouteExport` in `install-page-routes.ts`. */
-export type DeclaredRouteExport = string | { path: string; name?: string };
+export type DeclaredRouteExport = string | { path: string; name?: string; cache?: PageCacheOptIn };
 
 /** The canonical form every declared `route` export resolves to. */
 export type CanonicalRoute = {
   path: string;
   name?: string;
 };
+
+/**
+ * Raised when a page's `route.cache` is present but malformed — most notably
+ * `public: true` with no `maxAge`. The framework refuses to invent a
+ * freshness window (see {@link PageCacheOptIn}), so this is a BOOT-TIME
+ * failure rather than a silent fallback to `no-store`: a developer who wrote
+ * `cache: { public: true }` meant for the route to be cacheable, and serving
+ * it `no-store` without a word would be the exact silent-failure class this
+ * release exists to kill.
+ */
+export class InvalidPageCacheOptInError extends Error {
+  public constructor(public readonly pageFile: string) {
+    super(
+      `"${pageFile}" declares \`route.cache\` without a valid opt-in. Both keys are required: ` +
+        "write `cache: { public: true, maxAge: <seconds> }` — for example `cache: { public: " +
+        "true, maxAge: 60 }`. Remove `cache` entirely to keep the route `no-store` (the default) " +
+        "instead.",
+    );
+    this.name = "InvalidPageCacheOptInError";
+  }
+}
+
+/**
+ * Resolves and validates a declared `route` export's `cache` opt-in.
+ *
+ * `undefined` — the common case — means "no opt-in", which the caller (the
+ * response-cache-floor seam) treats as `no-store`, not as "cacheable with no
+ * limit". A malformed opt-in throws {@link InvalidPageCacheOptInError} rather
+ * than being coerced or ignored, so a typo in a route's `cache` field fails
+ * the build/boot instead of quietly shipping an unintended cache policy.
+ */
+export function resolvePageRouteCache(
+  route: DeclaredRouteExport | undefined,
+  pageFile: string,
+): PageCacheOptIn | undefined {
+  if (route === undefined || typeof route === "string") return undefined;
+
+  const { cache } = route;
+
+  if (cache === undefined) return undefined;
+
+  if (cache.public !== true || typeof cache.maxAge !== "number") {
+    throw new InvalidPageCacheOptInError(pageFile);
+  }
+
+  return cache;
+}
 
 /**
  * Canonicalizes a declared `route` export — string or `{ path, name? }` —

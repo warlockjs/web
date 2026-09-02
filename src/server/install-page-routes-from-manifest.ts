@@ -25,7 +25,12 @@
 import { composeRoutePath } from "../routing/compose-route-path";
 import { deriveFilesystemRoutePath } from "../routing/filesystem-route";
 import { NestedLayoutsNotSupportedError, selectPageLayout } from "../routing/layout-policy";
-import { canonicalizeRouteExport, resolvePageRouteName } from "../routing/route-identity";
+import {
+  canonicalizeRouteExport,
+  resolvePageRouteCache,
+  resolvePageRouteName,
+  type PageCacheOptIn,
+} from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
 import { Response, type Router } from "@warlock.js/core";
 import { createPageModuleLoader } from "./create-page-module-loader";
@@ -50,7 +55,7 @@ import {
 import type { PageManifest, PageManifestLayoutEntry, PageManifestPageEntry } from "./page-manifest";
 
 /** A page declares either a bare path or a path plus an explicit route name. */
-type PageRouteExport = string | { path: string; name?: string };
+type PageRouteExport = string | { path: string; name?: string; cache?: PageCacheOptIn };
 
 /** The only export this module reads off a page module namespace. */
 type PageModuleShape = {
@@ -323,9 +328,10 @@ export function installPageRoutesFromManifest(
   const loadModule = createPageModuleLoader(manifest);
   // The namespace is already statically imported by the generated barrel, but
   // do not hand it to the render pipeline until a request actually fails.
-  const loadErrorPage = manifest.errorPage === undefined
-    ? undefined
-    : async () => manifest.errorPage!.module as ErrorPageModule;
+  const loadErrorPage =
+    manifest.errorPage === undefined
+      ? undefined
+      : async () => manifest.errorPage!.module as ErrorPageModule;
 
   // Same partition development makes, on the same rule (the filename), so the
   // two modes cannot disagree about which file is the not-found page. It is
@@ -352,6 +358,12 @@ export function installPageRoutesFromManifest(
     const routeExport = (page.module as PageModuleShape).route;
 
     const { path: routePath, name } = resolveRoute(routeExport, page.sourceFile);
+
+    // Validated at INSTALL time — the same boot-time gate dev applies
+    // (`install-page-routes.ts`) — so a malformed `cache` opt-in fails a
+    // production boot instead of shipping a page whose freshness window the
+    // framework silently guessed.
+    const cache = resolvePageRouteCache(routeExport, page.sourceFile);
 
     // Explicit wins; otherwise the path is derived from the page's own source
     // location and the layouts on its path — the same rule dev applies at
@@ -419,11 +431,11 @@ export function installPageRoutesFromManifest(
                 moduleId === layout?.sourceFile
                   ? Promise.resolve(composedLayout)
                   : loadModule(moduleId),
-        loadRegistrationLayouts: () =>
-          Promise.resolve(page.layouts.map((layout) => layout.module)),
+        loadRegistrationLayouts: () => Promise.resolve(page.layouts.map((layout) => layout.module)),
         hydrationClientModuleUrl,
         loadErrorPage,
         stylesheetUrls,
+        cache,
       }),
       // `isPage` marks this route as SSR-served. Pages and API routes share one
       // router and one route-name namespace, so the router's duplicate-name

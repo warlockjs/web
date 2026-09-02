@@ -23,9 +23,11 @@
  *
  * Responses to a data request must carry `Vary: <this header>` so a shared
  * cache can never hand a document to a client that asked for JSON, or the
- * reverse. Page responses are `private, no-store` today, which makes that
- * theoretical — `Vary` is what keeps it theoretical if the caching policy
- * changes.
+ * reverse. Most page responses are `no-store` — which makes that theoretical
+ * — but an opted-in route (`route.cache`, `../routing/route-identity.ts`) is
+ * genuinely `public, max-age=<n>` on BOTH representations
+ * (`response-cache-floor.ts`), so `Vary` is what keeps a shared cache from
+ * ever conflating them.
  */
 export const WARLOCK_DATA_REQUEST_HEADER = "x-warlock-data";
 

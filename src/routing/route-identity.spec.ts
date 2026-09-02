@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { canonicalizeRouteExport } from "./route-identity";
+import {
+  canonicalizeRouteExport,
+  InvalidPageCacheOptInError,
+  resolvePageRouteCache,
+} from "./route-identity";
 
 describe("canonicalizeRouteExport", () => {
   it("canonicalizes the bare-string shorthand into { path }", () => {
@@ -24,8 +28,66 @@ describe("canonicalizeRouteExport", () => {
     // that deriveRouteName from "/settings" alone could never reproduce (it
     // would yield "users.settings", missing the "account" layout segment),
     // which is exactly why an explicit name must win untouched.
-    expect(canonicalizeRouteExport({ path: "/settings", name: "users.account.settings" })).toEqual(
-      { path: "/settings", name: "users.account.settings" },
-    );
+    expect(canonicalizeRouteExport({ path: "/settings", name: "users.account.settings" })).toEqual({
+      path: "/settings",
+      name: "users.account.settings",
+    });
+  });
+});
+
+describe("resolvePageRouteCache", () => {
+  it("returns undefined when the route export is undefined", () => {
+    expect(resolvePageRouteCache(undefined, "src/web/home.page.tsx")).toBeUndefined();
+  });
+
+  it("returns undefined for the bare-string route shorthand — a string cannot carry a cache opt-in", () => {
+    expect(resolvePageRouteCache("/contact-us", "src/web/contact-us.page.tsx")).toBeUndefined();
+  });
+
+  it("returns undefined when the object route declares no cache key at all", () => {
+    expect(
+      resolvePageRouteCache({ path: "/settings" }, "src/web/settings.page.tsx"),
+    ).toBeUndefined();
+  });
+
+  it("returns the opt-in verbatim when both public: true and a numeric maxAge are declared", () => {
+    expect(
+      resolvePageRouteCache(
+        { path: "/products", cache: { public: true, maxAge: 60 } },
+        "src/web/products.page.tsx",
+      ),
+    ).toEqual({ public: true, maxAge: 60 });
+  });
+
+  it("throws InvalidPageCacheOptInError, naming the page file, when public: true is declared with no maxAge — this is a BOOT-TIME error, never a silent default", () => {
+    expect(() =>
+      resolvePageRouteCache(
+        // A malformed opt-in reaches this function as `unknown`-shaped data at
+        // runtime (the module's real export), even though `PageCacheOptIn`
+        // requires `maxAge` at the type level — hence the cast.
+        { path: "/products", cache: { public: true } as never },
+        "src/web/products.page.tsx",
+      ),
+    ).toThrowError(InvalidPageCacheOptInError);
+
+    try {
+      resolvePageRouteCache(
+        { path: "/products", cache: { public: true } as never },
+        "src/web/products.page.tsx",
+      );
+      throw new Error("expected resolvePageRouteCache to throw");
+    } catch (error) {
+      expect((error as Error).message).toContain("src/web/products.page.tsx");
+      expect((error as Error).message).toContain("cache: { public: true, maxAge: <seconds> }");
+    }
+  });
+
+  it("throws InvalidPageCacheOptInError when maxAge is present but not a number", () => {
+    expect(() =>
+      resolvePageRouteCache(
+        { path: "/products", cache: { public: true, maxAge: "60" } as never },
+        "src/web/products.page.tsx",
+      ),
+    ).toThrowError(InvalidPageCacheOptInError);
   });
 });

@@ -444,12 +444,13 @@ async function finishRender(
     };
   }
 
-  // The framework's closed-by-default answer (README rule 8): every document
-  // is `Cache-Control: private` unless a loader's committed headers already
-  // answered for the key. Map-only — the caller applies the returned headers.
-  if (headers["cache-control"] === undefined) {
-    headers["cache-control"] = "private";
-  }
+  // `Cache-Control` is NOT decided here. The final value — the floor, an
+  // opted-in route's `public, max-age`, or the closed-by-default `no-store` —
+  // is decided once, at the `create-page-route-handler.ts` seam, by
+  // `applyResponseCacheFloor` (`response-cache-floor.ts`), identically for the
+  // document and the data representation. Anything this function's `headers`
+  // map put under `cache-control` is overwritten there on purpose: two sites
+  // deciding this key is exactly the drift that seam exists to prevent.
 
   // ── stage 9 · RENDER ─────────────────────────────────────────────────────
   // Lazy import: react-dom is a peer used only on this path, so merely

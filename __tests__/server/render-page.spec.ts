@@ -198,12 +198,15 @@ describe("renderPage — stage 10 EMIT", () => {
     expect(JSON.parse(payload).pageData.attack).toBe(attack);
   });
 
-  it("defaults the document to Cache-Control: private (README rule 8) when no loader answered for the key", async () => {
+  it("commits no cache-control of its own when no loader answered for the key — the final Cache-Control is decided once, at the create-page-route-handler.ts seam, by applyResponseCacheFloor (response-cache-floor.ts)", async () => {
     const { headers } = await renderPage("main.contact-us");
 
-    // contact-us has no loader and therefore nowhere to write a header — the
-    // exact case that makes this a framework default instead of a convention.
-    expect(headers["cache-control"]).toBe("private");
+    // contact-us has no loader and therefore nowhere to write a header.
+    // finishRender no longer defaults this key — a second site deciding
+    // `cache-control` is exactly the drift the seam exists to prevent (see
+    // `response-cache-floor.spec.ts` / `page-route-cache-opt-in.spec.ts` for
+    // the actual no-store/opt-in/floor decision, proven on real headers).
+    expect(headers["cache-control"]).toBeUndefined();
   });
 
   it("lets a loader's committed cache-control stand", async () => {
@@ -252,7 +255,7 @@ describe("renderPage — boundary path", () => {
     expect(status).toBe(500);
   });
 
-  it("keeps the thrower's data OUT of the payload and the boundary document private", async () => {
+  it("keeps the thrower's data OUT of the payload, and commits no cache-control of its own for the boundary document", async () => {
     const { html, headers } = await renderPage("test.exploding", { routes: throwingRoutes() });
     const payload = extractPayload(html);
     const parsed = JSON.parse(payload);
@@ -266,7 +269,10 @@ describe("renderPage — boundary path", () => {
     expect(parsed.layoutData).toEqual({ nav: ["home", "products"], locale: "en" });
     // The error itself never reaches the emitted bytes.
     expect(html).not.toContain('"inventory backend down"');
-    expect(headers["cache-control"]).toBe("private");
+    // See the innocent-case test above: `finishRender` no longer defaults
+    // `cache-control` — the seam (`response-cache-floor.ts`) does, and would
+    // make this `no-store` on a real response.
+    expect(headers["cache-control"]).toBeUndefined();
   });
 });
 

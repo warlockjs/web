@@ -36,6 +36,11 @@ function context(path = "/account") {
     },
     response: {
       headers: vi.fn(),
+      // `applyResponseCacheFloor` (`response-cache-floor.ts`) now calls
+      // `response.header(...)` on EVERY page response — the closed-by-default
+      // `no-store` case included, not only the floor cases — so this mock
+      // needs it even for tests that never touch cookies or auth.
+      header: vi.fn(),
       html: vi.fn(async () => undefined),
     },
   };

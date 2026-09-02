@@ -1,4 +1,5 @@
 import { type Response } from "@warlock.js/core";
+import type { PageCacheOptIn } from "../routing/route-identity";
 
 /**
  * The `Set-Cookie` floor: any page response that carries a `Set-Cookie`
@@ -67,16 +68,38 @@ export function carriesSetCookie(response: HeaderReadable): boolean {
 }
 
 /**
- * Apply the absolute `private, no-store` floor when either the request was
- * auth-derived or the response carries a `Set-Cookie`. Both reasons collapse
- * to the same header on purpose: whichever one is true, the response is not
- * safe for a shared cache to hold.
+ * Decide and apply the FINAL `Cache-Control` for a page response — the one
+ * call site both the document and the data representation (`x-warlock-data`)
+ * go through, so the two can never disagree (`create-page-route-handler.ts`).
+ *
+ * Precedence, highest wins:
+ *
+ * 1. `authDerived` or a `Set-Cookie` on the response ⇒ `private, no-store`,
+ *    ALWAYS — this floor beats an explicit `cache` opt-in on purpose. A
+ *    `Set-Cookie` held in a shared cache hands the SAME cookie to every later
+ *    visitor (session fixation); an auth-derived page is per-visitor by
+ *    definition. Neither is safe for a shared cache under any opt-in.
+ * 2. A route that declared `cache: { public: true, maxAge }`
+ *    ({@link PageCacheOptIn}, `../routing/route-identity.ts`) and triggered
+ *    neither floor above ⇒ `public, max-age=<maxAge>`.
+ * 3. Everything else ⇒ `no-store` — the framework's closed-by-default answer.
+ *    A page that never opts in is never held by a shared cache, no matter
+ *    what a loader's own committed headers said; only the two mechanisms
+ *    above can produce anything other than `no-store`.
  */
 export function applyResponseCacheFloor(
   response: Response,
-  options: { authDerived: boolean },
+  options: { authDerived: boolean; cache?: PageCacheOptIn },
 ): void {
   if (options.authDerived || carriesSetCookie(response)) {
     response.header("Cache-Control", "private, no-store");
+    return;
   }
+
+  if (options.cache !== undefined) {
+    response.header("Cache-Control", `public, max-age=${options.cache.maxAge}`);
+    return;
+  }
+
+  response.header("Cache-Control", "no-store");
 }
