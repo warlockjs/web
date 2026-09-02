@@ -20,7 +20,7 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import Fastify, { type FastifyInstance } from "fastify";
-import { registerHttpPlugins, router, type Request } from "@warlock.js/core";
+import { registerHttpPlugins, router, Response, type Request } from "@warlock.js/core";
 import { WARLOCK_DATA_REQUEST_HEADER, WARLOCK_DATA_REQUEST_VALUE } from "../routing/data-request";
 import type { PageCacheOptIn } from "../routing/route-identity";
 import type { BufferedCookie } from "./execute-page-request";
@@ -83,6 +83,47 @@ describe("page route cache opt-in", () => {
     registerRoute("/__cache-opted-in-auth", server, { public: true, maxAge: 120 });
 
     router.scan(server);
+
+    // ── 6. UNOBSERVABLE auth mark — wired directly on the raw Fastify
+    // instance, bypassing `router.get`/`router.scan` entirely. Going through
+    // the router always constructs a real core `Request`
+    // (`router.ts`'s `handleRoute`), whose `locals` is initialized to `{}` in
+    // its OWN constructor — so `request.locals` can never actually be absent
+    // that way, no matter what the request does. To prove the "the mark
+    // mechanism is not observable on this request at all" case for real, this
+    // route calls the exact same handler function returned by
+    // `createPageRouteHandler` with a hand-built context whose `request` has
+    // no `locals` property at all — the same shape several existing unit
+    // tests in `create-page-route-handler.spec.ts` already hand this handler.
+    const unobservableHandler = createPageRouteHandler({
+      path: "/__cache-opted-in-unobservable",
+      name: "/__cache-opted-in-unobservable",
+      appFile: "app.tsx",
+      layoutFile: "layout.tsx",
+      pageFile: "page.tsx",
+      loadModule: async (moduleId) => moduleById[moduleId],
+      httpServer: server,
+      cache: { public: true, maxAge: 120 },
+    });
+
+    server.get("/__cache-opted-in-unobservable", async (rawRequest, rawReply) => {
+      const response = new Response();
+      response.setResponse(rawReply);
+      // Only needed so `Response.send`'s optional-chained `this.request?.id`
+      // logging and the `finish`-event `endTime` write have somewhere to land
+      // — unrelated to the `request.locals` question this route exists to
+      // prove.
+      response.request = { id: "unobservable-test" } as never;
+
+      const request = {
+        path: rawRequest.url,
+        header: (name: string, defaultValue?: unknown) =>
+          rawRequest.headers[name.toLowerCase()] ?? defaultValue,
+        // Deliberately no `locals` property at all.
+      };
+
+      await unobservableHandler({ request, response } as never);
+    });
   });
 
   beforeEach(() => {
@@ -162,5 +203,26 @@ describe("page route cache opt-in", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.headers["cache-control"]).toBe("private, no-store");
+  });
+
+  // ── 6. UNPROVEN MEANS REVOKED — the fix this suite exists to prove ───────
+  it("unproven means revoked: an opted-in route whose auth mark is unobservable emits no-store, NOT public, max-age", async () => {
+    const response = await server.inject({
+      method: "GET",
+      url: "/__cache-opted-in-unobservable",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
+  });
+
+  it("unproven means revoked: the revoked opt-in does not escalate to private, no-store either — an unobservable mark is not proof of auth, just an absence of proof either way", async () => {
+    const response = await server.inject({
+      method: "GET",
+      url: "/__cache-opted-in-unobservable",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["cache-control"]).not.toBe("private, no-store");
   });
 });

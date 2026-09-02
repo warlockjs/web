@@ -435,12 +435,23 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       // a shared cache handing the same cookie to every later visitor
       // (session fixation — see `response-cache-floor.ts`). Read once,
       // applied identically to both representations, so neither can carry a
-      // weaker header than the other. Optional chaining: several existing
-      // unit tests hand this handler a plain `{ path, header }` mock with no
-      // `locals`, never a real core `Request` — treated the same as "never
-      // touched auth state".
+      // weaker header than the other.
+      //
+      // TRI-STATE, deliberately, not `=== true`: several existing unit tests
+      // hand this handler a plain `{ path, header }` mock with no `locals` at
+      // all, never a real core `Request` — that is the auth mark mechanism
+      // being genuinely UNOBSERVABLE on this request, not the mechanism
+      // having fired `false`. Collapsing both into one boolean via
+      // `request.locals?.authDerived === true` used to read "unobservable" as
+      // "provably clean", which let an opted-in route serve `public,
+      // max-age=N` to a request nobody could actually vouch for. The ruling
+      // for the per-route cache opt-in is fail-CLOSED — unproven means
+      // revoked — so `undefined` is passed through as its own state here and
+      // it is `applyResponseCacheFloor` (`response-cache-floor.ts`) that
+      // decides what each of the three states does to the opt-in; this seam
+      // only reports what it actually knows.
       applyResponseCacheFloor(response, {
-        authDerived: request.locals?.authDerived === true,
+        authDerived: request.locals === undefined ? undefined : request.locals.authDerived === true,
         cache,
       });
 

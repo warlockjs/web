@@ -72,31 +72,56 @@ export function carriesSetCookie(response: HeaderReadable): boolean {
  * call site both the document and the data representation (`x-warlock-data`)
  * go through, so the two can never disagree (`create-page-route-handler.ts`).
  *
+ * `authDerived` is TRI-STATE in effect, not a plain boolean, because the ruling
+ * for the per-route cache opt-in is fail-CLOSED: within an opted-in route,
+ * unproven means revoked.
+ *
+ * - `true`  — the auth mark mechanism is observable AND it fired: this request
+ *   touched auth state.
+ * - `false` — the auth mark mechanism is observable AND it did NOT fire: this
+ *   request PROVABLY never touched auth state.
+ * - `undefined` — the auth mark mechanism is not observable on this request AT
+ *   ALL (`request.locals` itself is absent — see `create-page-route-handler.ts`).
+ *   This is neither of the two states above: "we could not look" is not "we
+ *   looked and it was clean". Treating an unobservable mark as `false` would
+ *   let an opted-in route emit `public, max-age=N` for a request that might
+ *   have carried auth state we simply had no way to see — an incomplete
+ *   enumeration must fail toward LESS caching, never toward leaking. So only
+ *   `false` — provably-not-touched — may let an opt-in take effect; `undefined`
+ *   revokes it, the same as `true` would, just without the stronger `private`
+ *   claim `true` is entitled to make.
+ *
  * Precedence, highest wins:
  *
- * 1. `authDerived` or a `Set-Cookie` on the response ⇒ `private, no-store`,
- *    ALWAYS — this floor beats an explicit `cache` opt-in on purpose. A
- *    `Set-Cookie` held in a shared cache hands the SAME cookie to every later
- *    visitor (session fixation); an auth-derived page is per-visitor by
- *    definition. Neither is safe for a shared cache under any opt-in.
+ * 1. `authDerived === true` or a `Set-Cookie` on the response ⇒
+ *    `private, no-store`, ALWAYS — this floor beats an explicit `cache`
+ *    opt-in on purpose. A `Set-Cookie` held in a shared cache hands the SAME
+ *    cookie to every later visitor (session fixation); an auth-derived page
+ *    is per-visitor by definition. Neither is safe for a shared cache under
+ *    any opt-in.
  * 2. A route that declared `cache: { public: true, maxAge }`
- *    ({@link PageCacheOptIn}, `../routing/route-identity.ts`) and triggered
- *    neither floor above ⇒ `public, max-age=<maxAge>`.
+ *    ({@link PageCacheOptIn}, `../routing/route-identity.ts`) AND whose
+ *    `authDerived` is `false` (provably not touched, not merely unobserved)
+ *    ⇒ `public, max-age=<maxAge>`.
  * 3. Everything else ⇒ `no-store` — the framework's closed-by-default answer.
- *    A page that never opts in is never held by a shared cache, no matter
- *    what a loader's own committed headers said; only the two mechanisms
- *    above can produce anything other than `no-store`.
+ *    This is also where an opted-in route lands when `authDerived` is
+ *    `undefined`: the opt-in is revoked, not honoured and not upgraded to
+ *    `private` — plain `no-store` is what a route with no opt-in at all
+ *    already gets, and an unobservable mark must not read as worse than
+ *    that. A page that never opts in is never held by a shared cache, no
+ *    matter what a loader's own committed headers said; only the two
+ *    mechanisms above can produce anything other than `no-store`.
  */
 export function applyResponseCacheFloor(
   response: Response,
-  options: { authDerived: boolean; cache?: PageCacheOptIn },
+  options: { authDerived: boolean | undefined; cache?: PageCacheOptIn },
 ): void {
-  if (options.authDerived || carriesSetCookie(response)) {
+  if (options.authDerived === true || carriesSetCookie(response)) {
     response.header("Cache-Control", "private, no-store");
     return;
   }
 
-  if (options.cache !== undefined) {
+  if (options.cache !== undefined && options.authDerived === false) {
     response.header("Cache-Control", `public, max-age=${options.cache.maxAge}`);
     return;
   }

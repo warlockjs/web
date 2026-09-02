@@ -99,4 +99,34 @@ describe("applyResponseCacheFloor", () => {
 
     expect(response.header).toHaveBeenCalledWith("Cache-Control", "private, no-store");
   });
+
+  it("unproven means revoked: sets no-store, NOT public, max-age, when authDerived is undefined (the mark is unobservable) even though the route opted in", () => {
+    const response = responseWithHeader(() => undefined);
+
+    applyResponseCacheFloor(response, {
+      authDerived: undefined,
+      cache: { public: true, maxAge: 120 },
+    });
+
+    expect(response.header).toHaveBeenCalledWith("Cache-Control", "no-store");
+  });
+
+  it("unproven means revoked: an unobservable mark does not escalate to private, no-store either — it reads exactly like the no-opt-in default, no worse", () => {
+    const response = responseWithHeader(() => undefined);
+
+    applyResponseCacheFloor(response, {
+      authDerived: undefined,
+      cache: { public: true, maxAge: 120 },
+    });
+
+    expect(response.header).not.toHaveBeenCalledWith("Cache-Control", "private, no-store");
+  });
+
+  it("an unobservable mark with no cache opt-in at all is still no-store — the innocent default is unchanged", () => {
+    const response = responseWithHeader(() => undefined);
+
+    applyResponseCacheFloor(response, { authDerived: undefined });
+
+    expect(response.header).toHaveBeenCalledWith("Cache-Control", "no-store");
+  });
 });
