@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { webHomePageStub } from "@warlock.js/core/src/generations/stubs";
+import {
+  webHomePageStub,
+  webHomeRegisterStub,
+} from "@warlock.js/core/src/generations/stubs";
 import type { Plugin } from "vite";
 import { describe, expect, it } from "vitest";
 import { projection } from "./projection";
@@ -271,9 +274,11 @@ describe("projection — register lifecycle hook", () => {
   it("projects Core's generated Web page without any manual repair", async () => {
     const code = await transformSource(webHomePageStub, "index.page.tsx");
 
-    expect(code).toContain("export function register()");
-    expect(code).toContain('extend("en", {');
-    expect(code).toContain('extend("ar", {');
+    expect(code).toContain('export { register } from "./index.register";');
+    expect(code).not.toContain('extend("en", {');
+    expect(webHomeRegisterStub).toContain("export function register()");
+    expect(webHomeRegisterStub).toContain('extend("en", {');
+    expect(webHomeRegisterStub).toContain('extend("ar", {');
     expect(code).not.toMatch(/export const route/);
     expect(code).not.toMatch(/export const metadata/);
   });
