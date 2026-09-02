@@ -247,6 +247,30 @@ const REACT_REFRESH_PREAMBLE_ID = "virtual:warlock/react-refresh-preamble";
 /** The `\0`-prefixed form Rollup uses to mark a module as not-a-file. */
 const RESOLVED_REACT_REFRESH_PREAMBLE_ID = `\0${REACT_REFRESH_PREAMBLE_ID}`;
 
+/**
+ * `@fastify/static`'s `maxAge` is milliseconds (the `send` package's option,
+ * not seconds like `Cache-Control`'s own `max-age`) — one year, matching the
+ * header this produces: `public, max-age=31536000, immutable`. Safe forever
+ * because every filename under {@link CLIENT_ASSET_URL_PREFIX} is content-hashed
+ * by the client build: a changed file is a changed URL, never a changed
+ * response at the same URL, which is the one condition `immutable` requires.
+ */
+const HASHED_ASSET_CACHE_MAX_AGE_MS = 31536000 * 1000;
+
+/**
+ * Exported so a test can assert the real options this connector hands
+ * `router.directory` — the same object `boot()` uses below, not a copy a spec
+ * could drift from unnoticed.
+ */
+export function productionAssetsDirectoryOptions(clientDir: string) {
+  return {
+    root: path.join(clientDir, "assets"),
+    prefix: `${CLIENT_ASSET_URL_PREFIX}/`,
+    maxAge: HASHED_ASSET_CACHE_MAX_AGE_MS,
+    immutable: true,
+  };
+}
+
 /** `@vitejs/plugin-react`'s default export, plus the one static it publishes. */
 type ReactPluginFactory = ((options?: Record<string, unknown>) => PluginOption[]) & {
   preambleCode?: string;
@@ -442,10 +466,7 @@ export class WebConnector extends BaseConnector {
       // files, which were registered individually above rather than exposing
       // this directory wholesale.
       if (this.pageManifest.pages.length > 0) {
-        router.directory({
-          root: path.join(this.resolveClientDir(), "assets"),
-          prefix: `${CLIENT_ASSET_URL_PREFIX}/`,
-        });
+        router.directory(productionAssetsDirectoryOptions(this.resolveClientDir()));
       }
 
       return;

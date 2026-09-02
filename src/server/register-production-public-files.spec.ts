@@ -49,11 +49,13 @@ describe("registerProductionPublicFiles", () => {
       1,
       "/favicon.svg",
       path.join(clientDir, "public", "favicon.svg"),
+      300,
     );
     expect(file).toHaveBeenNthCalledWith(
       2,
       "/docs/rem-public.txt",
       path.join(clientDir, "public", "docs", "rem-public.txt"),
+      300,
     );
   });
 

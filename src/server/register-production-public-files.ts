@@ -25,6 +25,22 @@ export class MissingProductionPublicFileError extends Error {
   }
 }
 
+/**
+ * Seconds, not milliseconds — `Router.file`'s `cacheTime` is the response's
+ * own `Cache-Control: max-age` value (`core/src/http/response.ts`), unlike
+ * `@fastify/static`'s millisecond `maxAge`.
+ *
+ * These files are copied verbatim from `app/public` at build time: the URL is
+ * the developer's chosen filename, not a content hash, so a rebuild can change
+ * a file's bytes without changing its URL. `immutable` would tell the browser
+ * to skip revalidation forever, which is wrong here — this is a plain
+ * `max-age`, so a stale copy is served for at most this long and then
+ * revalidated. Five minutes bounds staleness after a deploy to something a
+ * developer would not notice, without paying a revalidation round trip on
+ * every load the way `max-age=0` does.
+ */
+const PUBLIC_FILE_CACHE_MAX_AGE_SECONDS = 300;
+
 function assertRelativePublicFile(publicFile: string): string[] {
   const segments = publicFile.split("/");
 
@@ -63,6 +79,6 @@ export function registerProductionPublicFiles(
       throw new MissingProductionPublicFileError(publicFile, absoluteFile);
     }
 
-    router.file(`/${publicFile}`, absoluteFile);
+    router.file(`/${publicFile}`, absoluteFile, PUBLIC_FILE_CACHE_MAX_AGE_SECONDS);
   }
 }
