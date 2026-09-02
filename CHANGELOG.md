@@ -2,6 +2,12 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.2.3 - 2026-09-02
+
+### Fixed
+
+- The generated Web starter now projects and hydrates unchanged with one `index` page identity, universal localization registration, and deterministic browser markup.
+
 ## 5.2.2
 
 ### Fixed
