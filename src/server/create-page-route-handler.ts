@@ -27,10 +27,7 @@ import {
   isDataRequest,
   WARLOCK_DATA_REQUEST_HEADER,
 } from "../routing/data-request";
-import {
-  registerModules,
-  type RegisterableModuleNamespace,
-} from "../runtime/register-modules";
+import { registerModules, type RegisterableModuleNamespace } from "../runtime/register-modules";
 import { buildHydrationPayload } from "./build-hydration-payload";
 import type { BufferedCookie, PageRouteEntry, PageTripleModule } from "./execute-page-request";
 import { isNonHydrating } from "./page-render-bundle";
@@ -261,128 +258,143 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     const wantsData = isDataRequest(request.header(WARLOCK_DATA_REQUEST_HEADER, undefined));
 
     try {
-    const [appModule, layoutModule, ownPageModule, registrationLayouts] = await Promise.all([
-      loadModule(appFile),
-      layoutFile ? loadModule(layoutFile) : Promise.resolve({}),
-      loadModule(pageFile),
-      loadRegistrationLayouts?.() ?? Promise.resolve([]),
-    ]);
+      const [appModule, layoutModule, ownPageModule, registrationLayouts] = await Promise.all([
+        loadModule(appFile),
+        layoutFile ? loadModule(layoutFile) : Promise.resolve({}),
+        loadModule(pageFile),
+        loadRegistrationLayouts?.() ?? Promise.resolve([]),
+      ]);
 
-    // Registration is the first lifecycle action after all module namespaces
-    // have loaded and before `renderPageRequest` can run middleware, loaders or
-    // render. App/page are already their real namespaces. Layouts deliberately
-    // come from the separate raw chain above, never from `layoutModule`, which
-    // may be the synthetic composed middleware wrapper used by dev.
-    registerModules([
-      appModule as RegisterableModuleNamespace,
-      ...registrationLayouts,
-      ownPageModule as RegisterableModuleNamespace,
-    ]);
+      // Registration is the first lifecycle action after all module namespaces
+      // have loaded and before `renderPageRequest` can run middleware, loaders or
+      // render. App/page are already their real namespaces. Layouts deliberately
+      // come from the separate raw chain above, never from `layoutModule`, which
+      // may be the synthetic composed middleware wrapper used by dev.
+      registerModules([
+        appModule as RegisterableModuleNamespace,
+        ...registrationLayouts,
+        ownPageModule as RegisterableModuleNamespace,
+      ]);
 
-    const pageModule = ownPageModule as PageTripleModule;
-    const triple: PageRouteEntry["triple"] = {
-      app: appModule as PageTripleModule,
-      layout: layoutModule as PageTripleModule,
-      // Registration above deliberately receives the REAL namespace. Only the
-      // pipeline view is projected: spreading preserves the component,
-      // metadata, middleware and boundary exports while making a custom 404's
-      // loader uncallable.
-      page: skipPageLoader
-        ? {
-            ...pageModule,
-            // Vite and native ESM loaders hand us module namespace objects,
-            // whose export descriptors are not an object-spread contract.
-            // Keep the rendering export explicitly while hiding only loader.
-            default: pageModule.default,
-            loader: undefined,
-          }
-        : pageModule,
-    };
+      const pageModule = ownPageModule as PageTripleModule;
+      const triple: PageRouteEntry["triple"] = {
+        app: appModule as PageTripleModule,
+        layout: layoutModule as PageTripleModule,
+        // Registration above deliberately receives the REAL namespace. Only the
+        // pipeline view is projected: spreading preserves the component,
+        // metadata, middleware and boundary exports while making a custom 404's
+        // loader uncallable.
+        page: skipPageLoader
+          ? {
+              ...pageModule,
+              // Vite and native ESM loaders hand us module namespace objects,
+              // whose export descriptors are not an object-spread contract.
+              // Keep the rendering export explicitly while hiding only loader.
+              default: pageModule.default,
+              loader: undefined,
+            }
+          : pageModule,
+      };
 
-    const requestUrl = request.path;
-    const [requestPathname] = requestUrl.split("?");
-    const routes: PageRouteEntry[] = [
-      { path: matchPath === undefined ? path : matchPath(requestPathname), name, triple },
-    ];
+      const requestUrl = request.path;
+      const [requestPathname] = requestUrl.split("?");
+      const routes: PageRouteEntry[] = [
+        { path: matchPath === undefined ? path : matchPath(requestPathname), name, triple },
+      ];
 
-    // A DATA request runs everything above and below this line identically —
-    // it is the same route, the same match and the same pipeline — and differs
-    // only in what gets written at the end. Decided here, before the render, so
-    // the branch is visibly about REPRESENTATION and not about behaviour.
-    const rendered = await renderPageRequest(requestUrl, {
-      routes,
-      createHttp: () => ({ request, response }),
-      loadErrorPage,
-    });
+      // A DATA request runs everything above and below this line identically —
+      // it is the same route, the same match and the same pipeline — and differs
+      // only in what gets written at the end. Decided here, before the render, so
+      // the branch is visibly about REPRESENTATION and not about behaviour.
+      const rendered = await renderPageRequest(requestUrl, {
+        routes,
+        createHttp: () => ({ request, response }),
+        loadErrorPage,
+      });
 
-    if (rendered instanceof Response) return rendered;
+      if (rendered instanceof Response) return rendered;
 
-    // See `statusForRenderedOk`: a settled 200 is the only status this route is
-    // allowed to restate, and both the document and the data branch below must
-    // restate it the same way — a client navigation that received 200 with a
-    // not-found payload would push the URL into history as a real page.
-    const status =
-      rendered.status === 200 && statusForRenderedOk !== undefined
-        ? statusForRenderedOk
-        : rendered.status;
+      // See `statusForRenderedOk`: a settled 200 is the only status this route is
+      // allowed to restate, and both the document and the data branch below must
+      // restate it the same way — a client navigation that received 200 with a
+      // not-found payload would push the URL into history as a real page.
+      const status =
+        rendered.status === 200 && statusForRenderedOk !== undefined
+          ? statusForRenderedOk
+          : rendered.status;
 
-    // Stage 10a: the stage 7 commit (headers, then cookies), applied ONCE,
-    // identically for the document and the data representation — see
-    // `applyCommit`.
-    applyCommit(response, rendered, applyBufferedCookie);
+      // Stage 10a: the stage 7 commit (headers, then cookies), applied ONCE,
+      // identically for the document and the data representation — see
+      // `applyCommit`.
+      applyCommit(response, rendered, applyBufferedCookie);
 
-    if (wantsData) {
-      // So a shared cache can never serve a document to a client that asked for
-      // JSON, or the reverse. See `data-request.ts` on why this stays even
-      // while page responses are `no-store`.
-      response.header("Vary", WARLOCK_DATA_REQUEST_HEADER);
+      // `request.locals.authDerived` (core `Request`) is set the moment `user`
+      // or `decodedAccessToken` is assigned, and never cleared. Overriding
+      // `Cache-Control` here — after `applyCommit`'s default `private` and
+      // before EITHER terminal write below — closes the one gap `private`
+      // alone leaves open: a browser (not a shared cache; `private` already
+      // stops those) holding an authenticated page in its own disk/back-forward
+      // cache with no freshness directive. Read once, applied identically to
+      // both representations, so neither can carry a weaker header than the
+      // other. Optional chaining: several existing unit tests hand this handler
+      // a plain `{ path, header }` mock with no `locals`, never a real core
+      // `Request` — treated the same as "never touched auth state".
+      if (request.locals?.authDerived === true) {
+        response.header("Cache-Control", "private, no-store");
+      }
 
-      // `bundle` is absent on exactly one path: nothing matched, so no pipeline
-      // ran and there is no payload to build. Fastify already matched this
-      // route to get here, so reaching it means `request.path` did not satisfy
-      // the entry's own pattern — answered as the 404 it is, rather than
-      // synthesising an empty payload the client would try to render as a page.
-      if (rendered.bundle === undefined) {
+      if (wantsData) {
+        // So a shared cache can never serve a document to a client that asked for
+        // JSON, or the reverse. See `data-request.ts` on why this stays even
+        // while page responses are `no-store`.
+        response.header("Vary", WARLOCK_DATA_REQUEST_HEADER);
+
+        // `bundle` is absent on exactly one path: nothing matched, so no pipeline
+        // ran and there is no payload to build. Fastify already matched this
+        // route to get here, so reaching it means `request.path` did not satisfy
+        // the entry's own pattern — answered as the 404 it is, rather than
+        // synthesising an empty payload the client would try to render as a page.
+        if (rendered.bundle === undefined) {
+          response.setContentType(DATA_RESPONSE_CONTENT_TYPE);
+          await response.send(JSON.stringify({ error: "not_found" }), status);
+
+          return;
+        }
+
+        // SERIALIZED HERE, and handed over as a STRING on purpose.
+        //
+        // `response.send(object)` runs the body through core's `Response.parse`,
+        // which recurses the object, calls `toJSON()` on anything that has one
+        // (assigning `request` onto it as it goes) and rebuilds arrays. That is
+        // the right behaviour for a controller returning Resources; it is the
+        // wrong behaviour here, because the DOCUMENT path serializes this exact
+        // object with a plain `JSON.stringify` into `#__WARLOCK_DATA__`. Routing
+        // one path through a transformer and not the other is precisely the
+        // drift `build-hydration-payload.ts` exists to prevent — the browser
+        // would build one tree on a page load and a different one on a
+        // navigation to the same URL.
+        //
+        // A string body also bypasses `parseBody()` entirely, so the content type
+        // has to be declared rather than inferred from an object body.
         response.setContentType(DATA_RESPONSE_CONTENT_TYPE);
-        await response.send(JSON.stringify({ error: "not_found" }), status);
+        await response.send(JSON.stringify(buildHydrationPayload(rendered.bundle)), status);
 
         return;
       }
 
-      // SERIALIZED HERE, and handed over as a STRING on purpose.
-      //
-      // `response.send(object)` runs the body through core's `Response.parse`,
-      // which recurses the object, calls `toJSON()` on anything that has one
-      // (assigning `request` onto it as it goes) and rebuilds arrays. That is
-      // the right behaviour for a controller returning Resources; it is the
-      // wrong behaviour here, because the DOCUMENT path serializes this exact
-      // object with a plain `JSON.stringify` into `#__WARLOCK_DATA__`. Routing
-      // one path through a transformer and not the other is precisely the
-      // drift `build-hydration-payload.ts` exists to prevent — the browser
-      // would build one tree on a page load and a different one on a
-      // navigation to the same URL.
-      //
-      // A string body also bypasses `parseBody()` entirely, so the content type
-      // has to be declared rather than inferred from an object body.
-      response.setContentType(DATA_RESPONSE_CONTENT_TYPE);
-      await response.send(JSON.stringify(buildHydrationPayload(rendered.bundle)), status);
+      // Stylesheets first: they go in `<head>`, the hydration module goes before
+      // `</body>`, and doing the head work on the already-rendered string keeps
+      // both splices in one place rather than threading CSS through the React
+      // render just to reach the same bytes.
+      const styled = installStylesheets(rendered.html, stylesheetUrls ?? []);
 
-      return;
-    }
+      const html = installHydrationClientModule(
+        styled,
+        hydrationClientModuleUrl,
+        hydrationClientModuleUrl === undefined ? undefined : request.nonce,
+      );
 
-    // Stylesheets first: they go in `<head>`, the hydration module goes before
-    // `</body>`, and doing the head work on the already-rendered string keeps
-    // both splices in one place rather than threading CSS through the React
-    // render just to reach the same bytes.
-    const styled = installStylesheets(rendered.html, stylesheetUrls ?? []);
-
-    const html = installHydrationClientModule(
-      styled,
-      hydrationClientModuleUrl,
-      hydrationClientModuleUrl === undefined ? undefined : request.nonce,
-    );
-
-    await response.html(html, status);
+      await response.html(html, status);
     } catch (thrown) {
       // This is outside the page pipeline: loading/registering a module can
       // fail before a triple exists for its authored boundaries to handle.
@@ -397,38 +409,38 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       // no try/catch at all (the file header's stated contract) — the
       // router's own error path is still the answer, just one throw later.
       try {
-      const rendered = await renderPageFailure({
-        name,
-        path: request.path,
-        request,
-        response,
-        thrown,
-        loadErrorPage,
-      });
+        const rendered = await renderPageFailure({
+          name,
+          path: request.path,
+          request,
+          response,
+          thrown,
+          loadErrorPage,
+        });
 
-      applyCommit(response, rendered, applyBufferedCookie);
+        applyCommit(response, rendered, applyBufferedCookie);
 
-      if (wantsData) {
-        response.header("Vary", WARLOCK_DATA_REQUEST_HEADER);
-        response.setContentType(DATA_RESPONSE_CONTENT_TYPE);
-        await response.send(JSON.stringify(buildHydrationPayload(rendered.bundle!)), 500);
-        return;
-      }
+        if (wantsData) {
+          response.header("Vary", WARLOCK_DATA_REQUEST_HEADER);
+          response.setContentType(DATA_RESPONSE_CONTENT_TYPE);
+          await response.send(JSON.stringify(buildHydrationPayload(rendered.bundle!)), 500);
+          return;
+        }
 
-      const styled = installStylesheets(rendered.html, stylesheetUrls ?? []);
+        const styled = installStylesheets(rendered.html, stylesheetUrls ?? []);
 
-      // `renderPageFailure` marks its bundle non-hydrating (page-render-bundle.ts):
-      // there is no triple, so there is nothing on the client the hydration
-      // module could attach to. Injecting it anyway would ship a script that
-      // hydrates against a composition the server never trusted.
-      const html = isNonHydrating(rendered.bundle)
-        ? styled
-        : installHydrationClientModule(
-            styled,
-            hydrationClientModuleUrl,
-            hydrationClientModuleUrl === undefined ? undefined : request.nonce,
-          );
-      await response.html(html, 500);
+        // `renderPageFailure` marks its bundle non-hydrating (page-render-bundle.ts):
+        // there is no triple, so there is nothing on the client the hydration
+        // module could attach to. Injecting it anyway would ship a script that
+        // hydrates against a composition the server never trusted.
+        const html = isNonHydrating(rendered.bundle)
+          ? styled
+          : installHydrationClientModule(
+              styled,
+              hydrationClientModuleUrl,
+              hydrationClientModuleUrl === undefined ? undefined : request.nonce,
+            );
+        await response.html(html, 500);
       } catch {
         throw thrown;
       }
