@@ -2,6 +2,14 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.2.1
+
+### Fixed
+
+- Tightened the Core and Seal peer ranges to `^5.2.0`. Web 5.2 production
+  code imports Core APIs that were not available in Core 5.0, while the former
+  Seal `*` range promised compatibility across unrelated major versions.
+
 ## 5.2.0
 
 ### Added
