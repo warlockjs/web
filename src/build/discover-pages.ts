@@ -59,7 +59,7 @@ import {
 import { METADATA_KEYS, OPEN_GRAPH_KEYS, TWITTER_KEYS } from "../metadata";
 import { NestedLayoutsNotSupportedError, selectPageLayout } from "../routing/layout-policy";
 import { deriveFilesystemRoutePath } from "../routing/filesystem-route";
-import { resolvePageRouteName } from "../routing/route-identity";
+import { canonicalizeRouteExport, resolvePageRouteName } from "../routing/route-identity";
 import { assertPageHasDefaultExport } from "./page-default-export";
 import type { RouteExportsReadResult } from "./read-route-exports";
 import { NonLiteralRouteExportError, readRouteExports } from "./read-route-exports";
@@ -944,10 +944,20 @@ export function discoverPages(options: DiscoverPagesOptions): DiscoveredPage[] {
           return [[directory, prefix]];
         }),
       );
+      // Routed through `canonicalizeRouteExport` — the ONE seam that validates
+      // a declared `route.path` (`../routing/route-identity.ts`) — rather than
+      // reading `route.path` directly, so `effectiveRoutePath` can never carry
+      // a path the grammar has rejected. This does not depend on `routeName`
+      // (below) also validating: even if that field were reordered, made
+      // conditional, or removed, an unsupported declared path still cannot
+      // reach `effectiveRoutePath` unvalidated.
+      const canonicalRoute =
+        !isNotFoundPage && route ? canonicalizeRouteExport(route, relativePageFile) : undefined;
+
       const effectiveRoutePath = isNotFoundPage
         ? NOT_FOUND_ROUTE_PATH
-        : route
-          ? composeRoutePath(layoutPrefix, route.path)
+        : canonicalRoute
+          ? composeRoutePath(layoutPrefix, canonicalRoute.path)
           : deriveFilesystemRoutePath({ pageFile: relativePageFile, layoutPrefixes });
 
       if (!isNotFoundPage && route !== undefined) {

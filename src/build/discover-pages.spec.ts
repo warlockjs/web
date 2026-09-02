@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NestedLayoutsNotSupportedError } from "../routing/layout-policy";
+import { PageRoutePathNotSupportedError } from "../routing/page-route-grammar";
 import {
   discoverPages as discoverPagesRaw,
   DuplicateErrorPageError,
@@ -489,6 +490,44 @@ describe("discoverPages — property C: the canonical route is the DECLARED one"
       ["/shop/bare", "shop.bare"],
       ["/shop/object", "shop.thing"],
     ]);
+  });
+
+  // BEHAVIOUR PINNED: an unsupported declared `path` must never reach `pages`
+  // — regardless of whether an explicit `name` is ALSO declared alongside it.
+  //
+  // `routeName`'s own validation (`resolvePageRouteName` →
+  // `canonicalizeRouteExport`) happens to also reject this same page, but that
+  // is not what this test is guarding: a `route` with an explicit `name`
+  // never NEEDS `resolvePageRouteName` to derive one, so a version of
+  // discovery that reads `route.name` directly wherever it is present —
+  // skipping `resolvePageRouteName` (and therefore skipping validation)
+  // whenever the author was thoughtful enough to name the route — would
+  // still pass every other test in this file while silently publishing the
+  // unsupported path below. Only a path that is independently validated on
+  // ITS OWN route (not merely as a side effect of validating something else
+  // in the same object) closes that hole, so this test would still catch a
+  // regression under such a refactor — reordering `routeName`/`routePath`,
+  // hoisting the page object into a variable pushed before `routeName` runs,
+  // or any other restructuring — because it fails whenever the path itself
+  // was never checked, not because of what order things happened to run in.
+  it("(g) refuses an unsupported declared path even when the route ALSO declares an explicit name", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/web/users/id.page.tsx": pageDeclaring(
+        'export const route = { path: "/users/:id?", name: "userDetail" };',
+      ),
+    });
+
+    try {
+      discoverPages({ appRoot });
+      expect.unreachable(
+        "expected discovery to reject the unsupported path instead of publishing it",
+      );
+    } catch (error) {
+      expect(error).toBeInstanceOf(PageRoutePathNotSupportedError);
+      expect((error as Error).message).toContain("users/id.page.tsx");
+      expect((error as Error).message).toContain("/users/:id?");
+    }
   });
 });
 
