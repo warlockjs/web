@@ -23,9 +23,9 @@
  * handler is a lookup over the same table, not an evaluation step.
  */
 import { composeRoutePath } from "../routing/compose-route-path";
-import { deriveFilesystemRouteName, deriveFilesystemRoutePath } from "../routing/filesystem-route";
+import { deriveFilesystemRoutePath } from "../routing/filesystem-route";
 import { NestedLayoutsNotSupportedError, selectPageLayout } from "../routing/layout-policy";
-import { canonicalizeRouteExport, deriveFallbackRouteName } from "../routing/route-identity";
+import { canonicalizeRouteExport, resolvePageRouteName } from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
 import { Response, type Router } from "@warlock.js/core";
 import { createPageModuleLoader } from "./create-page-module-loader";
@@ -129,24 +129,23 @@ function webRelativeSourceFile(sourceFile: string): string {
   return sourceFile.split("/").slice(2).join("/");
 }
 
-function resolveRoute(
+/** Exported for `../routing/route-name-parity.spec.ts`, which proves this and dev's `resolvePageRouteIdentity` agree. */
+export function resolveRoute(
   routeExport: PageRouteExport | undefined,
   sourceFile: string,
 ): { path: string; name: string } {
-  if (routeExport === undefined) {
-    const pageFile = webRelativeSourceFile(sourceFile);
+  const pageFile = webRelativeSourceFile(sourceFile);
 
+  if (routeExport === undefined) {
     return {
       path: deriveFilesystemRoutePath({ pageFile }),
-      name: deriveFilesystemRouteName(pageFile),
+      name: resolvePageRouteName(routeExport, pageFile),
     };
   }
 
-  const canonical = canonicalizeRouteExport(routeExport);
-
   return {
-    path: canonical.path,
-    name: canonical.name ?? deriveFallbackRouteName({ routePath: canonical.path, sourceFile }),
+    path: canonicalizeRouteExport(routeExport).path,
+    name: resolvePageRouteName(routeExport, pageFile),
   };
 }
 

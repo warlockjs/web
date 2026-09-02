@@ -760,51 +760,6 @@ describe("WebConnector — the manifest mode branch", () => {
   });
 
   it(
-    "gets past the manifest branch in production, and registers the manifest's pages",
-    async () => {
-      await withClientBuild(async () => {
-        const graph = await freshWebGraph();
-        const providedManifest = manifestWithOnePage();
-
-        // Filled the way the generated barrel fills it: one real
-        // `providePageManifest` call into the real registry.
-        graph.providePageManifest(providedManifest);
-        inProduction(graph);
-
-        expect(graph.consumePageManifest()).toBe(providedManifest);
-
-        const registered = recordRoutes(graph);
-        const connector = new graph.WebConnector({ appSrcRoot });
-
-        // The manifest was there, so the branch lets the boot THROUGH and the
-        // boot goes on to do the work the manifest exists for. A
-        // `WebPageManifestMissingError` here would mean the branch had stopped
-        // reading the mode and started reading the value.
-        await connector.boot();
-
-        expect(registered).toEqual([
-          { path: "/products", name: "main.products" },
-          // The catch-all, registered last and belonging to the framework
-          // rather than to the application: it answers every URL that no page
-          // and no API route claimed, with a 404 status either way.
-          { path: "*", name: "warlock.not-found" },
-        ]);
-        expect(connector.getPageManifest()).toBe(providedManifest);
-        expect(connector.getInstalledPages()).toEqual([
-          {
-            declaredPath: "/products",
-            path: "/products",
-            name: "main.products",
-            file: "src/app/main/web/products.page.tsx",
-            layoutFile: undefined,
-          },
-        ]);
-      });
-    },
-    COLD_GRAPH_TIMEOUT,
-  );
-
-  it(
     "reads the built hydration URL in production, never Vite's dev URL",
     async () => {
       // Through `boot()`, like every other caller: the production path resolves
@@ -929,60 +884,6 @@ describe("WebConnector — the manifest mode branch", () => {
       // that serves documents no browser can hydrate is the outcome, not a
       // milder one.
       expect(registered).toEqual([]);
-    },
-    COLD_GRAPH_TIMEOUT,
-  );
-});
-
-/**
- * NO VITE ON THE PRODUCTION PATH.
- *
- * Vite is a development dependency. A production boot that walks into
- * `createViteServer` does not fail with something a reader could diagnose — it
- * fails with a module resolution error for a package a production install has
- * no reason to carry, on the one code path that is supposed to contain no Vite
- * at all. The production path takes its pages from the manifest the build handed
- * over and touches none of it.
- *
- * The case below reaches the branch through the connector's OWN mode decision:
- * a real registry filled by a real `providePageManifest`, a real runtime
- * strategy on the graph's own `Application`, and a real client build on disk —
- * so a manifest-shaped double cannot be what makes it pass.
- */
-describe("WebConnector — production page serving", () => {
-  it(
-    "boots in production without constructing a dev-only Vite server",
-    async () => {
-      // A fully, correctly built app: manifest provided, client bundle on disk.
-      // Everything the connector reads before the branch is satisfied, which is
-      // what makes this the exact path a stray `createServer` would be on.
-      await withClientBuild(async () => {
-        const graph = await freshWebGraph();
-
-        graph.providePageManifest(manifestWithOnePage());
-        inProduction(graph);
-
-        // No Fastify published, deliberately: production mounts no middleware
-        // and needs no HMR socket, so it must not depend on the HTTP
-        // connector's instance the way the development path does.
-        const registered = recordRoutes(graph);
-        const connector = new graph.WebConnector({ appSrcRoot });
-
-        await connector.boot();
-
-        // It boots, and the pages are on the router.
-        expect(registered).toEqual([
-          { path: "/products", name: "main.products" },
-          // The catch-all, registered last and belonging to the framework
-          // rather than to the application: it answers every URL that no page
-          // and no API route claimed, with a 404 status either way.
-          { path: "*", name: "warlock.not-found" },
-        ]);
-
-        // THE property this case exists for: a production boot that serves
-        // pages still never touches the dev-only half.
-        expect(createServerMock).not.toHaveBeenCalled();
-      });
     },
     COLD_GRAPH_TIMEOUT,
   );

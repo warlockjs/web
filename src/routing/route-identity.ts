@@ -6,13 +6,21 @@
  * discovery (`web/src/build/discover-pages.ts`) each hand-derived this on
  * their own until all three were made to delegate here.
  *
+ * {@link resolvePageRouteName} is the ONE answer to "what is this page's
+ * route name": an explicit `name` on the declared `route` export wins,
+ * otherwise the name comes from the page's own FILE PATH
+ * (`deriveFilesystemRouteName`) — never from `route.path`. The route name is
+ * an identity key (`routing/route-table.ts`'s lookup key, `components/link.ts`,
+ * `server/render-page.ts`, the generated client registry and the hydration
+ * payload all address a page by it), and an identity key must be stable under
+ * the change most likely to happen to a page — its URL, renamed for SEO,
+ * localization or restructuring. A file path is also unique by construction,
+ * while a declared `path: "/"` yields no usable name at all.
+ *
  * Pure string logic only: no `fs`, no `path`, no Node built-ins. Every input
  * this module accepts is already CANONICAL — a POSIX, app-root-relative
- * source path (e.g. `"src/app/users/web/account/settings.page.tsx"` or
- * `"src/web/index.page.tsx"`) and an already-validated declared route export.
- * Turning an absolute, OS-specific file path into that canonical form is the
- * caller's job; this module refuses (see {@link NonPosixSourceFilePathError})
- * rather than guess at a normalization.
+ * source path (e.g. `"src/web/index.page.tsx"`) and an already-validated
+ * declared route export.
  *
  * Well-formedness of the declared `route` export itself (is it a string or an
  * object, does the object have a `path`) is the extractor's problem — already
@@ -28,6 +36,8 @@
  * environments along.
  */
 
+import { deriveFilesystemRouteName } from "./filesystem-route";
+
 /** The shape a page's `route` export may declare — mirrors `PageRouteExport` in `install-page-routes.ts`. */
 export type DeclaredRouteExport = string | { path: string; name?: string };
 
@@ -36,30 +46,6 @@ export type CanonicalRoute = {
   path: string;
   name?: string;
 };
-
-/** The canonical inputs {@link deriveFallbackRouteName} requires — see the module doc comment for what "canonical" means. */
-export type RouteNameFallbackInput = {
-  /** The page's declared route path, e.g. `"/settings"` or `"/"`. */
-  routePath: string;
-  /** The page's app-root-relative POSIX source path, e.g. `"src/app/main/web/contact-us.page.tsx"`. */
-  sourceFile: string;
-};
-
-/**
- * Raised when a caller passes a `sourceFile` containing a backslash.
- * Canonical means canonical: this module does not normalize Windows path
- * separators on the caller's behalf.
- */
-export class NonPosixSourceFilePathError extends Error {
-  public constructor(public readonly sourceFile: string) {
-    super(
-      `route-identity: sourceFile "${sourceFile}" contains a backslash. This module's inputs ` +
-        "must already be canonical app-root-relative POSIX paths (forward slashes only) — " +
-        'normalize with `value.replace(/\\\\/g, "/")` before calling deriveFallbackRouteName.',
-    );
-    this.name = "NonPosixSourceFilePathError";
-  }
-}
 
 /**
  * Canonicalizes a declared `route` export — string or `{ path, name? }` —
@@ -75,51 +61,26 @@ export function canonicalizeRouteExport(route: DeclaredRouteExport): CanonicalRo
   return route.name === undefined ? { path: route.path } : { path: route.path, name: route.name };
 }
 
-/** Strips leading and trailing "." characters — mirrors `trim(value, ".")` as used by the installer's `deriveRouteName`. */
-function trimDots(value: string): string {
-  return value.replace(/^\.+|\.+$/g, "");
-}
-
 /**
- * The module segment a canonical source path declares, or `undefined` for a
- * global (`src/web/**`) page. `sourceFile` is `<srcDir>/app/<module>/web/...`
- * or `<srcDir>/web/...` — the first segment is the (arbitrarily named) src
- * dir, so the module test looks at the SECOND segment.
- */
-function moduleSegmentFor(sourceFile: string): string | undefined {
-  const segments = sourceFile.split("/");
-
-  return segments[1] === "app" ? segments[2] : undefined;
-}
-
-/**
- * Derives the fallback route name for a page whose declared route carries no
- * `name` — the same derivation the dev installer's `deriveRouteName` applies
- * today (`web/src/server/install-page-routes.ts`), expressed against
- * canonical inputs instead of an absolute file path plus an `appSrcRoot`.
+ * Resolves a page's route NAME — the single derivation `install-page-routes.ts`,
+ * `install-page-routes-from-manifest.ts` and `discover-pages.ts` all delegate
+ * to, so dev, the production manifest installer and build discovery cannot
+ * derive three different names for the same page (see the module doc comment
+ * for why the file path, not `route.path`, is the source of truth).
  *
- * The installer only ever calls its derivation for a page under
- * `<appSrcRoot>/app/**`, so a global (`src/web/**`) page has no installer
- * behaviour to mirror; for that case this function instead follows
- * discovery's own convention (`routeNameFor` in `discover-pages.ts`) — no
- * module prefix, and `"index"` when there is nothing left to say at all.
- *
- * Throws {@link NonPosixSourceFilePathError} when `sourceFile` contains a
- * backslash.
+ * An explicit `name` on `route` always wins. Otherwise the name is derived
+ * from `pageFile` via {@link deriveFilesystemRouteName} — `pageFile` must
+ * already be canonical: a POSIX path relative to the page's web root (e.g.
+ * `"blog/archive.page.tsx"`), the same value each caller already computes as
+ * `filesystemPageFileFor`/`webRelativeSourceFile`/`relativePageFile`.
  */
-export function deriveFallbackRouteName(input: RouteNameFallbackInput): string {
-  const { routePath, sourceFile } = input;
-
-  if (sourceFile.includes("\\")) {
-    throw new NonPosixSourceFilePathError(sourceFile);
+export function resolvePageRouteName(
+  route: DeclaredRouteExport | undefined,
+  pageFile: string,
+): string {
+  if (route === undefined) {
+    return deriveFilesystemRouteName(pageFile);
   }
 
-  const moduleName = moduleSegmentFor(sourceFile);
-  const suffix = trimDots(routePath.replace(/\//g, "."));
-
-  if (moduleName !== undefined) {
-    return suffix ? `${moduleName}.${suffix}` : moduleName;
-  }
-
-  return suffix || "index";
+  return canonicalizeRouteExport(route).name ?? deriveFilesystemRouteName(pageFile);
 }

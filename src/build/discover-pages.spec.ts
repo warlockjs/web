@@ -135,7 +135,9 @@ describe("discoverPages — the recipe", () => {
     expect(relative(appRoot, page.layouts)).toEqual(["src/web/users/account/layout.tsx"]);
     expect(relative(appRoot, [page.appFile as string])).toEqual(["src/web/root.tsx"]);
     expect(page.routePath).toBe("/account/settings");
-    expect(page.routeName).toBe("account.settings");
+    // The name is the file path, not the declared route path: "users" is a
+    // directory segment even though `route` never mentions it.
+    expect(page.routeName).toBe("users.account.settings");
   });
 
   it("discovers src/web pages and ignores page-like files under src/app", () => {
@@ -167,7 +169,7 @@ describe("discoverPages — the recipe", () => {
     expect(page.routeName).toBe("home");
   });
 
-  it("derives an undeclared name from the declared path", () => {
+  it("derives an undeclared name from the file path, never the declared path", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
       "src/web/shop/index.page.tsx": routed("/"),
@@ -177,8 +179,8 @@ describe("discoverPages — the recipe", () => {
     const pages = discoverPages({ appRoot });
 
     expect(pages.map((page) => [page.routePath, page.routeName])).toEqual([
-      ["/", "index"],
-      ["/items", "items"],
+      ["/", "shop"],
+      ["/items", "shop.items"],
     ]);
   });
 
@@ -386,7 +388,10 @@ describe("discoverPages — property C: the canonical route is the DECLARED one"
 
     expect(rest).toEqual([]);
     expect(page.routePath).toBe("/people/directory");
-    expect(page.routeName).toBe("people.directory");
+    // The name still comes from the file path — an identity key must stay
+    // stable when the URL is restructured, so the declared path wins the
+    // route but never the name.
+    expect(page.routeName).toBe("users.list");
   });
 
   it("(b) refuses a computed route export, naming the file, before returning anything", () => {
@@ -481,7 +486,7 @@ describe("discoverPages — property C: the canonical route is the DECLARED one"
     const pages = discoverPages({ appRoot });
 
     expect(pages.map((page) => [page.routePath, page.routeName]).sort()).toEqual([
-      ["/shop/bare", "bare"],
+      ["/shop/bare", "shop.bare"],
       ["/shop/object", "shop.thing"],
     ]);
   });

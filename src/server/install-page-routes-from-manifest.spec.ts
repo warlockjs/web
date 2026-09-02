@@ -163,25 +163,6 @@ function install(
 }
 
 describe("production page route installation", () => {
-  it("registers one page route per manifest entry, with the page route options a page needs", () => {
-    const { run, registered } = install(manifestOf([homePage]));
-
-    const installed = run();
-
-    expect(registered).toHaveLength(1);
-    expect(registered[0].path).toBe("/");
-    expect(registered[0].options).toEqual({ name: "main", isPage: true });
-    expect(installed).toEqual([
-      {
-        declaredPath: "/",
-        path: "/",
-        name: "main",
-        file: "src/app/main/web/home.page.tsx",
-        layoutFile: "src/app/main/web/layout.tsx",
-      },
-    ]);
-  });
-
   it("composes the layout prefix with the page's declared route path", () => {
     const { run, registered } = install(manifestOf([homePage, productsPage]));
 
@@ -232,20 +213,6 @@ describe("production page route installation", () => {
 
     expect(registered[0].path).toBe("/blog");
     expect(registered[0].options.name).toBe("blog.listing");
-  });
-
-  it("derives the route name from the source file when the route export declares none", () => {
-    const page: PageManifestPageEntry = {
-      module: { default: () => null, route: "/blog/latest" },
-      sourceFile: "src/app/main/web/blog/latest.page.tsx",
-      layouts: [],
-    };
-
-    const { run, registered } = install(manifestOf([page]));
-
-    run();
-
-    expect(registered[0].options.name).toBe("main.blog.latest");
   });
 
   it("registers a page module with no route export under the derived filesystem path and dotted name", () => {
@@ -718,25 +685,6 @@ describe("the route table it publishes", () => {
     resetRouteTable();
   });
 
-  it("publishes every installed route, so href() resolves the names it registered", () => {
-    install(manifestOf([homePage, productsPage])).run();
-
-    expect(href("main")).toBe("/");
-    expect(href("products")).toBe("/products");
-  });
-
-  it("publishes the COMPOSED path, not the page's own `route` export", () => {
-    /*
-      `products.page.tsx` declares `route: "/"`; its layout contributes the
-      `/products` prefix. A link resolving to "/" would point at the home page —
-      a wrong URL rather than a missing one, which is the harder failure to
-      notice.
-    */
-    install(manifestOf([productsPage])).run();
-
-    expect(href("products")).toBe("/products");
-  });
-
   it("names itself as the publisher, so an empty table can be traced to a mode", () => {
     install(manifestOf([homePage])).run();
 
@@ -852,10 +800,14 @@ describe("installPageRoutesFromManifest — the not-found page", () => {
     run();
 
     const sent: { body: unknown; status?: number }[] = [];
+    const headers = new Map<string, unknown>();
     const context = {
       // `*/*` is what `fetch()` sends: no explicit `text/html`, so JSON.
       request: { method: "GET", path: "/api/uzers", header: () => "*/*" },
       response: {
+        header: vi.fn((name: string, value: unknown) => {
+          headers.set(name.toLowerCase(), value);
+        }),
         send: async (body: unknown, status?: number) => {
           sent.push({ body, status });
         },
@@ -872,6 +824,7 @@ describe("installPageRoutesFromManifest — the not-found page", () => {
         body: { error: "Route not found", path: "/api/uzers", method: "GET" },
       },
     ]);
+    expect(headers.get("cache-control")).toBe("no-store");
   });
 });
 

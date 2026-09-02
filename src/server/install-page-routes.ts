@@ -24,10 +24,9 @@
  *
  * WHICH PAGES EXIST is answered by {@link discoverPageFiles}
  * (`web/src/build/discover-pages.ts`) — the same walk production's build
- * shares — so this file owns no directory-walking of its own and serves the
- * global root (`<appSrcRoot>/web/**`) exactly as it serves a module's
- * (`<appSrcRoot>/app/<module>/web/**`). WHAT ROUTE A PAGE ANSWERS ON stays
- * this file's own job: each page and its nearest layout are still evaluated
+ * shares — so this file owns no directory-walking of its own; it serves the
+ * page root (`<appSrcRoot>/web/**`) exactly as discovery enumerates it. WHAT
+ * ROUTE A PAGE ANSWERS ON stays this file's own job: each page and its nearest layout are still evaluated
  * through Vite (`vite.ssrLoadModule`), never read statically, because a dev
  * page module must be the one Vite serves, warm cache and all.
  */
@@ -42,12 +41,9 @@ import {
 } from "../build/discover-pages";
 import { NonLiteralRouteExportError, readRouteExports } from "../build/read-route-exports";
 import { composeRoutePath } from "../routing/compose-route-path";
-import {
-  deriveFilesystemRouteName,
-  deriveFilesystemRoutePath,
-} from "../routing/filesystem-route";
+import { deriveFilesystemRoutePath } from "../routing/filesystem-route";
 import { NestedLayoutsNotSupportedError, selectPageLayout } from "../routing/layout-policy";
-import { canonicalizeRouteExport } from "../routing/route-identity";
+import { canonicalizeRouteExport, resolvePageRouteName } from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
 import { Response, type Router } from "@warlock.js/core";
 import { createPageRouteHandler } from "./create-page-route-handler";
@@ -119,15 +115,13 @@ export function resolvePageRouteIdentity(
   if (routeExport === undefined) {
     return {
       declaredPath: deriveFilesystemRoutePath({ pageFile: filesystemPageFile }),
-      name: deriveFilesystemRouteName(filesystemPageFile),
+      name: resolvePageRouteName(routeExport, filesystemPageFile),
     };
   }
 
-  const route = canonicalizeRouteExport(routeExport);
-
   return {
-    declaredPath: route.path,
-    name: route.name ?? deriveFilesystemRouteName(filesystemPageFile),
+    declaredPath: canonicalizeRouteExport(routeExport).path,
+    name: resolvePageRouteName(routeExport, filesystemPageFile),
   };
 }
 
@@ -263,7 +257,7 @@ async function composeLayoutLevel(
 export type InstallPageRoutesOptions = {
   router: Router;
   vite: ViteDevServer;
-  /** v5/app/src — pages live under "<appSrcRoot>/app/*\/web/**" and "<appSrcRoot>/web/**". */
+  /** v5/app/src — pages live under "<appSrcRoot>/web/**". */
   appSrcRoot: string;
   /** v5/app/src/web/root.tsx — the single global app-root file. */
   appFile: string;

@@ -57,11 +57,8 @@ import {
 // get from a type: the list of keys a page is allowed to write.
 import { METADATA_KEYS, OPEN_GRAPH_KEYS, TWITTER_KEYS } from "../metadata";
 import { NestedLayoutsNotSupportedError, selectPageLayout } from "../routing/layout-policy";
-import {
-  deriveFilesystemRouteName,
-  deriveFilesystemRoutePath,
-} from "../routing/filesystem-route";
-import { deriveFallbackRouteName } from "../routing/route-identity";
+import { deriveFilesystemRoutePath } from "../routing/filesystem-route";
+import { resolvePageRouteName } from "../routing/route-identity";
 import { assertPageHasDefaultExport } from "./page-default-export";
 import type { RouteExportsReadResult } from "./read-route-exports";
 import { NonLiteralRouteExportError, readRouteExports } from "./read-route-exports";
@@ -957,13 +954,7 @@ export function discoverPages(options: DiscoverPagesOptions): DiscoveredPage[] {
         type: "page",
         routeName: isNotFoundPage
           ? NOT_FOUND_ROUTE_NAME
-          : (route?.name ??
-              (route
-                ? deriveFallbackRouteName({
-                    routePath: route.path,
-                    sourceFile: relativeToApp(pageFile),
-                  })
-                : deriveFilesystemRouteName(relativePageFile))),
+          : resolvePageRouteName(route, relativePageFile),
         // The catch-all, which the client route matcher already understands as
         // a terminal `catch-all` token sorted LAST by specificity
         // (`../client/runtime/matcher.ts`) — so the browser resolves the
