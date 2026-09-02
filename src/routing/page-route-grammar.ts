@@ -1,9 +1,10 @@
 /**
  * Page-route grammar — the single, pure predicate that decides whether a
- * page's declared `route.path` is inside the PAGE route grammar. Page routes
- * deliberately support a NARROWER grammar than API routes: every place that
- * validates a page path consults this one predicate, so build and boot cannot
- * quietly disagree about what a page is allowed to declare.
+ * page's DECLARED, colon-form `route.path` (`/users/:id`) is inside the PAGE
+ * route grammar. Page routes deliberately support a NARROWER grammar than
+ * API routes. A page's FILESYSTEM segment grammar — the shape of a directory
+ * name or basename on disk, such as `[id]` — is a separate concern owned by
+ * the sibling module `page-file-segment.ts`; this predicate does not cover it.
  *
  * DIRECTORY CONTRACT — applies to everything in `web/src/routing/`: nothing
  * here may import `node:fs`, `node:path`, `vite`, or `fastify`. This module
@@ -45,9 +46,7 @@
  *   user-readable sentence naming the offending construct (the segment, when
  *   one segment is at fault) and the supported alternative if one exists.
  */
-export type PageRoutePathVerdict =
-  | { type: "allowed" }
-  | { type: "rejected"; reason: string };
+export type PageRoutePathVerdict = { type: "allowed" } | { type: "rejected"; reason: string };
 
 const allowed: PageRoutePathVerdict = { type: "allowed" };
 
@@ -162,9 +161,7 @@ export function classifyPageRoutePath(path: string): PageRoutePathVerdict {
   }
 
   if (path === "") {
-    return rejected(
-      `The page route path is empty — declare "/" for the site root instead.`,
-    );
+    return rejected(`The page route path is empty — declare "/" for the site root instead.`);
   }
 
   if (!path.startsWith("/")) {
