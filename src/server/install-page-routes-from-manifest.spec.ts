@@ -80,7 +80,6 @@ function recordingHandlerFactory() {
   return { createHandler, built };
 }
 
-
 const temporaryDirectories: string[] = [];
 
 /** Materialises a fixture app tree: `{ "src/web/dashboard.page.tsx": "" }` under a temp root. */
@@ -383,6 +382,64 @@ async function runLayoutMiddleware(handlerOptions: PageRouteHandlerOptions) {
     await middleware({});
   }
 }
+
+describe("installPageRoutesFromManifest — declared route path grammar", () => {
+  it("installs every allowed declared shape unchanged: /, static, whole-segment param, catch-all, bare string", () => {
+    const rootPage: PageManifestPageEntry = {
+      module: { default: () => null, route: { path: "/" } },
+      sourceFile: "src/app/main/web/home.page.tsx",
+      layouts: [],
+    };
+    const staticPage: PageManifestPageEntry = {
+      module: { default: () => null, route: { path: "/users" } },
+      sourceFile: "src/app/main/web/users.page.tsx",
+      layouts: [],
+    };
+    const paramPage: PageManifestPageEntry = {
+      module: { default: () => null, route: { path: "/users/:id" } },
+      sourceFile: "src/app/main/web/users-id.page.tsx",
+      layouts: [],
+    };
+    const catchAllPage: PageManifestPageEntry = {
+      module: { default: () => null, route: { path: "/prefix/*", name: "prefix.catch-all" } },
+      sourceFile: "src/app/main/web/prefix-catch-all.page.tsx",
+      layouts: [],
+    };
+    // A route export given as a bare string goes through the same seam.
+    const bareStringPage: PageManifestPageEntry = {
+      module: { default: () => null, route: "/contact-us" },
+      sourceFile: "src/app/main/web/contact-us.page.tsx",
+      layouts: [],
+    };
+
+    const { run, registered } = install(
+      manifestOf([rootPage, staticPage, paramPage, catchAllPage, bareStringPage]),
+    );
+
+    run();
+
+    expect(registered.map((route) => route.path)).toEqual([
+      "/",
+      "/users",
+      "/users/:id",
+      "/prefix/*",
+      "/contact-us",
+    ]);
+  });
+
+  it("raises PageRoutePathNotSupportedError, naming the page file, for a rejected declared path", () => {
+    const page: PageManifestPageEntry = {
+      module: { default: () => null, route: { path: "/users/:id?" } },
+      sourceFile: "src/app/main/web/users-id.page.tsx",
+      layouts: [],
+    };
+
+    const { run } = install(manifestOf([page]));
+
+    expect(() => run()).toThrow(page.sourceFile);
+    expect(() => run()).toThrow("/users/:id?");
+  });
+});
 
 describe("installPageRoutesFromManifest — the layout middleware chain", () => {
   it("runs EVERY layout's middleware, outermost first — the outer layout renders, the inner one only guards", async () => {
@@ -898,7 +955,10 @@ describe("installPageRoutesFromManifest — route-local CSS", () => {
     const clientDir = makeClientDir({
       "src/web/root.tsx": { file: "assets/root.js", css: ["assets/root.css"] },
       "src/app/main/web/layout.tsx": { file: "assets/layout.js", css: ["assets/layout.css"] },
-      "src/app/main/web/home.page.tsx": { file: "assets/home.page.js", css: ["assets/home.page.css"] },
+      "src/app/main/web/home.page.tsx": {
+        file: "assets/home.page.js",
+        css: ["assets/home.page.css"],
+      },
       "src/app/main/web/404.page.tsx": { file: "assets/404.page.js", css: ["assets/404.page.css"] },
     });
 
@@ -915,7 +975,11 @@ describe("installPageRoutesFromManifest — route-local CSS", () => {
     const homeHandler = built.find((options) => options.pageFile === homePage.sourceFile);
     const notFoundHandler = built.find((options) => options.pageFile === notFoundPage.sourceFile);
 
-    expect(homeHandler?.stylesheetUrls).toEqual(["/assets/root.css", "/assets/layout.css", "/assets/home.page.css"]);
+    expect(homeHandler?.stylesheetUrls).toEqual([
+      "/assets/root.css",
+      "/assets/layout.css",
+      "/assets/home.page.css",
+    ]);
     // No `/assets/layout.css` here — the not-found page renders inside the
     // application root and nothing else, exactly as it has no layout middleware.
     expect(notFoundHandler?.stylesheetUrls).toEqual(["/assets/root.css", "/assets/404.page.css"]);

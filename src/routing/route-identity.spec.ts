@@ -4,20 +4,25 @@ import {
   InvalidPageCacheOptInError,
   resolvePageRouteCache,
 } from "./route-identity";
+import { PageRoutePathNotSupportedError } from "./page-route-grammar";
 
 describe("canonicalizeRouteExport", () => {
   it("canonicalizes the bare-string shorthand into { path }", () => {
     // install-page-routes.ts:87-88 — `typeof routeExport === "string"` returns
     // `{ path: routeExport, name: deriveRouteName(...) }`; the `path` half is
     // the string verbatim.
-    expect(canonicalizeRouteExport("/contact-us")).toEqual({ path: "/contact-us" });
+    expect(canonicalizeRouteExport("/contact-us", "src/web/contact-us.page.tsx")).toEqual({
+      path: "/contact-us",
+    });
   });
 
   it("canonicalizes an object route with no name into { path }, no `name` key", () => {
     // install-page-routes.ts:91-94 — the object form's `path` passes through
     // and `name` is `routeExport.name ?? deriveRouteName(...)`; a fallback is
     // `resolvePageRouteName`'s concern, not canonicalizeRouteExport's.
-    expect(canonicalizeRouteExport({ path: "/settings" })).toEqual({ path: "/settings" });
+    expect(canonicalizeRouteExport({ path: "/settings" }, "src/web/settings.page.tsx")).toEqual({
+      path: "/settings",
+    });
   });
 
   it("keeps an explicit object `name` verbatim, whatever it is", () => {
@@ -28,10 +33,61 @@ describe("canonicalizeRouteExport", () => {
     // that deriveRouteName from "/settings" alone could never reproduce (it
     // would yield "users.settings", missing the "account" layout segment),
     // which is exactly why an explicit name must win untouched.
-    expect(canonicalizeRouteExport({ path: "/settings", name: "users.account.settings" })).toEqual({
+    expect(
+      canonicalizeRouteExport(
+        { path: "/settings", name: "users.account.settings" },
+        "src/web/account/settings.page.tsx",
+      ),
+    ).toEqual({
       path: "/settings",
       name: "users.account.settings",
     });
+  });
+
+  it("passes through every allowed page-route-grammar shape unchanged", () => {
+    // The whole grammar `page-route-grammar.ts` allows: root, static segments,
+    // whole-segment params, the bare "*", and a slash-led path whose final
+    // segment is "*".
+    expect(canonicalizeRouteExport({ path: "/" }, "src/web/home.page.tsx")).toEqual({
+      path: "/",
+    });
+    expect(canonicalizeRouteExport({ path: "/users" }, "src/web/users.page.tsx")).toEqual({
+      path: "/users",
+    });
+    expect(canonicalizeRouteExport({ path: "/users/:id" }, "src/web/users/[id].page.tsx")).toEqual({
+      path: "/users/:id",
+    });
+    expect(
+      canonicalizeRouteExport({ path: "/prefix/*" }, "src/web/prefix/[...catchAll].page.tsx"),
+    ).toEqual({ path: "/prefix/*" });
+    // Bare-string shorthand goes through the exact same canonicalization.
+    expect(canonicalizeRouteExport("/users", "src/web/users.page.tsx")).toEqual({
+      path: "/users",
+    });
+  });
+
+  it("raises PageRoutePathNotSupportedError, naming the page file, for a rejected path", () => {
+    const cases: string[] = [
+      "/users/:id?",
+      "/users/:id(\\d+)",
+      "/near/:lat-:lng",
+      "/a//b",
+      "/users/",
+    ];
+
+    for (const path of cases) {
+      expect(() => canonicalizeRouteExport({ path }, "src/web/users/[id].page.tsx")).toThrowError(
+        PageRoutePathNotSupportedError,
+      );
+
+      try {
+        canonicalizeRouteExport({ path }, "src/web/users/[id].page.tsx");
+        throw new Error("expected canonicalizeRouteExport to throw");
+      } catch (error) {
+        expect((error as Error).message).toContain("src/web/users/[id].page.tsx");
+        expect((error as Error).message).toContain(path);
+      }
+    }
   });
 });
 

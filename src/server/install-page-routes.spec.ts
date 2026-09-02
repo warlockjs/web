@@ -356,6 +356,58 @@ describe("installPageRoutes — a page with no route export", () => {
   });
 });
 
+describe("installPageRoutes — declared route path grammar", () => {
+  beforeEach(seedHttpServer);
+  afterEach(() => container.delete("http.server"));
+
+  it("installs every allowed declared shape unchanged: /, static, whole-segment param, catch-all, bare string", async () => {
+    const appRoot = makeAppTree({
+      "src/web/home.page.tsx": "",
+      "src/web/users.page.tsx": "",
+      "src/web/users/[id].page.tsx": "",
+      "src/web/prefix/catch-all.page.tsx": "",
+      "src/web/contact-us.page.tsx": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+    const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
+    const usersFile = path.join(appSrcRoot, "web", "users.page.tsx");
+    const userIdFile = path.join(appSrcRoot, "web", "users", "[id].page.tsx");
+    const catchAllFile = path.join(appSrcRoot, "web", "prefix", "catch-all.page.tsx");
+    const contactFile = path.join(appSrcRoot, "web", "contact-us.page.tsx");
+
+    const vite = fakeVite({
+      [homeFile]: { route: { path: "/" } },
+      [usersFile]: { route: { path: "/users" } },
+      [userIdFile]: { route: { path: "/users/:id" } },
+      // Explicit `name` because the fixture's own filesystem path would
+      // otherwise be used to derive one, and this test's only concern is the
+      // DECLARED path grammar, not filesystem-segment grammar.
+      [catchAllFile]: { route: { path: "/prefix/*", name: "prefix.catch-all" } },
+      // A route export given as a bare string goes through the same seam.
+      [contactFile]: { route: "/contact-us" },
+    });
+
+    const { run, registered } = install(appSrcRoot, vite);
+    await run();
+
+    expect(registered.map((route) => route.path)).toEqual(
+      expect.arrayContaining(["/", "/users", "/users/:id", "/prefix/*", "/contact-us"]),
+    );
+  });
+
+  it("raises PageRoutePathNotSupportedError, naming the page file, for a rejected declared path", async () => {
+    const appRoot = makeAppTree({ "src/web/users/[id].page.tsx": "" });
+    const appSrcRoot = path.join(appRoot, "src");
+    const pageFile = path.join(appSrcRoot, "web", "users", "[id].page.tsx");
+    const vite = fakeVite({ [pageFile]: { route: { path: "/users/:id?" } } });
+
+    const { run } = install(appSrcRoot, vite);
+
+    await expect(run()).rejects.toThrow(pageFile);
+    await expect(run()).rejects.toThrow(`/users/:id?`);
+  });
+});
+
 describe("installPageRoutes — the shared enumerator is called exactly once", () => {
   beforeEach(seedHttpServer);
   afterEach(() => container.delete("http.server"));

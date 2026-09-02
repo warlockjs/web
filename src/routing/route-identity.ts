@@ -19,8 +19,14 @@
  *
  * Pure string logic only: no `fs`, no `path`, no Node built-ins. Every input
  * this module accepts is already CANONICAL — a POSIX, app-root-relative
- * source path (e.g. `"src/web/index.page.tsx"`) and an already-validated
- * declared route export.
+ * source path (e.g. `"src/web/index.page.tsx"`).
+ *
+ * {@link canonicalizeRouteExport} is also the ONE seam every declared
+ * `route.path` passes through on its way into either installer
+ * (`install-page-routes.ts`, `install-page-routes-from-manifest.ts`), so it is
+ * where `../routing/page-route-grammar.ts`'s `classifyPageRoutePath` is
+ * applied: a rejected path raises {@link PageRoutePathNotSupportedError}
+ * naming the offending page file, rather than being published literally.
  *
  * Well-formedness of the declared `route` export itself (is it a string or an
  * object, does the object have a `path`) is the extractor's problem — already
@@ -37,6 +43,7 @@
  */
 
 import { deriveFilesystemRouteName } from "./filesystem-route";
+import { classifyPageRoutePath, PageRoutePathNotSupportedError } from "./page-route-grammar";
 
 /**
  * A page's opt-in into shared-cache storage for its document AND its data
@@ -123,8 +130,25 @@ export function resolvePageRouteCache(
  * into `{ path, name? }`. Requires well-formed input; an export that is
  * neither a string nor an object with a `path` is the extractor's problem,
  * already rejected before this function is ever called.
+ *
+ * This is also where the declared `path` is validated: `pageFile` names the
+ * page whose `route` export is being canonicalized, and a `path` that
+ * {@link classifyPageRoutePath} rejects raises
+ * {@link PageRoutePathNotSupportedError} naming it — rather than being
+ * published literally. Both installers reach every declared path through
+ * here, so this is the one place that check has to live.
  */
-export function canonicalizeRouteExport(route: DeclaredRouteExport): CanonicalRoute {
+export function canonicalizeRouteExport(
+  route: DeclaredRouteExport,
+  pageFile: string,
+): CanonicalRoute {
+  const path = typeof route === "string" ? route : route.path;
+  const verdict = classifyPageRoutePath(path);
+
+  if (verdict.type === "rejected") {
+    throw new PageRoutePathNotSupportedError(pageFile, path, verdict.reason);
+  }
+
   if (typeof route === "string") {
     return { path: route };
   }
@@ -153,5 +177,5 @@ export function resolvePageRouteName(
     return deriveFilesystemRouteName(pageFile);
   }
 
-  return canonicalizeRouteExport(route).name ?? deriveFilesystemRouteName(pageFile);
+  return canonicalizeRouteExport(route, pageFile).name ?? deriveFilesystemRouteName(pageFile);
 }

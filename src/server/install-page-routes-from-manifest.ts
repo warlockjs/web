@@ -149,7 +149,7 @@ export function resolveRoute(
   }
 
   return {
-    path: canonicalizeRouteExport(routeExport).path,
+    path: canonicalizeRouteExport(routeExport, sourceFile).path,
     name: resolvePageRouteName(routeExport, pageFile),
   };
 }

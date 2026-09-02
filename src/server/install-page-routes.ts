@@ -125,7 +125,7 @@ export function resolvePageRouteIdentity(
   }
 
   return {
-    declaredPath: canonicalizeRouteExport(routeExport).path,
+    declaredPath: canonicalizeRouteExport(routeExport, pageFile).path,
     name: resolvePageRouteName(routeExport, filesystemPageFile),
   };
 }
