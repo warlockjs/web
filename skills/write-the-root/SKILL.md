@@ -115,7 +115,7 @@ export default function App({ data, children }: AppProps<typeof loader>) {
 }
 ```
 
-The App loader runs in parallel with layout and page loaders. Its return is for the App component; use `shared` for request data that multiple levels need.
+The App loader runs first and is awaited before the outermost layout loader starts; matched layout loaders then run outermost to innermost before the page loader. Its return is for the App component; use `shared` for request data that multiple levels need.
 
 ## Gotchas
 

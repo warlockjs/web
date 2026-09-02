@@ -47,7 +47,14 @@ import type { Plugin } from "vite";
  * rather than hand-typing a second copy that could drift from projection's
  * own list.
  */
-export const SERVER_EXPORT_NAMES = new Set(["route", "middleware", "validation", "loader", "metadata", "prefix"]);
+export const SERVER_EXPORT_NAMES = new Set([
+  "route",
+  "middleware",
+  "validation",
+  "loader",
+  "metadata",
+  "prefix",
+]);
 
 /**
  * Recognized client-safe assets that always survive projection untouched,
@@ -123,7 +130,10 @@ interface LocalDeclaration {
   removed: boolean;
 }
 
-function hasSurvivingReader(local: LocalDeclaration, survivingNames: Set<string>): boolean {
+function hasSurvivingReader(
+  local: LocalDeclaration,
+  survivingNames: Set<string>,
+): boolean {
   for (const name of local.names) {
     if (survivingNames.has(name)) return true;
   }
@@ -176,8 +186,20 @@ function collectIdentifierNames(node: unknown, names: Set<string>): void {
     names.add((record as any).name);
   }
   for (const key of Object.keys(record)) {
-    if (key === "type" || key === "start" || key === "end" || key === "loc" || key === "range") continue;
-    if (key === "leadingComments" || key === "trailingComments" || key === "innerComments" || key === "extra") {
+    if (
+      key === "type" ||
+      key === "start" ||
+      key === "end" ||
+      key === "loc" ||
+      key === "range"
+    )
+      continue;
+    if (
+      key === "leadingComments" ||
+      key === "trailingComments" ||
+      key === "innerComments" ||
+      key === "extra"
+    ) {
       continue;
     }
     collectIdentifierNames(record[key], names);
@@ -204,7 +226,10 @@ function collectPatternNames(node: any, names: Set<string>): void {
       return;
     case "ObjectPattern":
       for (const property of node.properties) {
-        collectPatternNames(property.type === "RestElement" ? property.argument : property.value, names);
+        collectPatternNames(
+          property.type === "RestElement" ? property.argument : property.value,
+          names,
+        );
       }
       return;
     case "ArrayPattern":
@@ -223,7 +248,8 @@ function collectPatternNames(node: any, names: Set<string>): void {
 function declaredNames(stmt: any): Set<string> {
   const names = new Set<string>();
   if (stmt.type === "VariableDeclaration") {
-    for (const declarator of stmt.declarations) collectPatternNames(declarator.id, names);
+    for (const declarator of stmt.declarations)
+      collectPatternNames(declarator.id, names);
   } else if (stmt.id?.type === "Identifier") {
     names.add(stmt.id.name);
   }
@@ -262,13 +288,18 @@ function isDefinitionShapedInit(node: any): boolean {
     case "Identifier":
       return true;
     case "TemplateLiteral":
-      return node.expressions.every((expression: any) => isDefinitionShapedInit(expression));
+      return node.expressions.every((expression: any) =>
+        isDefinitionShapedInit(expression),
+      );
     case "UnaryExpression":
-      return node.operator !== "delete" && isDefinitionShapedInit(node.argument);
+      return (
+        node.operator !== "delete" && isDefinitionShapedInit(node.argument)
+      );
     case "ArrayExpression":
       return node.elements.every(
         (element: any) =>
-          element === null || (element.type !== "SpreadElement" && isDefinitionShapedInit(element)),
+          element === null ||
+          (element.type !== "SpreadElement" && isDefinitionShapedInit(element)),
       );
     case "ObjectExpression":
       // Spread and computed keys both evaluate arbitrary expressions; a getter
@@ -301,7 +332,9 @@ function isDefinitionShapedInit(node: any): boolean {
 function isDefinitionShapedStatement(stmt: any): boolean {
   if (stmt.type === "FunctionDeclaration") return true;
   if (stmt.type !== "VariableDeclaration") return false;
-  return stmt.declarations.every((declarator: any) => isDefinitionShapedInit(declarator.init));
+  return stmt.declarations.every((declarator: any) =>
+    isDefinitionShapedInit(declarator.init),
+  );
 }
 
 function removeStatement(s: MagicString, code: string, node: any): void {
@@ -315,7 +348,10 @@ function removeStatement(s: MagicString, code: string, node: any): void {
 }
 
 function statementSnippet(code: string, node: any): string {
-  return code.slice(node.start as number, node.end as number).split("\n")[0].trim();
+  return code
+    .slice(node.start as number, node.end as number)
+    .split("\n")[0]
+    .trim();
 }
 
 /**
@@ -324,7 +360,10 @@ function statementSnippet(code: string, node: any): string {
  * ambiguous. `filePath` is only used for error messages (`c604f0bc` §7 —
  * fence errors must name the file).
  */
-export function projectModule(code: string, filePath: string): ProjectionResult {
+export function projectModule(
+  code: string,
+  filePath: string,
+): ProjectionResult {
   const ast = parse(code, {
     sourceType: "module",
     plugins: ["typescript", "jsx"],
@@ -417,7 +456,8 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
     const names = new Set<string>();
     for (const stmt of body) {
       if (stmt.type === "ImportDeclaration") continue;
-      if (removedServerExports.includes(stmt) || removedLocals.has(stmt)) continue;
+      if (removedServerExports.includes(stmt) || removedLocals.has(stmt))
+        continue;
       const own = new Set<string>();
       collectIdentifierNames(stmt, own);
       if (DECLARATION_STATEMENT_TYPES.has(stmt.type)) {
@@ -431,7 +471,7 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
   // Fixpoint, not one pass: a server-only helper can be reached only through
   // ANOTHER server-only helper, and dropping the first orphans the second.
   let survivingNames = collectSurvivingNames();
-  for (let changed = true; changed; ) {
+  for (let changed = true; changed;) {
     changed = false;
     for (const local of localDeclarations) {
       if (local.removed || !local.definitionShaped) continue;
@@ -477,7 +517,9 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
       );
     }
 
-    const isUsed = decl.specifiers.some((spec: any) => survivingNames.has(spec.local.name));
+    const isUsed = decl.specifiers.some((spec: any) =>
+      survivingNames.has(spec.local.name),
+    );
     if (!isUsed) removeStatement(s, code, decl);
   }
 
@@ -495,7 +537,7 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
   };
 }
 
-function isProjectableFile(id: string): boolean {
+export function isProjectableFile(id: string): boolean {
   const base = path.basename(id.split("?")[0]);
   if (/\.page\.tsx?$/.test(base)) return true;
   if (base === "layout.tsx" || base === "layout.ts") return true;

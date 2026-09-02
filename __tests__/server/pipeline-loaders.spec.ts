@@ -10,11 +10,10 @@ import { createCoreHttp, requestContext } from "./fixtures/core-http";
 import { routes } from "./fixtures/routes";
 
 /**
- * Stage 6/7 contracts: loaders run in PARALLEL against buffered responses;
- * settle is allSettled; commit is root→leaf per cookie name / header key; a
- * throw discards the throwing layer's buffer with its siblings' below it and
- * designates the boundary; a short-circuit (redirect/notFound) keeps its own
- * buffer and discards the levels below.
+ * Stage 6/7 contracts: loaders run root-to-leaf against buffered responses;
+ * commit is root→leaf per cookie name / header key; a throw discards the
+ * throwing layer's buffer and prevents lower loaders; a short-circuit
+ * (redirect/notFound) keeps its own buffer and also prevents lower loaders.
  */
 
 let previousRunner: PageContextRunner | undefined;
@@ -56,8 +55,8 @@ function runInline(triple: PageRouteEntry["triple"], url = "/inline") {
   return { result, created };
 }
 
-describe("executePageRequest — loaders are PARALLEL", () => {
-  it("all three loaders START before any of them finishes (interleaving proof)", async () => {
+describe("executePageRequest — loaders are root-to-leaf", () => {
+  it("awaits each loader before starting the next", async () => {
     const order: string[] = [];
 
     const loaderFor = (level: string) => async () => {
@@ -75,11 +74,14 @@ describe("executePageRequest — loaders are PARALLEL", () => {
 
     const bundle = await result;
 
-    // Sequential execution would interleave start/end pairs
-    // (app:start, app:end, layout:start, …). Parallel execution starts every
-    // loader before the first await resolves:
-    expect(order.slice(0, 3)).toEqual(["app:start", "layout:start", "page:start"]);
-    expect(order.slice(3).sort()).toEqual(["app:end", "layout:end", "page:end"]);
+    expect(order).toEqual([
+      "app:start",
+      "app:end",
+      "layout:start",
+      "layout:end",
+      "page:start",
+      "page:end",
+    ]);
 
     expect(bundle!.appData).toEqual({ level: "app" });
     expect(bundle!.layoutData).toEqual({ level: "layout" });
@@ -192,6 +194,10 @@ describe("executePageRequest — a loader throw", () => {
   });
 
   it("layout throw with no layout/app boundary: designation falls back to the app root", async () => {
+    const pageLoader = vi.fn(async ({ response }: any) => {
+      response.header("x-from-page", "must-not-run");
+      return { still: "computed" };
+    });
     const { result, created } = runInline({
       app: {
         loader: async ({ response }: any) => {
@@ -206,10 +212,7 @@ describe("executePageRequest — a loader throw", () => {
         },
       },
       page: {
-        loader: async ({ response }: any) => {
-          response.header("x-from-page", "discarded-with-sibling");
-          return { still: "computed" };
-        },
+        loader: pageLoader,
       },
     });
 
@@ -218,11 +221,8 @@ describe("executePageRequest — a loader throw", () => {
 
     expect(bundle!.error!.boundary).toEqual({ throwingLevel: "layout", boundaryLevel: "app" });
 
-    // allSettled: the page loader FINISHED and its data is intact —
-    expect(bundle!.pageData).toEqual({ still: "computed" });
-    // — but its buffer is discarded along with the throwing layer's
-    // ("the throwing layer's buffer is discarded with its siblings' below
-    // it", request-lifecycle.md:51-52).
+    expect(pageLoader).not.toHaveBeenCalled();
+    expect(bundle!.pageData).toBeUndefined();
     expect(reply.appliedHeaders["x-from-app"]).toBe("kept");
     expect(reply.appliedHeaders["x-from-layout"]).toBeUndefined();
     expect(reply.appliedHeaders["x-from-page"]).toBeUndefined();
@@ -233,6 +233,10 @@ describe("executePageRequest — a loader throw", () => {
 describe("executePageRequest — loader short-circuits", () => {
   it("layout redirect: own buffer commits, page's buffer AND data are discarded, metadata skipped", async () => {
     const pageMetadata = vi.fn(() => ({ title: "never" }));
+    const pageLoader = vi.fn(async ({ response }: any) => {
+      response.header("x-from-page", "must-not-run");
+      return { secret: "must not surface" };
+    });
 
     const { result, created } = runInline({
       app: {
@@ -245,10 +249,7 @@ describe("executePageRequest — loader short-circuits", () => {
         },
       },
       page: {
-        loader: async ({ response }: any) => {
-          response.header("x-from-page", "discarded");
-          return { secret: "must not surface" };
-        },
+        loader: pageLoader,
         metadata: pageMetadata,
       },
     });
@@ -281,7 +282,8 @@ describe("executePageRequest — loader short-circuits", () => {
       committedLevels: ["app", "layout"],
       statusCode: 302,
     });
-    // …the level below is discarded wholesale: buffer AND data.
+    // The level below never starts.
+    expect(pageLoader).not.toHaveBeenCalled();
     expect(reply.appliedHeaders["x-from-page"]).toBeUndefined();
     expect(bundle!.pageData).toBeUndefined();
     expect(bundle!.appData).toEqual({ ok: true });

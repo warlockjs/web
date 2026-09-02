@@ -29,6 +29,13 @@ type HydratedLevelProps = {
   readonly children?: ReactNode;
 };
 
+/** The ordinary page leaf alone receives params from the server's match. */
+type HydratedPageProps = {
+  readonly data: unknown;
+  readonly shared: unknown;
+  readonly params: Readonly<Record<string, string>>;
+};
+
 function describeKnownNames(knownPageNames: readonly string[]): string {
   if (knownPageNames.length === 0) return "The client page registry is empty.";
 
@@ -185,16 +192,29 @@ export async function buildHydratedTree(
   let element: ReactNode;
 
   if (errorPageProps === undefined) {
-    const Page = componentOf<HydratedLevelProps>(selectedPageModule);
-    element = Page === undefined ? null : createElement(Page, { data: payload.pageData, shared });
+    const Page = componentOf<HydratedPageProps>(selectedPageModule);
+    element =
+      Page === undefined
+        ? null
+        : createElement(Page, {
+            data: payload.pageData,
+            shared,
+            params: payload.params ?? {},
+          });
   } else {
     const ErrorPage = componentOf<SerializedErrorPageProps>(selectedPageModule);
-    element = ErrorPage === undefined ? null : createElement(ErrorPage, errorPageProps);
+    element =
+      ErrorPage === undefined ? null : createElement(ErrorPage, errorPageProps);
   }
 
   // Innermost layout wraps the page, so walk the outermost-first list backwards.
   for (let index = composition.layouts.length - 1; index >= 0; index -= 1) {
-    element = wrap(composition.layouts[index]!, payload.layoutData, shared, element);
+    element = wrap(
+      composition.layouts[index]!,
+      payload.layoutData,
+      shared,
+      element,
+    );
   }
 
   return element;

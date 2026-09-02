@@ -39,12 +39,11 @@
  *
  * ## Partial failure
  *
- * Stage 7 runs app, layout and page loaders under `allSettled`, so the page's
- * own loader can resolve while an ANCESTOR's rejects. `failed` is still true
- * then, and the page's metadata still does not run — deliberately. Any recorded
- * error means a boundary renders instead of the page, and metadata describes
- * what is on screen. Describing a page the visitor never received is the same
- * defect in a quieter form.
+ * Stage 7 runs app, layout and page loaders root-to-leaf, so an ancestor
+ * rejection prevents the page loader from starting. `failed` is still the
+ * relevant guard here: any recorded error means a boundary renders instead of
+ * the page, and metadata describes what is on screen. Describing a page the
+ * visitor never received is the same defect in a quieter form.
  *
  * If per-page error metadata is ever wanted, it is a separate `errorMetadata`
  * export — a distinct signature for a distinct situation, not an arm of this

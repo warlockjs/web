@@ -19,6 +19,11 @@ import {
   NOT_FOUND_ROUTE_NAME,
   NOT_FOUND_ROUTE_PATH,
 } from "./not-found-page";
+import {
+  createBufferedResponse,
+  createLevelBuffer,
+  isLoaderShortCircuit,
+} from "./settle-page-response";
 
 /**
  * `installPageRoutes` no longer walks the filesystem itself — every subject
@@ -566,6 +571,47 @@ describe("installPageRoutes — the layout middleware chain", () => {
     expect(installed[0]?.layoutFile).toBe(usersLayoutFile);
   });
 
+  it("stops a composed layout loader chain when an outer loader redirects", async () => {
+    const appRoot = makeAppTree({
+      "src/web/layout.tsx": "",
+      "src/web/account/layout.tsx": "",
+      "src/web/account/settings.page.tsx": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+    const webRoot = path.join(appSrcRoot, "web");
+    const outerFile = path.join(webRoot, "layout.tsx");
+    const innerFile = path.join(webRoot, "account", "layout.tsx");
+    const pageFile = path.join(webRoot, "account", "settings.page.tsx");
+    const innerLoader = vi.fn(() => ({ mustNotRun: true }));
+    const captured = captureHandlerOptions();
+    const { run } = install(
+      appSrcRoot,
+      fakeVite({
+        [pageFile]: { route: "/settings" },
+        [outerFile]: {
+          default: () => null,
+          loader: ({ response }: any) => response.redirect("/login"),
+        },
+        [innerFile]: { loader: innerLoader },
+      }),
+    );
+
+    await run();
+
+    const handler = captured[0];
+    const composed = (await handler.loadModule(handler.layoutFile as string)) as {
+      loader?: (context: unknown) => unknown;
+    };
+    const result = await composed.loader?.({
+      request: {},
+      response: createBufferedResponse(createLevelBuffer()),
+      shared: {},
+    });
+
+    expect(isLoaderShortCircuit(result)).toBe(true);
+    expect(innerLoader).not.toHaveBeenCalled();
+  });
+
   it("leaves a page under ONE layout exactly as it was — that layout's middleware, that layout's prefix", async () => {
     const appRoot = makeAppTree({
       "src/web/layout.tsx": "",
@@ -687,7 +733,8 @@ describe("installPageRoutes — dev's URL is discovery's URL", () => {
     const appRoot = makeAppTree({
       "src/web/layout.tsx": 'export const prefix = "/users";\nexport default () => null;\n',
       "src/web/account/layout.tsx": 'export const prefix = "/account";\n',
-      "src/web/account/settings.page.tsx": 'export const route = "/settings";\n',
+      "src/web/account/settings.page.tsx":
+        'export const route = "/settings";\nexport default () => null;\n',
     });
     const appSrcRoot = path.join(appRoot, "src");
     const webRoot = path.join(appSrcRoot, "web");

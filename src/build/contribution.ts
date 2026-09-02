@@ -20,6 +20,7 @@ import type {
   ConnectorBuildContribution,
   ConnectorBuildGenerateResult,
 } from "@warlock.js/core";
+import type { PluginOption } from "vite";
 
 export type WebBuildOptions = {
   /** Source directory name under the app root. Default: `"src"`. */
@@ -50,16 +51,6 @@ export type WebBuildOptions = {
   aliases?: Record<string, string>;
   /** Extra package names to keep external to the client bundle. */
   external?: string[];
-  /**
-   * NOT AN APP-FACING OPTION. Set by `webConnector()` from the length of its own
-   * `plugins` array; a COUNT rather than the array itself, because this options
-   * object is JSON-serializable-values-only (constraint B) and a plugin instance
-   * here would drag Vite into every config load.
-   *
-   * Its only consumer is the refusal in `generate` — see
-   * {@link ConnectorPluginsNotSupportedError}.
-   */
-  connectorPluginCount?: number;
 };
 
 function resolveClientOutDir(context: ConnectorBuildContext): string {
@@ -86,49 +77,6 @@ export class ClientOutDirNotSupportedError extends Error {
         '"build.clientOutDir" from the build config.',
     );
     this.name = "ClientOutDirNotSupportedError";
-  }
-}
-
-/**
- * `webConnector({ plugins })` was given plugins, and `warlock build` cannot
- * apply them.
- *
- * THE SILENT FAILURE THIS REPLACES. `plugins` reaches exactly one place: the
- * dev server's `createServer({ plugins: [...] })`. The production client bundle
- * is built by `buildWarlockHydrationClient`, which composes its own pipeline
- * (`web/src/vite/index.ts` — projection and the boundary gates) and is not
- * handed the connector's array by anyone. So a plugin worked in `warlock dev`
- * and was absent from `warlock build`, with no warning and a green build log:
- * the site shipped unstyled, or unprocessed in whatever way the plugin
- * mattered, and the build claimed success. That is worse than any loud failure.
- *
- * WHY REFUSE RATHER THAN WIRE IT THROUGH. Plugin ORDER is part of a pipeline's
- * behavior, and a plugin authored against a dev server can misbehave inside a
- * production build; threading the array in is a change to build behavior that
- * has to be verified, not assumed. Refusing removes the silent failure now and
- * is strictly additive to reverse — wiring the plugins through later breaks no
- * app that this error currently stops, while shipping a half-verified plugin
- * pipeline could break every one of them.
- *
- * The message names the option and says what to do instead, because an error
- * that only says "no" costs the reader the same hour it took to find this.
- */
-export class ConnectorPluginsNotSupportedError extends Error {
-  public constructor(pluginCount: number) {
-    super(
-      `"plugins" on the web connector is not supported by \`warlock build\`: ` +
-        `webConnector({ plugins }) was given ${pluginCount} plugin${pluginCount === 1 ? "" : "s"}, ` +
-        "and they reach the dev server ONLY. The production client bundle is built with the " +
-        "framework's own pipeline and would silently ship without them, so this build refuses " +
-        "rather than emit an artifact that differs from what you saw in `warlock dev`.\n\n" +
-        "What to do instead: express the transform somewhere BOTH dev and build already read.\n" +
-        "  - CSS/PostCSS (Tailwind, autoprefixer, ...): put a `postcss.config.mjs` at your app " +
-        "root. Vite loads it automatically in dev and in build — this is how Tailwind is " +
-        "supported today.\n" +
-        "  - Otherwise: remove `plugins` from webConnector() and open an issue describing what " +
-        "the plugin does, so the production pipeline can support it deliberately.",
-    );
-    this.name = "ConnectorPluginsNotSupportedError";
   }
 }
 
@@ -220,13 +168,20 @@ export async function resolveWebPackageRoot(configured: string | undefined): Pro
  *
  * `generate` writes the page barrel into `ctx.productionDir` and patches
  * esbuild; `emit` produces the client bundle esbuild cannot. The two share one
- * closure fact — how many pages exist — because a build with zero pages must
- * skip the client bundle rather than emit an orphan one. `generate` itself does
+ * closure facts — how many pages exist, the discovered route table, and the
+ * exact app-public file list. A build with zero pages skips the hydration
+ * bundle but still copies public files when present. `generate` itself does
  * NOT skip: the barrel and its entry import are emitted either way, so the
  * runtime can tell a page-free web build from a build without web.
+ *
+ * Connector plugins are a separate argument rather than a `WebBuildOptions`
+ * field: the app constructs them once, the factory snapshots that array for
+ * both dev and build, and this module keeps Vite as a type-only import until
+ * `emit` dynamically loads the real client builder.
  */
 export function createWebBuildContribution(
   options: WebBuildOptions = {},
+  connectorPlugins: readonly PluginOption[] = [],
 ): ConnectorBuildContribution {
   if (options.clientOutDir !== undefined) {
     throw new ClientOutDirNotSupportedError();
@@ -237,33 +192,15 @@ export function createWebBuildContribution(
     version: 1,
     routes: [],
   };
+  let publicFiles: string[] = [];
 
   return {
     async generate(context: ConnectorBuildContext): Promise<ConnectorBuildGenerateResult | void> {
-      // REFUSED HERE, NOT IN THE CONSTRUCTOR ABOVE, and the difference is the
-      // whole of `warlock dev` still working.
-      //
-      // `webConnector()` — and therefore `createWebBuildContribution()` — runs
-      // on every config load, dev included. Throwing at construction the way
-      // `clientOutDir` does would make a connector with dev-only plugins fail
-      // to boot the dev server those plugins exist for. `generate` is the first
-      // hook `warlock build` calls, and nothing but a build calls it: refusing
-      // here fails the build before any barrel is written or any bundle emitted,
-      // and is unreachable from dev.
-      //
-      // Unconditional on page count. `emit` skips the client bundle when the app
-      // has zero pages, but "your plugins will not be applied" is true either
-      // way, and a refusal that depends on how many pages you happen to have is
-      // a worse contract than one that does not.
-      const connectorPluginCount = options.connectorPluginCount ?? 0;
+      const { generatePagesBarrel, WEB_ENTRY_IMPORT, WEB_ESBUILD_PATCH } =
+        await import("./generate-pages-barrel");
+      const { collectPublicFiles } = await import("./public-files");
 
-      if (connectorPluginCount > 0) {
-        throw new ConnectorPluginsNotSupportedError(connectorPluginCount);
-      }
-
-      const { generatePagesBarrel, WEB_ENTRY_IMPORT, WEB_ESBUILD_PATCH } = await import(
-        "./generate-pages-barrel"
-      );
+      publicFiles = await collectPublicFiles(path.join(context.appRoot, "public"));
 
       const result = await generatePagesBarrel({
         appRoot: context.appRoot,
@@ -280,6 +217,7 @@ export function createWebBuildContribution(
           .relative(context.appRoot, resolveClientOutDir(context))
           .split(path.sep)
           .join("/"),
+        publicFiles,
       });
 
       pageCount = result.pageCount;
@@ -295,33 +233,45 @@ export function createWebBuildContribution(
 
     async emit(context: ConnectorBuildContext): Promise<void> {
       if (pageCount > 0) {
+        const { buildWarlockHydrationClient } = await import("../vite");
+        const { appConventionAliases } = await import("../vite/app-convention-aliases");
 
-      const { buildWarlockHydrationClient } = await import("../vite");
-      const { appConventionAliases } = await import("../vite/app-convention-aliases");
+        // The app-tree convention (`web/*`, `app/*`) the dev server installs must
+        // also reach the production build, from the SAME definition — see
+        // `app-convention-aliases.ts`. Caller-supplied aliases come first so a
+        // caller can win a conflict, matching the dev server's ordering.
+        const callerAliases = Object.entries(options.aliases ?? {}).map(([find, replacement]) => ({
+          find,
+          replacement,
+        }));
 
-      // The app-tree convention (`web/*`, `app/*`) the dev server installs must
-      // also reach the production build, from the SAME definition — see
-      // `app-convention-aliases.ts`. Caller-supplied aliases come first so a
-      // caller can win a conflict, matching the dev server's ordering.
-      const callerAliases = Object.entries(options.aliases ?? {}).map(([find, replacement]) => ({
-        find,
-        replacement,
-      }));
+        await buildWarlockHydrationClient({
+          appRoot: context.appRoot,
+          webRoot: await resolveWebPackageRoot(options.webRoot),
+          outDir: resolveClientOutDir(context),
+          resolveAliases: [
+            ...callerAliases,
+            ...appConventionAliases(path.join(context.appRoot, options.srcDir ?? "src")),
+          ],
+          external: options.external,
+          plugins: connectorPlugins,
+        });
+      }
 
-      await buildWarlockHydrationClient({
-        appRoot: context.appRoot,
-        webRoot: await resolveWebPackageRoot(options.webRoot),
-        outDir: resolveClientOutDir(context),
-        resolveAliases: [
-          ...callerAliases,
-          ...appConventionAliases(path.join(context.appRoot, options.srcDir ?? "src")),
-        ],
-        external: options.external,
-      });
+      if (publicFiles.length > 0) {
+        const { copyPublicFiles } = await import("./public-files");
+        await copyPublicFiles(
+          path.join(context.appRoot, "public"),
+          path.join(resolveClientOutDir(context), "public"),
+          publicFiles,
+        );
       }
 
       const { writePageRoutesManifest } = await import("./page-routes-manifest");
-      await writePageRoutesManifest(path.resolve(context.appRoot, context.options.outdir), pageRoutes);
+      await writePageRoutesManifest(
+        path.resolve(context.appRoot, context.options.outdir),
+        pageRoutes,
+      );
     },
   };
 }

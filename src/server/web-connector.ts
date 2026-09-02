@@ -70,6 +70,7 @@ import {
   registeredPageFiles,
 } from "./page-route-reload";
 import { consumePageManifest, type PageManifest } from "./page-manifest";
+import { registerProductionPublicFiles } from "./register-production-public-files";
 import { createUnregisteredPageReporter } from "./unregistered-pages";
 import { WEB_CONNECTOR_PRIORITY } from "./web-connector-factory";
 
@@ -162,7 +163,7 @@ export class WebPageManifestMissingError extends Error {
 }
 
 /**
- * The manifest carried pages but no `clientDir`.
+ * The manifest carried browser artifacts but no `clientDir`.
  *
  * The build bakes that field in beside the page table, so the only way to
  * observe this is a VERSION SPLIT: an artifact produced by a `@warlock.js/web`
@@ -173,8 +174,9 @@ export class WebPageManifestMissingError extends Error {
 export class WebClientDirMissingError extends Error {
   public constructor() {
     super(
-      "The page manifest carries pages but no `clientDir`, so the connector cannot " +
-        "locate the client bundle. This artifact was built by an older @warlock.js/web " +
+      "The page manifest carries pages or public files but no `clientDir`, so the " +
+        "connector cannot " +
+        "locate the browser artifacts. This artifact was built by an older @warlock.js/web " +
         "than the one now running it. Re-run `warlock build` to regenerate the " +
         "`pages.ts` barrel against the current version.",
     );
@@ -394,6 +396,14 @@ export class WebConnector extends BaseConnector {
     // The manifest is guaranteed present by the guard above; naming it again is
     // what narrows the type, not a second check of the same condition.
     if (isProductionRuntime() && this.pageManifest) {
+      if ((this.pageManifest.publicFiles?.length ?? 0) > 0) {
+        registerProductionPublicFiles(
+          router,
+          this.resolveClientDir(),
+          this.pageManifest.publicFiles ?? [],
+        );
+      }
+
       this.installedPages = await installProductionPageRoutes({
         router,
         manifest: this.pageManifest,
@@ -426,11 +436,11 @@ export class WebConnector extends BaseConnector {
       // itself, which is why this sits inside the production branch and not
       // above it.
       //
-      // Gated on the page count for the same reason the build's `emit` hook is:
-      // a zero-page build produces NO client bundle, so there is no directory
-      // to mount and no `clientDir` baked into the manifest to name one. The
-      // two halves skip on the same condition, so neither can expect an
-      // artifact the other did not make.
+      // Gated on the page count for the same reason the build's hydration
+      // client step is: a zero-page build produces no `assets/` bundle to
+      // mount. Such a build may still carry `clientDir` for copied public
+      // files, which were registered individually above rather than exposing
+      // this directory wholesale.
       if (this.pageManifest.pages.length > 0) {
         router.directory({
           root: path.join(this.resolveClientDir(), "assets"),
@@ -586,8 +596,8 @@ export class WebConnector extends BaseConnector {
     const clientDir = this.pageManifest?.clientDir;
 
     if (clientDir === undefined) {
-      // Reached only via a manifest with pages but no `clientDir` — i.e. a
-      // bundle built by a web version older than this field. Named here
+      // Reached only via a manifest with browser artifacts but no `clientDir`
+      // — i.e. a bundle built by a web version older than this field. Named here
       // rather than left to surface as an ENOENT on a `path.join(undefined)`
       // deep inside the manifest read.
       throw new WebClientDirMissingError();

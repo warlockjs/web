@@ -53,6 +53,7 @@ import { Response, type Router } from "@warlock.js/core";
 import { createPageRouteHandler } from "./create-page-route-handler";
 import type { ErrorPageModule } from "./error-page";
 import type { PipelineLoader, PipelineMiddleware } from "./execute-page-request";
+import { isLoaderShortCircuit } from "./settle-page-response";
 import { devHandlerStylesheetUrls } from "./stylesheet-urls";
 import {
   createNotFoundRouteHandler,
@@ -250,7 +251,7 @@ async function composeLayoutLevel(
       for (let index = 0; index < modules.length; index++) {
         const value = await modules[index].loader?.(context);
 
-        if (value instanceof Response) return value;
+        if (value instanceof Response || isLoaderShortCircuit(value)) return value;
         if (index === hostIndex) hostData = value;
       }
 

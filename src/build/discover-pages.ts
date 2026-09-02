@@ -62,6 +62,7 @@ import {
   deriveFilesystemRoutePath,
 } from "../routing/filesystem-route";
 import { deriveFallbackRouteName } from "../routing/route-identity";
+import { assertPageHasDefaultExport } from "./page-default-export";
 import type { RouteExportsReadResult } from "./read-route-exports";
 import { NonLiteralRouteExportError, readRouteExports } from "./read-route-exports";
 
@@ -856,6 +857,7 @@ export function discoverPages(options: DiscoverPagesOptions): DiscoveredPage[] {
   for (const webRoot of webRoots) {
     for (const pageFile of walkFiles(webRoot, (fileName) => fileName.endsWith(".page.tsx"))) {
       const pageSource = fs.readFileSync(pageFile, "utf-8");
+      assertPageHasDefaultExport(relativeToApp(pageFile), pageSource);
       const { route } = readDeclarations(pageFile, declarations, pageSource);
       if (isErrorPageFile(pageFile)) {
         if (route !== undefined) throw new ErrorPageDeclaresRouteError(relativeToApp(pageFile));

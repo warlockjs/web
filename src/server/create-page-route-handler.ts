@@ -287,18 +287,29 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       // pipeline view is projected: spreading preserves the component,
       // metadata, middleware and boundary exports while making a custom 404's
       // loader uncallable.
-      page: skipPageLoader ? { ...pageModule, loader: undefined } : pageModule,
+      page: skipPageLoader
+        ? {
+            ...pageModule,
+            // Vite and native ESM loaders hand us module namespace objects,
+            // whose export descriptors are not an object-spread contract.
+            // Keep the rendering export explicitly while hiding only loader.
+            default: pageModule.default,
+            loader: undefined,
+          }
+        : pageModule,
     };
 
+    const requestUrl = request.path;
+    const [requestPathname] = requestUrl.split("?");
     const routes: PageRouteEntry[] = [
-      { path: matchPath === undefined ? path : matchPath(request.path), name, triple },
+      { path: matchPath === undefined ? path : matchPath(requestPathname), name, triple },
     ];
 
     // A DATA request runs everything above and below this line identically —
     // it is the same route, the same match and the same pipeline — and differs
     // only in what gets written at the end. Decided here, before the render, so
     // the branch is visibly about REPRESENTATION and not about behaviour.
-    const rendered = await renderPageRequest(request.path, {
+    const rendered = await renderPageRequest(requestUrl, {
       routes,
       createHttp: () => ({ request, response }),
       loadErrorPage,

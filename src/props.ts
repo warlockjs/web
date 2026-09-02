@@ -18,17 +18,21 @@ export type LoaderData<TLoader> = TLoader extends LoaderFunction
  * per-request payload. Never `request` or `response` — the component also
  * renders on a machine where neither exists.
  */
-export type PageProps<TLoader extends LoaderFunction | undefined = undefined> = {
-  data: LoaderData<TLoader>;
-  shared: Readonly<SharedContext>;
-};
+export type PageProps<TLoader extends LoaderFunction | undefined = undefined> =
+  {
+    data: LoaderData<TLoader>;
+    shared: Readonly<SharedContext>;
+    params: Readonly<Record<string, string>>;
+  };
 
 /**
  * A layout additionally receives the subtree it wraps. Usable bare —
  * `LayoutProps` with no generic — for a layout with no loader
  * (main/web/layout.tsx:26).
  */
-export type LayoutProps<TLoader extends LoaderFunction | undefined = undefined> = {
+export type LayoutProps<
+  TLoader extends LoaderFunction | undefined = undefined,
+> = {
   data: LoaderData<TLoader>;
   shared: Readonly<SharedContext>;
   children: ReactNode;

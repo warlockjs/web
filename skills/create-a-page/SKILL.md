@@ -1,6 +1,6 @@
 ---
 name: create-a-page
-description: 'Create an SSR React page under `src/web/**`, with either a literal `route` or a filesystem-derived one, a default component, an optional typed `loader`, page `metadata`, the `error.page.tsx` boundary, and the universal `register()` hook. Triggers: `*.page.tsx`, `route`, `PageLoader`, `PageProps`, `PageMetadata`, `error.page.tsx`, `register`; "create a page", "add an SSR route", "make a React page", "type page loader data", "add an error boundary"; typical import `import type { PageLoader, PageProps } from "@warlock.js/web"`. Skip: root document shell — `@warlock.js/web/write-the-root/SKILL.md`; layout wrappers and prefixes — `@warlock.js/web/use-layouts/SKILL.md`; loader lifecycle and `shared` — `@warlock.js/web/load-page-data/SKILL.md`; competing frameworks `next`, `remix`, `react-router` file routes.'
+description: 'Create an SSR React page under `src/web/**`, with either a literal `route` or a filesystem-derived one, a default component, an optional typed `loader`, page `metadata`, the `error.page.tsx` boundary, and the universal `register()` hook. Triggers: `*.page.tsx`, `route`, `PageLoader`, `PageProps`, `PageMetadata`, `error.page.tsx`, `register`, `[...slug]`; "create a page", "add an SSR route", "make a React page", "type page loader data", "add an error boundary", "catch-all route", "page renders blank 200", "page has no default export"; typical import `import type { PageLoader, PageProps } from "@warlock.js/web"`. Skip: root document shell — `@warlock.js/web/write-the-root/SKILL.md`; layout wrappers and prefixes — `@warlock.js/web/use-layouts/SKILL.md`; loader lifecycle and `shared` — `@warlock.js/web/load-page-data/SKILL.md`; competing frameworks `next`, `remix`, `react-router` file routes.'
 ---
 
 # Warlock — create a page
@@ -66,6 +66,25 @@ export default function ContactPage() {
 
 Changed in 5.2: through 5.1 an omitted `route` was refused — `warlock dev` and the production discovery pass threw `MissingRouteExportError`, naming the file. That error class is gone; the same file now resolves to a real, browsable URL.
 
+### The default export is required
+
+`route` is optional; the default export is not. A `*.page.tsx` that exports only named bindings is a **hard discovery/build failure naming the file**:
+
+```
+The page "src/web/contact.page.tsx" has no runtime default export. Every `*.page.tsx`
+file must default-export the React component it renders. For example:
+`export default function Page() { return <main />; }`
+```
+
+Changed in 5.2: such a file used to be discovered and registered anyway, then serve a blank `200` at its URL — a page that looked deployed and rendered nothing, with no error anywhere. It now stops the build.
+
+Two details worth knowing:
+
+- **`export { Page as default }` satisfies the rule** — the check is for a runtime default binding, not for the `export default` keyword form specifically.
+- **`export default interface Page {}` does not.** A type-only default is erased at compile time, so there is no component at runtime; it is treated as missing.
+
+A file that cannot be parsed reports separately — `Cannot inspect the default export of "<file>": the file could not be parsed (…). Fix the syntax error and discovery will continue.` — so a syntax error never masquerades as a missing export.
+
 ## Route declarations
 
 Use either a bare path or a literal object:
@@ -99,12 +118,26 @@ Omit `route` and the URL comes from the page's own path beneath `src/web`:
 
 Two pages that derive (or declare) the same effective path is a build error naming both files.
 
+### Catch-all segments are NOT supported
+
+**`[...slug].page.tsx` does not do what it looks like.** There is no catch-all / rest-parameter form in filesystem routing. Only `[name]` — a plain identifier in square brackets — is recognized as a dynamic segment; `[...slug]` fails that pattern and is taken as an ordinary **literal** segment.
+
+So `src/web/docs/[...slug].page.tsx` derives the route path `/docs/[...slug]` and the route name `docs.[...slug]`. It registers, it builds, and it serves — at the literal URL `/docs/%5B...slug%5D` and nowhere else. `/docs/a/b` does not match it.
+
+⚠ **Nothing warns you.** There is no build error, no dev warning, and no refusal; the page simply answers a URL nobody will ever request. If you came from Next.js or Remix expecting `[...slug]` to work, this is the failure mode to recognize.
+
+Until a catch-all exists, use the terminal wildcard with an explicit `route`:
+
+```tsx
+export const route = { path: "/docs/*", name: "docs.catchAll" } as const;
+```
+
 ## Page-route grammar
 
 Page routes deliberately accept less than API routes:
 
 - Supported: `/`, static segments, whole-segment params such as `/products/:id`, the exact wildcard `*`, and a terminal wildcard such as `/docs/*`.
-- Not supported: regex params, optional params, multiple params in one segment, params mixed with text, doubled or trailing slashes, and non-terminal wildcards.
+- Not supported: regex params, optional params, multiple params in one segment, params mixed with text, doubled or trailing slashes, non-terminal wildcards, and catch-all/rest segments (`[...slug]`).
 
 Write two pages for an optional segment. Validate a constrained parameter in the page instead of putting a regex in its path.
 
@@ -172,6 +205,24 @@ The browser boundary is decided by the import graph, not by the file's location.
 
 Keep server-only repository and service reads inside `loader`. Do not read them from module-scope initializers or the default component.
 
+### `.client` does not isolate SSR in 5.2
+
+A `.client.tsx` suffix is a naming convention, not an SSR-isolation boundary. A
+module statically imported by a page, layout, root, or any of their imports is
+still evaluated by the server. Top-level browser globals such as `window`
+therefore crash SSR boot. Warlock 5.2 does not ship a client-only component
+primitive; code that requires browser globals at module scope cannot be part of
+the SSR page graph.
+
+### Static assets use `public/` in 5.2
+
+The production server build does not support imported non-stylesheet assets. An
+import such as `import logo from "./logo.svg"` works under Vite in development
+but `warlock build` refuses it rather than emit a server URL that disagrees with
+the client bundle. Put the file in the application's `public/` directory and
+reference it by root URL: `public/logo.svg` is `/logo.svg`. Stylesheet imports
+are the exception and remain supported.
+
 ## Editing a page in development
 
 `warlock dev` decides Fast Refresh vs. a full reload by comparing the module's *skeleton* — its source with every component body masked out — across the edit. Everything outside a component body is part of the skeleton: imports, module-level declarations, and all server exports (`route`, `middleware`, `validation`, `loader`, `metadata`). The skeleton moving, with or without a simultaneous JSX change, forces a full reload; the skeleton holding still defers to Fast Refresh.
@@ -193,6 +244,11 @@ Changed in 5.2: through 5.1 the route table was built once at boot and never aga
 ## Gotchas
 
 - **A page with no `route` is not unreachable.** It derives a real URL from its file location — see [Filesystem routing](#filesystem-routing). Nothing about a route-less page is refused anymore.
+- **A page with no default export IS refused.** Named exports alone fail the build naming the file, instead of serving a blank 200.
+- **`.client.tsx` does not prevent SSR evaluation.** It is a naming convention in 5.2, not a client-only component primitive.
+- **Imported static assets do not build in 5.2.** Put them in `public/` and reference their root URL; CSS imports remain supported.
+- **`[...slug]` is not a catch-all.** It is read as a literal path segment and silently produces an unreachable route — see [Catch-all segments are NOT supported](#catch-all-segments-are-not-supported).
+- **`process.env` is refused in the client/universal graph, `PUBLIC_` prefix included.** Read env values in a loader and return them as page data; see [`load-page-data/SKILL.md`](../load-page-data/SKILL.md).
 - **Keep `route` literal.** A computed route cannot be discovered without executing app code and is refused.
 - **Do not annotate the loader with `: PageLoader`.** That erases the return type `PageProps` needs.
 - **Components receive data, not HTTP objects.** `request` and `response` belong to loaders; the component also renders in the browser.

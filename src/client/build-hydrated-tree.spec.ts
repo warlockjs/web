@@ -12,6 +12,11 @@ import type {
 } from "../hydration-payload";
 
 type LevelProps = { data: unknown; shared: unknown; children?: ReactNode };
+type PageProps = {
+  data: unknown;
+  shared: unknown;
+  params: Readonly<Record<string, string>>;
+};
 
 const Page = (_props: LevelProps): null => null;
 const OuterLayout = (_props: LevelProps): null => null;
@@ -22,13 +27,17 @@ const ErrorPage = (_props: SerializedErrorPageProps): null => null;
 /** A module NAMESPACE, which is what the registry's `load()` resolves to. */
 const moduleOf = (component: unknown) => ({ default: component });
 
-function payloadFor(name: string): HydrationDocumentPayloadSource {
+function payloadFor(
+  name: string,
+  params?: Readonly<Record<string, string>>,
+): HydrationDocumentPayloadSource {
   return {
     name,
     appData: { level: "app" },
     layoutData: { level: "layout" },
     pageData: { level: "page" },
     shared: { locale: "en" },
+    ...(params === undefined ? {} : { params }),
   };
 }
 
@@ -36,7 +45,11 @@ function errorPayloadFor(name: string): HydrationDocumentPayloadSource {
   return {
     ...payloadFor(name),
     errorPage: {
-      error: { name: "Error", message: "page exploded", stack: "Error: page exploded" },
+      error: {
+        name: "Error",
+        message: "page exploded",
+        stack: "Error: page exploded",
+      },
       status: 503,
     },
   };
@@ -50,7 +63,9 @@ function entry(
 }
 
 /** Narrow a ReactNode to an element so props can be read without `any`. */
-function asElement<Props extends object = LevelProps>(node: ReactNode): ReactElement<Props> {
+function asElement<Props extends object = LevelProps>(
+  node: ReactNode,
+): ReactElement<Props> {
   if (!isValidElement(node)) {
     throw new Error(`Expected a React element, received ${String(node)}.`);
   }
@@ -65,7 +80,7 @@ function asElement<Props extends object = LevelProps>(node: ReactNode): ReactEle
 function levelTypesOf(node: ReactNode): unknown[] {
   const types: unknown[] = [];
 
-  for (let current = node; isValidElement(current); ) {
+  for (let current = node; isValidElement(current);) {
     const element = current as ReactElement<LevelProps>;
     types.push(element.type);
     current = element.props.children as ReactNode;
@@ -99,6 +114,38 @@ describe("buildHydratedTree", () => {
     expect(page.props.data).toBe(payload.pageData);
     expect(page.props.shared).toBe(payload.shared);
     expect(page.props.children).toBeUndefined();
+  });
+
+  it("passes nested dynamic-route params only to the ordinary page", async () => {
+    const pages = [
+      entry("catalog.products.details", () => ({
+        Page: moduleOf(Page),
+        layouts: [moduleOf(OuterLayout)],
+        App: moduleOf(App),
+      })),
+    ];
+    const payload = payloadFor("catalog.products.details", {
+      category: "books",
+      productId: "42",
+    });
+
+    const layout = asElement(await buildHydratedTree(pages, payload));
+    const page = asElement<PageProps>(layout.props.children);
+
+    expect(page.props.params).toEqual({ category: "books", productId: "42" });
+    expect(layout.props).not.toHaveProperty("params");
+  });
+
+  it("uses an empty params object for payloads produced before params was optional", async () => {
+    const pages = [
+      entry("main.home", () => ({ Page: moduleOf(Page), layouts: [] })),
+    ];
+
+    const page = asElement<PageProps>(
+      await buildHydratedTree(pages, payloadFor("main.home")),
+    );
+
+    expect(page.props.params).toEqual({});
   });
 
   it("hydrates the server-selected ErrorPage instead of the ordinary Page", async () => {
@@ -159,17 +206,25 @@ describe("buildHydratedTree", () => {
       entry("main.about", () => ({ Page: moduleOf(Page), layouts: [] })),
     ];
 
-    const page = asElement(await buildHydratedTree(pages, payloadFor("main.about")));
+    const page = asElement(
+      await buildHydratedTree(pages, payloadFor("main.about")),
+    );
 
     expect(page.type).toBe(Page);
   });
 
   it("mounts the page alone when the route has no layouts", async () => {
     const pages = [
-      entry("main.home", () => ({ Page: moduleOf(Page), layouts: [], App: moduleOf(App) })),
+      entry("main.home", () => ({
+        Page: moduleOf(Page),
+        layouts: [],
+        App: moduleOf(App),
+      })),
     ];
 
-    const page = asElement(await buildHydratedTree(pages, payloadFor("main.home")));
+    const page = asElement(
+      await buildHydratedTree(pages, payloadFor("main.home")),
+    );
 
     expect(page.type).toBe(Page);
     expect(page.props.children).toBeUndefined();
@@ -177,10 +232,15 @@ describe("buildHydratedTree", () => {
 
   it("composes the layouts and page when the composition carries no App", async () => {
     const pages = [
-      entry("main.home", () => ({ Page: moduleOf(Page), layouts: [moduleOf(OuterLayout)] })),
+      entry("main.home", () => ({
+        Page: moduleOf(Page),
+        layouts: [moduleOf(OuterLayout)],
+      })),
     ];
 
-    const outer = asElement(await buildHydratedTree(pages, payloadFor("main.home")));
+    const outer = asElement(
+      await buildHydratedTree(pages, payloadFor("main.home")),
+    );
 
     expect(outer.type).toBe(OuterLayout);
     expect(asElement(outer.props.children).type).toBe(Page);
@@ -195,7 +255,9 @@ describe("buildHydratedTree", () => {
       })),
     ];
 
-    const page = asElement(await buildHydratedTree(pages, payloadFor("main.home")));
+    const page = asElement(
+      await buildHydratedTree(pages, payloadFor("main.home")),
+    );
 
     expect(page.type).toBe(Page);
   });
@@ -206,7 +268,10 @@ describe("buildHydratedTree", () => {
       entry("main.about", () => ({ Page: moduleOf(Page), layouts: [] })),
     ];
 
-    const failure = await buildHydratedTree(pages, payloadFor("main.contact")).then(
+    const failure = await buildHydratedTree(
+      pages,
+      payloadFor("main.contact"),
+    ).then(
       () => undefined,
       (error: unknown) => error,
     );
@@ -244,13 +309,22 @@ describe("buildHydratedTree", () => {
     const boom = new Error("chunk 404");
     const pages = [entry("main.home", () => Promise.reject(boom))];
 
-    await expect(buildHydratedTree(pages, payloadFor("main.home"))).rejects.toBe(boom);
+    await expect(
+      buildHydratedTree(pages, payloadFor("main.home")),
+    ).rejects.toBe(boom);
   });
 
   it("rejects a load that resolves to a malformed composition", async () => {
-    const pages = [entry("main.home", () => ({ layouts: [] }) as unknown as ClientRouteComposition)];
+    const pages = [
+      entry(
+        "main.home",
+        () => ({ layouts: [] }) as unknown as ClientRouteComposition,
+      ),
+    ];
 
-    await expect(buildHydratedTree(pages, payloadFor("main.home"))).rejects.toThrow(TypeError);
+    await expect(
+      buildHydratedTree(pages, payloadFor("main.home")),
+    ).rejects.toThrow(TypeError);
   });
 
   it("invokes load once per hydration, not once per layout", async () => {
@@ -260,7 +334,10 @@ describe("buildHydratedTree", () => {
       App: moduleOf(App),
     }));
 
-    await buildHydratedTree([entry("main.home", load)], payloadFor("main.home"));
+    await buildHydratedTree(
+      [entry("main.home", load)],
+      payloadFor("main.home"),
+    );
 
     expect(load).toHaveBeenCalledTimes(1);
   });
@@ -278,9 +355,16 @@ describe("buildHydratedTree", () => {
     const outer = registeredModule("outer", OuterLayout);
     const inner = registeredModule("inner", InnerLayout);
     const page = registeredModule("page", Page);
-    const load = vi.fn(() => ({ Page: page, layouts: [outer, inner], App: app }));
+    const load = vi.fn(() => ({
+      Page: page,
+      layouts: [outer, inner],
+      App: app,
+    }));
 
-    await buildHydratedTree([entry("main.home", load)], payloadFor("main.home"));
+    await buildHydratedTree(
+      [entry("main.home", load)],
+      payloadFor("main.home"),
+    );
 
     expect(events).toEqual([
       "register:app",

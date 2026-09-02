@@ -304,6 +304,112 @@ describe("gateBSecrets — Gate B inline-secret transform gate (real Vite builds
       expect(code).toContain("Case20Component");
     });
   });
+
+  describe("a bare `process.env` value-reference fails at transform time, mirroring the import.meta.env check", () => {
+    it("case 21: const env = process.env (aliased) fails at transform time, source-line-pointing", async () => {
+      try {
+        await buildEntry("case21-process-env-aliased.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module: forbidden inline env read in the client build.");
+        expect(message).toContain("case21-process-env-aliased.tsx:");
+        expect(message).toContain("Expression: process.env");
+        expect(message).toContain("Cause:");
+        expect(message).toContain("whole object");
+        expect(message).toContain("Fix:");
+      }
+    });
+
+    it("case 22: fn({...process.env}) (spread) fails at transform time, source-line-pointing", async () => {
+      try {
+        await buildEntry("case22-process-env-spread.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module: forbidden inline env read in the client build.");
+        expect(message).toContain("case22-process-env-spread.tsx:");
+        expect(message).toContain("Expression: process.env");
+        expect(message).toContain("Cause:");
+        expect(message).toContain("whole object");
+        expect(message).toContain("Fix:");
+      }
+    });
+
+    it("case 23: const { APP_SECRET } = process.env (destructured) fails at transform time", async () => {
+      try {
+        await buildEntry("case23-process-env-destructure.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module: forbidden inline env read in the client build.");
+        expect(message).toContain("case23-process-env-destructure.tsx:");
+        expect(message).toContain("Expression: process.env");
+        expect(message).toContain("whole object");
+      }
+    });
+
+    it("case 24: Object.keys(process.env) fails at transform time", async () => {
+      try {
+        await buildEntry("case24-process-env-object-keys.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module: forbidden inline env read in the client build.");
+        expect(message).toContain("case24-process-env-object-keys.tsx:");
+        expect(message).toContain("Expression: process.env");
+        expect(message).toContain("whole object");
+      }
+    });
+
+    it("case 25: JSON.stringify(process.env) fails at transform time", async () => {
+      try {
+        await buildEntry("case25-process-env-json-stringify.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module: forbidden inline env read in the client build.");
+        expect(message).toContain("case25-process-env-json-stringify.tsx:");
+        expect(message).toContain("Expression: process.env");
+        expect(message).toContain("whole object");
+      }
+    });
+
+    it("case 26: process.env[someRuntimeVariable] (computed key) fails — never-guess case", async () => {
+      try {
+        await buildEntry("case26-process-env-computed-bracket.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module");
+        expect(message).toContain("Expression: process.env[someRuntimeVariable]");
+        expect(message).toContain("Cause:");
+        expect(message).toContain("computed key");
+        expect(message).toContain("Fix:");
+      }
+    });
+
+    /**
+     * Documents ACTUAL behavior, not a request-spec claim: `process.env.X` is
+     * refused for EVERY key, "PUBLIC_"-prefixed or not — see this file's own
+     * header comment ("process.env is never readable client-side at all ...
+     * forbidden regardless of X") and the narrowed-read branch's cause
+     * message ("there is no 'public' process.env key, static or computed").
+     * That branch is pre-existing and intentionally untouched here. Unlike
+     * `import.meta.env`, `process.env` has no PUBLIC_-prefixed allowed path
+     * at all, narrowed or bare.
+     */
+    it("case 27: process.env.PUBLIC_API_URL (literal PUBLIC_ key) still fails — process.env has no allowed key, unlike import.meta.env", async () => {
+      try {
+        await buildEntry("case27-process-env-public-literal.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module");
+        expect(message).toContain("Expression: process.env.PUBLIC_API_URL");
+      }
+    });
+  });
 });
 
 /**

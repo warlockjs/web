@@ -7,6 +7,7 @@ import { build } from "vite";
 import type { Plugin } from "vite";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { CLIENT_REGISTRY_EXPORT_NAME } from "../build/generate-client-registry";
+import { MissingPageDefaultExportError } from "../build/page-default-export";
 import { warlockClientBoundary } from "./index";
 import {
   CLIENT_PAGE_REGISTRY_ID,
@@ -211,6 +212,29 @@ describe("clientPageRegistry — virtual module id contract", () => {
 
     expect(source).toContain(`export const ${CLIENT_REGISTRY_EXPORT_NAME}`);
     expect(source).not.toContain(`import("`);
+  });
+
+  it("refuses a discovered page with no default export before dev emits its registry", () => {
+    const appRoot = makeAppRoot();
+    writeFile(
+      path.join(appRoot, "src/web/no-default.page.tsx"),
+      'export const marker = "named-only";\n',
+    );
+
+    expect(() =>
+      callHook<string>(
+        clientPageRegistry({ appRoot }),
+        "load",
+        RESOLVED_CLIENT_PAGE_REGISTRY_ID,
+      ),
+    ).toThrow(MissingPageDefaultExportError);
+    expect(() =>
+      callHook<string>(
+        clientPageRegistry({ appRoot }),
+        "load",
+        RESOLVED_CLIENT_PAGE_REGISTRY_ID,
+      ),
+    ).toThrow(/src\/web\/no-default\.page\.tsx/);
   });
 });
 

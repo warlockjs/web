@@ -64,11 +64,18 @@ export type PageManifest = {
    * `WarlockConfig not loaded` during connector boot, taking the whole server
    * down before it could listen.
    *
-   * OPTIONAL for the same reason `app` is: a zero-page build skips the client
-   * bundle entirely, so there is no directory to name. Present whenever
-   * `pages` is non-empty.
+   * OPTIONAL only when the build has neither pages nor public files. A
+   * zero-page build skips the hydration bundle, but still names this directory
+   * when it copied app-owned `public/` files below it. Present whenever
+   * `pages` or `publicFiles` is non-empty.
    */
   clientDir?: string;
+  /**
+   * App-public file paths copied below `<clientDir>/public`, relative and
+   * POSIX. Production registers these exact URLs; it never mounts the client
+   * root and therefore never exposes `.vite/manifest.json`.
+   */
+  publicFiles?: readonly string[];
   /**
    * The application root component every page renders inside.
    *

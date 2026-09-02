@@ -21,7 +21,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parse } from "@babel/parser";
-import type { ConnectorEsbuildPatch } from "@warlock.js/core";
+import { normalizeRoutePath, type ConnectorEsbuildPatch } from "@warlock.js/core";
 import {
   discoverPages,
   discoverWebRoots,
@@ -96,9 +96,10 @@ export const WEB_ESBUILD_PATCH: ConnectorEsbuildPatch = {
 export const WEB_ENTRY_IMPORT = 'await import("./pages");';
 
 const REMEDY =
-  "remove the import from this file (move it into a client-only module, or " +
-  "reference the asset by URL instead), or wait for the Vite-based server " +
-  "build, which is the only build that can compile imports like this one";
+  "move the static file into the application's public/ directory and reference " +
+  "it by its root URL instead (for example, public/logo.svg becomes /logo.svg). " +
+  "The production server build does not compile static-asset imports, ?raw/?url " +
+  "queries, or import.meta.url in the page graph in 5.2";
 
 const ASSET_EXTENSIONS = [
   ".svg",
@@ -133,6 +134,8 @@ export type GeneratePagesBarrelOptions = {
    * build itself writes to, so the two cannot name different directories.
    */
   clientDir: string;
+  /** App-root-public file paths copied into the production client directory. */
+  publicFiles?: readonly string[];
 };
 
 export type GeneratePagesBarrelResult = {
@@ -368,6 +371,23 @@ const EMPTY_BARREL_CONTENTS = [
   "",
 ].join("\n");
 
+function emptyPageBarrelContents(clientDir: string, publicFiles: readonly string[]): string {
+  if (publicFiles.length === 0) return EMPTY_BARREL_CONTENTS;
+
+  return [
+    ...BARREL_HEADER,
+    "",
+    "// Zero pages were discovered, but app-owned public files still belong to",
+    "// the production browser surface and are served from the copied client tree.",
+    "providePageManifest({",
+    `  clientDir: ${quote(clientDir)},`,
+    `  publicFiles: ${JSON.stringify([...publicFiles])},`,
+    "  pages: [],",
+    "});",
+    "",
+  ].join("\n");
+}
+
 async function writeBarrel(productionDir: string, contents: string): Promise<string> {
   const barrelFile = path.join(productionDir, "pages.ts");
 
@@ -391,7 +411,7 @@ async function writeBarrel(productionDir: string, contents: string): Promise<str
 export async function generatePagesBarrel(
   options: GeneratePagesBarrelOptions,
 ): Promise<GeneratePagesBarrelResult> {
-  const { appRoot, productionDir, clientDir } = options;
+  const { appRoot, productionDir, clientDir, publicFiles = [] } = options;
   const srcRoot = path.join(appRoot, options.srcDir ?? "src");
   const webRoots = discoverWebRoots(srcRoot);
   const discovered = discoverPages({ appRoot, srcDir: options.srcDir });
@@ -400,11 +420,12 @@ export async function generatePagesBarrel(
 
   if (discovered.length === 0) {
     console.log("web configured, 0 pages");
+    const contents = emptyPageBarrelContents(clientDir, publicFiles);
 
     return {
       pageCount: 0,
-      barrelFile: await writeBarrel(productionDir, EMPTY_BARREL_CONTENTS),
-      contents: EMPTY_BARREL_CONTENTS,
+      barrelFile: await writeBarrel(productionDir, contents),
+      contents,
       pageRoutes: { version: 1, routes: [] },
     };
   }
@@ -422,18 +443,24 @@ export async function generatePagesBarrel(
 
   const layoutIdentifiers = new Map<string, string>();
   const pages: BarrelPage[] = [];
+  // Persisted paths run through the ROUTER's own `normalizeRoutePath`, the
+  // single definition of a route path's canonical form. Discovery derives these
+  // from the filesystem and never registers anything, so without this the
+  // manifest records a spelling the router never serves — the catch-all is
+  // literally `"*"` here and `"/*"` once registered — and `warlock routes:diff`
+  // reports drift on an untouched checkout right after a successful build.
   const pageRoutes: PageRoutesManifest = {
     version: 1,
     routes: [
       ...routablePages.filter((page) => !isNotFoundPageFile(page.pageFile)).map((page) => ({
       method: "GET" as const,
-      path: page.routePath,
+      path: normalizeRoutePath(page.routePath),
       name: page.routeName,
       source: toPosix(path.relative(appRoot, page.pageFile)),
       })),
       {
         method: "GET" as const,
-        path: NOT_FOUND_ROUTE_PATH,
+        path: normalizeRoutePath(NOT_FOUND_ROUTE_PATH),
         name: NOT_FOUND_ROUTE_NAME,
         source: routablePages.find((page) => isNotFoundPageFile(page.pageFile)) === undefined
           ? "\u0000warlock:framework-default-404"
@@ -495,7 +522,12 @@ export async function generatePagesBarrel(
     ...importLines,
     "",
     "providePageManifest({",
-    ...(routablePages.length === 0 ? [] : [`  clientDir: ${quote(clientDir)},`]),
+    ...(routablePages.length === 0 && publicFiles.length === 0
+      ? []
+      : [`  clientDir: ${quote(clientDir)},`]),
+    ...(publicFiles.length === 0
+      ? []
+      : [`  publicFiles: ${JSON.stringify([...publicFiles])},`]),
     ...(routablePages.length === 0 ? [] : [`  app: { module: app, sourceFile: ${relativeToApp(appFile)} },`]),
     ...(errorPage === undefined
       ? []

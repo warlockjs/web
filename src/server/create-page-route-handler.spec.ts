@@ -195,12 +195,15 @@ describe("createPageRouteHandler — universal registration", () => {
   it("registers App then the custom 404 page before rendering it, with no layout identity", async () => {
     const calls: string[] = [];
     const loader = vi.fn(() => ({ shouldNotRun: true }));
-    const responseContext = context("/missing/path");
+    const Page = () => null;
+    const notFoundModule = { register: () => calls.push("404"), loader };
+    Object.defineProperty(notFoundModule, "default", { value: Page, enumerable: false });
+    const responseContext = context("/missing/path?t=trace-token");
     const handler = createPageRouteHandler(
       handlerOptions(
         {
           "app.tsx": { register: () => calls.push("app") },
-          "404.page.tsx": { register: () => calls.push("404"), loader },
+          "404.page.tsx": notFoundModule,
         },
         {
           path: "*",
@@ -214,10 +217,12 @@ describe("createPageRouteHandler — universal registration", () => {
       ),
     );
 
-    renderPageRequest.mockImplementation(async (_url: string, options: RenderPageRequestOptions) => {
+    renderPageRequest.mockImplementation(async (url: string, options: RenderPageRequestOptions) => {
       calls.push("render");
+      expect(url).toBe("/missing/path?t=trace-token");
       expect(options.routes?.[0]?.path).toBe("/missing/path");
       expect(options.routes?.[0]?.triple.page.loader).toBeUndefined();
+      expect(options.routes?.[0]?.triple.page.default).toBe(Page);
       return renderedOk();
     });
 

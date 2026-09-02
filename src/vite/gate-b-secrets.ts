@@ -13,8 +13,9 @@
  * nowhere else: a client module may read
  * `import.meta.env.X` only when `X` starts with `PUBLIC_`. `process.env` is
  * never readable client-side at all — Node's `process` object does not exist
- * in the browser, so any static or computed read of `process.env.X` is
- * forbidden regardless of `X`.
+ * in the browser, so any static or computed read of `process.env.X`, or of
+ * `process.env` itself as a bare whole-object value (destructured, spread,
+ * assigned, or passed as an argument), is forbidden regardless of `X`.
  *
  * Gate A, Gate C and the SSR mirror rule are NOT this gate. Do not extend
  * this file to cover them; they are separate slices.
@@ -26,6 +27,11 @@
  * severe violation this gate judges, and is caught at the exact source line
  * like every other Gate B violation, not only as a whole-build
  * `generateBundle` failure. See `findViolation`'s `consumedEnvBases` note.
+ *
+ * A bare `process.env` reference is caught the same way, for the same
+ * reason — `findViolation`'s `consumedEnvBases` check applies to both bases,
+ * and unlike `import.meta.env` there is no allowed key at all for
+ * `process.env`, narrowed or bare.
  */
 import { parse } from "@babel/parser";
 import type { Plugin } from "vite";
@@ -180,8 +186,9 @@ interface Violation {
 
 /**
  * Walks a module's AST looking for `process.env.*` and `import.meta.env.*`
- * reads and returns the first violation found, or `undefined` if the module
- * is clean. Only the first violation is reported per module, fail-fast, so a
+ * reads — narrowed member accesses and bare whole-object references alike —
+ * and returns the first violation found, or `undefined` if the module is
+ * clean. Only the first violation is reported per module, fail-fast, so a
  * build failure always points at one concrete fix.
  *
  * `onPublicKeyRead` fires for every statically-resolved `PUBLIC_*` key
@@ -189,19 +196,20 @@ interface Violation {
  * vars are actually referenced anywhere in the client build (see
  * `gateBSecrets`'s `generateBundle` check below).
  *
- * `consumedEnvBases` tracks every `import.meta.env`
+ * `consumedEnvBases` tracks every `process.env` and `import.meta.env`
  * MemberExpression node that was already judged as the `.object` of a
- * further static/computed `.KEY` access (the two checks above) — i.e. a
- * NARROWED read, whether allowed or refused. Because `walk` visits a parent
- * node before its children, an outer `<base>.KEY` access always marks its
- * `base` sub-node as consumed BEFORE that same sub-node is visited on its
- * own. Any `import.meta.env` MemberExpression NOT found in this set when
- * visited on its own is therefore a bare reference used as a value —
- * `const env = import.meta.env`, `fn(import.meta.env)`,
- * `fn({...import.meta.env})`, `const { X } = import.meta.env` all take this
- * exact shape (the base is a direct child of a declarator/argument/spread,
- * never wrapped in one more `.KEY` MemberExpression) — and leaks the WHOLE
- * env object, not one key, so it fails regardless of what it's assigned to.
+ * further static/computed `.KEY` access (the narrowed-read checks above) —
+ * i.e. a NARROWED read, whether allowed or refused. Because `walk` visits a
+ * parent node before its children, an outer `<base>.KEY` access always marks
+ * its `base` sub-node as consumed BEFORE that same sub-node is visited on
+ * its own. Any `process.env` or `import.meta.env` MemberExpression NOT found
+ * in this set when visited on its own is therefore a bare reference used as
+ * a value — `const env = process.env`, `fn(process.env)`,
+ * `fn({...process.env})`, `const { X } = process.env` (and the same four
+ * shapes for `import.meta.env`) all take this exact shape (the base is a
+ * direct child of a declarator/argument/spread, never wrapped in one more
+ * `.KEY` MemberExpression) — and leaks the WHOLE env object, not one key, so
+ * it fails regardless of what it's assigned to.
  */
 function findViolation(
   code: string,
@@ -216,6 +224,7 @@ function findViolation(
     const outer = node;
 
     if (isProcessEnvBase(outer.object)) {
+      consumedEnvBases.add(outer.object);
       const key = resolveKey(outer);
       found = {
         line: outer.loc.start.line,
@@ -224,6 +233,16 @@ function findViolation(
           ? `"process.env.${key.key}" is read in client-bound code. process.env does not exist in the browser — there is no "public" process.env key, static or computed.`
           : `a computed key is read off process.env in client-bound code. process.env does not exist in the browser, and the compiler cannot guess whether a computed key is safe.`,
         fix: `Move the code that needs this value into a *.server.ts file or a server export (loader/route/middleware/validation/metadata), or — if the client genuinely needs this value — expose it via import.meta.env.${PUBLIC_ENV_PREFIX}* instead.`,
+      };
+      return;
+    }
+
+    if (isProcessEnvBase(outer) && !consumedEnvBases.has(outer)) {
+      found = {
+        line: outer.loc.start.line,
+        expression: expressionText(code, outer),
+        cause: `"process.env" is referenced as a whole object in client-bound code (not narrowed to one static "process.env.<KEY>" access) — process.env does not exist in the browser, so reading it as a value like this (assigned, destructured, spread, or passed as an argument) is never safe: there is no "public" process.env key, static or computed.`,
+        fix: `Move the code that needs this value into a *.server.ts file or a server export (loader/route/middleware/validation/metadata), reading only the specific "process.env.<KEY>" value you actually need, or — if the client genuinely needs a value — expose it via import.meta.env.${PUBLIC_ENV_PREFIX}* instead.`,
       };
       return;
     }

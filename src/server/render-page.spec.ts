@@ -1,5 +1,5 @@
 import { Response, type Request } from "@warlock.js/core";
-import { createElement } from "react";
+import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PAYLOAD_SCRIPT_ID } from "../components/document-context";
 
@@ -8,9 +8,9 @@ const { resolvePageMetadata } = vi.hoisted(() => ({
 }));
 
 vi.mock("./resolve-page-metadata", async () => {
-  const actual = await vi.importActual<typeof import("./resolve-page-metadata")>(
-    "./resolve-page-metadata",
-  );
+  const actual = await vi.importActual<
+    typeof import("./resolve-page-metadata")
+  >("./resolve-page-metadata");
   return { ...actual, resolvePageMetadata };
 });
 vi.mock("../shared", () => ({
@@ -18,7 +18,10 @@ vi.mock("../shared", () => ({
   sealShared: vi.fn(async () => Object.freeze({})),
 }));
 
-import { connectPageContext, type PageRouteEntry } from "./execute-page-request";
+import {
+  connectPageContext,
+  type PageRouteEntry,
+} from "./execute-page-request";
 import { isNonHydrating } from "./page-render-bundle";
 import { renderPage, renderPageFailure } from "./render-page";
 import type { ErrorPageModule } from "./error-page";
@@ -26,7 +29,7 @@ import type { ErrorPageModule } from "./error-page";
 beforeEach(() => {
   resolvePageMetadata.mockClear();
   connectPageContext({
-    buildStore: payload => payload as never,
+    buildStore: (payload) => payload as never,
     getStore: () => undefined,
     run: async (_store, callback) => callback(),
   });
@@ -112,13 +115,71 @@ describe("finishRender — normal app error page path", () => {
       loadErrorPage: async () => fakeErrorPageModule(),
     });
 
-    if (rendered instanceof Response) throw new Error("unexpected terminal Response");
+    if (rendered instanceof Response)
+      throw new Error("unexpected terminal Response");
 
     expect(isNonHydrating(rendered.bundle)).toBe(false);
     expect(rendered.html).toContain(PAYLOAD_SCRIPT_ID);
     expect(rendered.bundle?.errorPage).toEqual({
-      error: { name: expect.any(String), message: expect.any(String), stack: expect.any(String) },
+      error: {
+        name: expect.any(String),
+        message: expect.any(String),
+        stack: expect.any(String),
+      },
       status: 500,
     });
+  });
+});
+
+describe("finishRender ordinary page props", () => {
+  it("passes nested dynamic-route params only to the page, not its layout or root", async () => {
+    type WrapperProps = {
+      data: unknown;
+      shared: unknown;
+      children?: ReactNode;
+    };
+    type PageProps = {
+      data: unknown;
+      shared: unknown;
+      params: Readonly<Record<string, string>>;
+    };
+    let appProps: WrapperProps | undefined;
+    let layoutProps: WrapperProps | undefined;
+    let pageProps: PageProps | undefined;
+    const { request, response } = createHttp();
+    const entry: PageRouteEntry = {
+      path: "/catalog/:category/products/:productId",
+      name: "catalog.products.details",
+      triple: {
+        app: {
+          default: (props: WrapperProps) => {
+            appProps = props;
+            return props.children;
+          },
+        },
+        layout: {
+          default: (props: WrapperProps) => {
+            layoutProps = props;
+            return props.children;
+          },
+        },
+        page: {
+          default: (props: PageProps) => {
+            pageProps = props;
+            return null;
+          },
+        },
+      },
+    };
+
+    await renderPage(entry.name, {
+      params: { category: "books", productId: "42" },
+      routes: [entry],
+      createHttp: () => ({ request, response }),
+    });
+
+    expect(pageProps?.params).toEqual({ category: "books", productId: "42" });
+    expect(appProps).not.toHaveProperty("params");
+    expect(layoutProps).not.toHaveProperty("params");
   });
 });

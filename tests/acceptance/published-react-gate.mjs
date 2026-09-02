@@ -7,6 +7,8 @@
  *
  *   node web/tests/acceptance/published-react-gate.mjs --full-family
  *   node web/tests/acceptance/published-react-gate.mjs --red-control
+ *   node web/tests/acceptance/published-react-gate.mjs --registry-version 5.1.0
+ *   node web/tests/acceptance/published-react-gate.mjs --registry-version 5.1.0 --red-control
  *   node web/tests/acceptance/published-react-gate.mjs --web-version 5.0.3
  *   node web/tests/acceptance/published-react-gate.mjs --web-version 5.0.3 --registry-peer-version 5.0.2
  *
@@ -15,7 +17,8 @@
  * @warlock.js package is installed from a local packed artifact or the HTTPS
  * npm registry. Workspace packages are never linked. The explicit
  * --registry-peer-version mode isolates a web fix against released core/seal;
- * --full-family remains the release-family gate.
+ * --registry-version installs web/core/seal entirely from the HTTPS registry;
+ * --full-family remains the packed release-family gate.
  */
 
 import { spawn } from "node:child_process";
@@ -38,22 +41,30 @@ if (args.help) {
   console.log(`Published React gate
 
 Options:
-  --red-control          Remove React optimizeDeps.include in a copied web artifact.
+  --red-control          Remove React optimizeDeps.include in an isolated web copy.
   --web-version X.Y.Z    Test this pkgist artifact version (default: newest web build).
   --artifact-root PATH   Root containing <package>/<version>/ pkgist builds.
   --registry-peer-version X.Y.Z
                          Fix-isolation mode: pack only web and install exact
                          core/seal X.Y.Z from the HTTPS npm registry.
+  --registry-version X.Y.Z
+                         All-registry mode: install exact web/core/seal X.Y.Z
+                         from the HTTPS npm registry, with no local artifacts.
   --full-family          Pack and install the complete same-version Warlock family.
-  --keep-temp            Preserve the external app and tarballs for inspection.
+  --keep-temp            Preserve the external app and artifacts for inspection.
   --help                 Print this help.
 
-Both full-family and fix-isolation modes use the same browser assertions.
+Normal runs execute the same browser assertions in development and production;
+development additionally proves HMR. Red-control remains development-only.
 Red-control is expected to print EXIT FAIL and return a nonzero status.`);
   process.exit(0);
 }
 
-const installationMode = args.registryPeerVersion ? "fix-isolation" : "full-family";
+const installationMode = args.registryVersion
+  ? "all-registry"
+  : args.registryPeerVersion
+    ? "fix-isolation"
+    : "full-family";
 const mode = args.redControl ? `${installationMode}-red-control` : installationMode;
 const artifactRoot = path.resolve(args.artifactRoot ?? defaultArtifactRoot);
 const state = {
@@ -64,6 +75,7 @@ const state = {
 };
 
 let report;
+let teardownError;
 try {
   report = await runGate();
 } catch (error) {
@@ -80,7 +92,15 @@ try {
     setupError: formatError(error),
   };
 } finally {
-  await stopServer();
+  try {
+    await stopServer();
+  } catch (error) {
+    teardownError = formatError(error);
+  }
+}
+
+if (teardownError) {
+  report.assertions.push({ name: "server process tree is terminated", pass: false, detail: teardownError });
 }
 
 let passed = report.assertions.every(assertion => assertion.pass);
@@ -108,9 +128,9 @@ console.log(`EXIT ${passed ? "PASS" : "FAIL"} code=${passed ? 0 : 1} mode=${mode
 process.exitCode = passed ? 0 : 1;
 
 async function runGate() {
-  const webVersion = args.webVersion ?? (await newestArtifactVersion("web"));
-  const originalWebArtifact = path.join(artifactRoot, "web", webVersion);
-  await assertArtifact(originalWebArtifact, "@warlock.js/web", webVersion);
+  const webVersion = args.registryVersion ?? args.webVersion ?? (await newestArtifactVersion("web"));
+  const originalWebArtifact = args.registryVersion ? undefined : path.join(artifactRoot, "web", webVersion);
+  if (originalWebArtifact) await assertArtifact(originalWebArtifact, "@warlock.js/web", webVersion);
 
   state.tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "warlock-published-react-gate-"));
   state.appRoot = path.join(state.tempRoot, "app");
@@ -122,7 +142,7 @@ async function runGate() {
 
   let webArtifact = originalWebArtifact;
   let redMutation;
-  if (args.redControl) {
+  if (args.redControl && installationMode !== "all-registry") {
     webArtifact = path.join(state.tempRoot, "red-artifact", "web");
     await fs.cp(originalWebArtifact, webArtifact, { recursive: true });
     redMutation = await breakReactOptimization(webArtifact);
@@ -131,7 +151,8 @@ async function runGate() {
     );
   }
 
-  const closure = await collectPackedClosure(webVersion, webArtifact, installationMode);
+  const closure =
+    installationMode === "all-registry" ? [] : await collectPackedClosure(webVersion, webArtifact, installationMode);
   const tarballs = new Map();
   const packedEvidence = [];
 
@@ -155,13 +176,18 @@ async function runGate() {
 
   const port = await reserveEphemeralPort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const fixtureEvidence = await writeFixture(state.appRoot, baseUrl, tarballs, args.registryPeerVersion);
+  const fixtureEvidence = await writeFixture(state.appRoot, baseUrl, tarballs, {
+    registryPeerVersion: args.registryPeerVersion,
+    registryVersion: args.registryVersion,
+  });
 
   console.log(`MODE ${mode}`);
   console.log(
-    `INSTALL_MODE ${installationMode}${args.registryPeerVersion ? ` registry-peer-version=${args.registryPeerVersion}` : ""}`,
+    `INSTALL_MODE ${installationMode}` +
+      `${args.registryPeerVersion ? ` registry-peer-version=${args.registryPeerVersion}` : ""}` +
+      `${args.registryVersion ? ` registry-version=${args.registryVersion}` : ""}`,
   );
-  console.log(`NODE_ENV explicit=development asserted=true`);
+  console.log(`NODE_ENV development=explicit production=${args.redControl ? "skipped-red-control" : "explicit"}`);
   console.log(`APP external=${state.appRoot} workspace=${workspaceRoot}`);
   for (const item of packedEvidence) {
     console.log(
@@ -176,17 +202,25 @@ async function runGate() {
     cwd: state.appRoot,
     env: explicitDevelopmentEnv(),
     timeoutMs: 10 * 60_000,
-    label: "npm install packed artifacts",
+    label: installationMode === "all-registry" ? "npm install registry packages" : "npm install packed artifacts",
   });
 
   const installEvidence = await verifyPublishedInstall({
     packedArtifacts: closure,
     registryPeerVersion: args.registryPeerVersion,
+    registryVersion: args.registryVersion,
     appRoot: state.appRoot,
   });
   for (const evidence of installEvidence) {
     console.log(
       `INSTALLED package=${evidence.package}@${evidence.version} path=${evidence.path}${path.sep}package.json:1 symlink=${evidence.symlink} source=${evidence.source} resolution=${evidence.resolution}`,
+    );
+  }
+
+  if (args.redControl && installationMode === "all-registry") {
+    redMutation = await stageRegistryRedControl(state.appRoot, state.tempRoot);
+    console.log(
+      `RED_CONTROL artifact=${redMutation.file}:${redMutation.line} applied=${redMutation.appliedFile}:${redMutation.appliedLine} mutation=${JSON.stringify(redMutation.text)}`,
     );
   }
 
@@ -210,9 +244,12 @@ async function runGate() {
     console.log(`ARTIFACT ${includeEvidence.file}:${includeEvidence.line} ${includeEvidence.label}`);
   }
 
-  const serverEnv = explicitDevelopmentEnv();
+  const serverEnv = explicitDevelopmentEnv(port);
   if (serverEnv.NODE_ENV !== "development") {
     throw new Error(`NODE_ENV assertion failed before server spawn: ${JSON.stringify(serverEnv.NODE_ENV)}`);
+  }
+  if (serverEnv.HTTP_PORT !== String(port)) {
+    throw new Error(`HTTP_PORT assertion failed before server spawn: ${JSON.stringify(serverEnv.HTTP_PORT)}`);
   }
 
   const warlockBin = path.join(
@@ -233,22 +270,90 @@ async function runGate() {
   captureServerOutput(state.server.stderr);
 
   await waitForServer(baseUrl, 90_000);
-  const browserResults = await driveChromium(baseUrl, fixtureEvidence);
+  const browserResults = await driveChromium(baseUrl, {
+    phase: "development",
+    hmrSource: fixtureEvidence.find(item => item.label === "JSX HMR edit target").file,
+  });
+
+  let productionResults = null;
+  let productionBaseUrl = null;
+  let productionServerEnv = null;
+  let developmentPortReleased = null;
+  let productionBuildCompleted = null;
+  let productionSsrReady = null;
+  if (!args.redControl) {
+    await stopServer();
+    developmentPortReleased = await waitForPortRelease(port, 15_000);
+
+    const productionPort = await reserveEphemeralPort();
+    productionBaseUrl = `http://127.0.0.1:${productionPort}`;
+    await writeFixtureServerAddress(state.appRoot, productionBaseUrl);
+
+    const buildEnv = explicitProductionEnv();
+    if (buildEnv.NODE_ENV !== "production") {
+      throw new Error(`NODE_ENV assertion failed before build: ${JSON.stringify(buildEnv.NODE_ENV)}`);
+    }
+    await runCommand(process.execPath, [warlockBin, "build"], {
+      cwd: state.appRoot,
+      env: buildEnv,
+      timeoutMs: 5 * 60_000,
+      label: "installed warlock build",
+    });
+    productionBuildCompleted = true;
+
+    productionServerEnv = explicitProductionEnv(productionPort);
+    if (productionServerEnv.NODE_ENV !== "production") {
+      throw new Error(
+        `NODE_ENV assertion failed before production server spawn: ${JSON.stringify(productionServerEnv.NODE_ENV)}`,
+      );
+    }
+    if (productionServerEnv.HTTP_PORT !== String(productionPort)) {
+      throw new Error(
+        `HTTP_PORT assertion failed before production server spawn: ${JSON.stringify(productionServerEnv.HTTP_PORT)}`,
+      );
+    }
+
+    state.server = spawn(process.execPath, [warlockBin, "start"], {
+      cwd: state.appRoot,
+      env: productionServerEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    captureServerOutput(state.server.stdout);
+    captureServerOutput(state.server.stderr);
+
+    await waitForServer(productionBaseUrl, 90_000, "HMR_MARKER_B", "warlock start");
+    productionSsrReady = true;
+    productionResults = await driveChromium(productionBaseUrl, { phase: "production" });
+  }
 
   const assertions = [
     assertion("temp app is outside monorepo", !isInside(workspaceRoot, state.appRoot), state.appRoot),
     assertion("NODE_ENV is explicitly development", serverEnv.NODE_ENV === "development", serverEnv.NODE_ENV),
+    assertion("HTTP_PORT is explicitly reserved", serverEnv.HTTP_PORT === String(port), serverEnv.HTTP_PORT),
     assertion(
       "all Warlock installs are extracted directories, never symlinks",
       installEvidence.every(item => !item.symlink),
       installEvidence.map(item => `${item.package}:${item.symlink}`).join(", "),
     ),
     assertion(
-      args.registryPeerVersion
-        ? "web is a non-symlink packed tarball and core/seal are non-symlink HTTPS registry resolutions"
-        : "complete Warlock family resolves from non-symlink packed tarballs",
-      args.registryPeerVersion
-        ? installEvidence.some(item => item.package === "@warlock.js/web" && item.source === "packed-tarball") &&
+      args.registryVersion
+        ? `web/core/seal are exact ${args.registryVersion} non-symlink HTTPS registry resolutions`
+        : args.registryPeerVersion
+          ? "web is a non-symlink packed tarball and core/seal are non-symlink HTTPS registry resolutions"
+          : "complete Warlock family resolves from non-symlink packed tarballs",
+      args.registryVersion
+        ? ["@warlock.js/web", "@warlock.js/core", "@warlock.js/seal"].every(packageName =>
+            installEvidence.some(
+              item =>
+                item.package === packageName &&
+                item.version === args.registryVersion &&
+                item.source === "https-registry" &&
+                item.resolution.startsWith("https://"),
+            ),
+          )
+        : args.registryPeerVersion
+          ? installEvidence.some(item => item.package === "@warlock.js/web" && item.source === "packed-tarball") &&
             ["@warlock.js/core", "@warlock.js/seal"].every(packageName =>
               installEvidence.some(
                 item =>
@@ -257,7 +362,7 @@ async function runGate() {
                   item.source === "https-registry",
               ),
             )
-        : installEvidence.every(item => item.source === "packed-tarball"),
+          : installEvidence.every(item => item.source === "packed-tarball"),
       installEvidence.map(item => `${item.package}@${item.version}:${item.source}:${item.resolution}`).join(", "),
     ),
     assertion(
@@ -296,6 +401,58 @@ async function runGate() {
       browserResults.pageErrors.length === 0,
       JSON.stringify(browserResults.pageErrors),
     ),
+    ...(args.redControl
+      ? []
+      : [
+          assertion(
+            "development server closes and releases its port before production",
+            developmentPortReleased === true,
+            String(developmentPortReleased),
+          ),
+          assertion(
+            "production build and start use explicit NODE_ENV=production",
+            productionBuildCompleted === true && productionServerEnv?.NODE_ENV === "production",
+            `build=${productionBuildCompleted} start=${productionServerEnv?.NODE_ENV}`,
+          ),
+          assertion("production SSR becomes ready", productionSsrReady === true, String(productionSsrReady)),
+          assertion(
+            "production start uses an explicitly reserved HTTP_PORT",
+            productionServerEnv?.HTTP_PORT === new URL(productionBaseUrl).port,
+            productionServerEnv?.HTTP_PORT,
+          ),
+          assertion("production React hydration effect runs", productionResults.hydrated, String(productionResults.hydrated)),
+          assertion(
+            "production useState counter increments on two real clicks",
+            productionResults.counter.before === "Clicked 0 times" &&
+              productionResults.counter.after === "Clicked 2 times",
+            `${JSON.stringify(productionResults.counter.before)} -> ${JSON.stringify(productionResults.counter.after)}`,
+          ),
+          assertion(
+            "production @warlock.js/web Link navigates client-side",
+            productionResults.link.url === `${productionBaseUrl}/about` &&
+              productionResults.link.aboutText === "ABOUT_OK" &&
+              productionResults.link.documentRequests === 0 &&
+              productionResults.link.realmSurvived,
+            JSON.stringify(productionResults.link),
+          ),
+          assertion(
+            "production does not load or connect to HMR",
+            productionResults.hmr.performed === false &&
+              productionResults.hmr.clientRequests.length === 0 &&
+              productionResults.hmr.webSockets.length === 0,
+            JSON.stringify(productionResults.hmr),
+          ),
+          assertion(
+            "production browser console errors are empty",
+            productionResults.consoleErrors.length === 0,
+            JSON.stringify(productionResults.consoleErrors),
+          ),
+          assertion(
+            "production browser page errors are empty",
+            productionResults.pageErrors.length === 0,
+            JSON.stringify(productionResults.pageErrors),
+          ),
+        ]),
   ];
 
   return {
@@ -303,16 +460,27 @@ async function runGate() {
     installationMode,
     webVersion,
     registryPeerVersion: args.registryPeerVersion ?? null,
+    registryVersion: args.registryVersion ?? null,
     tempApp: state.appRoot,
     nodeEnv: serverEnv.NODE_ENV,
+    productionNodeEnv: productionServerEnv?.NODE_ENV ?? null,
     packedArtifacts: packedEvidence,
     artifactEvidence: {
       optimizeDeps: `${optimizerEvidence.file}:${optimizerEvidence.line}`,
       reactInclude: includeEvidence ? `${includeEvidence.file}:${includeEvidence.line}` : null,
       redMutation: redMutation ? `${redMutation.file}:${redMutation.line}` : null,
+      redMutationApplied: redMutation?.appliedFile
+        ? `${redMutation.appliedFile}:${redMutation.appliedLine}`
+        : null,
     },
     sourceEvidence: fixtureEvidence.map(item => `${item.file}:${item.line} ${item.label}`),
-    measured: browserResults,
+    measured: {
+      ...browserResults,
+      development: browserResults,
+      production: productionResults
+        ? { buildCompleted: productionBuildCompleted, ssrReady: productionSsrReady, ...productionResults }
+        : null,
+    },
     assertions,
   };
 }
@@ -326,6 +494,7 @@ function parseArgs(argv) {
     webVersion: undefined,
     artifactRoot: undefined,
     registryPeerVersion: undefined,
+    registryVersion: undefined,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -339,11 +508,21 @@ function parseArgs(argv) {
     else if (argument === "--registry-peer-version") {
       parsed.registryPeerVersion = requiredExactVersion(argv, ++index, argument);
     }
+    else if (argument === "--registry-version") {
+      parsed.registryVersion = requiredExactVersion(argv, ++index, argument);
+    }
     else throw new Error(`Unknown argument ${JSON.stringify(argument)}. Use --help.`);
   }
 
-  if (parsed.fullFamily && parsed.registryPeerVersion) {
-    throw new Error("--full-family and --registry-peer-version cannot be used together.");
+  const explicitModes = [parsed.fullFamily, parsed.registryPeerVersion, parsed.registryVersion].filter(Boolean);
+  if (explicitModes.length > 1) {
+    throw new Error("--full-family, --registry-peer-version, and --registry-version are mutually exclusive.");
+  }
+  if (parsed.registryVersion && parsed.webVersion) {
+    throw new Error("--registry-version supplies the web version and cannot be combined with --web-version.");
+  }
+  if (parsed.registryVersion && parsed.artifactRoot) {
+    throw new Error("--registry-version does not use local artifacts and cannot be combined with --artifact-root.");
   }
 
   return parsed;
@@ -472,7 +651,7 @@ async function npmPack(artifact, destination) {
   return path.join(destination, created[0]);
 }
 
-async function writeFixture(appRoot, baseUrl, tarballs, registryPeerVersion) {
+async function writeFixture(appRoot, baseUrl, tarballs, { registryPeerVersion, registryVersion }) {
   const dependencies = {
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
@@ -482,7 +661,11 @@ async function writeFixture(appRoot, baseUrl, tarballs, registryPeerVersion) {
     vite: "7.3.5",
   };
   for (const [name, tarball] of tarballs) dependencies[name] = `file:${toPosix(tarball)}`;
-  if (registryPeerVersion) {
+  if (registryVersion) {
+    dependencies["@warlock.js/web"] = registryVersion;
+    dependencies["@warlock.js/core"] = registryVersion;
+    dependencies["@warlock.js/seal"] = registryVersion;
+  } else if (registryPeerVersion) {
     dependencies["@warlock.js/core"] = registryPeerVersion;
     dependencies["@warlock.js/seal"] = registryPeerVersion;
   }
@@ -494,7 +677,7 @@ async function writeFixture(appRoot, baseUrl, tarballs, registryPeerVersion) {
         version: "1.0.0",
         private: true,
         type: "module",
-        scripts: { dev: "warlock dev" },
+        scripts: { dev: "warlock dev", build: "warlock build", start: "warlock start" },
         dependencies,
       },
       null,
@@ -546,8 +729,8 @@ export default app;
     "src/web/root.tsx": `import type { AppProps } from "@warlock.js/web";
 import { Head, Scripts } from "@warlock.js/web";
 
-export default function App({ shared, children }: AppProps) {
-  return <html lang={shared.locale} dir={shared.dir}><head><Head /></head><body><div id="root">{children}</div><Scripts /></body></html>;
+export default function App({ children }: AppProps) {
+  return <html lang="en" dir="ltr"><head><Head /></head><body><div id="root">{children}</div><Scripts /></body></html>;
 }
 `,
     "src/app/main/web/layout.tsx": `import type { LayoutProps } from "@warlock.js/web";
@@ -596,24 +779,54 @@ export default function AboutPage() {
   ];
 }
 
-async function verifyPublishedInstall({ packedArtifacts, registryPeerVersion, appRoot }) {
+async function writeFixtureServerAddress(appRoot, baseUrl) {
+  const port = new URL(baseUrl).port;
+  await fs.writeFile(
+    path.join(appRoot, "src/config/http.ts"),
+    `import type { HttpConfigurations } from "@warlock.js/core";\n\nconst http: HttpConfigurations = { port: ${port}, host: "127.0.0.1" };\nexport default http;\n`,
+    "utf8",
+  );
+  await fs.writeFile(
+    path.join(appRoot, "src/config/app.ts"),
+    `import type { AppConfigurations } from "@warlock.js/core";\n\nconst app: AppConfigurations = {\n  appName: "Published React Gate",\n  baseUrl: ${JSON.stringify(baseUrl)},\n  timezone: "UTC",\n  localeCode: "en",\n  localeCodes: ["en"],\n};\nexport default app;\n`,
+    "utf8",
+  );
+}
+
+async function verifyPublishedInstall({ packedArtifacts, registryPeerVersion, registryVersion, appRoot }) {
   const lock = await readJson(path.join(appRoot, "package-lock.json"));
   const evidence = [];
   for (const artifact of packedArtifacts) {
     evidence.push(await verifyInstalledPackage({ ...artifact, source: "packed-tarball" }, appRoot, lock));
   }
-  if (registryPeerVersion) {
-    for (const name of ["@warlock.js/core", "@warlock.js/seal"]) {
-      evidence.push(
-        await verifyInstalledPackage(
-          { name, version: registryPeerVersion, source: "https-registry" },
-          appRoot,
-          lock,
-        ),
-      );
-    }
+  const registryPackages = registryVersion
+    ? ["@warlock.js/web", "@warlock.js/core", "@warlock.js/seal"]
+    : registryPeerVersion
+      ? ["@warlock.js/core", "@warlock.js/seal"]
+      : [];
+  const exactRegistryVersion = registryVersion ?? registryPeerVersion;
+  for (const name of registryPackages) {
+    evidence.push(
+      await verifyInstalledPackage(
+        { name, version: exactRegistryVersion, source: "https-registry" },
+        appRoot,
+        lock,
+      ),
+    );
   }
   return evidence.sort((left, right) => left.package.localeCompare(right.package));
+}
+
+async function stageRegistryRedControl(appRoot, tempRoot) {
+  const installedWeb = path.join(appRoot, "node_modules", "@warlock.js", "web");
+  const copiedWeb = path.join(tempRoot, "red-artifact", "registry-web");
+  await fs.cp(installedWeb, copiedWeb, { recursive: true });
+  const mutation = await breakReactOptimization(copiedWeb);
+  const relativeMutationFile = path.relative(copiedWeb, mutation.file);
+  const appliedFile = path.join(installedWeb, relativeMutationFile);
+  await fs.copyFile(mutation.file, appliedFile);
+  const applied = await sourceEvidence(appliedFile, mutation.text, "installed registry web red control");
+  return { ...mutation, appliedFile: applied.file, appliedLine: applied.line };
 }
 
 async function verifyInstalledPackage({ name, version, source }, appRoot, lock) {
@@ -649,7 +862,7 @@ async function verifyInstalledPackage({ name, version, source }, appRoot, lock) 
   };
 }
 
-async function driveChromium(baseUrl, fixtureEvidence) {
+async function driveChromium(baseUrl, { phase, hmrSource }) {
   const { chromium } = loadPlaywright();
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext();
@@ -658,6 +871,8 @@ async function driveChromium(baseUrl, fixtureEvidence) {
   const pageErrors = [];
   const documentRequests = [];
   const reactDomClientUrls = [];
+  const hmrClientRequests = [];
+  const webSockets = [];
 
   page.on("console", message => {
     if (message.type() === "error") consoleErrors.push(message.text());
@@ -666,12 +881,23 @@ async function driveChromium(baseUrl, fixtureEvidence) {
   page.on("request", request => {
     if (request.resourceType() === "document") documentRequests.push(request.url());
     if (/react-dom(?:%2F|\/|_).*client/i.test(request.url())) reactDomClientUrls.push(request.url());
+    if (/\/@vite\/client(?:\?|$)/.test(request.url())) hmrClientRequests.push(request.url());
   });
+  page.on("websocket", socket => webSockets.push(socket.url()));
 
   const results = {
     hydrated: false,
     counter: { before: null, after: null },
-    hmr: { before: null, after: null, documentRequests: null, realmSurvived: false },
+    phase,
+    hmr: {
+      performed: Boolean(hmrSource),
+      before: null,
+      after: null,
+      documentRequests: null,
+      realmSurvived: false,
+      clientRequests: hmrClientRequests,
+      webSockets,
+    },
     link: { url: null, aboutText: null, documentRequests: null, realmSurvived: false },
     consoleErrors,
     pageErrors,
@@ -695,29 +921,36 @@ async function driveChromium(baseUrl, fixtureEvidence) {
     await page.locator("#counter").click();
     await page.waitForTimeout(250);
     results.counter.after = normalizeText(await page.locator("#counter").textContent());
-
-    await page.evaluate(() => {
-      window.__WARLOCK_HMR_REALM__ = "alive";
-    });
-    results.hmr.before = normalizeText(await page.locator("#hmr-marker").textContent());
-    const documentsBeforeHmr = documentRequests.length;
-    const homeSource = fixtureEvidence.find(item => item.label === "JSX HMR edit target").file;
-    const originalHome = await fs.readFile(homeSource, "utf8");
-    const editedHome = originalHome.replace("HMR_MARKER_A", "HMR_MARKER_B");
-    if (editedHome === originalHome) throw new Error(`HMR edit target missing from ${homeSource}.`);
-    await fs.writeFile(homeSource, editedHome, "utf8");
-    try {
-      await page.waitForFunction(
-        () => document.querySelector("#hmr-marker")?.textContent?.trim() === "HMR_MARKER_B",
-        undefined,
-        { timeout: 20_000 },
-      );
-    } catch {
-      // Preserve the measured DOM and browser errors; the assertion below owns failure.
+    if (!results.hydrated) {
+      results.hydrated = await page
+        .locator('#counter[data-hydrated="true"]')
+        .isVisible()
+        .catch(() => false);
     }
-    results.hmr.after = normalizeText(await page.locator("#hmr-marker").textContent().catch(() => null));
-    results.hmr.documentRequests = documentRequests.length - documentsBeforeHmr;
-    results.hmr.realmSurvived = await page.evaluate(() => window.__WARLOCK_HMR_REALM__ === "alive").catch(() => false);
+
+    if (hmrSource) {
+      await page.evaluate(() => {
+        window.__WARLOCK_HMR_REALM__ = "alive";
+      });
+      results.hmr.before = normalizeText(await page.locator("#hmr-marker").textContent());
+      const documentsBeforeHmr = documentRequests.length;
+      const originalHome = await fs.readFile(hmrSource, "utf8");
+      const editedHome = originalHome.replace("HMR_MARKER_A", "HMR_MARKER_B");
+      if (editedHome === originalHome) throw new Error(`HMR edit target missing from ${hmrSource}.`);
+      await fs.writeFile(hmrSource, editedHome, "utf8");
+      try {
+        await page.waitForFunction(
+          () => document.querySelector("#hmr-marker")?.textContent?.trim() === "HMR_MARKER_B",
+          undefined,
+          { timeout: 20_000 },
+        );
+      } catch {
+        // Preserve the measured DOM and browser errors; the assertion below owns failure.
+      }
+      results.hmr.after = normalizeText(await page.locator("#hmr-marker").textContent().catch(() => null));
+      results.hmr.documentRequests = documentRequests.length - documentsBeforeHmr;
+      results.hmr.realmSurvived = await page.evaluate(() => window.__WARLOCK_HMR_REALM__ === "alive").catch(() => false);
+    }
 
     await page.evaluate(() => {
       window.__WARLOCK_LINK_REALM__ = "alive";
@@ -752,35 +985,87 @@ function loadPlaywright() {
   );
 }
 
-async function waitForServer(baseUrl, timeoutMs) {
+async function waitForServer(baseUrl, timeoutMs, marker = "HMR_MARKER_A", command = "warlock dev") {
   const deadline = Date.now() + timeoutMs;
   let lastError;
   while (Date.now() < deadline) {
     if (state.server.exitCode !== null) {
-      throw new Error(`warlock dev exited early with code ${state.server.exitCode}.`);
+      throw new Error(`${command} exited early with code ${state.server.exitCode}.`);
     }
     try {
       const response = await fetch(`${baseUrl}/`);
       const body = await response.text();
-      if (response.ok && body.includes("HMR_MARKER_A")) return;
-      lastError = new Error(`HTTP ${response.status}; marker=${body.includes("HMR_MARKER_A")}`);
+      if (response.ok && body.includes(marker)) return;
+      lastError = new Error(`HTTP ${response.status}; marker=${body.includes(marker)}`);
     } catch (error) {
       lastError = error;
     }
     await delay(250);
   }
-  throw new Error(`warlock dev did not become browser-ready at ${baseUrl}: ${formatError(lastError)}`);
+  throw new Error(`${command} did not become browser-ready at ${baseUrl}: ${formatError(lastError)}`);
 }
 
 async function stopServer() {
-  if (!state.server || state.server.exitCode !== null) return;
-  state.server.kill("SIGTERM");
-  await Promise.race([
-    new Promise(resolve => state.server.once("exit", resolve)),
-    delay(5_000).then(() => {
-      if (state.server.exitCode === null) state.server.kill("SIGKILL");
-    }),
-  ]);
+  const server = state.server;
+  if (!server) return;
+  if (server.exitCode !== null) {
+    state.server = undefined;
+    return;
+  }
+
+  const exited = new Promise(resolve => server.once("exit", resolve));
+  if (process.platform === "win32") {
+    try {
+      await runCommand("taskkill.exe", ["/pid", String(server.pid), "/t", "/f"], {
+        cwd: state.appRoot ?? workspaceRoot,
+        env: process.env,
+        timeoutMs: 15_000,
+        label: `taskkill server tree ${server.pid}`,
+      });
+    } catch (error) {
+      if (processIsAlive(server.pid)) throw error;
+    }
+  } else {
+    server.kill("SIGTERM");
+    const stoppedGracefully = await Promise.race([exited.then(() => true), delay(5_000).then(() => false)]);
+    if (!stoppedGracefully && server.exitCode === null) server.kill("SIGKILL");
+  }
+  await Promise.race([exited, delay(5_000)]);
+  if (processIsAlive(server.pid)) throw new Error(`Server process ${server.pid} did not terminate.`);
+  if (state.server === server) state.server = undefined;
+}
+
+function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForPortRelease(port, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError;
+  while (Date.now() < deadline) {
+    try {
+      await bindAndReleasePort(port);
+      return true;
+    } catch (error) {
+      lastError = error;
+      await delay(100);
+    }
+  }
+  throw new Error(`Development HTTP_PORT ${port} was not released: ${formatError(lastError)}`);
+}
+
+async function bindAndReleasePort(port) {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.unref();
+    probe.once("error", reject);
+    probe.listen(port, "127.0.0.1", () => probe.close(error => (error ? reject(error) : resolve())));
+  });
 }
 
 function captureServerOutput(stream) {
@@ -851,8 +1136,20 @@ async function runNpm(npmArgs, options) {
   return runCommand("npm", npmArgs, options);
 }
 
-function explicitDevelopmentEnv() {
-  return { ...process.env, NODE_ENV: "development" };
+function explicitDevelopmentEnv(port) {
+  return {
+    ...process.env,
+    NODE_ENV: "development",
+    ...(port === undefined ? {} : { HTTP_PORT: String(port) }),
+  };
+}
+
+function explicitProductionEnv(port) {
+  return {
+    ...process.env,
+    NODE_ENV: "production",
+    ...(port === undefined ? {} : { HTTP_PORT: String(port) }),
+  };
 }
 
 function assertOutsideWorkspace(candidate) {

@@ -4,10 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConnectorBuildContext } from "@warlock.js/core";
+import type { Plugin } from "vite";
 import {
   assertWebPackageRoot,
   ClientOutDirNotSupportedError,
-  ConnectorPluginsNotSupportedError,
   createWebBuildContribution,
   resolveWebPackageRoot,
   WebPackageRootResolutionError,
@@ -30,12 +30,19 @@ function makeTree(files: Record<string, string>): string {
 
 afterEach(() => {
   while (temporaryDirectories.length > 0) {
-    fs.rmSync(temporaryDirectories.pop() as string, { recursive: true, force: true });
+    fs.rmSync(temporaryDirectories.pop() as string, {
+      recursive: true,
+      force: true,
+    });
   }
 });
 
 /** This spec lives at `web/src/build/` — two levels up is the real package root. */
-const realWebRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const realWebRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+);
 
 describe("assertWebPackageRoot", () => {
   it("accepts the real @warlock.js/web package root", () => {
@@ -45,12 +52,16 @@ describe("assertWebPackageRoot", () => {
   it("throws WebPackageRootResolutionError naming a root with no package.json", () => {
     const bogus = makeTree({ "readme.md": "not a package\n" });
 
-    expect(() => assertWebPackageRoot(bogus)).toThrow(WebPackageRootResolutionError);
+    expect(() => assertWebPackageRoot(bogus)).toThrow(
+      WebPackageRootResolutionError,
+    );
     expect(() => assertWebPackageRoot(bogus)).toThrow(bogus);
   });
 
   it("throws WebPackageRootResolutionError when the package name is another package", () => {
-    const bogus = makeTree({ "package.json": JSON.stringify({ name: "@warlock.js/core" }) });
+    const bogus = makeTree({
+      "package.json": JSON.stringify({ name: "@warlock.js/core" }),
+    });
 
     let thrown: unknown;
 
@@ -70,54 +81,76 @@ describe("assertWebPackageRoot", () => {
   it("throws WebPackageRootResolutionError on unparsable package.json", () => {
     const bogus = makeTree({ "package.json": "{ not json" });
 
-    expect(() => assertWebPackageRoot(bogus)).toThrow(WebPackageRootResolutionError);
+    expect(() => assertWebPackageRoot(bogus)).toThrow(
+      WebPackageRootResolutionError,
+    );
   });
 });
 
 const buildHydrationClient = vi.hoisted(() => vi.fn(async () => undefined));
 
-vi.mock("../vite", () => ({ buildWarlockHydrationClient: buildHydrationClient }));
+vi.mock("../vite", () => ({
+  buildWarlockHydrationClient: buildHydrationClient,
+}));
 
 /**
- * Wraps the real `generatePagesBarrel` so tests can observe call counts
- * without losing its real behavior (other tests in this file assert on the
- * barrel it actually writes).
+ * Keep this orchestration spec isolated from the generator's Babel/discovery
+ * graph. `generate-pages-barrel.spec.ts` owns the emitted-barrel contract;
+ * these tests own only the contribution's inputs, outputs, and sequencing.
  */
 const generatePagesBarrelSpy = vi.hoisted(() => vi.fn());
 
-vi.mock("./generate-pages-barrel", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./generate-pages-barrel")>();
-
-  generatePagesBarrelSpy.mockImplementation(actual.generatePagesBarrel);
-
-  return { ...actual, generatePagesBarrel: generatePagesBarrelSpy };
-});
+vi.mock("./generate-pages-barrel", () => ({
+  generatePagesBarrel: generatePagesBarrelSpy,
+  WEB_ENTRY_IMPORT: 'await import("./pages");',
+  WEB_ESBUILD_PATCH: {},
+}));
 
 /** Only `outdir` is read by the hooks under test; nothing else reaches them. */
 function buildContext(appRoot: string): ConnectorBuildContext {
   return {
     appRoot,
     productionDir: path.join(appRoot, ".warlock", "production"),
-    options: { outdir: path.join(appRoot, "dist") } as ConnectorBuildContext["options"],
+    options: {
+      outdir: path.join(appRoot, "dist"),
+    } as ConnectorBuildContext["options"],
   };
 }
 
 const APP = "export default function App() { return null; }\n";
-const PAGE = 'export const route = "/";\nexport default function Page() { return null; }\n';
+const PAGE =
+  'export const route = "/";\nexport default function Page() { return null; }\n';
+
+/**
+ * Keep emit-path tests focused on contribution orchestration. The real barrel
+ * generator is exercised in its own spec; repeating filesystem discovery in
+ * every emit assertion makes these units measure unrelated work.
+ */
+function stubGeneratedPages(pageCount: number): void {
+  generatePagesBarrelSpy.mockResolvedValueOnce({
+    pageCount,
+    barrelFile: "virtual-pages.ts",
+    contents: "",
+    pageRoutes: { version: 1, routes: [] },
+  });
+}
 
 describe("web build contribution — zero pages", () => {
-  it("writes the barrel and contributes its entry import even with no pages", async () => {
+  it("contributes its entry import even when the generator reports no pages", async () => {
     const appRoot = makeTree({ "src/web/root.tsx": APP });
     const context = buildContext(appRoot);
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
+    generatePagesBarrelSpy.mockClear();
+    stubGeneratedPages(0);
+
     const result = await createWebBuildContribution().generate?.(context);
 
-    expect(result).toMatchObject({ entryImports: ['await import("./pages");'] });
+    expect(result).toMatchObject({
+      entryImports: ['await import("./pages");'],
+    });
 
-    const contents = fs.readFileSync(path.join(context.productionDir, "pages.ts"), "utf-8");
-
-    expect(contents).toContain("providePageManifest({ pages: [] });");
+    expect(generatePagesBarrelSpy).toHaveBeenCalledTimes(1);
 
     log.mockRestore();
   });
@@ -128,32 +161,78 @@ describe("web build contribution — zero pages", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const contribution = createWebBuildContribution();
 
+    generatePagesBarrelSpy.mockClear();
     buildHydrationClient.mockClear();
+    stubGeneratedPages(0);
 
     await contribution.generate?.(context);
     await contribution.emit?.(context);
 
+    expect(generatePagesBarrelSpy).toHaveBeenCalledTimes(1);
     expect(buildHydrationClient).not.toHaveBeenCalled();
 
     log.mockRestore();
   });
 
+  it("copies and publishes app public files even when there are no pages to hydrate", async () => {
+    const appRoot = makeTree({
+      "src/web/root.tsx": APP,
+      "public/favicon.svg": "<svg />",
+      "public/docs/rem-public.txt": "public",
+    });
+    const context = buildContext(appRoot);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const contribution = createWebBuildContribution();
+
+    generatePagesBarrelSpy.mockClear();
+    buildHydrationClient.mockClear();
+    stubGeneratedPages(0);
+
+    await contribution.generate?.(context);
+    await contribution.emit?.(context);
+
+    expect(generatePagesBarrelSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientDir: "dist/client",
+        publicFiles: ["docs/rem-public.txt", "favicon.svg"],
+      }),
+    );
+
+    expect(buildHydrationClient).not.toHaveBeenCalled();
+    expect(
+      fs.readFileSync(path.join(appRoot, "dist", "client", "public", "favicon.svg"), "utf-8"),
+    ).toBe("<svg />");
+    expect(
+      fs.readFileSync(
+        path.join(appRoot, "dist", "client", "public", "docs", "rem-public.txt"),
+        "utf-8",
+      ),
+    ).toBe("public");
+
+    log.mockRestore();
+  });
+
   it("writes no barrel at all when the connector is not configured — generate never runs", () => {
-    const appRoot = makeTree({ "src/web/root.tsx": APP, "src/web/home.page.tsx": PAGE });
+    const appRoot = makeTree({
+      "src/web/root.tsx": APP,
+      "src/web/home.page.tsx": PAGE,
+    });
 
     // A configured-but-unbuilt app is the closest observable stand-in for "web
     // is absent from `connectors`": the builder only calls hooks it was given.
     createWebBuildContribution();
 
-    expect(fs.existsSync(path.join(appRoot, ".warlock", "production", "pages.ts"))).toBe(false);
+    expect(
+      fs.existsSync(path.join(appRoot, ".warlock", "production", "pages.ts")),
+    ).toBe(false);
   });
 });
 
 describe("web build contribution — clientOutDir", () => {
   it("refuses a config that sets build.clientOutDir", () => {
-    expect(() => createWebBuildContribution({ clientOutDir: "/tmp/wherever" })).toThrow(
-      ClientOutDirNotSupportedError,
-    );
+    expect(() =>
+      createWebBuildContribution({ clientOutDir: "/tmp/wherever" }),
+    ).toThrow(ClientOutDirNotSupportedError);
 
     let thrown: unknown;
 
@@ -175,12 +254,16 @@ describe("web build contribution — clientOutDir", () => {
   });
 
   it("invokes the barrel generator and client builder on the normal path — proves the spies observe real calls", async () => {
-    const appRoot = makeTree({ "src/web/root.tsx": APP, "src/web/home.page.tsx": PAGE });
+    const appRoot = makeTree({
+      "src/web/root.tsx": APP,
+      "src/web/home.page.tsx": PAGE,
+    });
     const context = buildContext(appRoot);
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     generatePagesBarrelSpy.mockClear();
     buildHydrationClient.mockClear();
+    stubGeneratedPages(1);
 
     const contribution = createWebBuildContribution();
 
@@ -197,9 +280,9 @@ describe("web build contribution — clientOutDir", () => {
     generatePagesBarrelSpy.mockClear();
     buildHydrationClient.mockClear();
 
-    expect(() => createWebBuildContribution({ clientOutDir: "/tmp/wherever" })).toThrow(
-      ClientOutDirNotSupportedError,
-    );
+    expect(() =>
+      createWebBuildContribution({ clientOutDir: "/tmp/wherever" }),
+    ).toThrow(ClientOutDirNotSupportedError);
 
     expect(generatePagesBarrelSpy).not.toHaveBeenCalled();
     expect(buildHydrationClient).not.toHaveBeenCalled();
@@ -207,65 +290,53 @@ describe("web build contribution — clientOutDir", () => {
 });
 
 describe("web build contribution — connector plugins", () => {
-  it("fails the build, naming the option, when the connector was given plugins", async () => {
-    const appRoot = makeTree({ "src/web/root.tsx": APP, "src/web/home.page.tsx": PAGE });
+  it("forwards connector plugins to the production hydration build", async () => {
+    const appRoot = makeTree({
+      "src/web/root.tsx": APP,
+      "src/web/home.page.tsx": PAGE,
+    });
     const context = buildContext(appRoot);
-    const contribution = createWebBuildContribution({ connectorPluginCount: 1 });
-
-    let thrown: unknown;
-
-    try {
-      await contribution.generate?.(context);
-    } catch (error) {
-      thrown = error;
-    }
-
-    expect(thrown).toBeInstanceOf(ConnectorPluginsNotSupportedError);
-    expect((thrown as Error).name).toBe("ConnectorPluginsNotSupportedError");
-    expect((thrown as Error).message).toContain('"plugins"');
-    expect((thrown as Error).message).toContain("webConnector({ plugins })");
-    // An error that only says "no" costs the reader the hour this one saves.
-    expect((thrown as Error).message).toContain("postcss.config.mjs");
-  });
-
-  it("refuses before writing the barrel or building the client — no partial artifacts", async () => {
-    const appRoot = makeTree({ "src/web/root.tsx": APP, "src/web/home.page.tsx": PAGE });
-    const context = buildContext(appRoot);
+    const tailwindStylePlugin: Plugin = { name: "tailwindcss-vite-style" };
+    const contribution = createWebBuildContribution({}, [tailwindStylePlugin]);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     generatePagesBarrelSpy.mockClear();
     buildHydrationClient.mockClear();
+    stubGeneratedPages(1);
 
-    await expect(
-      createWebBuildContribution({ connectorPluginCount: 2 }).generate?.(context),
-    ).rejects.toBeInstanceOf(ConnectorPluginsNotSupportedError);
+    await contribution.generate?.(context);
+    await contribution.emit?.(context);
 
-    expect(generatePagesBarrelSpy).not.toHaveBeenCalled();
-    expect(buildHydrationClient).not.toHaveBeenCalled();
-    expect(fs.existsSync(path.join(context.productionDir, "pages.ts"))).toBe(false);
+    expect(generatePagesBarrelSpy).toHaveBeenCalledTimes(1);
+    expect(buildHydrationClient).toHaveBeenCalledWith(
+      expect.objectContaining({ plugins: [tailwindStylePlugin] }),
+    );
+
+    log.mockRestore();
   });
 
-  it("constructing the contribution never throws — `warlock dev` loads this same config", () => {
-    // The refusal lives in `generate`, which only a build calls. If it moved to
-    // the constructor, a connector with dev-only plugins could not boot the dev
-    // server those plugins exist for.
-    expect(() => createWebBuildContribution({ connectorPluginCount: 3 })).not.toThrow();
-  });
-
-  it("does not fire on the normal path — zero or absent plugins build as before", async () => {
-    const appRoot = makeTree({ "src/web/root.tsx": APP, "src/web/home.page.tsx": PAGE });
+  it("keeps the normal no-plugin build path unchanged", async () => {
+    const appRoot = makeTree({
+      "src/web/root.tsx": APP,
+      "src/web/home.page.tsx": PAGE,
+    });
     const context = buildContext(appRoot);
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     generatePagesBarrelSpy.mockClear();
     buildHydrationClient.mockClear();
+    stubGeneratedPages(1);
 
-    const contribution = createWebBuildContribution({ connectorPluginCount: 0 });
+    const contribution = createWebBuildContribution();
 
     await contribution.generate?.(context);
     await contribution.emit?.(context);
 
     expect(generatePagesBarrelSpy).toHaveBeenCalledTimes(1);
     expect(buildHydrationClient).toHaveBeenCalledTimes(1);
+    expect(buildHydrationClient).toHaveBeenCalledWith(
+      expect.objectContaining({ plugins: [] }),
+    );
 
     log.mockRestore();
   });
@@ -273,7 +344,9 @@ describe("web build contribution — connector plugins", () => {
 
 describe("resolveWebPackageRoot", () => {
   it("verifies a configured webRoot instead of trusting it", async () => {
-    const bogus = makeTree({ "package.json": JSON.stringify({ name: "somebody-else" }) });
+    const bogus = makeTree({
+      "package.json": JSON.stringify({ name: "somebody-else" }),
+    });
 
     await expect(resolveWebPackageRoot(bogus)).rejects.toBeInstanceOf(
       WebPackageRootResolutionError,

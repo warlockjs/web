@@ -127,42 +127,15 @@ export async function executePageRequest<TResult = PageDataBundle>(
       page: "pageData",
     };
 
-    // Stage 6 — LOADERS, in parallel: every level gets its OWN buffer (never
-    // the live response), and every level starts before any of them finishes
-    // (`.map` invokes each async loader synchronously up to its first
-    // `await`, and `Promise.allSettled` never re-orders that).
+    // Stage 6 — LOADERS, root to leaf. Every level gets its OWN buffer (never
+    // the live response), and a terminal result or throw prevents every lower
+    // loader from starting.
     const buffers: Record<PageLevelName, LevelBuffer> = {
       app: createLevelBuffer(),
       layout: createLevelBuffer(),
       page: createLevelBuffer(),
     };
 
-    const settled = await Promise.allSettled(
-      LEVEL_ORDER.map(level => {
-        const loader = triple[level].loader;
-
-        if (!loader) return Promise.resolve({ level, skipped: true as const });
-
-        // `try` here, not just `.catch()` on the promise chain — a
-        // non-async loader can throw SYNCHRONOUSLY, before ever returning a
-        // promise for `.then()`/`.catch()` to attach to.
-        try {
-          return Promise.resolve(
-            loader({
-              request,
-              response: createBufferedResponse(buffers[level]),
-              shared: sealedShared,
-            }),
-          ).then(value => ({ level, value }));
-        } catch (thrown) {
-          return Promise.reject(thrown);
-        }
-      }),
-    );
-
-    // The first abnormal outcome (thrown, or a loader short-circuit), the
-    // level closest to the root wins — `LEVEL_ORDER` is already root→leaf, so
-    // "first" in iteration order IS "closest to the root".
     let signalIndex = -1;
     let signalKind: "throw" | "shortCircuit" | undefined;
     let signalThrown: unknown;
@@ -172,38 +145,35 @@ export async function executePageRequest<TResult = PageDataBundle>(
 
     for (let index = 0; index < LEVEL_ORDER.length; index++) {
       const level = LEVEL_ORDER[index];
-      const result = settled[index];
+      const loader = triple[level].loader;
 
-      if (result.status === "rejected") {
-        if (signalIndex === -1) {
-          signalIndex = index;
-          signalKind = "throw";
-          signalThrown = result.reason;
-        }
-        continue;
+      if (!loader) continue;
+
+      let value: unknown;
+
+      try {
+        value = await loader({
+          request,
+          response: createBufferedResponse(buffers[level]),
+          shared: sealedShared,
+        });
+      } catch (thrown) {
+        signalIndex = index;
+        signalKind = "throw";
+        signalThrown = thrown;
+        break;
       }
 
-      const outcome = result.value as
-        | { level: PageLevelName; skipped: true }
-        | { level: PageLevelName; value: unknown };
+      if (value instanceof Response) return value;
 
-      if ("skipped" in outcome) continue;
-
-      if (outcome.value instanceof Response) return outcome.value;
-
-      if (isLoaderShortCircuit(outcome.value)) {
-        if (signalIndex === -1) {
-          signalIndex = index;
-          signalKind = "shortCircuit";
-          signalCircuit = outcome.value;
-        }
-        continue;
+      if (isLoaderShortCircuit(value)) {
+        signalIndex = index;
+        signalKind = "shortCircuit";
+        signalCircuit = value;
+        break;
       }
 
-      // Plain data. Discarded below if it turns out to be leafward of a
-      // THROW signal at a rootward level; kept as-is for a short-circuit
-      // (that discard is explicit, further down) and for the normal path.
-      bundle[dataKeys[level]] = outcome.value;
+      bundle[dataKeys[level]] = value;
     }
 
     let committedLevels: PageLevelName[];
@@ -213,20 +183,11 @@ export async function executePageRequest<TResult = PageDataBundle>(
     if (signalIndex === -1) {
       committedLevels = [...LEVEL_ORDER];
     } else if (signalKind === "throw") {
-      // The throwing level's buffer is discarded WITH its siblings' below it;
-      // only rootward levels commit. Data leafward of the throw stays (it was
-      // already assigned above, from `allSettled`) — only its BUFFER is cut.
+      // The throwing level's buffer is discarded; lower levels never ran.
       committedLevels = LEVEL_ORDER.slice(0, signalIndex);
 
       const boundary = designateBoundary(LEVEL_ORDER[signalIndex], triple);
       bundle.error = buildErrorRecord(signalThrown, boundary, pathname);
-
-      // Data assigned above for the throwing level itself is impossible (its
-      // promise rejected), but a level "skipped"/never wrote one either — no
-      // cleanup needed there. Levels leafward of the throw whose loaders
-      // FULFILLED already have their data on the bundle; that is correct
-      // (`request-lifecycle.md` stage 7: "the throwing layer's buffer is
-      // discarded with its siblings' below it" — data is not a buffer).
 
       if (boundary.boundaryLevel === "app") {
         response.setStatusCode(500);
@@ -234,12 +195,8 @@ export async function executePageRequest<TResult = PageDataBundle>(
       }
     } else {
       // Short-circuit: the signalling level's OWN buffer commits too
-      // (inclusive), and everything leafward is discarded — buffer AND data.
+      // (inclusive); lower levels never ran.
       committedLevels = LEVEL_ORDER.slice(0, signalIndex + 1);
-
-      for (let index = signalIndex + 1; index < LEVEL_ORDER.length; index++) {
-        delete bundle[dataKeys[LEVEL_ORDER[index]]];
-      }
 
       const circuit = signalCircuit!;
 

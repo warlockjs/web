@@ -36,6 +36,7 @@ import {
   type PageRouteHandlerOptions,
 } from "./create-page-route-handler";
 import type { PipelineLoader, PipelineMiddleware } from "./execute-page-request";
+import { isLoaderShortCircuit } from "./settle-page-response";
 import { productionStylesheetUrls } from "./stylesheet-urls";
 import {
   createNotFoundRouteHandler,
@@ -269,7 +270,7 @@ function composeLayoutLevel(
       for (let index = 0; index < page.layouts.length; index++) {
         const value = await (page.layouts[index].module as LayoutModuleShape).loader?.(context);
 
-        if (value instanceof Response) return value;
+        if (value instanceof Response || isLoaderShortCircuit(value)) return value;
         if (index === hostIndex) hostData = value;
       }
 

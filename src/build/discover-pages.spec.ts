@@ -15,6 +15,7 @@ import {
   type DiscoveredRoutablePage,
 } from "./discover-pages";
 import { NotFoundPageDeclaresRouteError } from "../server/not-found-page";
+import { MissingPageDefaultExportError } from "./page-default-export";
 import { NonLiteralRouteExportError } from "./read-route-exports";
 
 /**
@@ -196,6 +197,46 @@ describe("discoverPages — the recipe", () => {
     const pages = discoverPages({ appRoot, srcDir: "source" });
 
     expect(pages.map((page) => page.routeName)).toEqual(["about"]);
+  });
+});
+
+describe("discoverPages — every page renders a default export", () => {
+  it.each(["home.page.tsx", "404.page.tsx", "error.page.tsx"])(
+    "refuses %s when it contains named exports only",
+    (fileName) => {
+      const appRoot = makeAppTree({
+        "src/web/root.tsx": APP,
+        [`src/web/${fileName}`]: 'export const marker = "named-only";\n',
+      });
+
+      try {
+        discoverPagesRaw({ appRoot });
+        expect.unreachable("expected discovery to reject a page without a default export");
+      } catch (error) {
+        expect(error).toBeInstanceOf(MissingPageDefaultExportError);
+        expect((error as Error).message).toContain(`src/web/${fileName}`);
+        expect((error as Error).message).toContain("export default function Page()");
+      }
+    },
+  );
+
+  it("accepts a runtime binding re-exported as default", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/web/home.page.tsx":
+        "function Home() { return null; }\nexport { Home as default };\n",
+    });
+
+    expect(discoverPages({ appRoot }).map((page) => page.routePath)).toEqual(["/home"]);
+  });
+
+  it("refuses a type-only default export because it has no runtime component", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/web/home.page.tsx": "export default interface HomePage {}\n",
+    });
+
+    expect(() => discoverPagesRaw({ appRoot })).toThrow(MissingPageDefaultExportError);
   });
 });
 

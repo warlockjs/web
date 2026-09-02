@@ -45,13 +45,7 @@ beforeEach(() => {
 });
 
 describe("executePageRequest loaders", () => {
-  // Loaders run in PARALLEL (stage 6 rewrite, request-lifecycle.md) — a
-  // returned core `Response` instance is still honoured (rare/legacy: a
-  // loader answering the request directly rather than through the buffered
-  // short-circuit surface), but "stops before lower loaders" no longer holds
-  // under a parallel model. Every level still runs; whichever settled value is
-  // a `Response` wins, closest to the root on a tie.
-  it("preserves a returned core Response over ordinary sibling data, and never reaches finish", async () => {
+  it("preserves a returned core Response and does not start lower loaders", async () => {
     const calls: string[] = [];
     const terminal = new Response();
     const finish = vi.fn();
@@ -72,21 +66,25 @@ describe("executePageRequest loaders", () => {
     });
 
     expect(result).toBe(terminal);
-    expect(calls).toEqual(["app", "layout", "page"]);
+    expect(calls).toEqual(["app", "layout"]);
     expect(resolvePageMetadata).not.toHaveBeenCalled();
     expect(finish).not.toHaveBeenCalled();
   });
 
-  it("runs ordinary loader values and keeps them as data", async () => {
+  it("awaits ordinary loaders root-to-leaf and keeps their values as data", async () => {
     const calls: string[] = [];
     const response = new Response();
     const entry = route({
       app: async () => {
-        calls.push("app");
+        calls.push("app:start");
+        await Promise.resolve();
+        calls.push("app:end");
         return { app: true };
       },
-      layout: () => {
-        calls.push("layout");
+      layout: async () => {
+        calls.push("layout:start");
+        await Promise.resolve();
+        calls.push("layout:end");
         return 0;
       },
       page: () => {
@@ -101,7 +99,7 @@ describe("executePageRequest loaders", () => {
       createHttp: () => ({ request, response }),
     });
 
-    expect(calls).toEqual(["app", "layout", "page"]);
+    expect(calls).toEqual(["app:start", "app:end", "layout:start", "layout:end", "page"]);
     expect(result).toMatchObject({
       appData: { app: true },
       layoutData: 0,

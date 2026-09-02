@@ -2,7 +2,7 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
-## Unreleased
+## 5.2.0
 
 ### Added
 
@@ -47,6 +47,66 @@ All notable changes to `@warlock.js/web` are documented here.
 
 ### Changed
 
+- **Page requests now tolerate one trailing slash identically in development
+  and production.** `/about` and `/about/` serve the same page; `/` remains the
+  root path and case handling is unchanged. Previously the development
+  dispatcher accepted the slash while the production Fastify route returned
+  404.
+
+- ⚠ **BREAKING — `process.env` is refused entirely in the client/universal
+  graph, and there is no `PUBLIC_` exception.** Neither a static key
+  (`process.env.PUBLIC_API_URL`) nor a computed one (`process.env[key]`) is
+  allowed: `process` does not exist in a browser, so there is no such thing as
+  a "public" `process.env` key. **Bare value-reads of the object now fail
+  too** — `const { X } = process.env`, `{ ...process.env }`,
+  `Object.keys(process.env)`, `JSON.stringify(process.env)`, or passing it as
+  an argument — which is the case that previously let an entire server
+  environment reach a component in one line while every keyed read was being
+  refused. `globalThis.process.env`, `window.process.env` and
+  `process["env"]` are matched as well.
+
+  **Enforcement now covers dev SSR as well as the client bundle, and a
+  violation fails the build** rather than being a production-only surprise.
+  Files under `node_modules` stay out of scope by design — a dependency's own
+  `process.env.NODE_ENV` guard is not the application's problem.
+
+  ⚠ **`env("PUBLIC_X")` does not work client-side either**, and never did:
+  `env` comes from `@warlock.js/core`, which declares itself server-only, so
+  the import is refused before the call is ever examined. **The supported
+  pattern is to read the value in a page loader — server code — and pass it to
+  the page as loader data:**
+
+  ```tsx
+  export const loader = (async () => ({
+    siteName: env("PUBLIC_SITE_NAME"),
+  })) satisfies PageLoader;
+
+  export default function HomePage({ data }: PageProps<typeof loader>) {
+    return <h1>{data.siteName}</h1>;
+  }
+  ```
+
+  If a value must genuinely be inlined into browser code instead of passed as
+  loader data, the one supported spelling is `import.meta.env.PUBLIC_*` with a
+  static key — Vite's env surface, baked in at build time, so it cannot vary
+  per request. Server-side code is unrestricted.
+
+- ⚠ **BREAKING — a `*.page.tsx` with no default export is now a hard
+  discovery/build failure, naming the file.** It previously built and
+  registered, then served a blank `200` at its URL — a page that looked
+  deployed, rendered nothing, and produced no error anywhere.
+
+  ```
+  The page "src/web/contact.page.tsx" has no runtime default export. Every
+  `*.page.tsx` file must default-export the React component it renders.
+  ```
+
+  `export { Page as default }` satisfies the rule — the check is for a runtime
+  default binding, not for the keyword form. `export default interface Page {}`
+  does not: a type-only default is erased and leaves no component behind. A
+  file that cannot be parsed reports as a parse failure instead, so a syntax
+  error never masquerades as a missing export.
+
 - **Initial stylesheet links are route-scoped in development and production.**
   Each response now links the ordered, deduplicated CSS chain for its own
   `[root, ...matched layouts, page]`. Production follows those source entries
@@ -55,6 +115,44 @@ All notable changes to `@warlock.js/web` are documented here.
   the matched page and layouts as well as the root. Unrelated page CSS no
   longer ships on every response, and page-local critical CSS no longer waits
   for hydration in development.
+- **The production static-asset refusal now names the working 5.2 alternative.**
+  Imported non-stylesheet assets still work under Vite in development but are
+  refused by the esbuild server bundle rather than risk a server/client URL
+  mismatch. The diagnostic now tells the developer to place the file under the
+  application's `public/` directory and reference its root URL
+  (`public/logo.svg` → `/logo.svg`) instead of waiting for an unspecified future
+  server build. Stylesheet imports remain supported.
+- **Loader execution is sequential, root to leaf, and terminal responses stop
+  lower work.** The `root.tsx` App loader runs first, followed by every matched
+  layout loader from outermost to innermost, then the page loader. The runtime
+  has three top-level slots (`app`, `layout`, `page`), but the layout slot
+  composes the full matched layout chain. A page still has at most one
+  *rendering* layout; loader-only and middleware-only layouts may appear at
+  multiple ancestry levels.
+
+  ⚠ **This package's own documentation previously described the three levels as
+  running in parallel, and told you not to rely on ordering between them.** The
+  implementation now awaits the App slot, the composed outer-to-inner layout
+  slot, and the Page slot in that order.
+
+  **The first core `Response` a loader returns is terminal**: it stops every
+  lower loader from starting, and — because the response is returned whole — it
+  also bypasses buffer commit and metadata resolution, discarding the header
+  and cookie writes buffered at that same level. A short-circuit
+  (`response.redirect()`, `response.notFound()`) commits its own level's buffer
+  inclusively and is the right choice when those writes should survive; a throw
+  discards the throwing level's buffer and commits only the levels above it.
+
+- **Catch-all page routes are documented as unsupported.** `[...slug].page.tsx`
+  does not do what it looks like: filesystem routing recognizes only `[name]` as
+  a dynamic segment, so `[...slug]` is taken as a **literal** segment and derives
+  the path `/docs/[...slug]` and the name `docs.[...slug]` — reachable only at
+  the literal URL `/docs/%5B...slug%5D`. ⚠ **Nothing warns about it**: no build
+  error, no dev warning, no refusal, just a page that answers a URL nobody will
+  request. A real catch-all is deferred; until then use a terminal wildcard with
+  an explicit route (`route = { path: "/docs/*" }`). This entry records the gap,
+  it does not close it.
+
 - **`src/web` is the only page root.** A per-module `src/app/<module>/web/`
   tree is no longer discovered, walked, or installed as a page root by either
   `warlock dev` or `warlock build`. Move any page, layout, or root file that
@@ -68,6 +166,15 @@ All notable changes to `@warlock.js/web` are documented here.
   triple omits the page loader in both development and production. A missing
   URL therefore cannot trigger application data work, redirect, or fail a
   second time through the fallback itself.
+
+  Precisely what is skipped, because "the 404 page doesn't run loaders" is a
+  useful shorthand and not the whole rule: only the **page-level `loader`** is
+  omitted. The real module namespace is still used, so `register()` runs and
+  the component renders normally, and the page's **middleware still runs**.
+  Layout loaders don't run because this page has an empty layout chain by
+  construction, not because loaders are disabled on it. And the **`root.tsx`
+  App loader does still run** on a 404 request — keep it cheap, and make sure
+  it tolerates a request that matched nothing.
 
 ## 5.1.0
 

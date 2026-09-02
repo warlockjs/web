@@ -16,7 +16,10 @@ import {
   type ErrorPageModuleLoader,
 } from "./error-page";
 import { ERROR_PAGE_METADATA } from "./resolve-page-metadata";
-import { registerModules, type RegisterableModuleNamespace } from "../runtime/register-modules";
+import {
+  registerModules,
+  type RegisterableModuleNamespace,
+} from "../runtime/register-modules";
 import { markNonHydrating } from "./page-render-bundle";
 import type { ServerErrorPageProps } from "../props";
 import {
@@ -124,7 +127,10 @@ export type RenderPageOptions = {
  * name-based sugar buildUrl consumes) have no meaning here — everything else
  * is the same seam.
  */
-export type RenderPageRequestOptions = Omit<RenderPageOptions, "params" | "query">;
+export type RenderPageRequestOptions = Omit<
+  RenderPageOptions,
+  "params" | "query"
+>;
 
 export type RenderedPage = {
   /** The full document ("" when the pipeline short-circuited before render). */
@@ -183,7 +189,7 @@ function buildUrl(
 ): string {
   const path = entry.path
     .split("/")
-    .map(segment => {
+    .map((segment) => {
       if (!segment.startsWith(":")) return segment;
 
       const name = segment.slice(1);
@@ -221,10 +227,16 @@ function FrameworkRootBoundary(): ReactNode {
   return createElement("main", { role: "alert" }, "Something went wrong.");
 }
 
-function errorPageElement(module: ErrorPageModule, props: ServerErrorPageProps): ReactNode {
-  const ErrorPage = module.default as ((input: ServerErrorPageProps) => ReactNode) | undefined;
+function errorPageElement(
+  module: ErrorPageModule,
+  props: ServerErrorPageProps,
+): ReactNode {
+  const ErrorPage = module.default as
+    ((input: ServerErrorPageProps) => ReactNode) | undefined;
   if (!ErrorPage) {
-    throw new Error("The application error.page.tsx module has no default export.");
+    throw new Error(
+      "The application error.page.tsx module has no default export.",
+    );
   }
   return createElement(ErrorPage, props);
 }
@@ -235,11 +247,19 @@ type LevelProps = {
   children?: ReactNode;
 };
 
-const DATA_KEYS: Record<PageLevelName, "appData" | "layoutData" | "pageData"> = {
-  app: "appData",
-  layout: "layoutData",
-  page: "pageData",
+/** The ordinary page leaf alone receives the route match's params. */
+type PageLevelProps = {
+  data: unknown;
+  shared: Readonly<SharedContext> | undefined;
+  params: Readonly<Record<string, string>>;
 };
+
+const DATA_KEYS: Record<PageLevelName, "appData" | "layoutData" | "pageData"> =
+  {
+    app: "appData",
+    layout: "layoutData",
+    page: "pageData",
+  };
 
 /**
  * Compose the tree root→leaf: `<App><Layout><Page/></Layout></App>`, each
@@ -256,7 +276,7 @@ function buildPageElement(
   triple: Record<PageLevelName, PageTripleModule>,
   bundle: PageDataBundle,
 ): ReactNode {
-  return wrapRootward(triple, bundle, "page", buildLeaf(triple.page, bundle, "page"));
+  return wrapRootward(triple, bundle, "page", buildLeaf(triple.page, bundle));
 }
 
 /**
@@ -275,8 +295,7 @@ function buildBoundaryElement(
 ): ReactNode {
   const { boundary, error } = record;
   const Boundary = triple[boundary.boundaryLevel].ErrorBoundary as
-    | ((props: { error: unknown }) => ReactNode)
-    | undefined;
+    ((props: { error: unknown }) => ReactNode) | undefined;
 
   const element = Boundary
     ? createElement(Boundary, { error })
@@ -297,15 +316,16 @@ function buildBoundaryElement(
 function buildLeaf(
   module: PageTripleModule,
   bundle: PageDataBundle,
-  level: PageLevelName,
 ): ReactNode {
-  const Component = module.default as ((props: LevelProps) => ReactNode) | undefined;
+  const Component = module.default as
+    ((props: PageLevelProps) => ReactNode) | undefined;
 
   if (!Component) return null;
 
-  return createElement(Component as ComponentType<LevelProps>, {
-    data: bundle[DATA_KEYS[level]],
+  return createElement(Component as ComponentType<PageLevelProps>, {
+    data: bundle.pageData,
     shared: bundle.shared,
+    params: bundle.route.params,
   });
 }
 
@@ -315,12 +335,14 @@ function wrapRootward(
   from: PageLevelName,
   leaf: ReactNode,
 ): ReactNode {
-  const wrappers: PageLevelName[] = from === "page" ? ["layout", "app"] : from === "layout" ? ["app"] : [];
+  const wrappers: PageLevelName[] =
+    from === "page" ? ["layout", "app"] : from === "layout" ? ["app"] : [];
 
   let element = leaf;
 
   for (const level of wrappers) {
-    const Component = triple[level].default as ((props: LevelProps) => ReactNode) | undefined;
+    const Component = triple[level].default as
+      ((props: LevelProps) => ReactNode) | undefined;
 
     if (!Component) {
       // "App" is the root: no App export means no custom document, but the
@@ -450,7 +472,14 @@ async function finishRender(
       bundle.shortCircuit.stage === "validation"
         ? bundle.shortCircuit.status
         : (bundle.shortCircuit.statusCode ?? 200);
-    return { html: "", status, headers, cookies, data: bundle.pageData, bundle };
+    return {
+      html: "",
+      status,
+      headers,
+      cookies,
+      data: bundle.pageData,
+      bundle,
+    };
   }
 
   // The framework's closed-by-default answer (README rule 8): every document
@@ -481,7 +510,12 @@ async function finishRender(
   };
 
   const renderWithContext = (element: ReactNode): string =>
-    renderToString(createElement(DocumentContext.Provider, { value: documentValue, children: element }));
+    renderToString(
+      createElement(DocumentContext.Provider, {
+        value: documentValue,
+        children: element,
+      }),
+    );
 
   // A boundary that throws while rendering escalates to
   // the next enclosing boundary rootward; if none survives, the framework's
@@ -494,7 +528,11 @@ async function finishRender(
   let body: string;
 
   const renderFrameworkRoot = (): string =>
-    renderWithContext(createElement(DefaultApp, { children: createElement(FrameworkRootBoundary, {}) }));
+    renderWithContext(
+      createElement(DefaultApp, {
+        children: createElement(FrameworkRootBoundary, {}),
+      }),
+    );
   const renderFrameworkAfterErrorPageFailure = (): string => {
     bundle.errorPage = undefined;
     bundle.metadata = ERROR_PAGE_METADATA;
@@ -533,7 +571,10 @@ async function finishRender(
       // The application error page is the framework terminal, never a rival
       // to an authored boundary. It is reached only after no app boundary
       // exists (or after that boundary has itself thrown below).
-      if (currentError?.boundary.boundaryLevel === "app" && !triple.app.ErrorBoundary) {
+      if (
+        currentError?.boundary.boundaryLevel === "app" &&
+        !triple.app.ErrorBoundary
+      ) {
         try {
           body =
             (await renderErrorPage(
@@ -577,9 +618,16 @@ async function finishRender(
       // A throw not yet attributable to a level (a normal page render, no
       // prior designation) starts the search at `page`.
       const throwingLevel: PageLevelName =
-        currentError?.boundary.boundaryLevel === "layout" ? "app" : currentError ? "layout" : "page";
+        currentError?.boundary.boundaryLevel === "layout"
+          ? "app"
+          : currentError
+            ? "layout"
+            : "page";
 
-      currentError = buildErrorRecord(thrown, designateBoundary(throwingLevel, triple));
+      currentError = buildErrorRecord(
+        thrown,
+        designateBoundary(throwingLevel, triple),
+      );
     }
   }
 
@@ -595,7 +643,9 @@ async function finishRender(
   // — read off the commit, never off the live `response`, same as `headers`
   // above. No committed status (no loader called `setStatusCode`) is the
   // ordinary 200.
-  const status = currentError ? 500 : ((bundle as Bundle).commit?.statusCode ?? 200);
+  const status = currentError
+    ? 500
+    : ((bundle as Bundle).commit?.statusCode ?? 200);
 
   const html = emitDocument(body);
 
@@ -614,7 +664,9 @@ async function finishRender(
  * `error.page.tsx`. A normal app error page reached through `finishRender`
  * renders inside a real triple and stays hydratable; this path never does.
  */
-export async function renderPageFailure(options: RenderPageFailureOptions): Promise<RenderedPage> {
+export async function renderPageFailure(
+  options: RenderPageFailureOptions,
+): Promise<RenderedPage> {
   const { request, response, name, path, thrown, loadErrorPage } = options;
   const bundle: PageDataBundle = markNonHydrating({
     route: { name, path, params: {}, query: {} },
@@ -633,11 +685,14 @@ export async function renderPageFailure(options: RenderPageFailureOptions): Prom
     lang: slots.lang,
   };
   const renderWithContext = (element: ReactNode): string =>
-    renderToString(createElement(DocumentContext.Provider, { value, children: element }));
+    renderToString(
+      createElement(DocumentContext.Provider, { value, children: element }),
+    );
   let body: string;
 
   try {
-    if (!loadErrorPage) throw new Error("No application error page is configured.");
+    if (!loadErrorPage)
+      throw new Error("No application error page is configured.");
     const props: ServerErrorPageProps = { error: thrown, status: 500 };
     const module = await loadErrorPage();
     registerModules([module as RegisterableModuleNamespace]);
@@ -648,7 +703,9 @@ export async function renderPageFailure(options: RenderPageFailureOptions): Prom
       metadata: resolveErrorPageMetadata(module, props),
       payload: markNonHydrating({ ...frameworkPayload, errorPage }),
     };
-    body = renderWithContext(createElement(DefaultApp, { children: errorPageElement(module, props) }));
+    body = renderWithContext(
+      createElement(DefaultApp, { children: errorPageElement(module, props) }),
+    );
   } catch {
     bundle.errorPage = undefined;
     bundle.metadata = ERROR_PAGE_METADATA;
@@ -657,10 +714,21 @@ export async function renderPageFailure(options: RenderPageFailureOptions): Prom
       metadata: bundle.metadata,
       payload: markNonHydrating(buildHydrationPayload(bundle)),
     };
-    body = renderWithContext(createElement(DefaultApp, { children: createElement(FrameworkRootBoundary, {}) }));
+    body = renderWithContext(
+      createElement(DefaultApp, {
+        children: createElement(FrameworkRootBoundary, {}),
+      }),
+    );
   }
 
-  return { html: emitDocument(body), status: 500, headers, cookies: [], data: undefined, bundle };
+  return {
+    html: emitDocument(body),
+    status: 500,
+    headers,
+    cookies: [],
+    data: undefined,
+    bundle,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -672,10 +740,14 @@ export async function renderPage(
   options: RenderPageOptions = {},
 ): Promise<RenderedPage | Response> {
   const registry = requireRegistry(options);
-  const entry = registry.routes.find(candidate => candidate.name === routeName);
+  const entry = registry.routes.find(
+    (candidate) => candidate.name === routeName,
+  );
 
   if (!entry) {
-    const known = registry.routes.map(candidate => `"${candidate.name}"`).join(", ");
+    const known = registry.routes
+      .map((candidate) => `"${candidate.name}"`)
+      .join(", ");
 
     throw new Error(
       `renderPage("${routeName}"): no route with that name ` +
@@ -692,7 +764,7 @@ export async function renderPage(
     url,
     routes: registry.routes,
     createHttp,
-    finish: bundle =>
+    finish: (bundle) =>
       finishRender(
         entry.triple,
         bundle,
@@ -734,7 +806,7 @@ export async function renderPageRequest(
     url,
     routes: registry.routes,
     createHttp,
-    finish: bundle =>
+    finish: (bundle) =>
       finishRender(
         state.match!.entry.triple,
         bundle,
@@ -745,7 +817,14 @@ export async function renderPageRequest(
   });
 
   if (!rendered) {
-    return { html: "", status: 404, headers: {}, cookies: [], data: undefined, bundle: undefined };
+    return {
+      html: "",
+      status: 404,
+      headers: {},
+      cookies: [],
+      data: undefined,
+      bundle: undefined,
+    };
   }
 
   // executePageRequest only produces a bundle after createHttp ran for the

@@ -18,6 +18,11 @@ import {
   NOT_FOUND_ROUTE_PATH,
 } from "./not-found-page";
 import type { PageManifest, PageManifestPageEntry } from "./page-manifest";
+import {
+  createBufferedResponse,
+  createLevelBuffer,
+  isLoaderShortCircuit,
+} from "./settle-page-response";
 
 type RegisteredRoute = {
   path: string;
@@ -476,6 +481,42 @@ describe("installPageRoutesFromManifest — the layout middleware chain", () => 
     await expect(built[0].loadModule("src/app/users/web/layout.tsx")).resolves.not.toBe(
       outerModule,
     );
+  });
+
+  it("stops a composed layout loader chain when an outer loader redirects", async () => {
+    const innerLoader = vi.fn(() => ({ mustNotRun: true }));
+    const page: PageManifestPageEntry = {
+      module: { default: () => null, route: "/settings" },
+      sourceFile: "src/app/users/web/account/settings.page.tsx",
+      layouts: [
+        {
+          module: {
+            default: () => null,
+            loader: ({ response }: any) => response.redirect("/login"),
+          },
+          sourceFile: "src/app/users/web/layout.tsx",
+        },
+        {
+          module: { loader: innerLoader },
+          sourceFile: "src/app/users/web/account/layout.tsx",
+        },
+      ],
+    };
+    const { run, built } = install(manifestOf([page]));
+
+    run();
+
+    const composed = (await built[0].loadModule("src/app/users/web/layout.tsx")) as {
+      loader?: (context: unknown) => unknown;
+    };
+    const result = await composed.loader?.({
+      request: {},
+      response: createBufferedResponse(createLevelBuffer()),
+      shared: {},
+    });
+
+    expect(isLoaderShortCircuit(result)).toBe(true);
+    expect(innerLoader).not.toHaveBeenCalled();
   });
 
   it("hosts the chain on the NEAREST layout when none of them renders", async () => {

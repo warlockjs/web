@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { normalizeRoutePath } from "@warlock.js/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { NOT_FOUND_ROUTE_NAME, NOT_FOUND_ROUTE_PATH } from "../server/not-found-page";
 import {
   generatePagesBarrel,
   layoutChainFor,
@@ -10,6 +12,7 @@ import {
   WEB_ENTRY_IMPORT,
   WEB_ESBUILD_PATCH,
 } from "./generate-pages-barrel";
+import { MissingPageDefaultExportError } from "./page-default-export";
 
 const temporaryDirectories: string[] = [];
 
@@ -66,6 +69,22 @@ describe("generatePagesBarrel", () => {
     );
     // No route paths in the table — they are read off the modules at boot.
     expect(contents).not.toContain("path:");
+  });
+
+  it("refuses to emit a production barrel for a page with no default export", async () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/web/no-default.page.tsx": 'export const marker = "named-only";\n',
+    });
+    const productionDir = path.join(appRoot, ".warlock", "production");
+
+    await expect(
+      generatePagesBarrel({ appRoot, productionDir, clientDir: "dist/client" }),
+    ).rejects.toThrow(MissingPageDefaultExportError);
+    await expect(
+      generatePagesBarrel({ appRoot, productionDir, clientDir: "dist/client" }),
+    ).rejects.toThrow(/src\/web\/no-default\.page\.tsx/);
+    expect(fs.existsSync(path.join(productionDir, "pages.ts"))).toBe(false);
   });
 
   it("collects pages from src/web when each page has at most one layout", async () => {
@@ -173,6 +192,26 @@ describe("generatePagesBarrel", () => {
     vi.restoreAllMocks();
   });
 
+  it("bakes the client directory and exact public-file list into a zero-page barrel", async () => {
+    const appRoot = makeAppTree({ "src/web/root.tsx": APP });
+    const productionDir = path.join(appRoot, ".warlock", "production");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const result = await generatePagesBarrel({
+      appRoot,
+      productionDir,
+      clientDir: "dist/client",
+      publicFiles: ["docs/rem-public.txt", "favicon.svg"],
+    });
+
+    expect(result.contents).toContain('clientDir: "dist/client"');
+    expect(result.contents).toContain(
+      'publicFiles: ["docs/rem-public.txt","favicon.svg"]',
+    );
+
+    vi.restoreAllMocks();
+  });
+
   it("fails when pages exist but the app root component does not", async () => {
     const appRoot = makeAppTree({ "src/web/main/home.page.tsx": PAGE });
 
@@ -233,7 +272,9 @@ describe("the Vite-switch tripwire", () => {
         // The message must stand on its own for an app author: what the build
         // cannot do, and what to change in their file.
         expect(message).toContain("Pages are compiled into the server bundle");
-        expect(message).toContain("To fix: remove the import from this file");
+        expect(message).toContain("public/ directory");
+        expect(message).toContain("public/logo.svg becomes /logo.svg");
+        expect(message).not.toContain("wait for the Vite-based server build");
       }
     });
   }
@@ -309,5 +350,75 @@ describe("the Vite-switch tripwire", () => {
     await expect(
       generatePagesBarrel({ appRoot, productionDir: path.join(appRoot, ".warlock/production"), clientDir: "dist/client" }),
     ).rejects.toThrowError(WebPageGraphUnsupportedImportError);
+  });
+});
+
+/**
+ * The page-route manifest is consumed by exactly one thing: `warlock routes:diff`,
+ * which compares it string-for-string against the LIVE router. So every path it
+ * records has to be the path the router would register — it goes through core's
+ * `normalizeRoutePath`, the same function `Router.add` uses.
+ *
+ * Without it the catch-all is persisted as the raw `"*"` constant while the
+ * router serves `"/*"`, and `routes:diff` reports drift on an untouched checkout
+ * immediately after a successful build.
+ */
+describe("the page-route manifest", () => {
+  it("records the catch-all as the router's canonical `/*`, never the raw `*`", async () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/web/main/home.page.tsx": PAGE,
+    });
+
+    const { pageRoutes } = await generatePagesBarrel({
+      appRoot,
+      productionDir: path.join(appRoot, ".warlock/production"),
+      clientDir: "dist/client",
+    });
+
+    const catchAll = pageRoutes.routes.find((route) => route.name === NOT_FOUND_ROUTE_NAME);
+
+    expect(catchAll).toBeDefined();
+    expect(catchAll?.path).toBe("/*");
+    expect(pageRoutes.routes.map((route) => route.path)).not.toContain(NOT_FOUND_ROUTE_PATH);
+  });
+
+  it("records an application 404 page on the same canonical path", async () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/web/main/home.page.tsx": PAGE,
+      "src/web/404.page.tsx": 'export default function NotFound() { return null; }\n',
+    });
+
+    const { pageRoutes } = await generatePagesBarrel({
+      appRoot,
+      productionDir: path.join(appRoot, ".warlock/production"),
+      clientDir: "dist/client",
+    });
+
+    const catchAll = pageRoutes.routes.find((route) => route.name === NOT_FOUND_ROUTE_NAME);
+
+    expect(catchAll?.path).toBe("/*");
+    expect(catchAll?.source).toBe("src/web/404.page.tsx");
+  });
+
+  it("leaves every ordinary page path exactly as the router would register it", async () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/web/main/home.page.tsx": PAGE,
+    });
+
+    const { pageRoutes } = await generatePagesBarrel({
+      appRoot,
+      productionDir: path.join(appRoot, ".warlock/production"),
+      clientDir: "dist/client",
+    });
+
+    for (const route of pageRoutes.routes) {
+      expect(route.path.startsWith("/")).toBe(true);
+      // Idempotent: normalizing an already-canonical path is a no-op, so the
+      // manifest is stable across rebuilds.
+      expect(normalizeRoutePath(route.path)).toBe(route.path);
+    }
   });
 });

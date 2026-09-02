@@ -35,7 +35,10 @@ import {
   ConnectorLifecyclePhase,
   type ConnectorName,
 } from "@warlock.js/core";
-import { createWebBuildContribution, type WebBuildOptions } from "../build/contribution";
+import {
+  createWebBuildContribution,
+  type WebBuildOptions,
+} from "../build/contribution";
 import type { WebConnector, WebConnectorOptions } from "./web-connector";
 
 /**
@@ -55,8 +58,7 @@ export const WEB_CONNECTOR_PRIORITY = 5.5;
 export type WebConnectorFactoryOptions = WebConnectorOptions & {
   /**
    * What web contributes to `warlock build`. Passed straight to
-   * {@link createWebBuildContribution}; JSON-serializable values only — no
-   * plugin or pipeline instances, so a config load never pulls Vite in.
+   * {@link createWebBuildContribution}; JSON-serializable values only.
    */
   build?: WebBuildOptions;
 };
@@ -87,22 +89,22 @@ function deriveWebRoot(): string {
  * export default defineConfig({ connectors: [webConnector()] });
  * ```
  */
-export function webConnector(options: WebConnectorFactoryOptions = {}): Connector {
+export function webConnector(
+  options: WebConnectorFactoryOptions = {},
+): Connector {
   const { build: buildOptions, ...connectorOptions } = options;
   const webRoot = connectorOptions.webRoot ?? deriveWebRoot();
+  // One snapshot feeds both halves. Mutating the caller's array after config
+  // construction cannot make dev and `warlock build` observe different lists.
+  const connectorPlugins = [...(connectorOptions.plugins ?? [])];
 
-  const build: ConnectorBuildContribution = createWebBuildContribution({
-    ...buildOptions,
-    webRoot: buildOptions?.webRoot ?? webRoot,
-    // The COUNT, never the array. `connectorOptions.plugins` are dev-server
-    // plugins and the production build cannot apply them; the build contribution
-    // refuses the build rather than let them vanish silently
-    // (`ConnectorPluginsNotSupportedError`). Passing a number keeps this options
-    // object JSON-serializable — handing the plugin instances over would pull
-    // Vite into every config load, which is the one thing this module exists to
-    // prevent — and the refusal needs nothing more than "how many".
-    connectorPluginCount: connectorOptions.plugins?.length ?? 0,
-  });
+  const build: ConnectorBuildContribution = createWebBuildContribution(
+    {
+      ...buildOptions,
+      webRoot: buildOptions?.webRoot ?? webRoot,
+    },
+    connectorPlugins,
+  );
 
   let instance: WebConnector | undefined;
 
@@ -113,9 +115,14 @@ export function webConnector(options: WebConnectorFactoryOptions = {}): Connecto
    */
   const load = async (): Promise<WebConnector> => {
     if (!instance) {
-      const { WebConnector: WebConnectorClass } = await import("./web-connector");
+      const { WebConnector: WebConnectorClass } =
+        await import("./web-connector");
 
-      instance = new WebConnectorClass({ ...connectorOptions, webRoot });
+      instance = new WebConnectorClass({
+        ...connectorOptions,
+        plugins: connectorPlugins,
+        webRoot,
+      });
     }
 
     return instance;
@@ -158,6 +165,7 @@ export function webConnector(options: WebConnectorFactoryOptions = {}): Connecto
     // once, in `WebConnector.boot()`, so the new page's URL 404'd in silence.
     // The connector itself now decides: add/remove and route-identity edits are
     // live route-table work; component-body-only edits remain Vite HMR work.
-    shouldRestart: (changedFiles: string[]) => instance?.shouldRestart(changedFiles) ?? false,
+    shouldRestart: (changedFiles: string[]) =>
+      instance?.shouldRestart(changedFiles) ?? false,
   };
 }
