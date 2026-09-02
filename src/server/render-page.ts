@@ -16,10 +16,7 @@ import {
   type ErrorPageModuleLoader,
 } from "./error-page";
 import { ERROR_PAGE_METADATA } from "./resolve-page-metadata";
-import {
-  registerModules,
-  type RegisterableModuleNamespace,
-} from "../runtime/register-modules";
+import { registerModules, type RegisterableModuleNamespace } from "../runtime/register-modules";
 import { markNonHydrating } from "./page-render-bundle";
 import type { ServerErrorPageProps } from "../props";
 import {
@@ -108,13 +105,6 @@ export function connectPageRoutes(
 export type RenderPageOptions = {
   params?: Record<string, string>;
   query?: Record<string, string>;
-  /**
-   * Impersonation for tests: assigned to `request.user` right after the
-   * request pair is constructed — `user` is a plain public property on core's
-   * Request (core/src/http/request.ts:92) and this is exactly the write auth
-   * middleware would have performed.
-   */
-  as?: unknown;
   /** Per-call overrides of the connected registry (tests, mostly). */
   routes?: readonly PageRouteEntry[];
   createHttp?: ExecutePageRequestOptions["createHttp"];
@@ -127,10 +117,7 @@ export type RenderPageOptions = {
  * name-based sugar buildUrl consumes) have no meaning here — everything else
  * is the same seam.
  */
-export type RenderPageRequestOptions = Omit<
-  RenderPageOptions,
-  "params" | "query"
->;
+export type RenderPageRequestOptions = Omit<RenderPageOptions, "params" | "query">;
 
 export type RenderedPage = {
   /** The full document ("" when the pipeline short-circuited before render). */
@@ -227,16 +214,10 @@ function FrameworkRootBoundary(): ReactNode {
   return createElement("main", { role: "alert" }, "Something went wrong.");
 }
 
-function errorPageElement(
-  module: ErrorPageModule,
-  props: ServerErrorPageProps,
-): ReactNode {
-  const ErrorPage = module.default as
-    ((input: ServerErrorPageProps) => ReactNode) | undefined;
+function errorPageElement(module: ErrorPageModule, props: ServerErrorPageProps): ReactNode {
+  const ErrorPage = module.default as ((input: ServerErrorPageProps) => ReactNode) | undefined;
   if (!ErrorPage) {
-    throw new Error(
-      "The application error.page.tsx module has no default export.",
-    );
+    throw new Error("The application error.page.tsx module has no default export.");
   }
   return createElement(ErrorPage, props);
 }
@@ -254,12 +235,11 @@ type PageLevelProps = {
   params: Readonly<Record<string, string>>;
 };
 
-const DATA_KEYS: Record<PageLevelName, "appData" | "layoutData" | "pageData"> =
-  {
-    app: "appData",
-    layout: "layoutData",
-    page: "pageData",
-  };
+const DATA_KEYS: Record<PageLevelName, "appData" | "layoutData" | "pageData"> = {
+  app: "appData",
+  layout: "layoutData",
+  page: "pageData",
+};
 
 /**
  * Compose the tree root→leaf: `<App><Layout><Page/></Layout></App>`, each
@@ -313,12 +293,8 @@ function buildBoundaryElement(
     : wrapped;
 }
 
-function buildLeaf(
-  module: PageTripleModule,
-  bundle: PageDataBundle,
-): ReactNode {
-  const Component = module.default as
-    ((props: PageLevelProps) => ReactNode) | undefined;
+function buildLeaf(module: PageTripleModule, bundle: PageDataBundle): ReactNode {
+  const Component = module.default as ((props: PageLevelProps) => ReactNode) | undefined;
 
   if (!Component) return null;
 
@@ -341,8 +317,7 @@ function wrapRootward(
   let element = leaf;
 
   for (const level of wrappers) {
-    const Component = triple[level].default as
-      ((props: LevelProps) => ReactNode) | undefined;
+    const Component = triple[level].default as ((props: LevelProps) => ReactNode) | undefined;
 
     if (!Component) {
       // "App" is the root: no App export means no custom document, but the
@@ -389,9 +364,7 @@ function emitDocument(body: string): string {
 
 /**
  * The real request/response pair `capturingCreateHttp` captured for this
- * call. It is used at
- * the two orchestrator call sites for the `as` impersonation write
- * (`state.captured.request.user = as`, below) and to read the document
+ * call. It is used at the two orchestrator call sites to read the document
  * slots (`documentSlotsFrom`, below).
  */
 type CapturedHttp = {
@@ -401,15 +374,10 @@ type CapturedHttp = {
 
 /**
  * Wrap the caller's createHttp to capture the real pair (for the document
- * slots, `documentSlotsFrom` below), the matched entry (the only place a
- * URL-based caller learns which triple to render), and to apply `as` —
- * `user` is a plain public property on core's Request
- * (core/src/http/request.ts:92), exactly the write auth middleware performs.
+ * slots, `documentSlotsFrom` below) and the matched entry (the only place a
+ * URL-based caller learns which triple to render).
  */
-function capturingCreateHttp(
-  registry: PageRoutesRegistry,
-  as: unknown,
-): {
+function capturingCreateHttp(registry: PageRoutesRegistry): {
   state: { captured?: CapturedHttp; match?: PageRouteMatch };
   createHttp: ExecutePageRequestOptions["createHttp"];
 } {
@@ -420,12 +388,6 @@ function capturingCreateHttp(
     createHttp(match) {
       state.match = match;
       state.captured = registry.createHttp(match);
-
-      // `!= null` (not just `!== undefined`): `Request.user` is `RequestUser
-      // | undefined` (core/src/http/request.ts:93) — it has no `null` member,
-      // so an explicit `as: null` is treated the same as "no impersonation"
-      // rather than written through.
-      if (as != null) state.captured.request.user = as;
 
       return state.captured;
     },
@@ -561,9 +523,7 @@ async function finishRender(
       metadata: bundle.metadata,
       payload: buildHydrationPayload(bundle),
     };
-    return renderWithContext(
-      wrapRootward(triple, bundle, "page", errorPageElement(module, props)),
-    );
+    return renderWithContext(wrapRootward(triple, bundle, "page", errorPageElement(module, props)));
   };
 
   for (;;) {
@@ -571,10 +531,7 @@ async function finishRender(
       // The application error page is the framework terminal, never a rival
       // to an authored boundary. It is reached only after no app boundary
       // exists (or after that boundary has itself thrown below).
-      if (
-        currentError?.boundary.boundaryLevel === "app" &&
-        !triple.app.ErrorBoundary
-      ) {
+      if (currentError?.boundary.boundaryLevel === "app" && !triple.app.ErrorBoundary) {
         try {
           body =
             (await renderErrorPage(
@@ -624,10 +581,7 @@ async function finishRender(
             ? "layout"
             : "page";
 
-      currentError = buildErrorRecord(
-        thrown,
-        designateBoundary(throwingLevel, triple),
-      );
+      currentError = buildErrorRecord(thrown, designateBoundary(throwingLevel, triple));
     }
   }
 
@@ -643,9 +597,7 @@ async function finishRender(
   // — read off the commit, never off the live `response`, same as `headers`
   // above. No committed status (no loader called `setStatusCode`) is the
   // ordinary 200.
-  const status = currentError
-    ? 500
-    : ((bundle as Bundle).commit?.statusCode ?? 200);
+  const status = currentError ? 500 : ((bundle as Bundle).commit?.statusCode ?? 200);
 
   const html = emitDocument(body);
 
@@ -664,9 +616,7 @@ async function finishRender(
  * `error.page.tsx`. A normal app error page reached through `finishRender`
  * renders inside a real triple and stays hydratable; this path never does.
  */
-export async function renderPageFailure(
-  options: RenderPageFailureOptions,
-): Promise<RenderedPage> {
+export async function renderPageFailure(options: RenderPageFailureOptions): Promise<RenderedPage> {
   const { request, response, name, path, thrown, loadErrorPage } = options;
   const bundle: PageDataBundle = markNonHydrating({
     route: { name, path, params: {}, query: {} },
@@ -685,14 +635,11 @@ export async function renderPageFailure(
     lang: slots.lang,
   };
   const renderWithContext = (element: ReactNode): string =>
-    renderToString(
-      createElement(DocumentContext.Provider, { value, children: element }),
-    );
+    renderToString(createElement(DocumentContext.Provider, { value, children: element }));
   let body: string;
 
   try {
-    if (!loadErrorPage)
-      throw new Error("No application error page is configured.");
+    if (!loadErrorPage) throw new Error("No application error page is configured.");
     const props: ServerErrorPageProps = { error: thrown, status: 500 };
     const module = await loadErrorPage();
     registerModules([module as RegisterableModuleNamespace]);
@@ -740,14 +687,10 @@ export async function renderPage(
   options: RenderPageOptions = {},
 ): Promise<RenderedPage | Response> {
   const registry = requireRegistry(options);
-  const entry = registry.routes.find(
-    (candidate) => candidate.name === routeName,
-  );
+  const entry = registry.routes.find((candidate) => candidate.name === routeName);
 
   if (!entry) {
-    const known = registry.routes
-      .map((candidate) => `"${candidate.name}"`)
-      .join(", ");
+    const known = registry.routes.map((candidate) => `"${candidate.name}"`).join(", ");
 
     throw new Error(
       `renderPage("${routeName}"): no route with that name ` +
@@ -758,7 +701,7 @@ export async function renderPage(
   }
 
   const url = buildUrl(entry, options.params ?? {}, options.query ?? {});
-  const { state, createHttp } = capturingCreateHttp(registry, options.as);
+  const { state, createHttp } = capturingCreateHttp(registry);
 
   const rendered = await executePageRequest({
     url,
@@ -800,7 +743,7 @@ export async function renderPageRequest(
   options: RenderPageRequestOptions = {},
 ): Promise<RenderedPage | Response> {
   const registry = requireRegistry(options);
-  const { state, createHttp } = capturingCreateHttp(registry, options.as);
+  const { state, createHttp } = capturingCreateHttp(registry);
 
   const rendered = await executePageRequest({
     url,

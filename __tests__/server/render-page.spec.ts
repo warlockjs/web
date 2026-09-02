@@ -162,7 +162,7 @@ describe("renderPage — stage 10 EMIT", () => {
   });
 
   it("escapes the payload against </script, <!--, -->, U+2028, U+2029", async () => {
-    const attack = '</script><script>alert(1)</script><!-- sneak -->\u2028\u2029';
+    const attack = "</script><script>alert(1)</script><!-- sneak -->\u2028\u2029";
     const escapingRoutes: PageRouteEntry[] = [
       {
         path: "/escape",
@@ -329,39 +329,21 @@ describe("renderPage — the one-call test-helper contract (dx-differentiators.m
   });
 
   it("asserting a guard rejection is one line", async () => {
-    await expect(renderPage("main.contact-us", { query: { deny: "1" } })).resolves.toMatchObject({ status: 401, html: "" });
+    await expect(renderPage("main.contact-us", { query: { deny: "1" } })).resolves.toMatchObject({
+      status: 401,
+      html: "",
+    });
   });
 
   it("asserting a loader's notFound answer is one line", async () => {
-    await expect(renderPage("products.details", { params: { id: "missing" } })).resolves.toMatchObject({ status: 404, html: "" });
+    await expect(
+      renderPage("products.details", { params: { id: "missing" } }),
+    ).resolves.toMatchObject({ status: 404, html: "" });
   });
 
   it("asserting a validation rejection is one line", async () => {
-    await expect(renderPage("products.details", { params: { id: "x" } })).resolves.toMatchObject({ status: 422 });
-  });
-
-  it("impersonates with `as`: the value lands on request.user before the pipeline runs", async () => {
-    const asRoutes: PageRouteEntry[] = [
-      {
-        path: "/whoami",
-        name: "test.whoami",
-        triple: {
-          app: App,
-          layout,
-          page: {
-            route: "/whoami",
-            loader: async ({ request }: any) => ({ userName: request.user?.name }),
-            default: () => null,
-          },
-        },
-      },
-    ];
-
-    const { data } = await renderPage("test.whoami", {
-      routes: asRoutes,
-      as: { id: 1, name: "Hasan" },
+    await expect(renderPage("products.details", { params: { id: "x" } })).resolves.toMatchObject({
+      status: 422,
     });
-
-    expect(data.userName).toBe("Hasan");
   });
 });
