@@ -26,6 +26,10 @@ describe("classifyPageFileSegment — allowed shapes", () => {
     expect(classifyPageFileSegment("(marketing)")).toEqual({ type: "allowed" });
   });
 
+  it("allows another group directory `(shop)` — it contains no brackets", () => {
+    expect(classifyPageFileSegment("(shop)")).toEqual({ type: "allowed" });
+  });
+
   it("allows a whole-segment param with an underscore name `[user_id]`", () => {
     expect(classifyPageFileSegment("[user_id]")).toEqual({ type: "allowed" });
   });
@@ -92,6 +96,28 @@ describe("classifyPageFileSegment — rejected shapes", () => {
     const reason = reasonFor("[id");
     expect(reason).toContain("[id");
     expect(reason).toMatch(/unbalanced/i);
+  });
+
+  it("rejects bracket syntax inside a group `(bad[...slug])`, naming the group and the fix", () => {
+    const reason = reasonFor("(bad[...slug])");
+    expect(reason).toContain("(bad[...slug])");
+    expect(reason).toMatch(/group/i);
+    expect(reason).toMatch(/contributes nothing to the URL path/i);
+    expect(reason).toContain("(marketing)/[id]/page.page.tsx");
+    expect(reason).toContain("(marketing[id])/page.page.tsx");
+  });
+
+  it("rejects a group whose whole name is a bracket group `([x])`", () => {
+    const reason = reasonFor("([x])");
+    expect(reason).toContain("([x])");
+    expect(reason).toMatch(/group/i);
+    expect(reason).toMatch(/contributes nothing to the URL path/i);
+  });
+
+  it("rejects a group with a catch-all mixed into its name `(a[...slug])`", () => {
+    const reason = reasonFor("(a[...slug])");
+    expect(reason).toContain("(a[...slug])");
+    expect(reason).toMatch(/group/i);
   });
 });
 

@@ -80,8 +80,12 @@ export function deriveFilesystemRoutePath(input: FilesystemRouteInput): string {
 
     if (prefix !== undefined) {
       segments.push(...validatedPrefixSegments(prefix, input.pageFile));
-    } else if (!isGroup(directory)) {
-      segments.push(routeSegment(directory, input.pageFile));
+    } else {
+      const routed = routeSegment(directory, input.pageFile);
+
+      if (!isGroup(directory)) {
+        segments.push(routed);
+      }
     }
   }
 
@@ -95,9 +99,15 @@ export function deriveFilesystemRoutePath(input: FilesystemRouteInput): string {
 /** Derive the stable dotted route name from a page's filesystem identity. */
 export function deriveFilesystemRouteName(pageFile: string): string {
   const { directories, basename } = pageParts(pageFile);
-  const segments = directories
-    .filter((segment) => !isGroup(segment))
-    .map((segment) => routeSegment(segment, pageFile));
+  const segments: string[] = [];
+
+  for (const directory of directories) {
+    const routed = routeSegment(directory, pageFile);
+
+    if (!isGroup(directory)) {
+      segments.push(routed);
+    }
+  }
 
   if (basename !== "index") {
     segments.push(routeSegment(basename, pageFile));

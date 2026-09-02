@@ -201,3 +201,71 @@ describe("filesystem route derivation — layout prefix bypass", () => {
     ).toThrow(PageFileSegmentNotSupportedError);
   });
 });
+
+describe("filesystem route derivation — bracket syntax inside a group", () => {
+  it("throws deriving the path for a group whose name contains brackets `(bad[...slug])/page.page.tsx`", () => {
+    expect(() => deriveFilesystemRoutePath({ pageFile: "(bad[...slug])/page.page.tsx" })).toThrow(
+      PageFileSegmentNotSupportedError,
+    );
+
+    try {
+      deriveFilesystemRoutePath({ pageFile: "(bad[...slug])/page.page.tsx" });
+      expect.unreachable("expected deriveFilesystemRoutePath to throw");
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).toContain("(bad[...slug])/page.page.tsx");
+      expect(message).toContain("(bad[...slug])");
+      expect(message).toMatch(/group/i);
+      expect(message).toMatch(/contributes nothing to the URL path/i);
+      expect(message).toContain("(marketing)/[id]/page.page.tsx");
+    }
+  });
+
+  it("throws deriving the name for the same offending group `(bad[...slug])/page.page.tsx`", () => {
+    expect(() => deriveFilesystemRouteName("(bad[...slug])/page.page.tsx")).toThrow(
+      PageFileSegmentNotSupportedError,
+    );
+
+    try {
+      deriveFilesystemRouteName("(bad[...slug])/page.page.tsx");
+      expect.unreachable("expected deriveFilesystemRouteName to throw");
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).toContain("(bad[...slug])/page.page.tsx");
+      expect(message).toContain("(bad[...slug])");
+      expect(message).toMatch(/group/i);
+      expect(message).toMatch(/contributes nothing to the URL path/i);
+      expect(message).toContain("(marketing)/[id]/page.page.tsx");
+    }
+  });
+
+  it("still throws when the bracketed group is nested under a valid segment `(a)/(b[c])/page.page.tsx`", () => {
+    expect(() => deriveFilesystemRoutePath({ pageFile: "(a)/(b[c])/page.page.tsx" })).toThrow(
+      PageFileSegmentNotSupportedError,
+    );
+
+    expect(() => deriveFilesystemRouteName("(a)/(b[c])/page.page.tsx")).toThrow(
+      PageFileSegmentNotSupportedError,
+    );
+  });
+
+  it("still throws when the group's whole name is a bracket group `([x])/page.page.tsx`", () => {
+    expect(() => deriveFilesystemRoutePath({ pageFile: "([x])/page.page.tsx" })).toThrow(
+      PageFileSegmentNotSupportedError,
+    );
+
+    expect(() => deriveFilesystemRouteName("([x])/page.page.tsx")).toThrow(
+      PageFileSegmentNotSupportedError,
+    );
+  });
+
+  it("still throws when the bracketed group sits inside a dynamic directory `[id]/(bad[x])/page.page.tsx`", () => {
+    expect(() => deriveFilesystemRoutePath({ pageFile: "[id]/(bad[x])/page.page.tsx" })).toThrow(
+      PageFileSegmentNotSupportedError,
+    );
+
+    expect(() => deriveFilesystemRouteName("[id]/(bad[x])/page.page.tsx")).toThrow(
+      PageFileSegmentNotSupportedError,
+    );
+  });
+});

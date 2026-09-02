@@ -15,19 +15,23 @@
  * malformed segment into a valid one.
  *
  * ALLOWED — and ONLY these shapes; anything else is rejected by default:
- * a plain static segment containing no "[" and no "]" at all (this also
- * covers `(group)` directories, which never contain brackets); and exactly
- * `[name]`, where the segment is nothing but a single bracket pair and
- * `name` matches `^[A-Za-z_][A-Za-z0-9_]*$` — i.e. precisely the shape
- * `filesystem-route.ts` can translate into a `:name` route param.
+ * a plain static segment containing no "[" and no "]" at all; a `(group)`
+ * directory whose name contains no "[" and no "]"; and exactly `[name]`,
+ * where the segment is nothing but a single bracket pair and `name` matches
+ * `^[A-Za-z_][A-Za-z0-9_]*$` — i.e. precisely the shape `filesystem-route.ts`
+ * can translate into a `:name` route param.
  *
  * REJECTED — each with a reason naming the offending segment and, where one
- * exists, the supported alternative: a catch-all group (`[...slug]`,
- * `[...]`); two or more bracket groups in one segment (`[id].[slug]`,
- * `[a]-[b]`); a bracket group mixed with other text (`pre[id]`); an empty
- * parameter name (`[]`); a parameter name that does not start with a letter
- * or `_`, or contains a character other than a letter, digit or `_`
- * (`[1bad]`, `[a-b]`, `[a b]`); and unbalanced or stray `[`/`]` characters.
+ * exists, the supported alternative: a `(group)` directory whose name
+ * contains "[" or "]" anywhere (`(bad[id])`, `([x])`) — a group contributes
+ * nothing to the URL path, so bracket syntax inside one can never produce a
+ * dynamic segment, and the fix is to move the dynamic segment out of the
+ * group; a catch-all group (`[...slug]`, `[...]`); two or more bracket
+ * groups in one segment (`[id].[slug]`, `[a]-[b]`); a bracket group mixed
+ * with other text (`pre[id]`); an empty parameter name (`[]`); a parameter
+ * name that does not start with a letter or `_`, or contains a character
+ * other than a letter, digit or `_` (`[1bad]`, `[a-b]`, `[a b]`); and
+ * unbalanced or stray `[`/`]` characters.
  *
  * REJECTION IS DATA, NOT A THROW: {@link classifyPageFileSegment} is total
  * and never raises. What a rejection MEANS to the user is nonetheless fixed
@@ -61,6 +65,9 @@ const parameterNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** A single balanced, non-nested bracket group such as `[id]` or `[...slug]`. */
 const bracketGroupPattern = /\[[^[\]]*]/g;
 
+/** A `(group)` directory — the whole segment wrapped in one pair of parens. */
+const groupSegmentPattern = /^\(([^/]+)\)$/;
+
 /**
  * Decides whether one filesystem segment is inside the grammar
  * `filesystem-route.ts` can translate. Pure and total: every input yields a
@@ -69,6 +76,23 @@ const bracketGroupPattern = /\[[^[\]]*]/g;
  * already stripped) — no normalization is performed here.
  */
 export function classifyPageFileSegment(segment: string): PageFileSegmentVerdict {
+  const groupMatch = groupSegmentPattern.exec(segment);
+
+  if (groupMatch) {
+    const groupName = groupMatch[1];
+
+    if (groupName.includes("[") || groupName.includes("]")) {
+      return rejected(
+        `Segment "${segment}" is a group, and a group contributes nothing to the URL path, so ` +
+          `bracket syntax inside it can never produce a dynamic segment — move the dynamic ` +
+          `segment out of the group, as in "(marketing)/[id]/page.page.tsx" rather than ` +
+          `"(marketing[id])/page.page.tsx".`,
+      );
+    }
+
+    return allowed;
+  }
+
   if (!segment.includes("[") && !segment.includes("]")) {
     return allowed;
   }
