@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Router } from "@warlock.js/core";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { container, type Router } from "@warlock.js/core";
 import * as discoverPagesModule from "../build/discover-pages";
 import { NestedLayoutsNotSupportedError } from "../routing/layout-policy";
 import * as createPageRouteHandlerModule from "./create-page-route-handler";
@@ -145,7 +145,6 @@ function fakeVite(moduleByFile: Record<string, unknown>): InstallPageRoutesOptio
   } as unknown as InstallPageRoutesOptions["vite"];
 }
 
-
 function install(
   appSrcRoot: string,
   vite: InstallPageRoutesOptions["vite"],
@@ -165,7 +164,25 @@ function install(
   return { run, router, registered, notFound };
 }
 
+/**
+ * `installPageRoutes` calls the REAL `createPageRouteHandler` in every
+ * describe block below that does not mock it (see `captureHandlerOptions`
+ * and the inline `vi.spyOn` calls further down) — and that factory now
+ * asserts a resolvable `http.server` rather than silently skipping the
+ * Set-Cookie cache-floor hook (`create-page-route-handler.ts`'s
+ * `MissingHttpServerForPageRouteError`). Seeded per describe-block that
+ * reaches the real handler, so each one proves the production
+ * route-installation path HAS a server, rather than proving it can survive
+ * without one.
+ */
+function seedHttpServer(): void {
+  container.set("http.server", { addHook: vi.fn() } as never);
+}
+
 describe("installPageRoutes — source-file ownership", () => {
+  beforeEach(seedHttpServer);
+  afterEach(() => container.delete("http.server"));
+
   it("removes only the page owned by an exact canonical source key", async () => {
     const appRoot = makeAppTree({
       "src/web/account.page.tsx": "",
@@ -254,6 +271,9 @@ describe("installPageRoutes — source-file ownership", () => {
 });
 
 describe("installPageRoutes — the global root", () => {
+  beforeEach(seedHttpServer);
+  afterEach(() => container.delete("http.server"));
+
   it("registers every page under src/web/**, from ONE subject list", async () => {
     const appRoot = makeAppTree({
       "src/web/dashboard.page.tsx": "",
@@ -278,6 +298,9 @@ describe("installPageRoutes — the global root", () => {
 });
 
 describe("installPageRoutes — a page with no route export", () => {
+  beforeEach(seedHttpServer);
+  afterEach(() => container.delete("http.server"));
+
   it("derives its route path and name from the filesystem", async () => {
     const appRoot = makeAppTree({
       "src/web/contact-us.page.tsx": "",
@@ -335,6 +358,9 @@ describe("installPageRoutes — a page with no route export", () => {
 });
 
 describe("installPageRoutes — the shared enumerator is called exactly once", () => {
+  beforeEach(seedHttpServer);
+  afterEach(() => container.delete("http.server"));
+
   it("calls discoverPageFiles(appSrcRoot) exactly once and registers exactly its returned records", async () => {
     const appRoot = makeAppTree({
       "src/web/dashboard.page.tsx": "",
@@ -372,6 +398,9 @@ describe("installPageRoutes — the shared enumerator is called exactly once", (
 });
 
 describe("installPageRoutes — ancestor layout composition", () => {
+  beforeEach(seedHttpServer);
+  afterEach(() => container.delete("http.server"));
+
   it("composes against the nearest ancestor layout's prefix when the page's own directory has none", async () => {
     const appRoot = makeAppTree({
       "src/web/layout.tsx": "",
@@ -398,6 +427,9 @@ describe("installPageRoutes — ancestor layout composition", () => {
 });
 
 describe("installPageRoutes — no independent filesystem enumeration", () => {
+  beforeEach(seedHttpServer);
+  afterEach(() => container.delete("http.server"));
+
   it("serves ONLY what the stubbed enumerator returns — a real page file it omits is never registered", async () => {
     const appRoot = makeAppTree({
       // A real page on disk, under the global root, that the stub below will
@@ -446,7 +478,7 @@ function captureHandlerOptions(): PageRouteHandlerOptions[] {
   const captured: PageRouteHandlerOptions[] = [];
 
   vi.spyOn(createPageRouteHandlerModule, "createPageRouteHandler").mockImplementation(
-    handlerOptions => {
+    (handlerOptions) => {
       captured.push(handlerOptions);
 
       return (async () => {}) as PageRouteHandler;
@@ -565,7 +597,7 @@ describe("installPageRoutes — the layout middleware chain", () => {
 
     // ...and every prefix on the path composed, for the same reason: it is one
     // chain walk, not two.
-    expect(registered.map(route => route.path)).toEqual(["/users/account/settings"]);
+    expect(registered.map((route) => route.path)).toEqual(["/users/account/settings"]);
     expect(installed[0]?.path).toBe("/users/account/settings");
     // The page still renders inside the one layout that renders.
     expect(installed[0]?.layoutFile).toBe(usersLayoutFile);
@@ -644,7 +676,7 @@ describe("installPageRoutes — the layout middleware chain", () => {
     await runLayoutMiddleware(captured[0]);
 
     expect(calls).toEqual(["only"]);
-    expect(registered.map(route => route.path)).toEqual(["/admin/settings"]);
+    expect(registered.map((route) => route.path)).toEqual(["/admin/settings"]);
     expect(installed[0]?.layoutFile).toBe(layoutFile);
   });
 
@@ -659,7 +691,7 @@ describe("installPageRoutes — the layout middleware chain", () => {
     const { run, registered } = install(appSrcRoot, vite);
     const installed = await run();
 
-    expect(registered.map(route => route.path)).toEqual(["/contact-us"]);
+    expect(registered.map((route) => route.path)).toEqual(["/contact-us"]);
     expect(installed[0]?.layoutFile).toBeUndefined();
     expect(captured[0]?.layoutFile).toBeUndefined();
     await expect(layoutMiddlewareOf(captured[0])).resolves.toEqual([]);
@@ -700,7 +732,7 @@ describe("installPageRoutes — the layout middleware chain", () => {
     await runLayoutMiddleware(captured[0]);
 
     expect(calls).toEqual(["gate"]);
-    expect(registered.map(route => route.path)).toEqual(["/shop/admin/orders"]);
+    expect(registered.map((route) => route.path)).toEqual(["/shop/admin/orders"]);
     expect(installed[0]?.layoutFile).toBe(shopLayoutFile);
   });
 
@@ -727,6 +759,9 @@ describe("installPageRoutes — the layout middleware chain", () => {
 });
 
 describe("installPageRoutes — dev's URL is discovery's URL", () => {
+  beforeEach(seedHttpServer);
+  afterEach(() => container.delete("http.server"));
+
   it("composes the same effective path discoverPages() computes for the same tree", async () => {
     // Real sources: discovery PARSES these, so the fixture has to be the thing
     // it reads, not a module double.
@@ -753,7 +788,7 @@ describe("installPageRoutes — dev's URL is discovery's URL", () => {
       .discoverPages({ appRoot })
       .filter(discoverPagesModule.isDiscoveredRoutablePage);
 
-    expect(discovered.map(page => page.routePath)).toEqual([installed[0]?.path]);
+    expect(discovered.map((page) => page.routePath)).toEqual([installed[0]?.path]);
     expect(installed[0]?.path).toBe("/users/account/settings");
   });
 });
@@ -763,6 +798,9 @@ describe("installPageRoutes — dev's URL is discovery's URL", () => {
  * proves, against a Vite-backed loader instead of a manifest.
  */
 describe("installPageRoutes — the not-found page", () => {
+  beforeEach(seedHttpServer);
+  afterEach(() => container.delete("http.server"));
+
   it("registers the catch-all last, under the reserved name, and never at /404", async () => {
     const appRoot = makeAppTree({
       "src/web/home.page.tsx": "",
@@ -865,11 +903,15 @@ describe("installPageRoutes — the not-found page", () => {
     await run();
 
     const sent: { body: unknown; status?: number }[] = [];
+    const headers = new Map<string, unknown>();
 
     await notFound[0].handler({
       // A browser navigation — the one request shape that opens the page path.
       request: { method: "GET", path: "/nope", header: () => "text/html" },
       response: {
+        header: vi.fn((name: string, value: unknown) => {
+          headers.set(name.toLowerCase(), value);
+        }),
         html: async (body: string, status?: number) => {
           sent.push({ body, status });
         },
@@ -877,6 +919,7 @@ describe("installPageRoutes — the not-found page", () => {
     } as never);
 
     expect(sent).toEqual([{ body: frameworkDefaultNotFoundDocument(), status: 404 }]);
+    expect(headers.get("cache-control")).toBe("no-store");
   });
 
   it("registers nothing at all for an application with no pages", async () => {
@@ -942,10 +985,7 @@ describe("installPageRoutes — route-local CSS", () => {
     const pageFile = path.join(appSrcRoot, "web", "contact-us.page.tsx");
 
     const captured = captureHandlerOptions();
-    const { run } = install(
-      appSrcRoot,
-      fakeVite({ [pageFile]: { route: "/contact-us" } }),
-    );
+    const { run } = install(appSrcRoot, fakeVite({ [pageFile]: { route: "/contact-us" } }));
     await run();
 
     expect(captured[0]?.stylesheetUrls).toEqual([
@@ -1043,6 +1083,9 @@ describe("installPageRoutes — route-local CSS", () => {
 
     const handler = built.find((options) => options.pageFile === notFoundFile);
 
-    expect(handler?.stylesheetUrls).toEqual(["/src/web/root.css?direct", "/src/web/404.css?direct"]);
+    expect(handler?.stylesheetUrls).toEqual([
+      "/src/web/root.css?direct",
+      "/src/web/404.css?direct",
+    ]);
   });
 });

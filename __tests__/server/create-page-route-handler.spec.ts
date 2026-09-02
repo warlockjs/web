@@ -92,7 +92,13 @@ function moduleLoader(modules: Record<string, unknown>): {
 
 type RecordedContext = {
   context: HttpContext;
-  written: { html?: string; status?: number; sent?: unknown; sentStatus?: number; contentType?: string };
+  written: {
+    html?: string;
+    status?: number;
+    sent?: unknown;
+    sentStatus?: number;
+    contentType?: string;
+  };
   appliedHeaders: Record<string, string>[];
   /** Single `header(key, value)` writes — the data path sets `Vary` this way. */
   singleHeaders: { key: string; value: unknown }[];
@@ -221,6 +227,7 @@ describe("createPageRouteHandler — constructible without Vite", () => {
       layoutFile: LAYOUT_FILE,
       loadModule,
       applyBufferedCookie: recorded.applyBufferedCookie as never,
+      httpServer: undefined,
     });
 
     await handler(recorded.context);
@@ -257,6 +264,7 @@ describe("createPageRouteHandler — constructible without Vite", () => {
       layoutFile: undefined,
       loadModule,
       applyBufferedCookie: recorded.applyBufferedCookie as never,
+      httpServer: undefined,
     });
 
     await handler(recorded.context);
@@ -285,6 +293,7 @@ describe("createPageRouteHandler — constructible without Vite", () => {
       loadModule,
       hydrationClientModuleUrl: "/@fs/hydration.tsx",
       applyBufferedCookie: recorded.applyBufferedCookie as never,
+      httpServer: undefined,
     });
 
     await handler(recorded.context);
@@ -326,6 +335,7 @@ describe("createPageRouteHandler — constructible without Vite", () => {
       pageFile: PAGE_FILE,
       loadModule,
       applyBufferedCookie: recorded.applyBufferedCookie as never,
+      httpServer: undefined,
     });
 
     await handler(recorded.context);
@@ -370,6 +380,7 @@ describe("createPageRouteHandler — data requests", () => {
       layoutFile: LAYOUT_FILE,
       loadModule,
       applyBufferedCookie: recorded.applyBufferedCookie as never,
+      httpServer: undefined,
     });
 
     await handler(recorded.context);
@@ -408,6 +419,7 @@ describe("createPageRouteHandler — data requests", () => {
         layoutFile: LAYOUT_FILE,
         loadModule: moduleLoader(modules).loadModule,
         applyBufferedCookie: recorded.applyBufferedCookie as never,
+        httpServer: undefined,
       })(recorded.context);
     }
 
@@ -431,6 +443,7 @@ describe("createPageRouteHandler — data requests", () => {
       pageFile: PAGE_FILE,
       loadModule,
       applyBufferedCookie: recorded.applyBufferedCookie as never,
+      httpServer: undefined,
     })(recorded.context);
 
     expect(
@@ -462,6 +475,7 @@ describe("createPageRouteHandler — data requests", () => {
         pageFile: PAGE_FILE,
         loadModule: moduleLoader(modules).loadModule,
         applyBufferedCookie: recorded.applyBufferedCookie as never,
+        httpServer: undefined,
       })(recorded.context);
     }
 
@@ -483,6 +497,7 @@ describe("createPageRouteHandler — data requests", () => {
         pageFile: PAGE_FILE,
         loadModule: moduleLoader({ [APP_FILE]: App, [PAGE_FILE]: contactPage }).loadModule,
         applyBufferedCookie: recorded.applyBufferedCookie as never,
+        httpServer: undefined,
       })(recorded.context);
 
       expect(recorded.written.html?.startsWith("<!DOCTYPE html>")).toBe(true);

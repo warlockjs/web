@@ -76,7 +76,8 @@ function handlerOptions(
     appFile: "app.tsx",
     layoutFile: "composed-layout.tsx",
     pageFile: "account.page.tsx",
-    loadModule: async moduleId => moduleById[moduleId],
+    loadModule: async (moduleId) => moduleById[moduleId],
+    httpServer: undefined,
     ...overrides,
   };
 }
@@ -210,7 +211,7 @@ describe("createPageRouteHandler — universal registration", () => {
           name: "warlock.not-found",
           layoutFile: undefined,
           pageFile: "404.page.tsx",
-          matchPath: requestPath => requestPath,
+          matchPath: (requestPath) => requestPath,
           statusForRenderedOk: 404,
           skipPageLoader: true,
         },
@@ -243,10 +244,12 @@ describe("createPageRouteHandler — universal registration", () => {
       }),
     );
 
-    renderPageRequest.mockImplementation(async (_url: string, options: RenderPageRequestOptions) => {
-      expect(options.routes?.[0]?.triple.page.loader).toBe(loader);
-      return renderedOk();
-    });
+    renderPageRequest.mockImplementation(
+      async (_url: string, options: RenderPageRequestOptions) => {
+        expect(options.routes?.[0]?.triple.page.loader).toBe(loader);
+        return renderedOk();
+      },
+    );
 
     await handler(context() as never);
   });
@@ -284,7 +287,9 @@ describe("createPageRouteHandler — hydration module injection", () => {
       status: 500,
       headers: {},
       data: undefined,
-      bundle: markNonHydrating({ route: { name: "account", path: "/account", params: {}, query: {} } }),
+      bundle: markNonHydrating({
+        route: { name: "account", path: "/account", params: {}, query: {} },
+      }),
     });
 
     const requestContext = context();
@@ -340,9 +345,7 @@ describe("createPageRouteHandler — fallback data requests", () => {
       "Vary",
       WARLOCK_DATA_REQUEST_HEADER,
     );
-    expect(requestContext.response.setContentType).toHaveBeenCalledWith(
-      DATA_RESPONSE_CONTENT_TYPE,
-    );
+    expect(requestContext.response.setContentType).toHaveBeenCalledWith(DATA_RESPONSE_CONTENT_TYPE);
     // Serialized with the SAME transform the document embeds under
     // `#__WARLOCK_DATA__`, and sent as the already-stringified body the
     // production code documents at its call site — a JSON.stringify of an
@@ -389,9 +392,7 @@ describe("createPageRouteHandler — fallback data requests", () => {
       "Vary",
       WARLOCK_DATA_REQUEST_HEADER,
     );
-    expect(requestContext.response.setContentType).toHaveBeenCalledWith(
-      DATA_RESPONSE_CONTENT_TYPE,
-    );
+    expect(requestContext.response.setContentType).toHaveBeenCalledWith(DATA_RESPONSE_CONTENT_TYPE);
     // `markNonHydrating` is what makes the DOCUMENT branch skip splicing the
     // hydration client module (asserted above, in the non-data test) — it
     // says "there is no triple for a browser script to attach to". It says

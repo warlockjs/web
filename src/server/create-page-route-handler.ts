@@ -20,7 +20,7 @@
  * Scope: this file creates a seam and nothing else. It does not implement
  * `type: "page"` routing, HTML error pages, or any other new capability.
  */
-import { Response, type HttpContext } from "@warlock.js/core";
+import { container, Response, type FastifyInstance, type HttpContext } from "@warlock.js/core";
 
 import {
   DATA_RESPONSE_CONTENT_TYPE,
@@ -29,10 +29,49 @@ import {
 } from "../routing/data-request";
 import { registerModules, type RegisterableModuleNamespace } from "../runtime/register-modules";
 import { buildHydrationPayload } from "./build-hydration-payload";
+import { applyResponseCacheFloor } from "./response-cache-floor";
+import { ensureSetCookieCacheFloorHook, markPageResponse } from "./set-cookie-cache-floor-hook";
 import type { BufferedCookie, PageRouteEntry, PageTripleModule } from "./execute-page-request";
 import { isNonHydrating } from "./page-render-bundle";
 import { renderPageFailure, renderPageRequest, type RenderedPage } from "./render-page";
+
+declare module "@warlock.js/core" {
+  interface RequestLocals {
+    /**
+     * Set by this file's route handler, on every page-route response
+     * (document and data representations alike) — never inferred from URL
+     * shape or content-type. `set-cookie-cache-floor-hook.ts`'s `onSend` hook
+     * reads this to scope its effect to page responses only.
+     */
+    isPageResponse?: boolean;
+  }
+}
 import type { ErrorPageModuleLoader } from "./error-page";
+
+/**
+ * Raised when a page route handler is constructed WITHOUT an `httpServer`
+ * option AND the framework container has no `"http.server"` binding either —
+ * i.e. there is no way, deliberate or ambient, to register the `Set-Cookie`
+ * cache-floor hook. `container.get("http.server")` (`core/src/container/index.ts`)
+ * is a bare `Map.get` that TypeScript types as always returning a
+ * `FastifyInstance`, so a silently-missing binding used to read as "no
+ * server" and skip the hook with no signal at all. This throws instead of
+ * repeating that mistake. To fix: register `http.server` in the container
+ * before this factory runs (the ordinary `HttpConnector.boot()` path), or —
+ * if this handler genuinely has no server on purpose, such as a unit test —
+ * pass `httpServer: undefined` explicitly to say so.
+ */
+export class MissingHttpServerForPageRouteError extends Error {
+  public constructor() {
+    super(
+      'createPageRouteHandler: no "httpServer" option was supplied and the container has no ' +
+        '"http.server" binding, so the Set-Cookie cache-floor hook on page responses cannot be ' +
+        "registered. Register `http.server` in the container before this factory runs, or pass " +
+        "`httpServer: undefined` explicitly if this handler is meant to have no server.",
+    );
+    this.name = "MissingHttpServerForPageRouteError";
+  }
+}
 
 /**
  * Replay ONE committed cookie through core's own `Response.cookie()` — the
@@ -146,6 +185,16 @@ export type PageRouteHandlerOptions = {
    * the call.
    */
   applyBufferedCookie?: (response: Response, cookie: BufferedCookie) => void;
+  /**
+   * The Fastify instance to register the `Set-Cookie` cache-floor `onSend`
+   * hook on (`ensureSetCookieCacheFloorHook`, `set-cookie-cache-floor-hook.ts`).
+   * Defaults to `container.get("http.server")` — the same instance
+   * `HttpConnector` publishes during its own `boot()`, which runs before
+   * `WebConnector.boot()` calls this factory. Injectable so a test can hand
+   * this factory a self-contained Fastify instance it built and booted
+   * itself, with no framework connector graph involved.
+   */
+  httpServer?: FastifyInstance;
 };
 
 export type PageRouteHandler = (context: HttpContext) => Promise<void | Response>;
@@ -254,6 +303,34 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     applyBufferedCookie = defaultApplyBufferedCookie,
   } = options;
 
+  // Distinguish "not supplied" (fall back to the container, and REQUIRE the
+  // container to have it) from "supplied as `undefined`" (a deliberate "this
+  // handler has no server" — the escape hatch unit tests use). Collapsing
+  // both into one optional-with-a-default, as this used to, let a genuinely
+  // missing `http.server` container binding masquerade as the deliberate
+  // no-server case with no signal at all — see `MissingHttpServerForPageRouteError`.
+  let httpServer: FastifyInstance | undefined;
+
+  if ("httpServer" in options) {
+    httpServer = options.httpServer;
+  } else if (container.has("http.server")) {
+    httpServer = container.get("http.server");
+  } else {
+    throw new MissingHttpServerForPageRouteError();
+  }
+
+  // Registration-time, not request-time: this runs once per page route, while
+  // `WebConnector.boot()` installs routes — after `HttpConnector.boot()` has
+  // already registered `@fastify/cookie` (`set-cookie-cache-floor-hook.ts`
+  // explains why that ordering is what makes the hook able to see the
+  // header). `httpServer` is `undefined` here only when it was supplied that
+  // way explicitly (checked above) — nothing to register the hook on, and
+  // nothing that will ever mark a request as a page response either, so
+  // skipping is correct, not just safe.
+  if (httpServer) {
+    ensureSetCookieCacheFloorHook(httpServer);
+  }
+
   return async ({ request, response }: HttpContext) => {
     const wantsData = isDataRequest(request.header(WARLOCK_DATA_REQUEST_HEADER, undefined));
 
@@ -328,20 +405,28 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       // `applyCommit`.
       applyCommit(response, rendered, applyBufferedCookie);
 
+      // Marks this request for `set-cookie-cache-floor-hook.ts`'s `onSend`
+      // hook, which runs LATER than this seam — after `@fastify/cookie` has
+      // flushed a parked `setCookie()`/`clearCookie()` call onto the real
+      // header. Must happen before either terminal write below, same as
+      // `applyResponseCacheFloor` just below it.
+      markPageResponse(request);
+
       // `request.locals.authDerived` (core `Request`) is set the moment `user`
       // or `decodedAccessToken` is assigned, and never cleared. Overriding
       // `Cache-Control` here — after `applyCommit`'s default `private` and
-      // before EITHER terminal write below — closes the one gap `private`
-      // alone leaves open: a browser (not a shared cache; `private` already
-      // stops those) holding an authenticated page in its own disk/back-forward
-      // cache with no freshness directive. Read once, applied identically to
-      // both representations, so neither can carry a weaker header than the
-      // other. Optional chaining: several existing unit tests hand this handler
-      // a plain `{ path, header }` mock with no `locals`, never a real core
-      // `Request` — treated the same as "never touched auth state".
-      if (request.locals?.authDerived === true) {
-        response.header("Cache-Control", "private, no-store");
-      }
+      // before EITHER terminal write below — closes two gaps `private` alone
+      // leaves open: a browser (not a shared cache; `private` already stops
+      // those) holding an authenticated page in its own disk/back-forward
+      // cache with no freshness directive, AND a `Set-Cookie` response held in
+      // a shared cache handing the same cookie to every later visitor
+      // (session fixation — see `response-cache-floor.ts`). Read once,
+      // applied identically to both representations, so neither can carry a
+      // weaker header than the other. Optional chaining: several existing
+      // unit tests hand this handler a plain `{ path, header }` mock with no
+      // `locals`, never a real core `Request` — treated the same as "never
+      // touched auth state".
+      applyResponseCacheFloor(response, { authDerived: request.locals?.authDerived === true });
 
       if (wantsData) {
         // So a shared cache can never serve a document to a client that asked for

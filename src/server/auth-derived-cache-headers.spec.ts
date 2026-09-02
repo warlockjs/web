@@ -54,6 +54,7 @@ function registerRoute(urlPath: string): void {
       layoutFile: "layout.tsx",
       pageFile: "page.tsx",
       loadModule: async (moduleId) => moduleById[moduleId],
+      httpServer: undefined,
     }),
   );
 }

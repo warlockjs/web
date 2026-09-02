@@ -5,9 +5,14 @@ import { fileURLToPath } from "node:url";
 import type { FastifyReply, FastifyRequest, HookHandlerDoneFunction } from "fastify";
 import type { InlineConfig } from "vite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ConnectorLifecyclePhase, ConnectorPriority, container, router, type Router, type RuntimeStrategy } from "@warlock.js/core";
-
-
+import {
+  ConnectorLifecyclePhase,
+  ConnectorPriority,
+  container,
+  router,
+  type Router,
+  type RuntimeStrategy,
+} from "@warlock.js/core";
 
 import { DEV_TRANSFORM_ERROR_BODY } from "../../src/server/dev-server";
 import type { PageManifest } from "../../src/server/page-manifest";
@@ -80,15 +85,12 @@ const webServerBarrel = path.resolve(
  * Pointing at a real-but-empty root makes that regression fail the way it
  * actually fails in production: quietly, with the shared store unconnected.
  */
-const appSrcRoot = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "fixtures/app-root",
-);
+const appSrcRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "fixtures/app-root");
 
 /** Marker value only the doubled `installPageRoutes` can return. */
-const INSTALLED_PAGES_MARKER = [
-  { path: "/__sentinel__", method: "GET" },
-] as unknown as ReturnType<WebConnector["getInstalledPages"]>;
+const INSTALLED_PAGES_MARKER = [{ path: "/__sentinel__", method: "GET" }] as unknown as ReturnType<
+  WebConnector["getInstalledPages"]
+>;
 
 type Harness = Awaited<ReturnType<typeof bootHarness>>;
 
@@ -502,7 +504,10 @@ describe("WebConnector — the Vite config it builds", () => {
     };
 
     const request = {
-      raw: { url: "/src/web/root.tsx", [DEV_TRANSFORM_ERROR_BODY]: "ProjectionAmbiguityError: nope\n" },
+      raw: {
+        url: "/src/web/root.tsx",
+        [DEV_TRANSFORM_ERROR_BODY]: "ProjectionAmbiguityError: nope\n",
+      },
     } as unknown as FastifyRequest;
     const reply = { raw } as unknown as FastifyReply;
     const done = vi.fn();
@@ -772,6 +777,16 @@ describe("WebConnector — the manifest mode branch", () => {
         graph.providePageManifest(manifestWithOnePage());
         inProduction(graph);
         recordRoutes(graph);
+
+        // The production install path runs the REAL `createPageRouteHandler`
+        // (no dev-server double stands in for it here), which now asserts a
+        // resolvable `http.server` rather than silently skipping the
+        // Set-Cookie cache-floor hook — see
+        // `create-page-route-handler.ts`'s `MissingHttpServerForPageRouteError`.
+        // Seeded here, not passed as `httpServer: undefined`, because this
+        // test's whole point is proving the production route-installation
+        // path WITH a server, not proving it can survive without one.
+        graph.container.set("http.server", { server: {}, addHook: vi.fn() } as never);
 
         const installFromManifest = vi.spyOn(graph.webServer, "installPageRoutesFromManifest");
         const connector = new graph.WebConnector({ appSrcRoot });

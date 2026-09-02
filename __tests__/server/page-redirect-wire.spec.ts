@@ -101,6 +101,7 @@ async function renderToWire(page: unknown, url = "/account/settings", layout?: u
       ...(layout === undefined ? {} : { [LAYOUT_FILE]: layout }),
     }),
     applyBufferedCookie: applyBufferedCookie as never,
+    httpServer: undefined,
   });
 
   await handler({ request: http.request, response: http.response } as unknown as HttpContext);
@@ -110,7 +111,7 @@ async function renderToWire(page: unknown, url = "/account/settings", layout?: u
 
 /** Every `Set-Cookie` the reply was handed, in application order, by name. */
 const cookieNames = (reply: { cookies: { name: string }[] }) =>
-  reply.cookies.map(cookie => cookie.name);
+  reply.cookies.map((cookie) => cookie.name);
 
 describe("loader redirect on a DOCUMENT render reaches the wire", () => {
   it("writes Location and 302 to the reply, not just to the bundle", async () => {
