@@ -2,6 +2,13 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.2.2
+
+### Fixed
+
+- Restored exact Core and Seal peer pins at the family's shared 5.2.2 version.
+  The partial 5.2.1 release could not satisfy reciprocal family peer pins.
+
 ## 5.2.1
 
 ### Fixed
