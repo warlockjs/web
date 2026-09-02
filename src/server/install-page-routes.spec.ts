@@ -27,8 +27,7 @@ import {
 
 /**
  * `installPageRoutes` no longer walks the filesystem itself — every subject
- * (which `*.page.tsx` files exist under `src/web/**`, the ONLY page root —
- * `src/app/*\/web` was retired as one) comes from
+ * (which `*.page.tsx` files exist under `src/web/**`) comes from
  * {@link discoverPagesModule.discoverPageFiles}, the same enumeration
  * production's build shares. This file proves two things about that: the
  * shared enumerator is consulted exactly once per install; and the installer
@@ -388,7 +387,7 @@ describe("installPageRoutes — the shared enumerator is called exactly once", (
 
     const returned = spy.mock.results[0]?.value as { pageFile: string; webRoot: string }[];
 
-    // Both roots came back in the one call...
+    // Every discovered page came back in the one call...
     expect(returned.map((record) => record.pageFile).sort()).toEqual(
       [dashboardFile, homeFile, itemsFile].sort(),
     );
