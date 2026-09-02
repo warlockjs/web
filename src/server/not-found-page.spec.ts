@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { Response, type HttpContext } from "@warlock.js/core";
 import type { PageRouteHandler } from "./create-page-route-handler";
+
+vi.mock("./framework-default-not-found.css?url&inline", () => ({
+  default: "data:text/css;base64,LmZha2Ute30=",
+}));
+
 import {
   acceptsHtmlExplicitly,
   classifyUnmatchedRequest,
@@ -104,12 +109,21 @@ describe("THE RULE — a caller that did not ask for a document never gets one",
 
 type SentResponse = { body: unknown; status: number | undefined; kind: "json" | "html" };
 
-function fakeContext(method: string, path: string, accept: string | undefined) {
+function fakeContext(method: string, path: string, accept: string | undefined, locale?: string) {
   const sent: SentResponse[] = [];
+  const headers = new Map<string, unknown>();
 
   const context = {
-    request: { method, path, header: (name: string) => (name === "accept" ? accept : undefined) },
+    request: {
+      method,
+      path,
+      locale,
+      header: (name: string) => (name === "accept" ? accept : undefined),
+    },
     response: {
+      header: vi.fn((name: string, value: unknown) => {
+        headers.set(name.toLowerCase(), value);
+      }),
       send: vi.fn(async (body: unknown, status?: number) => {
         sent.push({ body, status, kind: "json" });
       }),
@@ -119,14 +133,14 @@ function fakeContext(method: string, path: string, accept: string | undefined) {
     },
   } as unknown as HttpContext;
 
-  return { context, sent };
+  return { context, sent, headers };
 }
 
 describe("createNotFoundRouteHandler — the three answers", () => {
   it("declines an API request with JSON 404 and never reaches the page, even when a page exists", async () => {
     const renderPage = vi.fn(async () => undefined) as unknown as PageRouteHandler;
     const handler = createNotFoundRouteHandler({ renderPage });
-    const { context, sent } = fakeContext("GET", "/api/uzers", FETCH_ACCEPT);
+    const { context, sent, headers } = fakeContext("GET", "/api/uzers", FETCH_ACCEPT);
 
     await handler(context);
 
@@ -140,23 +154,25 @@ describe("createNotFoundRouteHandler — the three answers", () => {
     ]);
     // No HTML anywhere in the answer — the whole point.
     expect(JSON.stringify(sent)).not.toContain("<");
+    expect(headers).toEqual(new Map([["cache-control", "no-store"]]));
   });
 
   it("renders the application's page for a page request", async () => {
     const renderPage = vi.fn(async () => undefined) as unknown as PageRouteHandler;
     const handler = createNotFoundRouteHandler({ renderPage });
-    const { context, sent } = fakeContext("GET", "/prodcts", BROWSER_ACCEPT);
+    const { context, sent, headers } = fakeContext("GET", "/prodcts", BROWSER_ACCEPT);
 
     await handler(context);
 
     expect(renderPage).toHaveBeenCalledTimes(1);
     // The page handler owns the response from here; nothing was written first.
     expect(sent).toEqual([]);
+    expect(headers.get("cache-control")).toBe("no-store");
   });
 
   it("falls back to the framework default — a real document, with a real 404 status", async () => {
     const handler = createNotFoundRouteHandler({});
-    const { context, sent } = fakeContext("GET", "/prodcts", BROWSER_ACCEPT);
+    const { context, sent, headers } = fakeContext("GET", "/prodcts", BROWSER_ACCEPT);
 
     await handler(context);
 
@@ -164,19 +180,36 @@ describe("createNotFoundRouteHandler — the three answers", () => {
     expect(sent[0].kind).toBe("html");
     expect(sent[0].status).toBe(404);
     expect(sent[0].body).toBe(frameworkDefaultNotFoundDocument());
-    expect(String(sent[0].body)).toContain(NOT_FOUND_PAGE_FILENAME);
+    expect(headers).toEqual(new Map([["cache-control", "no-store"]]));
+  });
+
+  it("applies no-store to the standalone HEAD document fallback", async () => {
+    const handler = createNotFoundRouteHandler({});
+    const { context, sent, headers } = fakeContext("HEAD", "/prodcts", BROWSER_ACCEPT);
+
+    await handler(context);
+
+    expect(sent).toEqual([
+      {
+        kind: "html",
+        status: 404,
+        body: frameworkDefaultNotFoundDocument(),
+      },
+    ]);
+    expect(headers).toEqual(new Map([["cache-control", "no-store"]]));
   });
 
   it("preserves the exact terminal core Response returned by the application's page", async () => {
     const terminal = new Response();
     const renderPage = vi.fn(async () => terminal) as unknown as PageRouteHandler;
     const handler = createNotFoundRouteHandler({ renderPage });
-    const { context, sent } = fakeContext("GET", "/prodcts", BROWSER_ACCEPT);
+    const { context, sent, headers } = fakeContext("GET", "/prodcts", BROWSER_ACCEPT);
 
     const result = await handler(context);
 
     expect(result).toBe(terminal);
     expect(sent).toEqual([]);
+    expect(headers).toEqual(new Map([["cache-control", "no-store"]]));
   });
 
   it("still answers a fetch() with JSON when the application ships no 404 page", async () => {
@@ -205,15 +238,55 @@ describe("createNotFoundRouteHandler — the three answers", () => {
 });
 
 describe("the framework default document", () => {
-  it("is a complete document that names the file needed to replace it", () => {
+  it("is a complete, self-contained document with a quiet route home", () => {
     const html = frameworkDefaultNotFoundDocument();
 
     expect(html.startsWith("<!doctype html>")).toBe(true);
+    expect(html.match(/<html [^>]+>/)?.[0]).toBe('<html lang="en" dir="ltr">');
+    expect(html).toContain("<head>");
+    expect(html).toContain("<body>");
     expect(html).toContain("</html>");
-    expect(html).toContain("404");
-    expect(html).toContain("404.page.tsx");
-    // Nothing that can fail: no stylesheet link, no hydration script.
+    expect(html).toContain("<h1>404</h1>");
+    expect(html).toContain('<p dir="auto">This page is outside the spellbook.</p>');
+    expect(html).toContain('<a href="/" dir="auto">Return home</a>');
+    expect(html.match(/<link rel="stylesheet" href="data:text\/css[^\"]+">/g)).toHaveLength(1);
+    // CSS ships with the document: there is no external fetch, inline style, or script.
+    expect(html).not.toContain("framework-default-not-found.css");
+    expect(html).not.toContain("<style");
+    expect(html).not.toMatch(/\sstyle=/);
     expect(html).not.toContain("<script");
-    expect(html).not.toContain("<link");
+    expect(html).not.toContain("404.page.tsx");
+    expect(html).not.toContain("src/web");
+  });
+
+  it("uses Intl.Locale's canonical Arabic locale and RTL direction", () => {
+    const html = frameworkDefaultNotFoundDocument("ar-eg");
+
+    expect(html.match(/<html [^>]+>/)?.[0]).toBe('<html lang="ar-EG" dir="rtl">');
+  });
+
+  it("uses Intl.Locale's canonical English locale and LTR direction", () => {
+    const html = frameworkDefaultNotFoundDocument("en-us");
+
+    expect(html.match(/<html [^>]+>/)?.[0]).toBe('<html lang="en-US" dir="ltr">');
+  });
+
+  it("falls back safely for missing or malformed locales and never throws", () => {
+    for (const locale of [undefined, "", "not_a_locale"]) {
+      expect(() => frameworkDefaultNotFoundDocument(locale)).not.toThrow();
+      expect(frameworkDefaultNotFoundDocument(locale).match(/<html [^>]+>/)?.[0]).toBe(
+        '<html lang="en" dir="ltr">',
+      );
+    }
+  });
+
+  it("receives the request locale through the default route handler", async () => {
+    const handler = createNotFoundRouteHandler({});
+    const { context, sent } = fakeContext("GET", "/prodcts", BROWSER_ACCEPT, "ar");
+
+    await handler(context);
+
+    expect(sent[0]).toMatchObject({ kind: "html", status: 404 });
+    expect(String(sent[0].body).match(/<html [^>]+>/)?.[0]).toBe('<html lang="ar" dir="rtl">');
   });
 });

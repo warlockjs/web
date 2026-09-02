@@ -41,10 +41,11 @@ import path from "node:path";
 import { parse } from "@babel/parser";
 import { composeRoutePath } from "../routing/compose-route-path";
 // `../server/not-found-page` is imported for its CONSTANTS and its filename
-// predicate only — that module has no runtime imports of its own, precisely so
-// this edge cannot drag the render pipeline into the build. What a not-found
-// page is, and what identity it carries, is decided in one place for discovery
-// and both installers.
+// predicate only. Its sole runtime import is the default fallback's build-time
+// stylesheet data URL; it imports no renderer or application runtime, so this
+// edge cannot drag the render pipeline into the build. What a not-found page is,
+// and what identity it carries, is decided in one place for discovery and both
+// installers.
 import {
   isNotFoundPageFile,
   NotFoundPageDeclaresRouteError,
@@ -860,7 +861,10 @@ export function discoverPages(options: DiscoverPagesOptions): DiscoveredPage[] {
         if (route !== undefined) throw new ErrorPageDeclaresRouteError(relativeToApp(pageFile));
 
         if (errorPage !== undefined) {
-          throw new DuplicateErrorPageError(relativeToApp(errorPage.pageFile), relativeToApp(pageFile));
+          throw new DuplicateErrorPageError(
+            relativeToApp(errorPage.pageFile),
+            relativeToApp(pageFile),
+          );
         }
 
         errorPage = { type: "error", pageFile, webRoot, ...(hasAppFile ? { appFile } : {}) };

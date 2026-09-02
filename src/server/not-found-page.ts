@@ -48,13 +48,16 @@
  * is 404 either way, which is the part machines read.
  *
  * ── DEPENDENCY NOTE ──────────────────────────────────────────────────────────
- * This module has NO runtime imports. `../build/discover-pages` imports the
- * filename constant and the identity helpers from here so build discovery and
- * both installers cannot disagree about what a not-found page is, and that edge
- * must not drag the render pipeline into the build.
+ * This module has one runtime asset import: the framework fallback's stylesheet,
+ * forced into a data URL at build time. `../build/discover-pages` imports the
+ * filename constant and identity helpers from here so build discovery and both
+ * installers cannot disagree about what a not-found page is. No renderer or
+ * application runtime is imported, so that edge cannot drag the render pipeline
+ * into the build.
  */
 import type { HttpContext } from "@warlock.js/core";
 import type { PageRouteHandler } from "./create-page-route-handler";
+import frameworkDefaultNotFoundStylesheetUrl from "./framework-default-not-found.css?url&inline";
 
 /**
  * The one filename that makes a page THE not-found page.
@@ -208,31 +211,67 @@ export function classifyUnmatchedRequest(input: {
  *
  * Deliberately a STRING, not a React render: it must survive the case where the
  * application root, a layout or the page module is exactly what is broken, and
- * a default that can itself fail is not a default. It carries no stylesheet and
- * no hydration script for the same reason — nothing here can 500.
+ * a default that can itself fail is not a default. Its stylesheet is embedded in
+ * the document as a data URL, and it carries no hydration script, so serving the
+ * fallback requires no application render and no follow-up fetch.
  *
  * It answers 404 like the real page does, because the status is the part that
  * search engines, caches and monitoring read; a framework default that soft-404s
  * would teach every un-customised application to lie.
  */
-export function frameworkDefaultNotFoundDocument(): string {
-  return (
-    "<!doctype html>" +
-    '<html lang="en">' +
-    "<head>" +
-    '<meta charset="utf-8">' +
-    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
-    '<meta name="robots" content="noindex">' +
-    "<title>404 — Page not found</title>" +
-    "</head>" +
-    "<body>" +
-    "<h1>404 — Page not found</h1>" +
-    "<p>This URL does not match any page.</p>" +
-    `<p>To replace this page, add <code>${NOT_FOUND_PAGE_FILENAME}</code> to a web folder ` +
-    "(for example <code>src/web/404.page.tsx</code>).</p>" +
-    "</body>" +
-    "</html>"
-  );
+function resolveDefaultNotFoundDocumentLocale(locale: unknown): {
+  lang: string;
+  dir: "ltr" | "rtl";
+} {
+  const fallback = { lang: "en", dir: "ltr" } as const;
+
+  if (typeof locale !== "string" || locale.trim() === "") return fallback;
+
+  // Locale negotiation is normally complete by this point, but the final 404
+  // must also survive a partial or unusual JavaScript runtime. Keep this local:
+  // it is a document-specific last line of defence, not a public locale API.
+  try {
+    const Locale = Intl.Locale;
+
+    if (typeof Locale !== "function") return fallback;
+
+    const resolvedLocale = new Locale(locale);
+    const lang = resolvedLocale.toString();
+    const textInfo = (resolvedLocale as Intl.Locale & { textInfo?: unknown }).textInfo;
+
+    if (typeof textInfo !== "object" || textInfo === null) return fallback;
+
+    const direction = (textInfo as { direction?: unknown }).direction;
+
+    if (direction !== "ltr" && direction !== "rtl") return fallback;
+
+    return { lang, dir: direction };
+  } catch {
+    return fallback;
+  }
+}
+
+export function frameworkDefaultNotFoundDocument(locale?: string): string {
+  const { lang, dir } = resolveDefaultNotFoundDocumentLocale(locale);
+
+  return `<!doctype html>
+<html lang="${lang}" dir="${dir}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>404 | Warlock</title>
+  <link rel="stylesheet" href="${frameworkDefaultNotFoundStylesheetUrl}">
+</head>
+<body>
+  <main>
+    <div class="rule" aria-hidden="true"></div>
+    <h1>404</h1>
+    <p dir="auto">This page is outside the spellbook.</p>
+    <a href="/" dir="auto">Return home</a>
+  </main>
+</body>
+</html>`;
 }
 
 export type NotFoundRouteHandlerOptions = {
@@ -256,13 +295,15 @@ export type NotFoundRouteHandlerOptions = {
  * check runs BEFORE anything can render, so no request that the rule calls an
  * API request can reach a React render even if the page module is broken.
  */
-export function createNotFoundRouteHandler(
-  options: NotFoundRouteHandlerOptions,
-): PageRouteHandler {
+export function createNotFoundRouteHandler(options: NotFoundRouteHandlerOptions): PageRouteHandler {
   const { renderPage } = options;
 
   return async (context: HttpContext) => {
     const { request, response } = context;
+    // A catch-all 404 must never become a cached answer for a later route.
+    // Set this before classifying so it also travels with an application's
+    // custom 404 page, whose rendering remains otherwise entirely its own.
+    response.header("Cache-Control", "no-store");
     // Node lowercases header names and collapses a repeated `Accept` into an
     // array; both forms are read, so a duplicated header cannot silently mean
     // "no preference".
@@ -287,7 +328,7 @@ export function createNotFoundRouteHandler(
     }
 
     if (renderPage === undefined) {
-      await response.html(frameworkDefaultNotFoundDocument(), 404);
+      await response.html(frameworkDefaultNotFoundDocument(request.locale), 404);
 
       return;
     }
