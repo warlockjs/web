@@ -94,7 +94,7 @@ Non-rendering layouts may carry prefixes and middleware and may nest freely. Do 
 
 ## `404.page.tsx` never gets a layout
 
-A `404.page.tsx` renders with no layouts, even when it sits in a directory with a rendering `layout.tsx` above it. Discovery reports an empty layout chain for the not-found page only, and both the client hydration registry and the production route table read from that same chain — the server has always rendered it with no layout wrapper, so the client no longer hydrates one either. A page that exists to handle failure must not depend on app chrome that can itself throw or need data.
+A `404.page.tsx` renders with no layouts, even when it sits in a directory with a rendering `layout.tsx` above it. Discovery reports an empty layout chain for the not-found page only, and both the client hydration registry and the production route table read from that same chain — the server renders it with no layout wrapper, and the client hydrates it the same way, with no layout of its own. A page that exists to handle failure must not depend on app chrome that can itself throw or need data.
 
 This is scoped to the not-found page: an ordinary page in the same directory still gets its full layout chain, and nested-layout refusal on the 404's own path is still enforced exactly as it is for any other page.
 

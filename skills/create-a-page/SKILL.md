@@ -5,7 +5,7 @@ description: 'Create an SSR React page under `src/web/**`, with either a literal
 
 # Warlock — create a page
 
-A page is any `*.page.tsx` beneath `src/web/` — the only page root. (A per-module `src/app/<module>/web/` tree is not scanned; move any page that lived there into `src/web/`, a subdirectory if you like.) Its URL is either a declared `route` or one derived from its own location; its default export renders React.
+A page is any `*.page.tsx` beneath `src/web/` — the page root. Its URL is either a declared `route` or one derived from its own location; its default export renders React.
 
 ## The shape
 
@@ -64,8 +64,6 @@ export default function ContactPage() {
 
 `route` is optional. A page that omits it derives both its path and its name from where the file sits beneath `src/web` ([filesystem routing](#filesystem-routing), below). A page that declares `route` uses that instead — an explicit `route` always wins over the derived one, for both the path and (when it sets `name`) the name.
 
-Changed in 5.2: through 5.1 an omitted `route` was refused — `warlock dev` and the production discovery pass threw `MissingRouteExportError`, naming the file. That error class is gone; the same file now resolves to a real, browsable URL.
-
 ### The default export is required
 
 `route` is optional; the default export is not. A `*.page.tsx` that exports only named bindings is a **hard discovery/build failure naming the file**:
@@ -75,8 +73,6 @@ The page "src/web/contact.page.tsx" has no runtime default export. Every `*.page
 file must default-export the React component it renders. For example:
 `export default function Page() { return <main />; }`
 ```
-
-Changed in 5.2: such a file used to be discovered and registered anyway, then serve a blank `200` at its URL — a page that looked deployed and rendered nothing, with no error anywhere. It now stops the build.
 
 Two details worth knowing:
 
@@ -205,16 +201,16 @@ The browser boundary is decided by the import graph, not by the file's location.
 
 Keep server-only repository and service reads inside `loader`. Do not read them from module-scope initializers or the default component.
 
-### `.client` does not isolate SSR in 5.2
+### `.client` does not isolate SSR
 
 A `.client.tsx` suffix is a naming convention, not an SSR-isolation boundary. A
 module statically imported by a page, layout, root, or any of their imports is
 still evaluated by the server. Top-level browser globals such as `window`
-therefore crash SSR boot. Warlock 5.2 does not ship a client-only component
+therefore crash SSR boot. Warlock does not ship a client-only component
 primitive; code that requires browser globals at module scope cannot be part of
 the SSR page graph.
 
-### Static assets use `public/` in 5.2
+### Static assets use `public/`
 
 The production server build does not support imported non-stylesheet assets. An
 import such as `import logo from "./logo.svg"` works under Vite in development
@@ -233,20 +229,16 @@ are the exception and remain supported.
 - **A helper function used only by the JSX still reloads if it is declared at module level.** The rule does not try to prove which half of a shared declaration the edit was "really" for — it over-approximates deliberately, because a false reload only costs component state, while a missed one ships a stale `<head>` and calls it a hot update.
 - Creating, deleting, or renaming a page file, or editing its `route` export, is page-GRAPH churn, not a skeleton edit — see below, not Fast Refresh.
 
-Changed in 5.1: a metadata-only edit previously left a stale `<head>` until you refreshed the browser by hand. The current skeleton-comparison rule replaces that earlier, narrower "metadata-only" special case.
-
 ## Route-table changes in development
 
 Creating a page, deleting one, or editing its `route` export's path is a different kind of dev edit from the skeleton comparison above — it changes which URLs exist, not just how one already-registered URL renders. `warlock dev` re-registers the affected route(s) in the live route table, atomically and with no dev-server restart, so the new file (or new path) is reachable on the very next request with no manual restart.
 
-Changed in 5.2: through 5.1 the route table was built once at boot and never again. Creating a page 404'd forever; deleting one kept it reachable at its old URL; editing `route` served the OLD path from the old file and 404'd the new one — the running server silently disagreed with the source on disk. All three are now live.
-
 ## Gotchas
 
-- **A page with no `route` is not unreachable.** It derives a real URL from its file location — see [Filesystem routing](#filesystem-routing). Nothing about a route-less page is refused anymore.
+- **A page with no `route` is not unreachable.** It derives a real URL from its file location — see [Filesystem routing](#filesystem-routing).
 - **A page with no default export IS refused.** Named exports alone fail the build naming the file, instead of serving a blank 200.
-- **`.client.tsx` does not prevent SSR evaluation.** It is a naming convention in 5.2, not a client-only component primitive.
-- **Imported static assets do not build in 5.2.** Put them in `public/` and reference their root URL; CSS imports remain supported.
+- **`.client.tsx` does not prevent SSR evaluation.** It is a naming convention, not a client-only component primitive.
+- **Imported static assets do not build.** Put them in `public/` and reference their root URL; CSS imports remain supported.
 - **`[...slug]` is not a catch-all.** It is read as a literal path segment and silently produces an unreachable route — see [Catch-all segments are NOT supported](#catch-all-segments-are-not-supported).
 - **`process.env` is refused in the client/universal graph, `PUBLIC_` prefix included.** Read env values in a loader and return them as page data; see [`load-page-data/SKILL.md`](../load-page-data/SKILL.md).
 - **Keep `route` literal.** A computed route cannot be discovered without executing app code and is refused.

@@ -90,7 +90,7 @@ export default function ProductsPage() {
 
 Recognized stylesheet imports survive the page's client projection. The client boundary is determined by the import graph, not by the file living under `web/`.
 
-That support is specific to stylesheets in the production page graph. An imported non-stylesheet asset such as `import logo from "./logo.svg"` works under Vite in development but is refused by `warlock build` in 5.2. Put it in the application's `public/` directory and reference its root URL instead: `public/logo.svg` is `/logo.svg`.
+That support is specific to stylesheets in the production page graph. An imported non-stylesheet asset such as `import logo from "./logo.svg"` works under Vite in development but is refused by `warlock build`. Put it in the application's `public/` directory and reference its root URL instead: `public/logo.svg` is `/logo.svg`.
 
 For each matched handler, Warlock builds one ordered CSS chain: `[root, ...matched layouts, page]`. A stylesheet imported directly by any member of that chain becomes a render-blocking link in the initial document in both development and production. Unrelated pages and layouts do not contribute CSS to this response.
 
