@@ -48,16 +48,19 @@
  * is 404 either way, which is the part machines read.
  *
  * ── DEPENDENCY NOTE ──────────────────────────────────────────────────────────
- * This module has one runtime asset import: the framework fallback's stylesheet,
- * forced into a data URL at build time. `../build/discover-pages` imports the
- * filename constant and identity helpers from here so build discovery and both
- * installers cannot disagree about what a not-found page is. No renderer or
- * application runtime is imported, so that edge cannot drag the render pipeline
- * into the build.
+ * This module has one runtime asset dependency: the framework fallback's
+ * stylesheet, read as a plain string constant from
+ * `./framework-default-not-found-stylesheet` and turned into a data URL at
+ * render time — never a static-asset import, which the production server
+ * build refuses to compile (see that module's own comment). `../build/discover-pages`
+ * imports the filename constant and identity helpers from here so build
+ * discovery and both installers cannot disagree about what a not-found page
+ * is. No renderer or application runtime is imported, so that edge cannot
+ * drag the render pipeline into the build.
  */
 import type { HttpContext } from "@warlock.js/core";
 import type { PageRouteHandler } from "./create-page-route-handler";
-import frameworkDefaultNotFoundStylesheetUrl from "./framework-default-not-found.css?url&inline";
+import { buildFrameworkDefaultNotFoundStylesheetUrl } from "./framework-default-not-found-stylesheet";
 
 /**
  * The one filename that makes a page THE not-found page.
@@ -261,7 +264,7 @@ export function frameworkDefaultNotFoundDocument(locale?: string): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
   <title>404 | Warlock</title>
-  <link rel="stylesheet" href="${frameworkDefaultNotFoundStylesheetUrl}">
+  <link rel="stylesheet" href="${buildFrameworkDefaultNotFoundStylesheetUrl()}">
 </head>
 <body>
   <main>

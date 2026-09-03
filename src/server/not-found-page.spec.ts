@@ -1,11 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { Response, type HttpContext } from "@warlock.js/core";
 import type { PageRouteHandler } from "./create-page-route-handler";
-
-vi.mock("./framework-default-not-found.css?url&inline", () => ({
-  default: "data:text/css;base64,LmZha2Ute30=",
-}));
-
 import {
   acceptsHtmlExplicitly,
   classifyUnmatchedRequest,
