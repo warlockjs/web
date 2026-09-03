@@ -126,7 +126,13 @@ export async function fetchPageData(url: string): Promise<PageDataResult> {
   }
 
   if (!isPayloadShape(parsed)) {
-    return { type: "hard-navigate", url, reason: "payload has no route name" };
+    // Deliberately recover through a full document load: malformed navigation
+    // data must not crash the client when the server can still render the URL.
+    return {
+      type: "hard-navigate",
+      url,
+      reason: "payload is missing required navigation identity",
+    };
   }
 
   // `response.url` is absolute and reflects any redirect that was followed.
