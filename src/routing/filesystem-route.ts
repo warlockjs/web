@@ -78,14 +78,19 @@ export function deriveFilesystemRoutePath(input: FilesystemRouteInput): string {
     const directoryPath = directories.slice(0, index + 1).join("/");
     const prefix = prefixes[directoryPath];
 
+    // Validate EVERY directory name before deciding whether it contributes.
+    // Contribution and legality are separate questions, and answering them in
+    // one branch is what let a malformed name through: a directory that owns a
+    // layout `prefix` took the prefix branch and was never classified, so
+    // bracket syntax inside a group name went unexamined whenever that group
+    // also carried a prefix. The name derivation always classified every
+    // directory; this path did not, and the two disagreed.
+    const routed = routeSegment(directory, input.pageFile);
+
     if (prefix !== undefined) {
       segments.push(...validatedPrefixSegments(prefix, input.pageFile));
-    } else {
-      const routed = routeSegment(directory, input.pageFile);
-
-      if (!isGroup(directory)) {
-        segments.push(routed);
-      }
+    } else if (!isGroup(directory)) {
+      segments.push(routed);
     }
   }
 

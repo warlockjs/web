@@ -269,3 +269,75 @@ describe("filesystem route derivation — bracket syntax inside a group", () => 
     );
   });
 });
+
+describe("filesystem route derivation — a directory that owns a layout prefix is still classified", () => {
+  // The bypass this block exists for: contribution and legality used to be
+  // decided in one branch, so a directory carrying a layout `prefix` took the
+  // prefix branch and was never classified. Bracket syntax inside a group name
+  // therefore went unexamined whenever that group also owned a prefix, and the
+  // path derivation silently disagreed with the name derivation, which had
+  // always classified every directory.
+  it("throws for a bracketed group name even when that group owns the layout prefix", () => {
+    expect(() =>
+      deriveFilesystemRoutePath({
+        pageFile: "(bad[x])/page.page.tsx",
+        layoutPrefixes: { "(bad[x])": "/safe" },
+      }),
+    ).toThrow(PageFileSegmentNotSupportedError);
+  });
+
+  it("throws for a bracketed group under a prefixed parent, so the prefix does not shield its children", () => {
+    expect(() =>
+      deriveFilesystemRoutePath({
+        pageFile: "shop/(bad[x])/page.page.tsx",
+        layoutPrefixes: { shop: "/store" },
+      }),
+    ).toThrow(PageFileSegmentNotSupportedError);
+  });
+
+  it("throws for a malformed NON-group directory that owns a prefix, because the class is wider than groups", () => {
+    expect(() =>
+      deriveFilesystemRoutePath({
+        pageFile: "[a]-[b]/page.page.tsx",
+        layoutPrefixes: { "[a]-[b]": "/safe" },
+      }),
+    ).toThrow(PageFileSegmentNotSupportedError);
+  });
+
+  it("path and name derivation now AGREE on a prefix-owning bracketed group — both throw", () => {
+    expect(() =>
+      deriveFilesystemRoutePath({
+        pageFile: "(bad[x])/page.page.tsx",
+        layoutPrefixes: { "(bad[x])": "/safe" },
+      }),
+    ).toThrow(PageFileSegmentNotSupportedError);
+
+    expect(() => deriveFilesystemRouteName("(bad[x])/page.page.tsx")).toThrow(
+      PageFileSegmentNotSupportedError,
+    );
+  });
+
+  it("INNOCENT CASE: a valid group that owns a prefix still contributes exactly the prefix", () => {
+    expect(
+      deriveFilesystemRoutePath({
+        pageFile: "(marketing)/pricing.page.tsx",
+        layoutPrefixes: { "(marketing)": "/promo" },
+      }),
+    ).toBe("/promo/pricing");
+  });
+
+  it("INNOCENT CASE: a valid dynamic directory that owns a prefix is replaced by the prefix, not doubled", () => {
+    expect(
+      deriveFilesystemRoutePath({
+        pageFile: "[id]/edit.page.tsx",
+        layoutPrefixes: { "[id]": "/items/[id]" },
+      }),
+    ).toBe("/items/:id/edit");
+  });
+
+  it("INNOCENT CASE: a valid group with no prefix still contributes nothing", () => {
+    expect(deriveFilesystemRoutePath({ pageFile: "(marketing)/pricing.page.tsx" })).toBe(
+      "/pricing",
+    );
+  });
+});
