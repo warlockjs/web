@@ -20,6 +20,7 @@ const fullPayload = {
   pageData: { p: 1 },
   shared: { s: 1 },
   name: "home",
+  locale: "en",
 };
 
 const serializedErrorPage = {
@@ -32,7 +33,7 @@ const serializedErrorPage = {
 };
 
 describe("readHydrationPayload", () => {
-  it("parses and returns a payload object with all five keys", () => {
+  it("parses and returns a payload object with all six keys", () => {
     const documentNode = makeDocument(JSON.stringify(fullPayload));
 
     expect(readHydrationPayload(documentNode)).toEqual(fullPayload);
@@ -44,6 +45,16 @@ describe("readHydrationPayload", () => {
     const documentNode = makeDocument(JSON.stringify(withoutName));
 
     expect(() => readHydrationPayload(documentNode)).toThrow(
+      /Warlock hydration payload was found at #.* but could not be read\./,
+    );
+  });
+
+  it.each([undefined, "", 42])("rejects an absent or invalid request locale (%s)", (locale) => {
+    const payload = { ...fullPayload, locale };
+
+    if (locale === undefined) delete (payload as { locale?: unknown }).locale;
+
+    expect(() => readHydrationPayload(makeDocument(JSON.stringify(payload)))).toThrow(
       /Warlock hydration payload was found at #.* but could not be read\./,
     );
   });
@@ -78,7 +89,7 @@ describe("readHydrationPayload", () => {
    * `metadata`, `params` and `errorPage` are OPTIONAL: absent is a valid
    * payload, wrong-typed is not.
    *
-   * They are ungated on purpose. The five gated keys are the ones the browser
+   * They are ungated on purpose. The six gated keys are the ones the browser
    * cannot build a page without — no `name`, no page to look up; no `shared`,
    * no state to hydrate — so their absence has to be a loud failure. A page
    * that exports no `metadata` produces none (`bundle.metadata` is optional at
@@ -192,7 +203,7 @@ describe("buildHydrationPayload", () => {
   }
 
   it("carries the matched route's params untransformed", () => {
-    expect(buildHydrationPayload(bundleOf()).params).toEqual({ id: "42" });
+    expect(buildHydrationPayload(bundleOf(), "en").params).toEqual({ id: "42" });
   });
 
   it("carries an empty params object for a route with no dynamic segments", () => {
@@ -200,7 +211,7 @@ describe("buildHydrationPayload", () => {
       route: { name: "main.home", path: "/", params: {}, query: {} },
     });
 
-    expect(buildHydrationPayload(bundle).params).toEqual({});
+    expect(buildHydrationPayload(bundle, "en").params).toEqual({});
   });
 
   it("carries the resolved page metadata whole, not a narrowed projection", () => {
@@ -214,7 +225,7 @@ describe("buildHydrationPayload", () => {
       twitter: { card: "summary" },
     };
 
-    expect(buildHydrationPayload(bundleOf({ metadata })).metadata).toEqual(metadata);
+    expect(buildHydrationPayload(bundleOf({ metadata }), "en").metadata).toEqual(metadata);
   });
 
   /**
@@ -223,14 +234,14 @@ describe("buildHydrationPayload", () => {
    * parsed one is two different payload shapes wearing one type.
    */
   it("omits the metadata key entirely when the page produced none", () => {
-    const payload = buildHydrationPayload(bundleOf());
+    const payload = buildHydrationPayload(bundleOf(), "en");
 
     expect("metadata" in payload).toBe(false);
     expect(JSON.parse(JSON.stringify(payload))).toEqual(payload);
   });
 
-  it("still emits the five gated keys", () => {
-    const payload = buildHydrationPayload(bundleOf());
+  it("emits the six gated keys, including the request locale", () => {
+    const payload = buildHydrationPayload(bundleOf(), "ar");
 
     expect(payload).toMatchObject({
       appData: { a: 1 },
@@ -238,6 +249,7 @@ describe("buildHydrationPayload", () => {
       pageData: { p: 1 },
       shared: { s: 1 },
       name: "users.details",
+      locale: "ar",
     });
   });
 });

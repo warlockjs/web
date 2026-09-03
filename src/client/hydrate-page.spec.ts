@@ -20,6 +20,7 @@ const validPayload = {
   pageData: { title: "page" },
   shared: { locale: "en" },
   name: "main.home",
+  locale: "en",
 };
 
 type FakeRoot = { id: string; innerHTML: string };

@@ -70,7 +70,9 @@ function isPayloadShape(value: unknown): value is HydrationDocumentPayloadSource
   return (
     typeof value === "object" &&
     value !== null &&
-    typeof (value as { name?: unknown }).name === "string"
+    typeof (value as { name?: unknown }).name === "string" &&
+    typeof (value as { locale?: unknown }).locale === "string" &&
+    (value as { locale: string }).locale.length > 0
   );
 }
 

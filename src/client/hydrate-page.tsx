@@ -57,8 +57,9 @@ function reportHydrationFailure(error: unknown): void {
 /**
  * The one hydration entry point. Mounts at `#root` only — the page subtree —
  * never `document`/`html`/`head`/`body` (hydration-payload-contract-2026-08-22.md
- * §2): `metadata`, `lang`, `dir`, `nonce` are not in the client payload and are
- * never touched here. `readHydrationPayload` (web/src/hydration-payload.ts,
+ * §2): `metadata`, `dir`, and `nonce` are not used to rebuild the mounted tree;
+ * the declared `locale` key is consumed by `NavigationRoot`'s provider.
+ * `readHydrationPayload` (web/src/hydration-payload.ts,
  * Vega's slice B) is the one place ABSENT/MALFORMED are decided, so this
  * function does not re-implement that check — reusing it is what keeps the
  * two throw messages from drifting apart at a second site. On ABSENT/MALFORMED

@@ -17,6 +17,7 @@ const PAYLOAD = {
   pageData: { title: "Products" },
   shared: { locale: "en" },
   name: "products.list",
+  locale: "en",
 };
 
 function respondWith(
@@ -92,6 +93,11 @@ describe("fetchPageData", () => {
     ["a response with no content-type", () => respondWith(PAYLOAD, { contentType: null })],
     ["malformed JSON", () => respondWith("<!DOCTYPE html>")],
     ["a JSON body that is not a payload", () => respondWith({ error: "nope" })],
+    ["a payload with no declared locale", () => {
+      const { locale: _locale, ...withoutLocale } = PAYLOAD;
+      respondWith(withoutLocale);
+    }],
+    ["a payload with an empty locale", () => respondWith({ ...PAYLOAD, locale: "" })],
   ])("falls back to a real navigation on %s", async (_label, arrange) => {
     arrange();
 

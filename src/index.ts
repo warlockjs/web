@@ -26,6 +26,8 @@ export type {
 } from "./components/document-context";
 export type { PageMetadata } from "./metadata";
 export { shared, useShared } from "./shared";
+export { LocaleProvider, useLocale, useTrans } from "./localization";
+export type { LocaleProviderProps, Translate } from "./localization";
 export { href } from "./routing/route-table";
 export type { RouteParameters, RouteQuery } from "./routing/route-table";
 export { Link } from "./components/link";

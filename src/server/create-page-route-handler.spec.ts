@@ -32,6 +32,7 @@ function context(path = "/account") {
   return {
     request: {
       path,
+      locale: "en",
       header: vi.fn(() => undefined),
     },
     response: {
@@ -356,7 +357,7 @@ describe("createPageRouteHandler — fallback data requests", () => {
     // production code documents at its call site — a JSON.stringify of an
     // object body here would silently change the wire format.
     expect(requestContext.response.send).toHaveBeenCalledWith(
-      JSON.stringify(buildHydrationPayload(bundle as never)),
+      JSON.stringify(buildHydrationPayload(bundle as never, "en")),
       200,
     );
     expect(requestContext.response.html).not.toHaveBeenCalled();
@@ -406,7 +407,7 @@ describe("createPageRouteHandler — fallback data requests", () => {
     // payload regardless of the bundle's hydration flag. Suppressing it too
     // would be a second, undocumented meaning smuggled onto the same flag.
     expect(requestContext.response.send).toHaveBeenCalledWith(
-      JSON.stringify(buildHydrationPayload(bundle as never)),
+      JSON.stringify(buildHydrationPayload(bundle as never, "en")),
       500,
     );
     expect(requestContext.response.html).not.toHaveBeenCalled();

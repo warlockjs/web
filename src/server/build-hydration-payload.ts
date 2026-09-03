@@ -33,7 +33,10 @@ function serializableData(data: unknown): unknown {
   return data === undefined ? {} : data;
 }
 
-export function buildHydrationPayload(bundle: PageDataBundle): HydrationDocumentPayloadSource {
+export function buildHydrationPayload(
+  bundle: PageDataBundle,
+  locale: string,
+): HydrationDocumentPayloadSource {
   return {
     appData: serializableData(bundle.appData),
     layoutData: serializableData(bundle.layoutData),
@@ -60,5 +63,6 @@ export function buildHydrationPayload(bundle: PageDataBundle): HydrationDocument
     // about the very request it is hydrating, and on a client navigation it
     // would be disagreeing about a request the server already answered.
     name: bundle.route.name,
+    locale,
   };
 }

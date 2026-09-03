@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { DocumentContext } from "../../components/document-context";
+import { LocaleProvider } from "../../localization";
 import type { HydrationDocumentPayloadSource } from "../../hydration-payload";
 import type { MetadataOutput } from "../../metadata";
 import { connectNavigator } from "../../routing/navigator";
@@ -560,7 +561,7 @@ export function NavigationRoot({
     <DocumentContext.Provider
       value={{ metadata: current.payload.metadata, payload: current.payload }}
     >
-      {current.tree}
+      <LocaleProvider locale={current.payload.locale}>{current.tree}</LocaleProvider>
     </DocumentContext.Provider>
   );
 }

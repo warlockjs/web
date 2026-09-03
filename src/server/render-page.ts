@@ -8,6 +8,7 @@ import {
   type DocumentContextValue,
 } from "../components/document-context";
 import type { SharedContext } from "../index";
+import { LocaleProvider } from "../localization";
 import { buildHydrationPayload } from "./build-hydration-payload";
 import {
   hydrationErrorPageProps,
@@ -404,14 +405,16 @@ function capturingCreateHttp(registry: PageRoutesRegistry): {
  */
 type DocumentSlots = {
   nonce?: string;
-  lang?: string;
+  locale: string;
 };
 
 /** Reads document slots directly from core's Request. */
 function documentSlotsFrom(captured: CapturedHttp | undefined): DocumentSlots {
-  const request = captured?.request;
+  if (captured === undefined) {
+    throw new Error("The page pipeline reached rendering without its request context.");
+  }
 
-  return { nonce: request?.nonce, lang: request?.locale };
+  return { nonce: captured.request.nonce, locale: captured.request.locale };
 }
 
 async function finishRender(
@@ -467,16 +470,19 @@ async function finishRender(
   // SAME object. See that module for why the two must not drift.
   let documentValue: DocumentContextValue = {
     metadata: bundle.metadata,
-    payload: buildHydrationPayload(bundle),
+    payload: buildHydrationPayload(bundle, documentSlots.locale),
     nonce: documentSlots.nonce,
-    lang: documentSlots.lang,
+    lang: documentSlots.locale,
   };
 
   const renderWithContext = (element: ReactNode): string =>
     renderToString(
       createElement(DocumentContext.Provider, {
         value: documentValue,
-        children: element,
+        children: createElement(LocaleProvider, {
+          locale: documentValue.payload.locale,
+          children: element,
+        }),
       }),
     );
 
@@ -502,7 +508,7 @@ async function finishRender(
     documentValue = {
       ...documentValue,
       metadata: bundle.metadata,
-      payload: buildHydrationPayload(bundle),
+      payload: buildHydrationPayload(bundle, documentSlots.locale),
     };
     return renderFrameworkRoot();
   };
@@ -522,7 +528,7 @@ async function finishRender(
     documentValue = {
       ...documentValue,
       metadata: bundle.metadata,
-      payload: buildHydrationPayload(bundle),
+      payload: buildHydrationPayload(bundle, documentSlots.locale),
     };
     return renderWithContext(wrapRootward(triple, bundle, "page", errorPageElement(module, props)));
   };
@@ -628,15 +634,23 @@ export async function renderPageFailure(options: RenderPageFailureOptions): Prom
 
   const { renderToString } = await import("react-dom/server");
   const slots = documentSlotsFrom({ request, response });
-  const frameworkPayload = markNonHydrating(buildHydrationPayload(bundle));
+  const frameworkPayload = markNonHydrating(buildHydrationPayload(bundle, slots.locale));
   let value: DocumentContextValue = {
     metadata: undefined,
     payload: frameworkPayload,
     nonce: slots.nonce,
-    lang: slots.lang,
+    lang: slots.locale,
   };
   const renderWithContext = (element: ReactNode): string =>
-    renderToString(createElement(DocumentContext.Provider, { value, children: element }));
+    renderToString(
+      createElement(DocumentContext.Provider, {
+        value,
+        children: createElement(LocaleProvider, {
+          locale: value.payload.locale,
+          children: element,
+        }),
+      }),
+    );
   let body: string;
 
   try {
@@ -660,7 +674,7 @@ export async function renderPageFailure(options: RenderPageFailureOptions): Prom
     value = {
       ...value,
       metadata: bundle.metadata,
-      payload: markNonHydrating(buildHydrationPayload(bundle)),
+      payload: markNonHydrating(buildHydrationPayload(bundle, slots.locale)),
     };
     body = renderWithContext(
       createElement(DefaultApp, {

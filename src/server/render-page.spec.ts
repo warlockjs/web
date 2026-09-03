@@ -2,6 +2,7 @@ import { Response, type Request } from "@warlock.js/core";
 import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PAYLOAD_SCRIPT_ID } from "../components/document-context";
+import { useLocale } from "../localization";
 
 const { resolvePageMetadata } = vi.hoisted(() => ({
   resolvePageMetadata: vi.fn(() => ({ metadata: {} })),
@@ -42,12 +43,68 @@ beforeEach(() => {
  * `Response` implements, used here directly (as other server specs do)
  * rather than re-declaring it.
  */
-function createHttp() {
+function createHttp(locale = "en") {
   const response = new Response();
-  const request = { nonce: undefined, locale: undefined } as unknown as Request;
+  const request = { nonce: undefined, locale } as unknown as Request;
 
   return { request, response };
 }
+
+describe("request-bound locale provider", () => {
+  it("keeps concurrent SSR documents and their hydration payloads on their own locale", async () => {
+    let started = 0;
+    let release!: () => void;
+    let confirmBothStarted!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const bothStarted = new Promise<void>((resolve) => {
+      confirmBothStarted = resolve;
+    });
+    const entry: PageRouteEntry = {
+      path: "/locale",
+      name: "locale",
+      triple: {
+        app: {},
+        layout: {},
+        page: {
+          loader: async () => {
+            started += 1;
+            if (started === 2) confirmBothStarted();
+            await held;
+          },
+          default: () => createElement("main", { lang: useLocale() }, useLocale()),
+        },
+      },
+    };
+
+    const renderLocale = async (locale: string) => {
+      const { request, response } = createHttp(locale);
+      const rendered = await renderPage("locale", {
+        routes: [entry],
+        createHttp: () => ({ request, response }),
+      });
+
+      if (rendered instanceof Response) throw new Error("unexpected terminal Response");
+
+      return rendered.html;
+    };
+
+    const englishRender = renderLocale("en");
+    const arabicRender = renderLocale("ar");
+
+    await bothStarted;
+    expect(started).toBe(2);
+    release();
+
+    const [english, arabic] = await Promise.all([englishRender, arabicRender]);
+
+    expect(english).toContain('<main lang="en">en</main>');
+    expect(english).toContain('"locale":"en"');
+    expect(arabic).toContain('<main lang="ar">ar</main>');
+    expect(arabic).toContain('"locale":"ar"');
+  });
+});
 
 function throwingPageEntry(): PageRouteEntry {
   return {

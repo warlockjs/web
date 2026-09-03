@@ -56,6 +56,8 @@ export type HydrationDocumentPayloadSource = {
    * server on the very request it is hydrating.
    */
   readonly name: string;
+  /** The request locale selected by core for this exact render. */
+  readonly locale: string;
   /**
    * The params the SERVER matched for this request — `bundle.route.params`
    * (`server/execute-page-request.ts:288`), carried untransformed. Same reason

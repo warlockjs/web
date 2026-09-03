@@ -22,6 +22,7 @@ export const REQUIRED_PAYLOAD_KEYS = [
   "pageData",
   "shared",
   "name",
+  "locale",
 ] as const;
 
 const ABSENT_PAYLOAD_MESSAGE =
@@ -108,6 +109,10 @@ function requireHydrationPayload(value: unknown): HydrationDocumentPayloadSource
     if (!Object.prototype.hasOwnProperty.call(value, key)) malformedPayload();
   }
 
+  if (typeof (value as Record<string, unknown>).name !== "string") malformedPayload();
+  const locale = (value as Record<string, unknown>).locale;
+  if (typeof locale !== "string" || locale.length === 0) malformedPayload();
+
   for (const key of OPTIONAL_OBJECT_PAYLOAD_KEYS) {
     const optional = (value as Record<string, unknown>)[key];
 
@@ -123,7 +128,7 @@ function requireHydrationPayload(value: unknown): HydrationDocumentPayloadSource
 /**
  * Read the fixed payload script without changing the server-rendered root.
  *
- * Extra fields are ignored. The gate owns the FIVE required keys — absent or
+ * Extra fields are ignored. The gate owns the SIX required keys — absent or
  * malformed, both throw — plus a shape check on the three optional ones
  * ({@link OPTIONAL_OBJECT_PAYLOAD_KEYS}); it deliberately does not require
  * those to be present. `errorPage`, when present, is additionally validated as

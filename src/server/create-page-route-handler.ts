@@ -489,7 +489,10 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         // A string body also bypasses `parseBody()` entirely, so the content type
         // has to be declared rather than inferred from an object body.
         response.setContentType(DATA_RESPONSE_CONTENT_TYPE);
-        await response.send(JSON.stringify(buildHydrationPayload(rendered.bundle)), status);
+        await response.send(
+          JSON.stringify(buildHydrationPayload(rendered.bundle, request.locale)),
+          status,
+        );
 
         return;
       }
@@ -535,7 +538,10 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         if (wantsData) {
           response.header("Vary", WARLOCK_DATA_REQUEST_HEADER);
           response.setContentType(DATA_RESPONSE_CONTENT_TYPE);
-          await response.send(JSON.stringify(buildHydrationPayload(rendered.bundle!)), 500);
+          await response.send(
+            JSON.stringify(buildHydrationPayload(rendered.bundle!, request.locale)),
+            500,
+          );
           return;
         }
 

@@ -30,6 +30,7 @@ type Modules = {
   recordCurrentRoute: typeof import("./current-route").recordCurrentRoute;
   NavigationRoot: typeof import("./navigation-root").NavigationRoot;
   applyDocumentMetadata: typeof import("./navigation-root").applyDocumentMetadata;
+  useLocale: typeof import("../../localization").useLocale;
 };
 
 async function freshModules(): Promise<Modules> {
@@ -37,6 +38,7 @@ async function freshModules(): Promise<Modules> {
 
   const { currentRoute, previousRoute, recordCurrentRoute } = await import("./current-route");
   const { NavigationRoot, applyDocumentMetadata } = await import("./navigation-root");
+  const { useLocale } = await import("../../localization");
 
   return {
     currentRoute,
@@ -44,12 +46,14 @@ async function freshModules(): Promise<Modules> {
     recordCurrentRoute,
     NavigationRoot,
     applyDocumentMetadata,
+    useLocale,
   };
 }
 
 function payloadOf(
   name: string,
   params?: Record<string, string>,
+  locale = "en",
 ): HydrationDocumentPayloadSource {
   return {
     appData: {},
@@ -57,6 +61,7 @@ function payloadOf(
     pageData: {},
     shared: {},
     name,
+    locale,
     // Spread, never `params: undefined`: a payload without params has no such
     // key, and the reader's fallback is only proven against real absence.
     ...(params === undefined ? {} : { params }),
@@ -93,6 +98,14 @@ beforeEach(async () => {
 });
 
 describe("currentRoute", () => {
+  it("hydrates the page under the locale declared by the server payload", () => {
+    const markup = renderInitialMount(modules, payloadOf("main.home", undefined, "ar"), () =>
+      createElement("span", null, modules.useLocale()),
+    );
+
+    expect(markup).toContain("ar");
+  });
+
   /**
    * THE case. No navigation has happened, nothing has been fetched, and the
    * page tree is mid-render — and the answer is already the entry the server

@@ -33,6 +33,7 @@ function payloadFor(
 ): HydrationDocumentPayloadSource {
   return {
     name,
+    locale: "en",
     appData: { level: "app" },
     layoutData: { level: "layout" },
     pageData: { level: "page" },
