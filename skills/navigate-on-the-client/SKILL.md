@@ -16,12 +16,7 @@ import { Link } from "@warlock.js/web";
 
 export function ProductLink({ id }: { id: string }) {
   return (
-    <Link
-      to="products.details"
-      params={{ id }}
-      query={{ tab: "specifications" }}
-      prefetch
-    >
+    <Link to="products.details" params={{ id }} query={{ tab: "specifications" }} prefetch>
       View product
     </Link>
   );
@@ -42,7 +37,9 @@ export function NavigationLinks() {
     <nav>
       <Link to="products.index">Products</Link>
       <Link href="/pricing">Pricing</Link>
-      <Link href="https://example.com/docs" newTab>External docs</Link>
+      <Link href="https://example.com/docs" newTab>
+        External docs
+      </Link>
       <Link email="sales@example.com">Email sales</Link>
       <Link tel="+201000000000">Call sales</Link>
     </nav>
@@ -93,8 +90,12 @@ export function CheckoutButtons() {
 
   return (
     <div>
-      <button type="button" onClick={navigateBack}>Back</button>
-      <button type="button" onClick={openCheckout}>Checkout</button>
+      <button type="button" onClick={navigateBack}>
+        Back
+      </button>
+      <button type="button" onClick={openCheckout}>
+        Checkout
+      </button>
     </div>
   );
 }
@@ -126,7 +127,11 @@ export function DeleteProductButton({ id }: { id: string }) {
     }
   };
 
-  return <button type="button" onClick={deleteProduct}>Delete product</button>;
+  return (
+    <button type="button" onClick={deleteProduct}>
+      Delete product
+    </button>
+  );
 }
 ```
 

@@ -23,14 +23,11 @@ export const loader = (async () => {
   };
 }) satisfies LayoutLoader;
 
-export default function ProductsLayout({
-  data,
-  children,
-}: LayoutProps<typeof loader>) {
+export default function ProductsLayout({ data, children }: LayoutProps<typeof loader>) {
   return (
     <section>
       <nav aria-label="Products">
-        {data.navigation.map(item => (
+        {data.navigation.map((item) => (
           <a key={item.href} href={item.href}>
             {item.label}
           </a>

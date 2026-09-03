@@ -52,6 +52,7 @@ Use a bare side-effect import in `root.tsx`. In development the server parses th
 
 Development has no client manifest, so Warlock reads `root.tsx`, finds bare stylesheet imports, resolves them relative to the root file, and emits a link before `</head>`:
 
+<!-- prettier-ignore -->
 ```html
 <link rel="stylesheet" href="/src/web/app.css?direct">
 ```
