@@ -2,6 +2,28 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.3.1 - 2026-09-04
+
+### Fixed
+
+- Republished the complete family so a clean install resolves. Same code as 5.3.0, published as one complete set.
+
+## 5.3.0 - 2026-09-03
+
+### Added
+
+- A standalone Warlock 404 page, styled and served by the web layer.
+- Request-bound web localization: the active locale travels with the request rather than being read from ambient state.
+
+### Fixed
+
+- The 404 page's stylesheet was imported through a Vite-only `?url&inline` query, which the release bundler could not resolve — the web package could not be built for publication at all. The stylesheet URL is now produced by a plain module, guarded by a test that keeps the emitted markup byte-exact against the CSS file.
+- A directory that owned a layout `prefix` was never classified, so bracket syntax inside a group name went unexamined and two different pages could derive the same route. Every directory name is now validated before the route decides whether it contributes.
+- A page's DECLARED `route.path` was never validated — the validator had zero callers.
+- Bracket syntax inside a group name is rejected instead of silently deriving a route.
+- `discover-pages` now composes paths through the same validated seam as the rest of routing, so the two can no longer disagree.
+- An unobservable auth mark revokes a cache opt-in: unproven now means revoked, not assumed safe.
+
 ## 5.2.3 - 2026-09-02
 
 ### Fixed
