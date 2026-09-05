@@ -2,6 +2,12 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.3.2
+
+### Fixed
+
+- A page-file segment carrying a bracket but no complete group could reach the parameter-name read with nothing to read. Unreachable as the surrounding checks stand, and now stated as a guard rather than assumed, so a future narrowing of those checks fails here naming the segment instead of throwing further down.
+
 ## 5.3.1 - 2026-09-04
 
 ### Fixed
