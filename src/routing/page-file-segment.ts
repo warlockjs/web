@@ -115,7 +115,19 @@ export function classifyPageFileSegment(segment: string): PageFileSegmentVerdict
     );
   }
 
-  const [group] = groups;
+  const group = groups[0];
+
+  // Unreachable as the checks above stand: a segment carrying a bracket but no
+  // COMPLETE group leaves that bracket in `remaining`, which the unbalanced
+  // check has already rejected. Stated as a guard rather than asserted away
+  // with `!`, so that if either check above is ever narrowed this fails here,
+  // naming the segment, instead of throwing on `group.slice` a few lines down.
+  if (group === undefined) {
+    return rejected(
+      `Segment "${segment}" has unbalanced "[" or "]" brackets, which page routes do not ` +
+        `support — balance the brackets, as in a whole-segment param like "[id]".`,
+    );
+  }
 
   if (remaining !== "") {
     return rejected(

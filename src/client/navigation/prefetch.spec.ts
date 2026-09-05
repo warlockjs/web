@@ -20,7 +20,11 @@ import {
  * because the happy path is not what makes this feature risky.
  */
 
-const PAYLOAD = { name: "products.list", shared: {} };
+// `locale` is required by `fetch-page-data.ts`'s `isPayloadShape` guard — a
+// fixture missing it is silently rejected as `hard-navigate` and never cached,
+// which is what was actually failing every "caches"/"expires"/"bound" test
+// below (not a missing `window`; see the report for this file's history).
+const PAYLOAD = { name: "products.list", locale: "en", shared: {} };
 
 function respondWith(
   init: { status?: number; contentType?: string; body?: unknown } = {},

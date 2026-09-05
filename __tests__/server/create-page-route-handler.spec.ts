@@ -192,6 +192,17 @@ function recordingContext(
   const request = {
     path: url,
     nonce,
+    /**
+     * The resolved request locale core's real `Request` exposes as
+     * `request.locale` (`core/src/http/request.ts:402`) — the same field the
+     * 404 page and every pipeline fixture read. Fixed to the framework's own
+     * default (`config.key("app.localeCode")`, which resolves to `"en"`
+     * absent an app override — see `__tests__/server/fixtures/core-http.ts`'s
+     * real-`Request` fixture, whose default locale is likewise `"en"`) so this
+     * stand-in stays faithful to core without duplicating its resolution
+     * logic.
+     */
+    locale: "en",
     input: () => undefined,
     /** Mirrors core's `Request.header(name, defaultValue)` — lowercased lookup. */
     header: (name: string, defaultValue: unknown = null) =>

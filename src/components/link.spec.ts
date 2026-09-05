@@ -346,7 +346,11 @@ describe("Link — literal URLs and paths", () => {
 });
 
 describe("Link — prefetch", () => {
-  const PAYLOAD = { name: "main.home", shared: {} };
+  // `locale` is not decoration here: `fetch-page-data`'s `isPayloadShape` gate
+  // requires a non-empty `locale` string, so a fixture without one is classified
+  // `hard-navigate` and never cached — and every assertion below that a prefetch
+  // landed then fails for a reason that has nothing to do with `<Link>`.
+  const PAYLOAD = { name: "main.home", shared: {}, locale: "en" };
 
   function respondWithPayload(): ReturnType<typeof vi.fn> {
     const fetchMock = vi.fn(async () => ({
