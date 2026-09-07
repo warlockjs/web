@@ -43,6 +43,7 @@ import { NonLiteralRouteExportError, readRouteExports } from "../build/read-rout
 import { composeRoutePath } from "../routing/compose-route-path";
 import { deriveFilesystemRoutePath } from "../routing/filesystem-route";
 import { NestedLayoutsNotSupportedError, selectPageLayout } from "../routing/layout-policy";
+import { PageFileSegmentNotSupportedError } from "../routing/page-file-segment";
 import {
   canonicalizeRouteExport,
   resolvePageRouteCache,
@@ -102,6 +103,108 @@ function canonicalSourceFileFor(pageFile: string, appSrcRoot: string): string {
 
 function filesystemPageFileFor(pageFile: string, appSrcRoot: string): string {
   return toPosix(path.relative(path.join(appSrcRoot, "web"), pageFile));
+}
+
+/**
+ * Raised when a page's own module fails to load in dev (`vite.ssrLoadModule`
+ * rejects on the page file itself — never a layout, which this class does not
+ * cover).
+ *
+ * Before this class existed, that rejection propagated straight out of
+ * `installPageRoutes`'s loop and failed the WHOLE install: every other page's
+ * route went unregistered along with the broken one, and the failure named
+ * neither the page file nor which module actually threw. One bad page taking
+ * every other page down with it is a worse outage than the bad page alone, so
+ * this error is what the broken page's own route now fails with instead —
+ * named, with its cause attached, while the rest of the application keeps
+ * serving.
+ */
+export class PageModuleLoadError extends Error {
+  public constructor(
+    public readonly pageFile: string,
+    cause: unknown,
+  ) {
+    const rawCause = cause instanceof Error ? cause.message : String(cause);
+    // The cause is someone else's text — a bundler's, a module resolver's — so
+    // it may or may not end in punctuation. Without this it runs straight into
+    // the next sentence, and the seam is exactly where a reader stops trusting
+    // the message.
+    const causeMessage = /[.!?]$/.test(rawCause.trim()) ? rawCause.trim() : `${rawCause.trim()}.`;
+
+    super(
+      `"${pageFile}" failed to load: ${causeMessage} Every other page still installed and is ` +
+        "still serving; fix the error in this page's module and it will start serving again.",
+      { cause },
+    );
+    this.name = "PageModuleLoadError";
+  }
+}
+
+/**
+ * Registers a page whose OWN module failed to load at its filesystem-derived
+ * URL, so a request there reports {@link PageModuleLoadError} — naming the
+ * page file and the underlying cause — instead of a bare 404 that explains
+ * nothing.
+ *
+ * Only the filesystem-derived path is attempted: the page's `route` export
+ * cannot be read (that requires the very module that failed to load), and its
+ * layout chain is not resolved either, so no layout prefix composes into this
+ * path. When the filesystem path itself is not derivable
+ * (`deriveFilesystemRoutePath` rejects a segment), there is no path left to
+ * register a route at, so nothing is registered — the caller reports both
+ * failures loudly at boot and moves on.
+ */
+async function registerFailedPageRoute(input: {
+  router: Router;
+  pageFile: string;
+  appSrcRoot: string;
+  loadError: unknown;
+  fileByPath: Map<string, string>;
+}): Promise<void> {
+  const { router, pageFile, appSrcRoot, loadError, fileByPath } = input;
+  const attributed = new PageModuleLoadError(pageFile, loadError);
+  const filesystemPageFile = filesystemPageFileFor(pageFile, appSrcRoot);
+
+  let effectivePath: string;
+
+  try {
+    effectivePath = deriveFilesystemRoutePath({ pageFile: filesystemPageFile });
+  } catch (segmentError) {
+    if (!(segmentError instanceof PageFileSegmentNotSupportedError)) throw segmentError;
+
+    // No filesystem path to register a route at, so this page cannot answer
+    // its own URL with the attributed error — the request that would have hit
+    // it 404s instead, unregistered, and the existing unregistered-page
+    // reporter (`web/src/server/unregistered-pages.ts`) is what explains that
+    // 404 to whoever is looking. Reported loudly here so the underlying load
+    // failure is not lost as well.
+    console.error(attributed.message);
+    console.error(segmentError.message);
+
+    return;
+  }
+
+  const existingFile = fileByPath.get(effectivePath);
+
+  if (existingFile) {
+    throw new Error(
+      `installPageRoutes: composed route path "${effectivePath}" is declared by two ` +
+        `pages (web/src/server/install-page-routes.ts) — "${existingFile}" and ` +
+        `"${pageFile}". Every page's composed route path must be unique.`,
+    );
+  }
+
+  fileByPath.set(effectivePath, pageFile);
+
+  await router.withSourceFile(canonicalSourceFileFor(pageFile, appSrcRoot), () =>
+    router.get(
+      effectivePath,
+      async () => {
+        throw attributed;
+      },
+      { name: resolvePageRouteName(undefined, filesystemPageFile), isPage: true },
+    ),
+  );
 }
 
 /**
@@ -355,7 +458,20 @@ export async function installPageRoutes(
   const fileByPath = new Map<string, string>();
 
   for (const { pageFile, webRoot } of pageFiles) {
-    const pageModule = (await vite.ssrLoadModule(pageFile)) as PageModuleShape;
+    let pageModule: PageModuleShape;
+
+    try {
+      pageModule = (await vite.ssrLoadModule(pageFile)) as PageModuleShape;
+    } catch (loadError) {
+      // THE PAGE ITSELF MUST NOT ABORT THE INSTALL: every other page still
+      // needs to install and serve. Layout loading is deliberately NOT
+      // wrapped here — a broken layout is a different failure with a
+      // different blast radius (it can affect more than one page) and is out
+      // of this card's scope.
+      await registerFailedPageRoute({ router, pageFile, appSrcRoot, loadError, fileByPath });
+
+      continue;
+    }
 
     const sourceFile = canonicalSourceFileFor(pageFile, appSrcRoot);
 

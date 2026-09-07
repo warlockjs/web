@@ -10,6 +10,7 @@ import type { PageRouteHandler, PageRouteHandlerOptions } from "./create-page-ro
 import {
   FRAMEWORK_DEFAULT_NOT_FOUND_SOURCE_FILE,
   installPageRoutes,
+  PageModuleLoadError,
   type InstallPageRoutesOptions,
 } from "./install-page-routes";
 import {
@@ -63,6 +64,7 @@ type RegisteredRoute = {
   path: string;
   options: { name?: string; isPage?: boolean };
   sourceFile?: string;
+  handler: PageRouteHandler;
 };
 
 /**
@@ -85,7 +87,7 @@ function recordingRouter() {
       if (routePath === NOT_FOUND_ROUTE_PATH) {
         notFound.push({ path: routePath, options, handler, sourceFile });
       } else {
-        registered.push({ path: routePath, options, sourceFile });
+        registered.push({ path: routePath, options, sourceFile, handler });
       }
 
       return router;
@@ -841,6 +843,119 @@ describe("installPageRoutes — dev's URL is discovery's URL", () => {
 
     expect(discovered.map((page) => page.routePath)).toEqual([installed[0]?.path]);
     expect(installed[0]?.path).toBe("/users/account/settings");
+  });
+});
+
+/**
+ * A PAGE MODULE THAT FAILS TO LOAD must not abort the whole install — every
+ * other page still installs and serves, and the broken page still answers ITS
+ * OWN URL, but with an attributed error naming the page file and the cause
+ * instead of silently losing its route.
+ */
+describe("installPageRoutes — a page module that fails to load", () => {
+  beforeEach(seedHttpServer);
+  afterEach(() => container.delete("http.server"));
+
+  it("still installs the good page, and the broken page's own URL rejects with an attributed error naming the file and the cause", async () => {
+    const appRoot = makeAppTree({
+      "src/web/home.page.tsx": "",
+      "src/web/dashboard.page.tsx": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+    const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
+    const dashboardFile = path.join(appSrcRoot, "web", "dashboard.page.tsx");
+    const cause = new Error("boom: dashboard.page.tsx has a syntax error");
+
+    const vite = {
+      ssrLoadModule: vi.fn(async (id: string) => {
+        if (id === dashboardFile) throw cause;
+        if (id === homeFile) return { route: "/" };
+
+        throw new Error(`fakeVite: no module registered for "${id}"`);
+      }),
+    } as unknown as InstallPageRoutesOptions["vite"];
+
+    const { run, registered } = install(appSrcRoot, vite);
+
+    // The install itself resolves — the broken page does not reject it.
+    const installed = await run();
+
+    expect(registered.map((route) => route.path).sort()).toEqual(["/", "/dashboard"]);
+    // Only the good page is in the returned install table.
+    expect(installed.map((page) => page.path)).toEqual(["/"]);
+
+    const brokenRoute = registered.find((route) => route.path === "/dashboard");
+
+    expect(brokenRoute?.sourceFile).toBe("src/web/dashboard.page.tsx");
+
+    let thrown: unknown;
+
+    try {
+      await brokenRoute?.handler({} as never);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(PageModuleLoadError);
+    expect((thrown as PageModuleLoadError).pageFile).toBe(dashboardFile);
+    expect((thrown as PageModuleLoadError).cause).toBe(cause);
+    expect((thrown as Error).message).toContain(dashboardFile);
+    expect((thrown as Error).message).toContain(cause.message);
+  });
+
+  it("good input still installs cleanly (no broken page in the tree)", async () => {
+    const appRoot = makeAppTree({
+      "src/web/home.page.tsx": "",
+      "src/web/dashboard.page.tsx": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+    const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
+    const dashboardFile = path.join(appSrcRoot, "web", "dashboard.page.tsx");
+
+    const vite = fakeVite({
+      [homeFile]: { route: "/" },
+      [dashboardFile]: { route: "/dashboard" },
+    });
+
+    const { run, registered } = install(appSrcRoot, vite);
+    const installed = await run();
+
+    expect(registered.map((route) => route.path).sort()).toEqual(["/", "/dashboard"]);
+    expect(installed.map((page) => page.path).sort()).toEqual(["/", "/dashboard"]);
+  });
+
+  it("reports PageFileSegmentNotSupportedError and skips the page when its filesystem path is not derivable", async () => {
+    const appRoot = makeAppTree({
+      "src/web/home.page.tsx": "",
+      "src/web/[1bad].page.tsx": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+    const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
+    const undecidableFile = path.join(appSrcRoot, "web", "[1bad].page.tsx");
+    const cause = new Error("boom: [1bad].page.tsx has a syntax error");
+
+    const vite = {
+      ssrLoadModule: vi.fn(async (id: string) => {
+        if (id === undecidableFile) throw cause;
+        if (id === homeFile) return { route: "/" };
+
+        throw new Error(`fakeVite: no module registered for "${id}"`);
+      }),
+    } as unknown as InstallPageRoutesOptions["vite"];
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const { run, registered } = install(appSrcRoot, vite);
+    const installed = await run();
+
+    // No route registered for the undecidable page — nothing to register it
+    // at — but the good page is unaffected.
+    expect(registered.map((route) => route.path)).toEqual(["/"]);
+    expect(installed.map((page) => page.path)).toEqual(["/"]);
+    expect(errorSpy).toHaveBeenCalled();
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain("[1bad].page.tsx");
+
+    errorSpy.mockRestore();
   });
 });
 
