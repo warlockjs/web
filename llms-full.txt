@@ -18,7 +18,7 @@ description: 'Install the SSR page layer with `warlock add web`: add React/Vite 
 ## The shape
 
 ```bash
-pnpm warlock add web
+npx warlock add web
 ```
 
 On the ordinary path it leaves this application-owned shape:
@@ -91,8 +91,8 @@ On the refusal path, free `/` yourself and create a page with either `route = { 
 Read the files rather than assuming the command could patch every application shape:
 
 ```bash
-pnpm warlock routes --method GET --path /
-pnpm warlock routes --method GET --path /welcome
+npx warlock routes --method GET --path /
+npx warlock routes --method GET --path /welcome
 ```
 
 The desired result is one page route at `/` and, when the stock JSON route existed, one API route at `/welcome`.
@@ -696,12 +696,7 @@ import { Link } from "@warlock.js/web";
 
 export function ProductLink({ id }: { id: string }) {
   return (
-    <Link
-      to="products.details"
-      params={{ id }}
-      query={{ tab: "specifications" }}
-      prefetch
-    >
+    <Link to="products.details" params={{ id }} query={{ tab: "specifications" }} prefetch>
       View product
     </Link>
   );
@@ -722,7 +717,9 @@ export function NavigationLinks() {
     <nav>
       <Link to="products.index">Products</Link>
       <Link href="/pricing">Pricing</Link>
-      <Link href="https://example.com/docs" newTab>External docs</Link>
+      <Link href="https://example.com/docs" newTab>
+        External docs
+      </Link>
       <Link email="sales@example.com">Email sales</Link>
       <Link tel="+201000000000">Call sales</Link>
     </nav>
@@ -773,8 +770,12 @@ export function CheckoutButtons() {
 
   return (
     <div>
-      <button type="button" onClick={navigateBack}>Back</button>
-      <button type="button" onClick={openCheckout}>Checkout</button>
+      <button type="button" onClick={navigateBack}>
+        Back
+      </button>
+      <button type="button" onClick={openCheckout}>
+        Checkout
+      </button>
     </div>
   );
 }
@@ -806,7 +807,11 @@ export function DeleteProductButton({ id }: { id: string }) {
     }
   };
 
-  return <button type="button" onClick={deleteProduct}>Delete product</button>;
+  return (
+    <button type="button" onClick={deleteProduct}>
+      Delete product
+    </button>
+  );
 }
 ```
 
@@ -919,6 +924,7 @@ Use a bare side-effect import in `root.tsx`. In development the server parses th
 
 Development has no client manifest, so Warlock reads `root.tsx`, finds bare stylesheet imports, resolves them relative to the root file, and emits a link before `</head>`:
 
+<!-- prettier-ignore -->
 ```html
 <link rel="stylesheet" href="/src/web/app.css?direct">
 ```
@@ -1039,14 +1045,11 @@ export const loader = (async () => {
   };
 }) satisfies LayoutLoader;
 
-export default function ProductsLayout({
-  data,
-  children,
-}: LayoutProps<typeof loader>) {
+export default function ProductsLayout({ data, children }: LayoutProps<typeof loader>) {
   return (
     <section>
       <nav aria-label="Products">
-        {data.navigation.map(item => (
+        {data.navigation.map((item) => (
           <a key={item.href} href={item.href}>
             {item.label}
           </a>

@@ -10,7 +10,7 @@ description: 'Install the SSR page layer with `warlock add web`: add React/Vite 
 ## The shape
 
 ```bash
-pnpm warlock add web
+npx warlock add web
 ```
 
 On the ordinary path it leaves this application-owned shape:
@@ -83,8 +83,8 @@ On the refusal path, free `/` yourself and create a page with either `route = { 
 Read the files rather than assuming the command could patch every application shape:
 
 ```bash
-pnpm warlock routes --method GET --path /
-pnpm warlock routes --method GET --path /welcome
+npx warlock routes --method GET --path /
+npx warlock routes --method GET --path /welcome
 ```
 
 The desired result is one page route at `/` and, when the stock JSON route existed, one API route at `/welcome`.
