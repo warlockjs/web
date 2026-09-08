@@ -16,7 +16,6 @@ import {
   isAppSourcePath,
   isRecognizedUniversalSurface,
   isServerFile,
-  isWithinModuleWebFolder,
 } from "./gate-a-resolve";
 import { createPublicEnvTracker, gateBSecrets } from "./gate-b-secrets";
 import { gateCVerify } from "./gate-c-verify";
@@ -85,16 +84,34 @@ type SsrBoundaryState = {
 
 const CODE_MODULE_EXTENSION = /\.([cm]?[jt]sx?)$/;
 
+/**
+ * Whether `id` is a client surface WITHOUT having to be reached through the
+ * projected-import walk first — the seed set `clientViewOf` marks before any
+ * graph traversal has happened.
+ *
+ * Deliberately does NOT ask `isWithinModuleWebFolder`. A file living under
+ * `src/web/**` is not, by that location alone, on the client boundary: dev's
+ * `middleware`/`loader`/etc. exports are stripped by projection before this
+ * function is ever consulted for THEM specifically, and a plain server-only
+ * helper reached only through `root.tsx`'s (stripped) `middleware` export —
+ * `optional-auth.ts` importing `cookie-session.middleware.ts` — has no route
+ * into the surviving graph at all. Location used to override that and refuse
+ * it anyway; the boundary is the post-projection import graph, per canon
+ * `10f6041c`, the same rule `gate-a-resolve.ts` already enforces by having
+ * deliberately removed its own location-based rule 4 (see `ruleViolation`'s
+ * comment there). A file that genuinely belongs in the client graph — a
+ * `.page.tsx`, a `layout.tsx`, the app root, or anything one of those imports
+ * — is still admitted, either directly by `isRecognizedUniversalSurface` or by
+ * `resolveId`'s graph walk (`clientBoundModules` / `clientImportsByModule`)
+ * once something already in the graph imports it. Nothing under `src/web/**`
+ * needs a location exemption to be reached that way.
+ */
 function isStatelessClientSurface(id: string, appRoot: string): boolean {
   const bare = moduleKey(id);
   if (!isAppSourcePath(bare, appRoot)) return false;
   if (isServerFile(bare, appRoot)) return false;
 
-  return (
-    isProjectableFile(bare) ||
-    isRecognizedUniversalSurface(bare) ||
-    isWithinModuleWebFolder(bare, appRoot)
-  );
+  return isProjectableFile(bare) || isRecognizedUniversalSurface(bare);
 }
 
 function collectImportSpecifiers(code: string): Set<string> {
