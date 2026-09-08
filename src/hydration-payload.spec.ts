@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PAYLOAD_SCRIPT_ID } from "./components/document-context";
-import { readHydrationPayload } from "./hydration-payload";
+import { REQUIRED_PAYLOAD_KEYS, readHydrationPayload } from "./hydration-payload";
 import { buildHydrationPayload } from "./server/build-hydration-payload";
 import type { PageDataBundle } from "./server/execute-page-request";
 
@@ -38,6 +38,29 @@ describe("readHydrationPayload", () => {
 
     expect(readHydrationPayload(documentNode)).toEqual(fullPayload);
   });
+
+  /**
+   * Asserted against the CONTRACT export itself, not a copy of it — a key
+   * added to or removed from `REQUIRED_PAYLOAD_KEYS` without this fixture
+   * changing to match fails right here, before it fails silently on the wire.
+   */
+  it("fullPayload's keys are exactly REQUIRED_PAYLOAD_KEYS", () => {
+    expect(Object.keys(fullPayload).sort()).toEqual([...REQUIRED_PAYLOAD_KEYS].sort());
+  });
+
+  it.each(REQUIRED_PAYLOAD_KEYS)(
+    "throws the malformed message when the required key %s is missing",
+    (key) => {
+      const withoutKey = { ...fullPayload };
+      delete (withoutKey as Record<string, unknown>)[key];
+
+      const documentNode = makeDocument(JSON.stringify(withoutKey));
+
+      expect(() => readHydrationPayload(documentNode)).toThrow(
+        /Warlock hydration payload was found at #.* but could not be read\./,
+      );
+    },
+  );
 
   it("throws the malformed message when name is missing", () => {
     const { name, ...withoutName } = fullPayload;

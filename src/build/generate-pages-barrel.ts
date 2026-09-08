@@ -36,19 +36,13 @@ import {
 } from "../server/not-found-page";
 import { toPosix } from "../shared/to-posix";
 
-// Re-exported, not redefined: discovery's helpers were this module's before the
-// split, and the callers that already reach for them here should keep getting
+// Re-exported, not redefined: `layoutChainFor` was this module's before the
+// split, and the callers that already reach for it here should keep getting
 // the one implementation rather than a copy that can drift from it. The nested
 // layout error re-exports from the layout policy module, the one place that
 // owns layout selection and its error contract.
-export {
-  discoverPages,
-  discoverWebRoots,
-  DuplicatePageRouteNameError,
-  layoutChainFor,
-} from "./discover-pages";
+export { layoutChainFor } from "./discover-pages";
 export { NestedLayoutsNotSupportedError } from "../routing/layout-policy";
-export type { DiscoveredPage, DiscoverPagesOptions } from "./discover-pages";
 
 /**
  * Declared BEFORE the patch that reads it. `const` is hoisted but sits in the
@@ -448,6 +442,7 @@ export async function generatePagesBarrel(
   // manifest records a spelling the router never serves — the catch-all is
   // literally `"*"` here and `"/*"` once registered — and `warlock routes:diff`
   // reports drift on an untouched checkout right after a successful build.
+  const notFoundPage = routablePages.find((page) => isNotFoundPageFile(page.pageFile));
   const pageRoutes: PageRoutesManifest = {
     version: 1,
     routes: [
@@ -464,14 +459,9 @@ export async function generatePagesBarrel(
         path: normalizeRoutePath(NOT_FOUND_ROUTE_PATH),
         name: NOT_FOUND_ROUTE_NAME,
         source:
-          routablePages.find((page) => isNotFoundPageFile(page.pageFile)) === undefined
+          notFoundPage === undefined
             ? "\u0000warlock:framework-default-404"
-            : toPosix(
-                path.relative(
-                  appRoot,
-                  routablePages.find((page) => isNotFoundPageFile(page.pageFile))!.pageFile,
-                ),
-              ),
+            : toPosix(path.relative(appRoot, notFoundPage.pageFile)),
       },
     ],
   };

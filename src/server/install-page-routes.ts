@@ -65,7 +65,6 @@ import {
   NotFoundPageDeclaresRouteError,
   NOT_FOUND_ROUTE_NAME,
   NOT_FOUND_ROUTE_PATH,
-  type RegisteredRouteShape,
 } from "./not-found-page";
 
 /** Re-exported so `web/src/server/index.ts`'s existing barrel export keeps resolving. */

@@ -69,9 +69,6 @@ export function resolveLayoutLevel(
 
   return {
     hostId: selection.type === "selected" ? selection.layout : chain.at(-1)?.id,
-    prefix: chain.reduce(
-      (composed, entry) => composeRoutePath(composed, entry.prefix ?? "/"),
-      "/",
-    ),
+    prefix: chain.reduce((composed, entry) => composeRoutePath(composed, entry.prefix ?? "/"), "/"),
   };
 }

@@ -2,7 +2,11 @@ import path from "node:path";
 import { resolvePageRouteIdentity } from "../routing/route-identity";
 import type { Router } from "@warlock.js/core";
 import type { ViteDevServer } from "vite";
-import { filesystemPageFileFor, type InstalledPageRoute, type PageModuleShape } from "./install-page-routes";
+import {
+  filesystemPageFileFor,
+  type InstalledPageRoute,
+  type PageModuleShape,
+} from "./install-page-routes";
 import { isNotFoundPageFile } from "./not-found-page";
 import type { PageFileChanges } from "./page-file-change";
 import { isErrorPageFilePath } from "./page-file-change";

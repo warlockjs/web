@@ -53,7 +53,6 @@ import {
   NotFoundPageDeclaresRouteError,
   NOT_FOUND_ROUTE_NAME,
   NOT_FOUND_ROUTE_PATH,
-  type RegisteredRouteShape,
 } from "./not-found-page";
 import type { PageManifest, PageManifestLayoutEntry, PageManifestPageEntry } from "./page-manifest";
 
