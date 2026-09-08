@@ -1,9 +1,5 @@
 import { describe, expectTypeOf, it } from "vitest";
-import type {
-  ErrorPageProps,
-  SerializedErrorPageProps,
-  SerializedPageError,
-} from "./index";
+import type { ErrorPageProps, SerializedErrorPageProps, SerializedPageError } from "./index";
 
 describe("ErrorPageProps public contract", () => {
   it("keeps the SSR error value public and exposes a distinct hydration shape", () => {

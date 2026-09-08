@@ -45,10 +45,7 @@ describe("findUnregisteredPageFiles", () => {
         appRoot,
         appSrcRoot,
         registeredPageFiles: () => [homePage],
-        discover: () => [
-          discoveredPage(homePage, "/"),
-          discoveredPage(notFoundPage, "*"),
-        ],
+        discover: () => [discoveredPage(homePage, "/"), discoveredPage(notFoundPage, "*")],
       }),
     ).toEqual([]);
   });

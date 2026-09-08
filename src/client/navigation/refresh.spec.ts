@@ -55,14 +55,17 @@ function payloadResponse(payload: HydrationDocumentPayloadSource, url = HREF) {
 
 /** Answer every request with the same payload. */
 function respondWith(payload: HydrationDocumentPayloadSource, url = HREF): void {
-  vi.stubGlobal("fetch", vi.fn(async () => payloadResponse(payload, url)));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => payloadResponse(payload, url)),
+  );
 }
 
 /** Answer each request from a queue, resolved by the test in whatever order it likes. */
 function respondInOrder(payloads: HydrationDocumentPayloadSource[]) {
   const gates = payloads.map(() => {
     let open: () => void = () => undefined;
-    const opened = new Promise<void>(resolve => {
+    const opened = new Promise<void>((resolve) => {
       open = resolve;
     });
 
@@ -82,7 +85,7 @@ function respondInOrder(payloads: HydrationDocumentPayloadSource[]) {
     }),
   );
 
-  return gates.map(gate => gate.open);
+  return gates.map((gate) => gate.open);
 }
 
 type Browser = {
@@ -114,7 +117,7 @@ type Harness = {
 
 function harness(
   initial: RefreshablePage,
-  buildTree: (payload: HydrationDocumentPayloadSource) => Promise<string> = async payload =>
+  buildTree: (payload: HydrationDocumentPayloadSource) => Promise<string> = async (payload) =>
     `tree:${payload.name}`,
 ): Harness {
   let token = 0;
@@ -124,7 +127,7 @@ function harness(
   return {
     runtime: {
       readCurrent: () => current,
-      writeCurrent: page => {
+      writeCurrent: (page) => {
         current = page;
         writes.push(page);
       },
@@ -154,12 +157,12 @@ function listen() {
   const failed: unknown[] = [];
 
   const stops = [
-    routerEvents.onNavigating(event => navigating.push(event)),
-    routerEvents.onNavigated(event => navigated.push(event)),
-    routerEvents.onNavigationError(event => failed.push(event)),
+    routerEvents.onNavigating((event) => navigating.push(event)),
+    routerEvents.onNavigated((event) => navigated.push(event)),
+    routerEvents.onNavigationError((event) => failed.push(event)),
   ];
 
-  return { navigating, navigated, failed, stop: () => stops.forEach(stop => stop()) };
+  return { navigating, navigated, failed, stop: () => stops.forEach((stop) => stop()) };
 }
 
 let events: ReturnType<typeof listen>;
@@ -223,8 +226,10 @@ describe("refresh — the happy path", () => {
 
     await expect(refresher()).resolves.toBe(true);
 
-    const [url, init] = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock
-      .calls[0] as [string, RequestInit];
+    const [url, init] = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
 
     // The SAME data path a navigation uses — the `x-warlock-data` marker, not a
     // second endpoint.

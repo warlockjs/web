@@ -51,9 +51,7 @@ describe("href — the name→URL primitive", () => {
   it("appends a query string and skips undefined values", () => {
     publishRouteTable([{ name: "products.list", path: "/products" }]);
 
-    expect(href("products.list", undefined, { page: 2, sort: undefined })).toBe(
-      "/products?page=2",
-    );
+    expect(href("products.list", undefined, { page: 2, sort: undefined })).toBe("/products?page=2");
   });
 
   it("carries an array and a nested filter in the grammar core parses", () => {
@@ -85,9 +83,9 @@ describe("href — the name→URL primitive", () => {
     */
     publishRouteTable([{ name: "products.list", path: "/products" }]);
 
-    expect(() =>
-      href("products.list", undefined, { filter: { range: { min: 1 } } }),
-    ).toThrow(UnserializableQueryValueError);
+    expect(() => href("products.list", undefined, { filter: { range: { min: 1 } } })).toThrow(
+      UnserializableQueryValueError,
+    );
   });
 
   it("supports a catch-all segment through the `*` parameter", () => {
@@ -129,9 +127,7 @@ describe("href — failing closed", () => {
 
     expect(() => href("products.details")).toThrow(MissingRouteParameterError);
     expect(() => href("products.details", {})).toThrow(MissingRouteParameterError);
-    expect(() => href("products.details", { id: undefined })).toThrow(
-      MissingRouteParameterError,
-    );
+    expect(() => href("products.details", { id: undefined })).toThrow(MissingRouteParameterError);
   });
 
   it("throws on a parameter the pattern does not declare", () => {
@@ -179,9 +175,8 @@ describe("publishRouteTable — reachable across module graphs", () => {
   it("stores the table in the per-isolate symbol registry, not in module scope", () => {
     publishRouteTable([{ name: "main.home", path: "/" }]);
 
-    const slot = (globalThis as Record<symbol, unknown>)[
-      Symbol.for("warlock.web.routeTable")
-    ] as { table: Map<string, string> } | undefined;
+    const slot = (globalThis as Record<symbol, unknown>)[Symbol.for("warlock.web.routeTable")] as
+      { table: Map<string, string> } | undefined;
 
     expect(slot?.table.get("main.home")).toBe("/");
   });

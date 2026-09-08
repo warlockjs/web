@@ -100,10 +100,14 @@ try {
 }
 
 if (teardownError) {
-  report.assertions.push({ name: "server process tree is terminated", pass: false, detail: teardownError });
+  report.assertions.push({
+    name: "server process tree is terminated",
+    pass: false,
+    detail: teardownError,
+  });
 }
 
-let passed = report.assertions.every(assertion => assertion.pass);
+let passed = report.assertions.every((assertion) => assertion.pass);
 console.log("MEASURED " + JSON.stringify(report, null, 2));
 
 if (!passed && state.serverOutput.length > 0) {
@@ -128,8 +132,11 @@ console.log(`EXIT ${passed ? "PASS" : "FAIL"} code=${passed ? 0 : 1} mode=${mode
 process.exitCode = passed ? 0 : 1;
 
 async function runGate() {
-  const webVersion = args.registryVersion ?? args.webVersion ?? (await newestArtifactVersion("web"));
-  const originalWebArtifact = args.registryVersion ? undefined : path.join(artifactRoot, "web", webVersion);
+  const webVersion =
+    args.registryVersion ?? args.webVersion ?? (await newestArtifactVersion("web"));
+  const originalWebArtifact = args.registryVersion
+    ? undefined
+    : path.join(artifactRoot, "web", webVersion);
   if (originalWebArtifact) await assertArtifact(originalWebArtifact, "@warlock.js/web", webVersion);
 
   state.tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "warlock-published-react-gate-"));
@@ -152,7 +159,9 @@ async function runGate() {
   }
 
   const closure =
-    installationMode === "all-registry" ? [] : await collectPackedClosure(webVersion, webArtifact, installationMode);
+    installationMode === "all-registry"
+      ? []
+      : await collectPackedClosure(webVersion, webArtifact, installationMode);
   const tarballs = new Map();
   const packedEvidence = [];
 
@@ -187,7 +196,9 @@ async function runGate() {
       `${args.registryPeerVersion ? ` registry-peer-version=${args.registryPeerVersion}` : ""}` +
       `${args.registryVersion ? ` registry-version=${args.registryVersion}` : ""}`,
   );
-  console.log(`NODE_ENV development=explicit production=${args.redControl ? "skipped-red-control" : "explicit"}`);
+  console.log(
+    `NODE_ENV development=explicit production=${args.redControl ? "skipped-red-control" : "explicit"}`,
+  );
   console.log(`APP external=${state.appRoot} workspace=${workspaceRoot}`);
   for (const item of packedEvidence) {
     console.log(
@@ -202,7 +213,10 @@ async function runGate() {
     cwd: state.appRoot,
     env: explicitDevelopmentEnv(),
     timeoutMs: 10 * 60_000,
-    label: installationMode === "all-registry" ? "npm install registry packages" : "npm install packed artifacts",
+    label:
+      installationMode === "all-registry"
+        ? "npm install registry packages"
+        : "npm install packed artifacts",
   });
 
   const installEvidence = await verifyPublishedInstall({
@@ -233,23 +247,35 @@ async function runGate() {
     "server",
     "web-connector.mjs",
   );
-  const optimizerEvidence = await sourceEvidence(installedConnector, "optimizeDeps:", "installed optimizeDeps seam");
+  const optimizerEvidence = await sourceEvidence(
+    installedConnector,
+    "optimizeDeps:",
+    "installed optimizeDeps seam",
+  );
   const includeEvidence = await optionalSourceEvidence(
     installedConnector,
     "include: [",
     "installed React optimizer include",
   );
-  console.log(`ARTIFACT ${optimizerEvidence.file}:${optimizerEvidence.line} ${optimizerEvidence.label}`);
+  console.log(
+    `ARTIFACT ${optimizerEvidence.file}:${optimizerEvidence.line} ${optimizerEvidence.label}`,
+  );
   if (includeEvidence) {
-    console.log(`ARTIFACT ${includeEvidence.file}:${includeEvidence.line} ${includeEvidence.label}`);
+    console.log(
+      `ARTIFACT ${includeEvidence.file}:${includeEvidence.line} ${includeEvidence.label}`,
+    );
   }
 
   const serverEnv = explicitDevelopmentEnv(port);
   if (serverEnv.NODE_ENV !== "development") {
-    throw new Error(`NODE_ENV assertion failed before server spawn: ${JSON.stringify(serverEnv.NODE_ENV)}`);
+    throw new Error(
+      `NODE_ENV assertion failed before server spawn: ${JSON.stringify(serverEnv.NODE_ENV)}`,
+    );
   }
   if (serverEnv.HTTP_PORT !== String(port)) {
-    throw new Error(`HTTP_PORT assertion failed before server spawn: ${JSON.stringify(serverEnv.HTTP_PORT)}`);
+    throw new Error(
+      `HTTP_PORT assertion failed before server spawn: ${JSON.stringify(serverEnv.HTTP_PORT)}`,
+    );
   }
 
   const warlockBin = path.join(
@@ -272,7 +298,7 @@ async function runGate() {
   await waitForServer(baseUrl, 90_000);
   const browserResults = await driveChromium(baseUrl, {
     phase: "development",
-    hmrSource: fixtureEvidence.find(item => item.label === "JSX HMR edit target").file,
+    hmrSource: fixtureEvidence.find((item) => item.label === "JSX HMR edit target").file,
   });
 
   let productionResults = null;
@@ -291,7 +317,9 @@ async function runGate() {
 
     const buildEnv = explicitProductionEnv();
     if (buildEnv.NODE_ENV !== "production") {
-      throw new Error(`NODE_ENV assertion failed before build: ${JSON.stringify(buildEnv.NODE_ENV)}`);
+      throw new Error(
+        `NODE_ENV assertion failed before build: ${JSON.stringify(buildEnv.NODE_ENV)}`,
+      );
     }
     await runCommand(process.execPath, [warlockBin, "build"], {
       cwd: state.appRoot,
@@ -328,13 +356,25 @@ async function runGate() {
   }
 
   const assertions = [
-    assertion("temp app is outside monorepo", !isInside(workspaceRoot, state.appRoot), state.appRoot),
-    assertion("NODE_ENV is explicitly development", serverEnv.NODE_ENV === "development", serverEnv.NODE_ENV),
-    assertion("HTTP_PORT is explicitly reserved", serverEnv.HTTP_PORT === String(port), serverEnv.HTTP_PORT),
+    assertion(
+      "temp app is outside monorepo",
+      !isInside(workspaceRoot, state.appRoot),
+      state.appRoot,
+    ),
+    assertion(
+      "NODE_ENV is explicitly development",
+      serverEnv.NODE_ENV === "development",
+      serverEnv.NODE_ENV,
+    ),
+    assertion(
+      "HTTP_PORT is explicitly reserved",
+      serverEnv.HTTP_PORT === String(port),
+      serverEnv.HTTP_PORT,
+    ),
     assertion(
       "all Warlock installs are extracted directories, never symlinks",
-      installEvidence.every(item => !item.symlink),
-      installEvidence.map(item => `${item.package}:${item.symlink}`).join(", "),
+      installEvidence.every((item) => !item.symlink),
+      installEvidence.map((item) => `${item.package}:${item.symlink}`).join(", "),
     ),
     assertion(
       args.registryVersion
@@ -343,9 +383,9 @@ async function runGate() {
           ? "web is a non-symlink packed tarball and core/seal are non-symlink HTTPS registry resolutions"
           : "complete Warlock family resolves from non-symlink packed tarballs",
       args.registryVersion
-        ? ["@warlock.js/web", "@warlock.js/core", "@warlock.js/seal"].every(packageName =>
+        ? ["@warlock.js/web", "@warlock.js/core", "@warlock.js/seal"].every((packageName) =>
             installEvidence.some(
-              item =>
+              (item) =>
                 item.package === packageName &&
                 item.version === args.registryVersion &&
                 item.source === "https-registry" &&
@@ -353,27 +393,38 @@ async function runGate() {
             ),
           )
         : args.registryPeerVersion
-          ? installEvidence.some(item => item.package === "@warlock.js/web" && item.source === "packed-tarball") &&
-            ["@warlock.js/core", "@warlock.js/seal"].every(packageName =>
+          ? installEvidence.some(
+              (item) => item.package === "@warlock.js/web" && item.source === "packed-tarball",
+            ) &&
+            ["@warlock.js/core", "@warlock.js/seal"].every((packageName) =>
               installEvidence.some(
-                item =>
+                (item) =>
                   item.package === packageName &&
                   item.version === args.registryPeerVersion &&
                   item.source === "https-registry",
               ),
             )
-          : installEvidence.every(item => item.source === "packed-tarball"),
-      installEvidence.map(item => `${item.package}@${item.version}:${item.source}:${item.resolution}`).join(", "),
+          : installEvidence.every((item) => item.source === "packed-tarball"),
+      installEvidence
+        .map((item) => `${item.package}@${item.version}:${item.source}:${item.resolution}`)
+        .join(", "),
     ),
     assertion(
       "react-dom/client was served through Vite's ESM optimizer",
-      browserResults.reactDomClientUrls.some(url => /\/node_modules\/\.vite\/deps\/react-dom_client(?:-|\.)/.test(url)),
+      browserResults.reactDomClientUrls.some((url) =>
+        /\/node_modules\/\.vite\/deps\/react-dom_client(?:-|\.)/.test(url),
+      ),
       JSON.stringify(browserResults.reactDomClientUrls),
     ),
-    assertion("React hydration effect runs", browserResults.hydrated, String(browserResults.hydrated)),
+    assertion(
+      "React hydration effect runs",
+      browserResults.hydrated,
+      String(browserResults.hydrated),
+    ),
     assertion(
       "useState counter increments on two real clicks",
-      browserResults.counter.before === "Clicked 0 times" && browserResults.counter.after === "Clicked 2 times",
+      browserResults.counter.before === "Clicked 0 times" &&
+        browserResults.counter.after === "Clicked 2 times",
       `${JSON.stringify(browserResults.counter.before)} -> ${JSON.stringify(browserResults.counter.after)}`,
     ),
     assertion(
@@ -414,13 +465,21 @@ async function runGate() {
             productionBuildCompleted === true && productionServerEnv?.NODE_ENV === "production",
             `build=${productionBuildCompleted} start=${productionServerEnv?.NODE_ENV}`,
           ),
-          assertion("production SSR becomes ready", productionSsrReady === true, String(productionSsrReady)),
+          assertion(
+            "production SSR becomes ready",
+            productionSsrReady === true,
+            String(productionSsrReady),
+          ),
           assertion(
             "production start uses an explicitly reserved HTTP_PORT",
             productionServerEnv?.HTTP_PORT === new URL(productionBaseUrl).port,
             productionServerEnv?.HTTP_PORT,
           ),
-          assertion("production React hydration effect runs", productionResults.hydrated, String(productionResults.hydrated)),
+          assertion(
+            "production React hydration effect runs",
+            productionResults.hydrated,
+            String(productionResults.hydrated),
+          ),
           assertion(
             "production useState counter increments on two real clicks",
             productionResults.counter.before === "Clicked 0 times" &&
@@ -473,12 +532,16 @@ async function runGate() {
         ? `${redMutation.appliedFile}:${redMutation.appliedLine}`
         : null,
     },
-    sourceEvidence: fixtureEvidence.map(item => `${item.file}:${item.line} ${item.label}`),
+    sourceEvidence: fixtureEvidence.map((item) => `${item.file}:${item.line} ${item.label}`),
     measured: {
       ...browserResults,
       development: browserResults,
       production: productionResults
-        ? { buildCompleted: productionBuildCompleted, ssrReady: productionSsrReady, ...productionResults }
+        ? {
+            buildCompleted: productionBuildCompleted,
+            ssrReady: productionSsrReady,
+            ...productionResults,
+          }
         : null,
     },
     assertions,
@@ -503,26 +566,36 @@ function parseArgs(argv) {
     else if (argument === "--keep-temp") parsed.keepTemp = true;
     else if (argument === "--full-family") parsed.fullFamily = true;
     else if (argument === "--help" || argument === "-h") parsed.help = true;
-    else if (argument === "--web-version") parsed.webVersion = requiredValue(argv, ++index, argument);
-    else if (argument === "--artifact-root") parsed.artifactRoot = requiredValue(argv, ++index, argument);
+    else if (argument === "--web-version")
+      parsed.webVersion = requiredValue(argv, ++index, argument);
+    else if (argument === "--artifact-root")
+      parsed.artifactRoot = requiredValue(argv, ++index, argument);
     else if (argument === "--registry-peer-version") {
       parsed.registryPeerVersion = requiredExactVersion(argv, ++index, argument);
-    }
-    else if (argument === "--registry-version") {
+    } else if (argument === "--registry-version") {
       parsed.registryVersion = requiredExactVersion(argv, ++index, argument);
-    }
-    else throw new Error(`Unknown argument ${JSON.stringify(argument)}. Use --help.`);
+    } else throw new Error(`Unknown argument ${JSON.stringify(argument)}. Use --help.`);
   }
 
-  const explicitModes = [parsed.fullFamily, parsed.registryPeerVersion, parsed.registryVersion].filter(Boolean);
+  const explicitModes = [
+    parsed.fullFamily,
+    parsed.registryPeerVersion,
+    parsed.registryVersion,
+  ].filter(Boolean);
   if (explicitModes.length > 1) {
-    throw new Error("--full-family, --registry-peer-version, and --registry-version are mutually exclusive.");
+    throw new Error(
+      "--full-family, --registry-peer-version, and --registry-version are mutually exclusive.",
+    );
   }
   if (parsed.registryVersion && parsed.webVersion) {
-    throw new Error("--registry-version supplies the web version and cannot be combined with --web-version.");
+    throw new Error(
+      "--registry-version supplies the web version and cannot be combined with --web-version.",
+    );
   }
   if (parsed.registryVersion && parsed.artifactRoot) {
-    throw new Error("--registry-version does not use local artifacts and cannot be combined with --artifact-root.");
+    throw new Error(
+      "--registry-version does not use local artifacts and cannot be combined with --artifact-root.",
+    );
   }
 
   return parsed;
@@ -545,16 +618,21 @@ function requiredExactVersion(argv, index, option) {
 async function newestArtifactVersion(packageFolder) {
   const packageRoot = path.join(artifactRoot, packageFolder);
   const entries = await fs.readdir(packageRoot, { withFileTypes: true }).catch(() => []);
-  const versions = entries.filter(entry => entry.isDirectory()).map(entry => entry.name).sort(compareVersions);
+  const versions = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort(compareVersions);
   if (versions.length === 0) {
-    throw new Error(`No pkgist artifacts found below ${packageRoot}. Build the release family first.`);
+    throw new Error(
+      `No pkgist artifacts found below ${packageRoot}. Build the release family first.`,
+    );
   }
   return versions.at(-1);
 }
 
 function compareVersions(left, right) {
-  const a = left.split(/[.-]/).map(part => (/^\d+$/.test(part) ? Number(part) : part));
-  const b = right.split(/[.-]/).map(part => (/^\d+$/.test(part) ? Number(part) : part));
+  const a = left.split(/[.-]/).map((part) => (/^\d+$/.test(part) ? Number(part) : part));
+  const b = right.split(/[.-]/).map((part) => (/^\d+$/.test(part) ? Number(part) : part));
   for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
     if (a[index] === b[index]) continue;
     if (a[index] === undefined) return -1;
@@ -584,8 +662,9 @@ async function collectPackedClosure(version, webArtifact, installMode) {
     const name = pending.shift();
     if (artifacts.has(name)) continue;
     const folder = name.slice("@warlock.js/".length);
-    const root = name === "@warlock.js/web" ? webArtifact : path.join(artifactRoot, folder, version);
-    const packageJson = await readJson(path.join(root, "package.json")).catch(error => {
+    const root =
+      name === "@warlock.js/web" ? webArtifact : path.join(artifactRoot, folder, version);
+    const packageJson = await readJson(path.join(root, "package.json")).catch((error) => {
       throw new Error(
         `Missing same-version packed-install prerequisite ${name}@${version} at ${root}. ` +
           `Run pkgist for the complete family before this gate. ${formatError(error)}`,
@@ -620,7 +699,8 @@ async function assertArtifact(root, expectedName, expectedVersion) {
 async function breakReactOptimization(webArtifact) {
   const connectorFile = path.join(webArtifact, "esm", "server", "web-connector.mjs");
   const original = await fs.readFile(connectorFile, "utf8");
-  const seam = /include:\s*\[\s*["']react["']\s*,\s*["']react-dom["']\s*,\s*["']react-dom\/client["']\s*,\s*["']react\/jsx-runtime["']\s*\]/;
+  const seam =
+    /include:\s*\[\s*["']react["']\s*,\s*["']react-dom["']\s*,\s*["']react-dom\/client["']\s*,\s*["']react\/jsx-runtime["']\s*\]/;
   const matches = original.match(new RegExp(seam.source, "g")) ?? [];
   if (matches.length !== 1) {
     throw new Error(
@@ -631,7 +711,11 @@ async function breakReactOptimization(webArtifact) {
   const replacement = "include: []";
   const changed = original.replace(seam, replacement);
   await fs.writeFile(connectorFile, changed, "utf8");
-  const evidence = await sourceEvidence(connectorFile, replacement, "React optimizer include deliberately emptied");
+  const evidence = await sourceEvidence(
+    connectorFile,
+    replacement,
+    "React optimizer include deliberately emptied",
+  );
   return { ...evidence, text: replacement };
 }
 
@@ -644,9 +728,11 @@ async function npmPack(artifact, destination) {
     label: `npm pack ${artifact}`,
   });
   const after = await fs.readdir(destination);
-  const created = after.filter(file => file.endsWith(".tgz") && !before.has(file));
+  const created = after.filter((file) => file.endsWith(".tgz") && !before.has(file));
   if (created.length !== 1) {
-    throw new Error(`npm pack ${artifact} produced ${created.length} new tarballs in ${destination}.`);
+    throw new Error(
+      `npm pack ${artifact} produced ${created.length} new tarballs in ${destination}.`,
+    );
   }
   return path.join(destination, created[0]);
 }
@@ -772,10 +858,26 @@ export default function AboutPage() {
   }
 
   return [
-    await sourceEvidence(path.join(appRoot, "src/app/main/web/counter.tsx"), "useState(0)", "useState counter"),
-    await sourceEvidence(path.join(appRoot, "src/app/main/web/counter.tsx"), "onClick=", "real click handler"),
-    await sourceEvidence(path.join(appRoot, "src/app/main/web/home.page.tsx"), "HMR_MARKER_A", "JSX HMR edit target"),
-    await sourceEvidence(path.join(appRoot, "src/app/main/web/home.page.tsx"), '<Link href="/about">', "@warlock.js/web Link"),
+    await sourceEvidence(
+      path.join(appRoot, "src/app/main/web/counter.tsx"),
+      "useState(0)",
+      "useState counter",
+    ),
+    await sourceEvidence(
+      path.join(appRoot, "src/app/main/web/counter.tsx"),
+      "onClick=",
+      "real click handler",
+    ),
+    await sourceEvidence(
+      path.join(appRoot, "src/app/main/web/home.page.tsx"),
+      "HMR_MARKER_A",
+      "JSX HMR edit target",
+    ),
+    await sourceEvidence(
+      path.join(appRoot, "src/app/main/web/home.page.tsx"),
+      '<Link href="/about">',
+      "@warlock.js/web Link",
+    ),
   ];
 }
 
@@ -793,11 +895,18 @@ async function writeFixtureServerAddress(appRoot, baseUrl) {
   );
 }
 
-async function verifyPublishedInstall({ packedArtifacts, registryPeerVersion, registryVersion, appRoot }) {
+async function verifyPublishedInstall({
+  packedArtifacts,
+  registryPeerVersion,
+  registryVersion,
+  appRoot,
+}) {
   const lock = await readJson(path.join(appRoot, "package-lock.json"));
   const evidence = [];
   for (const artifact of packedArtifacts) {
-    evidence.push(await verifyInstalledPackage({ ...artifact, source: "packed-tarball" }, appRoot, lock));
+    evidence.push(
+      await verifyInstalledPackage({ ...artifact, source: "packed-tarball" }, appRoot, lock),
+    );
   }
   const registryPackages = registryVersion
     ? ["@warlock.js/web", "@warlock.js/core", "@warlock.js/seal"]
@@ -825,7 +934,11 @@ async function stageRegistryRedControl(appRoot, tempRoot) {
   const relativeMutationFile = path.relative(copiedWeb, mutation.file);
   const appliedFile = path.join(installedWeb, relativeMutationFile);
   await fs.copyFile(mutation.file, appliedFile);
-  const applied = await sourceEvidence(appliedFile, mutation.text, "installed registry web red control");
+  const applied = await sourceEvidence(
+    appliedFile,
+    mutation.text,
+    "installed registry web red control",
+  );
   return { ...mutation, appliedFile: applied.file, appliedLine: applied.line };
 }
 
@@ -839,9 +952,12 @@ async function verifyInstalledPackage({ name, version, source }, appRoot, lock) 
         `found ${packageJson.name}@${packageJson.version}.`,
     );
   }
-  if (stat.isSymbolicLink()) throw new Error(`Published-install invariant failed: ${installPath} is a symlink.`);
+  if (stat.isSymbolicLink())
+    throw new Error(`Published-install invariant failed: ${installPath} is a symlink.`);
   if (!isInside(appRoot, await fs.realpath(installPath))) {
-    throw new Error(`Published-install invariant failed: ${installPath} resolves outside the temp app.`);
+    throw new Error(
+      `Published-install invariant failed: ${installPath} resolves outside the temp app.`,
+    );
   }
   const lockKey = `node_modules/${name}`;
   const resolution = lock.packages?.[lockKey]?.resolved;
@@ -874,16 +990,17 @@ async function driveChromium(baseUrl, { phase, hmrSource }) {
   const hmrClientRequests = [];
   const webSockets = [];
 
-  page.on("console", message => {
+  page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());
   });
-  page.on("pageerror", error => pageErrors.push(`${error.name}: ${error.message}`));
-  page.on("request", request => {
+  page.on("pageerror", (error) => pageErrors.push(`${error.name}: ${error.message}`));
+  page.on("request", (request) => {
     if (request.resourceType() === "document") documentRequests.push(request.url());
-    if (/react-dom(?:%2F|\/|_).*client/i.test(request.url())) reactDomClientUrls.push(request.url());
+    if (/react-dom(?:%2F|\/|_).*client/i.test(request.url()))
+      reactDomClientUrls.push(request.url());
     if (/\/@vite\/client(?:\?|$)/.test(request.url())) hmrClientRequests.push(request.url());
   });
-  page.on("websocket", socket => webSockets.push(socket.url()));
+  page.on("websocket", (socket) => webSockets.push(socket.url()));
 
   const results = {
     hydrated: false,
@@ -936,7 +1053,8 @@ async function driveChromium(baseUrl, { phase, hmrSource }) {
       const documentsBeforeHmr = documentRequests.length;
       const originalHome = await fs.readFile(hmrSource, "utf8");
       const editedHome = originalHome.replace("HMR_MARKER_A", "HMR_MARKER_B");
-      if (editedHome === originalHome) throw new Error(`HMR edit target missing from ${hmrSource}.`);
+      if (editedHome === originalHome)
+        throw new Error(`HMR edit target missing from ${hmrSource}.`);
       await fs.writeFile(hmrSource, editedHome, "utf8");
       try {
         await page.waitForFunction(
@@ -947,9 +1065,16 @@ async function driveChromium(baseUrl, { phase, hmrSource }) {
       } catch {
         // Preserve the measured DOM and browser errors; the assertion below owns failure.
       }
-      results.hmr.after = normalizeText(await page.locator("#hmr-marker").textContent().catch(() => null));
+      results.hmr.after = normalizeText(
+        await page
+          .locator("#hmr-marker")
+          .textContent()
+          .catch(() => null),
+      );
       results.hmr.documentRequests = documentRequests.length - documentsBeforeHmr;
-      results.hmr.realmSurvived = await page.evaluate(() => window.__WARLOCK_HMR_REALM__ === "alive").catch(() => false);
+      results.hmr.realmSurvived = await page
+        .evaluate(() => window.__WARLOCK_HMR_REALM__ === "alive")
+        .catch(() => false);
     }
 
     await page.evaluate(() => {
@@ -958,11 +1083,21 @@ async function driveChromium(baseUrl, { phase, hmrSource }) {
     const documentsBeforeLink = documentRequests.length;
     await page.locator('a[href="/about"]').click();
     await page.waitForURL(`${baseUrl}/about`, { timeout: 15_000 }).catch(() => undefined);
-    await page.locator("#about-marker").waitFor({ state: "visible", timeout: 15_000 }).catch(() => undefined);
+    await page
+      .locator("#about-marker")
+      .waitFor({ state: "visible", timeout: 15_000 })
+      .catch(() => undefined);
     results.link.url = page.url();
-    results.link.aboutText = normalizeText(await page.locator("#about-marker").textContent().catch(() => null));
+    results.link.aboutText = normalizeText(
+      await page
+        .locator("#about-marker")
+        .textContent()
+        .catch(() => null),
+    );
     results.link.documentRequests = documentRequests.length - documentsBeforeLink;
-    results.link.realmSurvived = await page.evaluate(() => window.__WARLOCK_LINK_REALM__ === "alive").catch(() => false);
+    results.link.realmSurvived = await page
+      .evaluate(() => window.__WARLOCK_LINK_REALM__ === "alive")
+      .catch(() => false);
   } finally {
     await context.close();
     await browser.close();
@@ -1002,7 +1137,9 @@ async function waitForServer(baseUrl, timeoutMs, marker = "HMR_MARKER_A", comman
     }
     await delay(250);
   }
-  throw new Error(`${command} did not become browser-ready at ${baseUrl}: ${formatError(lastError)}`);
+  throw new Error(
+    `${command} did not become browser-ready at ${baseUrl}: ${formatError(lastError)}`,
+  );
 }
 
 async function stopServer() {
@@ -1013,7 +1150,7 @@ async function stopServer() {
     return;
   }
 
-  const exited = new Promise(resolve => server.once("exit", resolve));
+  const exited = new Promise((resolve) => server.once("exit", resolve));
   if (process.platform === "win32") {
     try {
       await runCommand("taskkill.exe", ["/pid", String(server.pid), "/t", "/f"], {
@@ -1027,11 +1164,15 @@ async function stopServer() {
     }
   } else {
     server.kill("SIGTERM");
-    const stoppedGracefully = await Promise.race([exited.then(() => true), delay(5_000).then(() => false)]);
+    const stoppedGracefully = await Promise.race([
+      exited.then(() => true),
+      delay(5_000).then(() => false),
+    ]);
     if (!stoppedGracefully && server.exitCode === null) server.kill("SIGKILL");
   }
   await Promise.race([exited, delay(5_000)]);
-  if (processIsAlive(server.pid)) throw new Error(`Server process ${server.pid} did not terminate.`);
+  if (processIsAlive(server.pid))
+    throw new Error(`Server process ${server.pid} did not terminate.`);
   if (state.server === server) state.server = undefined;
 }
 
@@ -1064,19 +1205,22 @@ async function bindAndReleasePort(port) {
     const probe = net.createServer();
     probe.unref();
     probe.once("error", reject);
-    probe.listen(port, "127.0.0.1", () => probe.close(error => (error ? reject(error) : resolve())));
+    probe.listen(port, "127.0.0.1", () =>
+      probe.close((error) => (error ? reject(error) : resolve())),
+    );
   });
 }
 
 function captureServerOutput(stream) {
   let remainder = "";
   stream.setEncoding("utf8");
-  stream.on("data", chunk => {
+  stream.on("data", (chunk) => {
     remainder += chunk;
     const lines = remainder.split(/\r?\n/);
     remainder = lines.pop() ?? "";
     state.serverOutput.push(...lines);
-    if (state.serverOutput.length > 500) state.serverOutput.splice(0, state.serverOutput.length - 500);
+    if (state.serverOutput.length > 500)
+      state.serverOutput.splice(0, state.serverOutput.length - 500);
   });
 }
 
@@ -1088,7 +1232,7 @@ async function reserveEphemeralPort() {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address();
       const port = typeof address === "object" && address ? address.port : undefined;
-      server.close(error => (error ? reject(error) : resolve(port)));
+      server.close((error) => (error ? reject(error) : resolve(port)));
     });
   });
 }
@@ -1109,13 +1253,13 @@ async function runCommand(command, commandArgs, options) {
     }, options.timeoutMs);
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-    child.stdout.on("data", chunk => (stdout += chunk));
-    child.stderr.on("data", chunk => (stderr += chunk));
-    child.once("error", error => {
+    child.stdout.on("data", (chunk) => (stdout += chunk));
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.once("error", (error) => {
       clearTimeout(timer);
       reject(new Error(`${options.label} could not start: ${formatError(error)}`));
     });
-    child.once("exit", code => {
+    child.once("exit", (code) => {
       clearTimeout(timer);
       if (code === 0) resolve({ stdout, stderr });
       else {
@@ -1131,7 +1275,11 @@ async function runCommand(command, commandArgs, options) {
 
 async function runNpm(npmArgs, options) {
   if (process.platform === "win32") {
-    return runCommand(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", "npm.cmd", ...npmArgs], options);
+    return runCommand(
+      process.env.ComSpec ?? "cmd.exe",
+      ["/d", "/s", "/c", "npm.cmd", ...npmArgs],
+      options,
+    );
   }
   return runCommand("npm", npmArgs, options);
 }
@@ -1153,19 +1301,27 @@ function explicitProductionEnv(port) {
 }
 
 function assertOutsideWorkspace(candidate) {
-  if (isInside(workspaceRoot, candidate) || path.resolve(candidate) === path.resolve(workspaceRoot)) {
+  if (
+    isInside(workspaceRoot, candidate) ||
+    path.resolve(candidate) === path.resolve(workspaceRoot)
+  ) {
     throw new Error(`Temp root ${candidate} is inside monorepo ${workspaceRoot}.`);
   }
 }
 
 function isInside(parent, candidate) {
   const relative = path.relative(path.resolve(parent), path.resolve(candidate));
-  return relative !== "" && !relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative);
+  return (
+    relative !== "" &&
+    !relative.startsWith(`..${path.sep}`) &&
+    relative !== ".." &&
+    !path.isAbsolute(relative)
+  );
 }
 
 async function sourceEvidence(file, needle, label) {
   const lines = (await fs.readFile(file, "utf8")).split(/\r?\n/);
-  const index = lines.findIndex(line => line.includes(needle));
+  const index = lines.findIndex((line) => line.includes(needle));
   if (index < 0) throw new Error(`Evidence needle ${JSON.stringify(needle)} missing from ${file}.`);
   return { file, line: index + 1, label };
 }
@@ -1183,7 +1339,9 @@ async function readJson(file) {
 }
 
 async function sha256(file) {
-  return createHash("sha256").update(await fs.readFile(file)).digest("hex");
+  return createHash("sha256")
+    .update(await fs.readFile(file))
+    .digest("hex");
 }
 
 function assertion(name, pass, detail) {
@@ -1208,5 +1366,5 @@ function formatError(error) {
 }
 
 function delay(milliseconds) {
-  return new Promise(resolve => setTimeout(resolve, milliseconds));
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

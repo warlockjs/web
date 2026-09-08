@@ -74,7 +74,11 @@ describe("pageRoutesNeedReplacement", () => {
 
     await expect(
       pageRoutesNeedReplacement(
-        { added: [path.join(appSrcRoot, "web", "new.page.tsx")], removed: [], inspectionNeeded: [pageFile] },
+        {
+          added: [path.join(appSrcRoot, "web", "new.page.tsx")],
+          removed: [],
+          inspectionNeeded: [pageFile],
+        },
         { vite: harness.vite, appSrcRoot, installedPages: [installed()] },
       ),
     ).resolves.toBe(true);

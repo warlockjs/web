@@ -111,10 +111,7 @@ describe("selectPageLayout — the rule counts RENDERING layouts, not files", ()
       ]),
     ).toEqual({
       type: "rejected",
-      layouts: [
-        "src/app/users/web/layout.tsx",
-        "src/app/users/web/account/settings/layout.tsx",
-      ],
+      layouts: ["src/app/users/web/layout.tsx", "src/app/users/web/account/settings/layout.tsx"],
     });
   });
 

@@ -155,7 +155,7 @@ function createSignal<Payload>(eventName: string): Signal<Payload> {
   const registrations = new Set<Registration<Payload>>();
 
   return {
-    subscribe: listener => {
+    subscribe: (listener) => {
       const registration: Registration<Payload> = { listener };
 
       registrations.add(registration);
@@ -167,7 +167,7 @@ function createSignal<Payload>(eventName: string): Signal<Payload> {
         registrations.delete(registration);
       };
     },
-    emit: payload => {
+    emit: (payload) => {
       /*
         A SNAPSHOT, not the live set. Listeners subscribe and unsubscribe from
         inside other listeners — a progress bar that hides itself, a one-shot

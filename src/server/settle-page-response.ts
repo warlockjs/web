@@ -146,7 +146,13 @@ export function createBufferedResponse(buffer: LevelBuffer): BufferedResponse {
     },
     notFound(body) {
       buffer.statusCode = 404;
-      return { [LOADER_SHORT_CIRCUIT]: true, kind: "notFound", statusCode: 404, url: undefined, body };
+      return {
+        [LOADER_SHORT_CIRCUIT]: true,
+        kind: "notFound",
+        statusCode: 404,
+        url: undefined,
+        body,
+      };
     },
   };
 
@@ -201,8 +207,8 @@ export function commitBuffers(
     if (buffer.statusCode !== undefined) statusCode = buffer.statusCode;
   }
 
-  const headers = headerOrder.map(key => headerMap.get(key)!);
-  const cookies = cookieOrder.map(name => cookieMap.get(name)!);
+  const headers = headerOrder.map((key) => headerMap.get(key)!);
+  const cookies = cookieOrder.map((name) => cookieMap.get(name)!);
 
   for (const header of headers) response.header(header.key, header.value);
   if (statusCode !== undefined) response.setStatusCode(statusCode);

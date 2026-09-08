@@ -56,9 +56,7 @@ describe("withFragmentFrom", () => {
   });
 
   it("preserves an EMPTY fragment, which the author still wrote", () => {
-    expect(withFragmentFrom("https://app.test/docs", "/docs#")).toBe(
-      "https://app.test/docs#",
-    );
+    expect(withFragmentFrom("https://app.test/docs", "/docs#")).toBe("https://app.test/docs#");
   });
 
   it("lets a redirect's own fragment win", () => {

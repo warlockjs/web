@@ -110,18 +110,14 @@ describe("classifyPageFileChanges", () => {
   });
 
   it("reports work when any category is non-empty", () => {
-    expect(
-      hasPageFileChanges({ added: [], removed: [], inspectionNeeded: [homePage] }),
-    ).toBe(true);
+    expect(hasPageFileChanges({ added: [], removed: [], inspectionNeeded: [homePage] })).toBe(true);
   });
 });
 
 describe("isPageFilePath", () => {
   it("only accepts .page.tsx files below src/web", () => {
     expect(isPageFilePath(homePage, appSrcRoot)).toBe(true);
-    expect(isPageFilePath(path.join(webRoot, "nested", "about.page.tsx"), appSrcRoot)).toBe(
-      true,
-    );
+    expect(isPageFilePath(path.join(webRoot, "nested", "about.page.tsx"), appSrcRoot)).toBe(true);
     expect(
       isPageFilePath(path.join(appSrcRoot, "app", "main", "web", "home.page.tsx"), appSrcRoot),
     ).toBe(false);

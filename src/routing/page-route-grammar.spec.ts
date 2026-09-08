@@ -76,7 +76,7 @@ describe("classifyPageRoutePath — allowed shapes", () => {
 describe("classifyPageRoutePath — rejected shapes", () => {
   it("rejects a regex param `/users/:id(\\d+)`, naming the segment and the plain-param fix", () => {
     const reason = reasonFor("/users/:id(\\d+)");
-    expect(reason).toContain(':id(\\d+)');
+    expect(reason).toContain(":id(\\d+)");
     expect(reason).toMatch(/regex/i);
     expect(reason).toContain(":id");
   });

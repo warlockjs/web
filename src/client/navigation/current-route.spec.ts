@@ -279,7 +279,13 @@ function matchesSelector(element: FakeElement, selector: string): boolean {
   return element.attributes[attribute] === value;
 }
 
-function fakeHead(initial: readonly { tagName: string; attributes?: Record<string, string>; textContent?: string }[]) {
+function fakeHead(
+  initial: readonly {
+    tagName: string;
+    attributes?: Record<string, string>;
+    textContent?: string;
+  }[],
+) {
   const elements: FakeElement[] = [];
 
   const make = (
@@ -316,7 +322,7 @@ function fakeHead(initial: readonly { tagName: string; attributes?: Record<strin
     },
     createElement: (tagName: string) => make(tagName),
     querySelector: (selector: string) =>
-      elements.find(element => matchesSelector(element, selector)) ?? null,
+      elements.find((element) => matchesSelector(element, selector)) ?? null,
   } as unknown as Document;
 
   return { documentNode, elements };
@@ -324,7 +330,7 @@ function fakeHead(initial: readonly { tagName: string; attributes?: Record<strin
 
 /** What the head says now, in the terms the assertions are written in. */
 function describeHead(elements: readonly FakeElement[]): string[] {
-  return elements.map(element => {
+  return elements.map((element) => {
     const attributes = Object.entries(element.attributes)
       .map(([name, value]) => `${name}=${value}`)
       .join(" ");

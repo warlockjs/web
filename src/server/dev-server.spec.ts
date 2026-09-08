@@ -97,7 +97,7 @@ async function bootHarness(
       info: () => undefined,
       warn: () => undefined,
       warnOnce: () => undefined,
-      error: message => loggedToTerminal.push(message),
+      error: (message) => loggedToTerminal.push(message),
       clearScreen: () => undefined,
       hasErrorLogged: () => false,
       hasWarned: false,
@@ -119,7 +119,7 @@ async function bootHarness(
     });
   });
 
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 
   const { port } = server.address() as AddressInfo;
 
@@ -127,7 +127,7 @@ async function bootHarness(
     url: `http://127.0.0.1:${port}`,
     loggedToTerminal,
     close: async () => {
-      await new Promise<void>(resolve => server.close(() => resolve()));
+      await new Promise<void>((resolve) => server.close(() => resolve()));
       await vite.close();
       await fs.rm(root, { recursive: true, force: true });
     },
@@ -224,9 +224,9 @@ describe("dev error transport", () => {
   }, 30_000);
 
   it("refuses to be constructed at all on a production-hosted process", () => {
-    expect(() => devErrorTransportPlugin({ isProductionRuntime: () => true, buildErrorMessage })).toThrow(
-      DevErrorTransportInProductionError,
-    );
+    expect(() =>
+      devErrorTransportPlugin({ isProductionRuntime: () => true, buildErrorMessage }),
+    ).toThrow(DevErrorTransportInProductionError);
   });
 });
 
@@ -238,7 +238,7 @@ describe("formatDevTransformError", () => {
   });
 
   it("walks the cause chain vite does not walk", () => {
-    const inner = new Error("Unexpected token, expected \";\"");
+    const inner = new Error('Unexpected token, expected ";"');
     inner.name = "SyntaxError";
 
     const outer = new Error("Gate B refused a module", { cause: inner });

@@ -257,8 +257,14 @@ function collectIdentifierNames(node: unknown, names: Set<string>): void {
     names.add((record as any).name);
   }
   for (const key of Object.keys(record)) {
-    if (key === "type" || key === "start" || key === "end" || key === "loc" || key === "range") continue;
-    if (key === "leadingComments" || key === "trailingComments" || key === "innerComments" || key === "extra") {
+    if (key === "type" || key === "start" || key === "end" || key === "loc" || key === "range")
+      continue;
+    if (
+      key === "leadingComments" ||
+      key === "trailingComments" ||
+      key === "innerComments" ||
+      key === "extra"
+    ) {
       continue;
     }
     collectIdentifierNames(record[key], names);
@@ -308,7 +314,7 @@ function serverReachableNames(body: any[]): Set<string> {
     if (isServerExport) collectIdentifierNames(stmt, reached);
   }
 
-  for (let changed = true; changed; ) {
+  for (let changed = true; changed;) {
     changed = false;
     for (const { stmt, names } of declarations) {
       let isReached = false;

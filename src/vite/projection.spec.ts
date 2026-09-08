@@ -1,10 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  webHomePageStub,
-  webHomeRegisterStub,
-} from "@warlock.js/core/src/generations/stubs";
+import { webHomePageStub, webHomeRegisterStub } from "@warlock.js/core/src/generations/stubs";
 import type { Plugin } from "vite";
 import { describe, expect, it } from "vitest";
 import { projection } from "./projection";
@@ -187,7 +184,7 @@ describe("projection — strip the 6 server exports (real transform hook, real o
       When projection learns the sixth export, this test flips to `not.toMatch`
       and the assertion below it moves up into the test above.
     */
-    return transformedCode("root.tsx").then(code => {
+    return transformedCode("root.tsx").then((code) => {
       expect(code).toMatch(/export const revalidate/);
     });
   });
@@ -221,7 +218,7 @@ describe("projection — strip the 6 server exports (real transform hook, real o
  * through `ProjectionAmbiguityError`, not a second resolution path.
  */
 describe("projection — refuses a star re-export rather than assuming it is safe", () => {
-  it("refuses `export * from \"./source\"`, naming the leak risk as the cause", async () => {
+  it('refuses `export * from "./source"`, naming the leak risk as the cause', async () => {
     const message = await refusalMessage(
       [
         `export * from "./shared-loaders";`,
@@ -238,7 +235,7 @@ describe("projection — refuses a star re-export rather than assuming it is saf
     expect(message).toContain("Fix:");
   });
 
-  it("refuses `export * as ns from \"./source\"` the same way", async () => {
+  it('refuses `export * as ns from "./source"` the same way', async () => {
     const message = await refusalMessage(
       [
         `export * as sharedLoaders from "./shared-loaders";`,
@@ -287,52 +284,58 @@ describe("projection — register lifecycle hook", () => {
     ["page", "account.page.tsx"],
     ["layout", "layout.tsx"],
     ["root", "root.tsx"],
-  ])("keeps register and its referenced import/declaration in a %s module", async (_kind, baseName) => {
-    const code = await transformSource(
-      [
-        `import { install } from "./universal-static";`,
-        ``,
-        `const registrationName = "catalog";`,
-        ``,
-        `export const loader = async () => ({ hidden: true });`,
-        ``,
-        `export function register() {`,
-        `  install(registrationName);`,
-        `}`,
-        ``,
-        `export default function Entry() {`,
-        `  return <main />;`,
-        `}`,
-      ].join("\n"),
-      baseName,
-    );
+  ])(
+    "keeps register and its referenced import/declaration in a %s module",
+    async (_kind, baseName) => {
+      const code = await transformSource(
+        [
+          `import { install } from "./universal-static";`,
+          ``,
+          `const registrationName = "catalog";`,
+          ``,
+          `export const loader = async () => ({ hidden: true });`,
+          ``,
+          `export function register() {`,
+          `  install(registrationName);`,
+          `}`,
+          ``,
+          `export default function Entry() {`,
+          `  return <main />;`,
+          `}`,
+        ].join("\n"),
+        baseName,
+      );
 
-    expect(code).toContain('from "./universal-static"');
-    expect(code).toContain('const registrationName = "catalog"');
-    expect(code).toContain("export function register()");
-    expect(code).toContain("install(registrationName)");
-    expect(code).not.toMatch(/export const loader/);
-  });
+      expect(code).toContain('from "./universal-static"');
+      expect(code).toContain('const registrationName = "catalog"');
+      expect(code).toContain("export function register()");
+      expect(code).toContain("install(registrationName)");
+      expect(code).not.toMatch(/export const loader/);
+    },
+  );
 
   it.each([
     ["page", "account.page.tsx"],
     ["layout", "layout.tsx"],
     ["root", "root.tsx"],
-  ])("self-accepts a %s replacement through the once-per-namespace registration guard", async (_kind, baseName) => {
-    const code = await transformSource(
-      `export function register() {}\nexport default function Entry() { return <main />; }`,
-      baseName,
-    );
+  ])(
+    "self-accepts a %s replacement through the once-per-namespace registration guard",
+    async (_kind, baseName) => {
+      const code = await transformSource(
+        `export function register() {}\nexport default function Entry() { return <main />; }`,
+        baseName,
+      );
 
-    expect(code).toContain(
-      'import { registerModules as __warlockRegisterModules } from "@warlock.js/web/client/runtime";',
-    );
-    expect(code).toContain(
-      "if (import.meta.hot) import.meta.hot.accept((replacement) => { if (replacement) __warlockRegisterModules([replacement]); });",
-    );
-    expect(code).not.toContain("replacement?.register?.()");
-    expect(code).not.toContain("import.meta.hot.accept(register)");
-  });
+      expect(code).toContain(
+        'import { registerModules as __warlockRegisterModules } from "@warlock.js/web/client/runtime";',
+      );
+      expect(code).toContain(
+        "if (import.meta.hot) import.meta.hot.accept((replacement) => { if (replacement) __warlockRegisterModules([replacement]); });",
+      );
+      expect(code).not.toContain("replacement?.register?.()");
+      expect(code).not.toContain("import.meta.hot.accept(register)");
+    },
+  );
 
   it("keeps projected HMR out of SSR and non-projectable modules, so Vite performs its normal full reload", async () => {
     const ssr = await runTransform("case1-shared-import.page.tsx", { ssr: true });

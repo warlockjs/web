@@ -57,7 +57,9 @@ describe("renderPageRequest — url in, document out", () => {
     expect(html).toContain("<h1>Product 42</h1>");
     // Located by id, as the browser's `readHydrationPayload` locates it: the
     // opening tag also carries the per-request CSP nonce `Scripts` emits.
-    expect(html).toMatch(new RegExp(`<script id="${PAYLOAD_SCRIPT_ID}" type="application/json" nonce="[^"]+">`));
+    expect(html).toMatch(
+      new RegExp(`<script id="${PAYLOAD_SCRIPT_ID}" type="application/json" nonce="[^"]+">`),
+    );
     // The url's own segments fed the pipeline: :id from the path, user from
     // the query string — nothing was passed as options.
     expect(data.product.id).toBe("42");

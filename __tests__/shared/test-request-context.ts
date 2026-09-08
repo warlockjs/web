@@ -43,7 +43,7 @@ export function makeParsingResponse(): TestStore["response"] {
     if (typeof value.toJSON === "function") return await value.toJSON();
 
     if (Array.isArray(value)) {
-      return Promise.all(value.map(item => parse(item)));
+      return Promise.all(value.map((item) => parse(item)));
     }
 
     for (const key in value) {

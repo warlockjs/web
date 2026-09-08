@@ -54,7 +54,7 @@ type ManagedTag = {
 function metaTag(attribute: "name" | "property", key: string): ManagedTag {
   return {
     selector: `meta[${attribute}="${key}"]`,
-    create: documentNode => {
+    create: (documentNode) => {
       const element = documentNode.createElement("meta");
 
       element.setAttribute(attribute, key);
@@ -67,7 +67,7 @@ function metaTag(attribute: "name" | "property", key: string): ManagedTag {
 
 const TITLE_TAG: ManagedTag = {
   selector: "title",
-  create: documentNode => documentNode.createElement("title"),
+  create: (documentNode) => documentNode.createElement("title"),
   write: (element, value) => {
     element.textContent = value;
   },
@@ -75,7 +75,7 @@ const TITLE_TAG: ManagedTag = {
 
 const CANONICAL_TAG: ManagedTag = {
   selector: 'link[rel="canonical"]',
-  create: documentNode => {
+  create: (documentNode) => {
     const element = documentNode.createElement("link");
 
     element.setAttribute("rel", "canonical");
@@ -280,11 +280,7 @@ export function NavigationRoot({
      *
      * The fragment is still PRESERVED in the URL in both cases — see below.
      */
-    const apply = async (
-      url: string,
-      replace: boolean,
-      honourFragment: boolean,
-    ): Promise<void> => {
+    const apply = async (url: string, replace: boolean, honourFragment: boolean): Promise<void> => {
       const ticket = ++token;
       /*
         A prefetched response is CONSUMED, never merely read — `take` removes it,
@@ -386,7 +382,7 @@ export function NavigationRoot({
       createRefresher({
         readCurrent: () => currentRef.current,
         writeCurrent: setCurrent,
-        buildTree: payload => buildTree(pages, payload),
+        buildTree: (payload) => buildTree(pages, payload),
         claimTicket,
       }),
     );

@@ -44,11 +44,9 @@ describe("registerModules", () => {
   });
 
   it("retries a hook that previously threw", () => {
-    const register = vi
-      .fn<() => void>()
-      .mockImplementationOnce(() => {
-        throw new Error("first attempt failed");
-      });
+    const register = vi.fn<() => void>().mockImplementationOnce(() => {
+      throw new Error("first attempt failed");
+    });
     const module = moduleWith(register);
 
     expect(() => registerModules([module])).toThrow("first attempt failed");
@@ -70,21 +68,15 @@ describe("registerModules", () => {
     const register = vi.fn(async () => undefined);
     const module = moduleWith(register);
 
-    expect(() => registerModules([module])).toThrow(
-      "Warlock register() hooks must be synchronous",
-    );
-    expect(() => registerModules([module])).toThrow(
-      "Warlock register() hooks must be synchronous",
-    );
+    expect(() => registerModules([module])).toThrow("Warlock register() hooks must be synchronous");
+    expect(() => registerModules([module])).toThrow("Warlock register() hooks must be synchronous");
     expect(register).toHaveBeenCalledTimes(2);
   });
 
   it("rejects thenable-returning hooks", () => {
     const module = moduleWith(() => ({ then() {} }));
 
-    expect(() => registerModules([module])).toThrow(
-      "Warlock register() hooks must be synchronous",
-    );
+    expect(() => registerModules([module])).toThrow("Warlock register() hooks must be synchronous");
   });
 
   it("treats a missing register hook as a no-op", () => {

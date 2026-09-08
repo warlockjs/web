@@ -140,10 +140,7 @@ describe("readHydrationPayload", () => {
     ["a non-object error", { error: "boom", status: 500 }],
     ["a missing error name", { error: { message: "boom" }, status: 500 }],
     ["a missing error message", { error: { name: "Error" }, status: 500 }],
-    [
-      "a non-string stack",
-      { error: { name: "Error", message: "boom", stack: [] }, status: 500 },
-    ],
+    ["a non-string stack", { error: { name: "Error", message: "boom", stack: [] }, status: 500 }],
     [
       "an extra serialized error field",
       { error: { name: "Error", message: "boom", cause: "raw" }, status: 500 },

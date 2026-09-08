@@ -72,14 +72,8 @@ export type InstallProductionPageRoutesOptions = {
 export async function installProductionPageRoutes(
   options: InstallProductionPageRoutesOptions,
 ): Promise<InstalledManifestPageRoute[]> {
-  const {
-    router,
-    manifest,
-    pageContext,
-    sharedStore,
-    resolveHydrationClientModuleUrl,
-    clientDir,
-  } = options;
+  const { router, manifest, pageContext, sharedStore, resolveHydrationClientModuleUrl, clientDir } =
+    options;
 
   if (manifest.pages.length === 0) return [];
 

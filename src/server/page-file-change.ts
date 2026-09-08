@@ -132,8 +132,6 @@ export function classifyPageFileChanges(
 
 export function hasPageFileChanges(changes: PageFileChanges): boolean {
   return (
-    changes.added.length > 0 ||
-    changes.removed.length > 0 ||
-    changes.inspectionNeeded.length > 0
+    changes.added.length > 0 || changes.removed.length > 0 || changes.inspectionNeeded.length > 0
   );
 }

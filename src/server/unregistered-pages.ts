@@ -35,9 +35,9 @@ function findUnregisteredPages(options: UnregisteredPagesOptions): DiscoveredGlo
     .filter(isDiscoveredRoutablePage)
     .filter(
       (page) =>
-      path.resolve(page.webRoot) === webRoot &&
-      !isNotFoundPageFile(page.pageFile) &&
-      !registered.has(fileKey(page.pageFile)),
+        path.resolve(page.webRoot) === webRoot &&
+        !isNotFoundPageFile(page.pageFile) &&
+        !registered.has(fileKey(page.pageFile)),
     );
 }
 

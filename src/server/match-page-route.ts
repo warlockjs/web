@@ -17,13 +17,10 @@ import type { PageRouteEntry } from "./execute-page-request.types";
  */
 
 function splitSegments(path: string): string[] {
-  return path.split("/").filter(segment => segment.length > 0);
+  return path.split("/").filter((segment) => segment.length > 0);
 }
 
-export function matchPath(
-  pattern: string,
-  pathname: string,
-): Record<string, string> | undefined {
+export function matchPath(pattern: string, pathname: string): Record<string, string> | undefined {
   const patternSegments = splitSegments(pattern);
   const pathSegments = splitSegments(pathname);
 

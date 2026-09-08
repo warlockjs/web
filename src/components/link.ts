@@ -147,7 +147,7 @@ export class AmbiguousLinkDestinationError extends Error {
   public constructor(public readonly providedProps: readonly string[]) {
     super(
       `Warlock <Link> was given ${providedProps
-        .map(name => JSON.stringify(name))
+        .map((name) => JSON.stringify(name))
         .join(" and ")}, but a link goes to exactly one place. There is no ` +
         "precedence between them on purpose: one of the two would silently win, and the " +
         "call site would go on naming a destination that never renders. Delete the one " +
@@ -161,7 +161,7 @@ export class MissingLinkDestinationError extends Error {
   public constructor() {
     super(
       `Warlock <Link> was given no destination. Pass exactly one of ${DESTINATION_PROPS.map(
-        name => JSON.stringify(name),
+        (name) => JSON.stringify(name),
       ).join(", ")}. It is not defaulted to the current page: an anchor with an empty ` +
         "`href` renders as a working link and reloads the page when clicked, which is a " +
         "harder fault to see than this message.",
@@ -177,7 +177,7 @@ export class RouteArgumentsOnLiteralUrlError extends Error {
   ) {
     super(
       `Warlock <Link> was given ${providedProps
-        .map(name => JSON.stringify(name))
+        .map((name) => JSON.stringify(name))
         .join(" and ")} alongside the literal URL "${url}". Those apply to a route NAME, ` +
         "which is resolved through the route table; a literal URL is passed through exactly " +
         "as written, so they would have been dropped and the link would have pointed at an " +
@@ -278,7 +278,7 @@ function assertNotARouteName(url: string): void {
 const ROUTE_ARGUMENT_PROPS = ["params", "query"] as const;
 
 function resolveDestination(props: LinkDestinationProps): Destination {
-  const provided = DESTINATION_PROPS.filter(name => props[name] !== undefined);
+  const provided = DESTINATION_PROPS.filter((name) => props[name] !== undefined);
 
   if (provided.length > 1) throw new AmbiguousLinkDestinationError(provided);
 
@@ -297,7 +297,7 @@ function resolveDestination(props: LinkDestinationProps): Destination {
     throw `UnknownRouteNameError` on every link out of the application.
   */
   if (isLiteralUrl(destination)) {
-    const routeArguments = ROUTE_ARGUMENT_PROPS.filter(name => props[name] !== undefined);
+    const routeArguments = ROUTE_ARGUMENT_PROPS.filter((name) => props[name] !== undefined);
 
     if (routeArguments.length > 0) {
       throw new RouteArgumentsOnLiteralUrlError(destination, routeArguments);
@@ -381,8 +381,7 @@ export function Link({
   // Only a DEFAULT: a caller that wrote its own `rel` (`"me noopener"`,
   // `"external"`) meant it, and overwriting it would delete a value the page
   // depends on to say something this component knows nothing about.
-  const rel =
-    elementProps.rel ?? (target === "_blank" ? "noopener noreferrer" : undefined);
+  const rel = elementProps.rel ?? (target === "_blank" ? "noopener noreferrer" : undefined);
 
   const handleClick = (event: MouseEvent<HTMLAnchorElement>): void => {
     // The caller's handler runs FIRST and unconditionally — it may be doing
@@ -421,8 +420,7 @@ export function Link({
     another browsing context are all clicks that leave this page, and none of
     them has page data to fetch.
   */
-  const prefetchesOnInteraction =
-    prefetch === true && isInApp && !opensAnotherContext(target);
+  const prefetchesOnInteraction = prefetch === true && isInApp && !opensAnotherContext(target);
 
   /*
     Attached ONLY when prefetching — a link without the prop keeps whatever

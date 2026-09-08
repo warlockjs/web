@@ -49,11 +49,7 @@ export const DEV_TRANSFORM_ERROR_STATUS = 500;
  * needs no value import of vite — vite is an optional, dev-only peer and a
  * production install does not carry it.
  */
-export type BuildErrorMessage = (
-  error: Error,
-  args?: string[],
-  includeStack?: boolean,
-) => string;
+export type BuildErrorMessage = (error: Error, args?: string[], includeStack?: boolean) => string;
 
 /**
  * The dev error transport was constructed while the process is hosting a

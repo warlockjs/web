@@ -42,7 +42,6 @@ const SIBLING_PKG_DIR = path.join(
 );
 const SIBLING_PKG_ENTRY = path.join(SIBLING_PKG_DIR, "web", "src", "server", "runtime.ts");
 
-
 /**
  * The vendor + governed-scope packages the cases below import.
  *
@@ -141,7 +140,11 @@ async function buildPage(fileName: string, gateOptions: GateAOptions = {}) {
  * reachable from no page directory. Parameterising the entry is what lets a
  * root file be built at all.
  */
-async function buildEntry(entry: string, gateOptions: GateAOptions = {}, harness: BuildHarness = {}) {
+async function buildEntry(
+  entry: string,
+  gateOptions: GateAOptions = {},
+  harness: BuildHarness = {},
+) {
   return build({
     root: FIXTURE_ROOT,
     logLevel: "silent",
@@ -304,9 +307,7 @@ describe("gateAResolve — Gate A resolveId refusal (real Vite builds)", () => {
       expect.unreachable("expected the build to fail");
     } catch (error) {
       const message = (error as Error).message;
-      expect(message).toContain(
-        "Import chain: case5-fs-chain.page.tsx → fs-helper.ts → node:fs",
-      );
+      expect(message).toContain("Import chain: case5-fs-chain.page.tsx → fs-helper.ts → node:fs");
       expect(message).toContain("Cause:");
       expect(message).toContain("Node.js builtin module");
       expect(message).toContain("Fix:");
@@ -334,7 +335,7 @@ describe("gateAResolve — Gate A resolveId refusal (real Vite builds)", () => {
     }
   });
 
-  it("case 8: a module importing \"server-only\", reached from a client entry, is refused with the chain", async () => {
+  it('case 8: a module importing "server-only", reached from a client entry, is refused with the chain', async () => {
     try {
       await buildPage("case8-server-only.page.tsx");
       expect.unreachable("expected the build to fail");
@@ -375,9 +376,7 @@ describe("gateAResolve — Gate A resolveId refusal (real Vite builds)", () => {
       expect.unreachable("expected the build to fail");
     } catch (error) {
       const message = (error as Error).message;
-      expect(message).toContain(
-        "Import chain: case10-server-folder.page.tsx → ./server/repo",
-      );
+      expect(message).toContain("Import chain: case10-server-folder.page.tsx → ./server/repo");
       expect(message).toContain("Cause:");
       expect(message).toContain("server-only file");
       expect(message).toContain("server/ folder");
@@ -448,9 +447,7 @@ describe("gateAResolve — Gate A resolveId refusal (real Vite builds)", () => {
       evidence that turned "load-bearing site" into "dead code" on the rename
       fence.
     */
-    const result = await buildEntry(
-      path.join(FIXTURE_ROOT, "src", "web", "ordinary-web-file.tsx"),
-    );
+    const result = await buildEntry(path.join(FIXTURE_ROOT, "src", "web", "ordinary-web-file.tsx"));
     const code = firstChunkCode(result);
     expect(code).toContain("ordinary");
   });
@@ -528,7 +525,9 @@ describe("gateAResolve — rule 1 is generic and scope-free", () => {
         "Import chain: case17-vendor-transitive.page.tsx → vendor-node-lib/index.js → node:fs",
       );
       expect(message).toContain('"node:fs" is a Node.js builtin module');
-      expect(message).toContain(`File: ${normalizeSlashes(path.join(FIXTURE_ROOT, "node_modules", "vendor-node-lib", "index.js"))}`);
+      expect(message).toContain(
+        `File: ${normalizeSlashes(path.join(FIXTURE_ROOT, "node_modules", "vendor-node-lib", "index.js"))}`,
+      );
     }
   });
 
@@ -607,7 +606,10 @@ describe("gateAResolve — rule 1 is generic and scope-free", () => {
     mkdirSync(GENERATED_DIR, { recursive: true });
     const fileName = `${specifier.replace(/[^a-z0-9]+/gi, "-")}.page.tsx`;
     const file = path.join(GENERATED_DIR, fileName);
-    writeFileSync(file, `import "${specifier}";\n\nexport default function Page() {\n  return "generated";\n}\n`);
+    writeFileSync(
+      file,
+      `import "${specifier}";\n\nexport default function Page() {\n  return "generated";\n}\n`,
+    );
     return buildEntry(file);
   }
 
@@ -674,7 +676,9 @@ describe("gateAResolve — rule 1 is generic and scope-free", () => {
   });
 
   it("case 24 (NEGATIVE CONTROL): externalizing an ORDINARY package is untouched by that guard", async () => {
-    const result = await buildWithExternal("case19-vendor-browser-safe.page.tsx", ["vendor-browser-lib"]);
+    const result = await buildWithExternal("case19-vendor-browser-safe.page.tsx", [
+      "vendor-browser-lib",
+    ]);
     expect(firstChunkCode(result as never)).toContain("vendor-browser-lib");
   });
 });
@@ -760,7 +764,7 @@ describe("gateAResolve — rule 2 and type-only imports (verbatimModuleSyntax fi
     }
   });
 
-  it("case E (NEGATIVE CONTROL): a bare side-effect `import \"P\"` FAILS — it is not an erased type import", async () => {
+  it('case E (NEGATIVE CONTROL): a bare side-effect `import "P"` FAILS — it is not an erased type import', async () => {
     try {
       await buildTypeOnlyPage("bare-side-effect.page.tsx", CORE_AS_SERVER);
       expect.unreachable("expected the build to fail");
@@ -961,7 +965,11 @@ describe("gateAResolve — path completion is not escapable by omitting a file e
       await buildExtPage("ext25-plain", "../../ext-services/server/plain", "extPlain");
       expect.unreachable("expected the build to fail");
     } catch (error) {
-      expectServerFileRefusal((error as Error).message, "../../ext-services/server/plain", "ext25-plain");
+      expectServerFileRefusal(
+        (error as Error).message,
+        "../../ext-services/server/plain",
+        "ext25-plain",
+      );
       expect((error as Error).message).toContain(
         "Import chain: ext25-plain.page.tsx → ../../ext-services/server/plain",
       );
@@ -976,7 +984,11 @@ describe("gateAResolve — path completion is not escapable by omitting a file e
       `thing.middleware.ts`.
     */
     try {
-      await buildExtPage("ext26-dotted", "../../ext-services/server/thing.middleware", "extMiddleware");
+      await buildExtPage(
+        "ext26-dotted",
+        "../../ext-services/server/thing.middleware",
+        "extMiddleware",
+      );
       expect.unreachable("expected the build to fail");
     } catch (error) {
       expectServerFileRefusal(
@@ -992,7 +1004,11 @@ describe("gateAResolve — path completion is not escapable by omitting a file e
       await buildExtPage("ext27-dir", "../../ext-services/server/dir", "extDirIndex");
       expect.unreachable("expected the build to fail");
     } catch (error) {
-      expectServerFileRefusal((error as Error).message, "../../ext-services/server/dir", "ext27-dir");
+      expectServerFileRefusal(
+        (error as Error).message,
+        "../../ext-services/server/dir",
+        "ext27-dir",
+      );
     }
   });
 
@@ -1024,7 +1040,11 @@ describe("gateAResolve — path completion is not escapable by omitting a file e
       `server/` — and is still refused. Address alone no longer decides; what
       the file declares itself to be, and what it reaches, do.
     */
-    const result = await buildExtPage("ext25b-harmless", "../../ext-services/harmless", "extHarmless");
+    const result = await buildExtPage(
+      "ext25b-harmless",
+      "../../ext-services/harmless",
+      "extHarmless",
+    );
     expect(firstChunkCode(result)).toContain("ext-harmless-value");
   });
 
@@ -1119,7 +1139,11 @@ describe("gateAResolve — path completion is not escapable by omitting a file e
       await buildExtPage("ext32-mts", "../../ext-services/server/modern", "extModern");
       expect.unreachable("expected the build to fail");
     } catch (error) {
-      expectServerFileRefusal((error as Error).message, "../../ext-services/server/modern", "ext32-mts");
+      expectServerFileRefusal(
+        (error as Error).message,
+        "../../ext-services/server/modern",
+        "ext32-mts",
+      );
     }
   });
 });
@@ -1202,7 +1226,9 @@ describe("gateAResolve — the verdict follows the FILE, not the spelling", () =
 
   /** CONFIG A — the alias entry `web-connector.ts` installs for the dev server. */
   const CONFIG_A: BuildHarness = {
-    aliases: [{ find: /^app\//, replacement: `${normalizeSlashes(path.join(FIXTURE_ROOT, "app"))}/` }],
+    aliases: [
+      { find: /^app\//, replacement: `${normalizeSlashes(path.join(FIXTURE_ROOT, "app"))}/` },
+    ],
   };
 
   /** CONFIG B — the v5 production client build: no alias entry at all. */
@@ -1234,7 +1260,10 @@ describe("gateAResolve — the verdict follows the FILE, not the spelling", () =
 
   beforeAll(() => {
     writeFixture(SPELL_TARGET, `export const spellTarget = "spell-target-value";\n`);
-    writeFixture(path.join(SPELL_SERVER_DIR, "repo.ts"), `export const spellRepo = "spell-repo-value";\n`);
+    writeFixture(
+      path.join(SPELL_SERVER_DIR, "repo.ts"),
+      `export const spellRepo = "spell-repo-value";\n`,
+    );
     writeFixture(SPELL_UNIVERSAL, `export const spellUniversal = "spell-universal-value";\n`);
   });
 
@@ -1263,10 +1292,12 @@ describe("gateAResolve — the verdict follows the FILE, not the spelling", () =
 
   /** The rule a Gate A message names, read off its `Cause:` line. */
   function ruleOf(message: string): string | null {
-    if (message.includes("lives outside this module's web/ folder")) return "rule 4 — outside $module/web/";
+    if (message.includes("lives outside this module's web/ folder"))
+      return "rule 4 — outside $module/web/";
     if (message.includes("is a server-only file")) return "rule 3 — server-only file";
     if (message.includes("is a Node.js builtin module")) return "rule 1 — node builtin";
-    if (message.includes("server-only @warlock.js package")) return "rule 2 — server-marked package";
+    if (message.includes("server-only @warlock.js package"))
+      return "rule 2 — server-marked package";
     return null;
   }
 
@@ -1298,12 +1329,16 @@ describe("gateAResolve — the verdict follows the FILE, not the spelling", () =
     const warnings: string[] = [];
     let result: Awaited<ReturnType<typeof buildEntry>>;
     try {
-      result = await buildEntry(file, {}, {
-        ...harness,
-        onwarn: (warning) => {
-          if (typeof warning.message === "string") warnings.push(warning.message);
+      result = await buildEntry(
+        file,
+        {},
+        {
+          ...harness,
+          onwarn: (warning) => {
+            if (typeof warning.message === "string") warnings.push(warning.message);
+          },
         },
-      });
+      );
     } catch (error) {
       const message = (error as Error).message;
       return { report: "refused", rule: ruleOf(message), message, emittedImports: [] };
@@ -1315,7 +1350,12 @@ describe("gateAResolve — the verdict follows the FILE, not the spelling", () =
 
     const wouldRefuse = warnings.find((message) => message.includes(WOULD_REFUSE));
     if (wouldRefuse) {
-      return { report: "would-refuse", rule: ruleOf(wouldRefuse), message: wouldRefuse, emittedImports };
+      return {
+        report: "would-refuse",
+        rule: ruleOf(wouldRefuse),
+        message: wouldRefuse,
+        emittedImports,
+      };
     }
     const couldNotJudge = warnings.find((message) => message.includes(COULD_NOT_JUDGE));
     if (couldNotJudge) {
@@ -1329,7 +1369,10 @@ describe("gateAResolve — the verdict follows the FILE, not the spelling", () =
   /** The three spellings that name the same file the ordinary way. */
   const LOCAL_SPELLINGS: { label: string; specifier: string }[] = [
     { label: "relative, no extension", specifier: "../../spell-services/server/user.resource" },
-    { label: "relative, with extension", specifier: "../../spell-services/server/user.resource.ts" },
+    {
+      label: "relative, with extension",
+      specifier: "../../spell-services/server/user.resource.ts",
+    },
     { label: "absolute", specifier: normalizeSlashes(SPELL_TARGET) },
   ];
 
@@ -1350,7 +1393,12 @@ describe("gateAResolve — the verdict follows the FILE, not the spelling", () =
     */
     const verdicts: Record<string, string> = {};
     for (const [index, spelling] of LOCAL_SPELLINGS.entries()) {
-      const verdict = await verdictFor(`spell35-local-${index}`, spelling.specifier, "spellTarget", CONFIG_A);
+      const verdict = await verdictFor(
+        `spell35-local-${index}`,
+        spelling.specifier,
+        "spellTarget",
+        CONFIG_A,
+      );
       verdicts[spelling.label] = verdict.report;
     }
     verdicts["alias — config A (alias table present)"] = (
@@ -1397,7 +1445,12 @@ describe("gateAResolve — the verdict follows the FILE, not the spelling", () =
     // Nothing here is being softened. The three ordinary spellings, and the
     // alias spelling under config A, all still stop the build.
     for (const [index, spelling] of LOCAL_SPELLINGS.entries()) {
-      const verdict = await verdictFor(`spell35c-${index}`, spelling.specifier, "spellTarget", CONFIG_A);
+      const verdict = await verdictFor(
+        `spell35c-${index}`,
+        spelling.specifier,
+        "spellTarget",
+        CONFIG_A,
+      );
       expect(verdict.report, spelling.label).toBe("refused");
       expect(verdict.message, spelling.label).toContain("Gate A refused an import");
     }
@@ -1467,7 +1520,12 @@ describe("gateAResolve — the verdict follows the FILE, not the spelling", () =
   it("case 35g (NEGATIVE CONTROL): the relative spelling of that same universal file is admitted too", async () => {
     // The other half of 35f: equivalence has to hold for CLEAN files as well,
     // or "no silent admission" collapses into "warn about everything".
-    const verdict = await verdictFor("spell35g", "../spell-gen-universal", "spellUniversal", CONFIG_B);
+    const verdict = await verdictFor(
+      "spell35g",
+      "../spell-gen-universal",
+      "spellUniversal",
+      CONFIG_B,
+    );
     expect(verdict.report).toBe("silence");
     expect(verdict.emittedImports).toEqual([]);
   });
@@ -1662,4 +1720,3 @@ describe("gateAResolve — SSR self-guard (bare, direct resolveId call)", () => 
     );
   });
 });
-

@@ -17,16 +17,12 @@ function ConvertedProbe() {
   return createElement(
     "div",
     null,
-    trans("greeting", {}, (translation) =>
-      createElement("strong", null, translation),
-    ),
+    trans("greeting", {}, (translation) => createElement("strong", null, translation)),
   );
 }
 
 function render(locale: string): string {
-  return renderToString(
-    createElement(LocaleProvider, { locale, children: createElement(Probe) }),
-  );
+  return renderToString(createElement(LocaleProvider, { locale, children: createElement(Probe) }));
 }
 
 describe("request-bound localization", () => {

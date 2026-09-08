@@ -118,7 +118,7 @@ describe("executePageRequest — happy path (stages 1-8)", () => {
     expect(bundle!.commit).toMatchObject({
       committedLevels: ["app", "layout", "page"],
     });
-    expect(bundle!.commit!.headers.map(header => header.key.toLowerCase())).toEqual([
+    expect(bundle!.commit!.headers.map((header) => header.key.toLowerCase())).toEqual([
       "x-fixture-level",
       "cache-control",
     ]);

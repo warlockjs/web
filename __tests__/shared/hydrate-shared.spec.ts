@@ -25,8 +25,6 @@ describe("hydrateShared — browser snapshot install", () => {
 
   it("does not export the withdrawn installBrowserSharedSnapshot name", () => {
     expect("installBrowserSharedSnapshot" in sharedModule).toBe(false);
-    expect(Object.getOwnPropertyNames(sharedModule)).not.toContain(
-      "installBrowserSharedSnapshot",
-    );
+    expect(Object.getOwnPropertyNames(sharedModule)).not.toContain("installBrowserSharedSnapshot");
   });
 });

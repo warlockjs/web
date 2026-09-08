@@ -115,7 +115,7 @@ describe("arrays and nested objects: the bracket grammar the SERVER parses", () 
     expectRoundTrip({ tags: "a,b" }, { tags: "a,b" });
   });
 
-  it("does not split values on \",\", because commas are legitimate text", () => {
+  it('does not split values on ",", because commas are legitimate text', () => {
     // The guard on the tempting \"fix\" for the case above. A decoder that split
     // on \",\" to recover arrays would turn this name into ["Doe", " John"] —
     // trading a visible limitation for a silent corruption of ordinary data.
@@ -124,16 +124,17 @@ describe("arrays and nested objects: the bracket grammar the SERVER parses", () 
   });
 
   it("writes a nested object as `key[sub]`, and reads it back as an object", () => {
-    expect(encodeAsLinkWould({ filter: { status: "active" } })).toBe(
-      "?filter%5Bstatus%5D=active",
-    );
+    expect(encodeAsLinkWould({ filter: { status: "active" } })).toBe("?filter%5Bstatus%5D=active");
     expectRoundTrip({ filter: { status: "active" } }, { filter: { status: "active" } });
 
     // Several keys, one object, order preserved.
     expect(encodeAsLinkWould({ filter: { status: "active", min: 5 } })).toBe(
       "?filter%5Bstatus%5D=active&filter%5Bmin%5D=5",
     );
-    expectRoundTrip({ filter: { status: "active", min: 5 } }, { filter: { status: "active", min: "5" } });
+    expectRoundTrip(
+      { filter: { status: "active", min: 5 } },
+      { filter: { status: "active", min: "5" } },
+    );
   });
 
   it("writes an array INSIDE an object as `key[sub][]`", () => {
@@ -153,9 +154,7 @@ describe("arrays and nested objects: the bracket grammar the SERVER parses", () 
     expect(encodeAsLinkWould({ filter: { status: "active", min: undefined } })).toBe(
       "?filter%5Bstatus%5D=active",
     );
-    expect(encodeAsLinkWould({ tags: ["a", undefined, "b"] })).toBe(
-      "?tags%5B%5D=a&tags%5B%5D=b",
-    );
+    expect(encodeAsLinkWould({ tags: ["a", undefined, "b"] })).toBe("?tags%5B%5D=a&tags%5B%5D=b");
   });
 
   it("omits an empty array and an empty object, because the format cannot express them", () => {
@@ -189,9 +188,7 @@ describe("shapes the wire format cannot carry are REFUSED, not mangled", () => {
     expect(() => encodeAsLinkWould({ filter: { range: { min: 1 } } })).toThrow(
       UnserializableQueryValueError,
     );
-    expect(() => encodeAsLinkWould({ filter: { range: { min: 1 } } })).toThrow(
-      /filter\[range\]/,
-    );
+    expect(() => encodeAsLinkWould({ filter: { range: { min: 1 } } })).toThrow(/filter\[range\]/);
   });
 
   it("throws on an array of objects rather than emitting a grammar it cannot read back", () => {

@@ -41,10 +41,7 @@ export type FragmentScrollDocument = {
  *
  * @returns whether a target was found and scrolled to.
  */
-export function scrollToFragment(
-  documentNode: FragmentScrollDocument,
-  fragment: string,
-): boolean {
+export function scrollToFragment(documentNode: FragmentScrollDocument, fragment: string): boolean {
   // `/docs#` names no target. Nothing to look up, and nothing to move.
   if (fragment === "") return false;
 

@@ -43,7 +43,9 @@ const CHECKOUT_ENTRY = "src/hydration/index.ts";
  */
 export function createHydrationClientEntry(webRoot: string): HydrationClientEntry {
   if (typeof webRoot !== "string" || webRoot.trim().length === 0) {
-    throw new TypeError("Cannot create the hydration client entry: webRoot must be a non-empty path.");
+    throw new TypeError(
+      "Cannot create the hydration client entry: webRoot must be a non-empty path.",
+    );
   }
 
   const packagedPath = path.resolve(webRoot, PACKAGED_ENTRY);

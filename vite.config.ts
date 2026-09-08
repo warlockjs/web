@@ -20,9 +20,7 @@ function isExternalDependency(id: string): boolean {
     return true;
   }
 
-  return peerPackages.some(
-    (packageName) => id === packageName || id.startsWith(`${packageName}/`),
-  );
+  return peerPackages.some((packageName) => id === packageName || id.startsWith(`${packageName}/`));
 }
 
 export default defineConfig({

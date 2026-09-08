@@ -105,8 +105,7 @@ All notable changes to `@warlock.js/web` are documented here.
 - **Page requests now tolerate one trailing slash identically in development
   and production.** `/about` and `/about/` serve the same page; `/` remains the
   root path and case handling is unchanged. Previously the development
-  dispatcher accepted the slash while the production Fastify route returned
-  404.
+  dispatcher accepted the slash while the production Fastify route returned 404.
 
 - ⚠ **BREAKING — `process.env` is refused entirely in the client/universal
   graph, and there is no `PUBLIC_` exception.** Neither a static key
@@ -182,7 +181,7 @@ All notable changes to `@warlock.js/web` are documented here.
   layout loader from outermost to innermost, then the page loader. The runtime
   has three top-level slots (`app`, `layout`, `page`), but the layout slot
   composes the full matched layout chain. A page still has at most one
-  *rendering* layout; loader-only and middleware-only layouts may appear at
+  _rendering_ layout; loader-only and middleware-only layouts may appear at
   multiple ancestry levels.
 
   ⚠ **This package's own documentation previously described the three levels as
@@ -234,7 +233,7 @@ All notable changes to `@warlock.js/web` are documented here.
 ## 5.1.0
 
 > **Upgrade if you installed 5.0.0, 5.0.1 or 5.0.2.** React did not execute at all in
-> a published install of any of them — see the first entry under *Fixed*. Every
+> a published install of any of them — see the first entry under _Fixed_. Every
 > interactive page shipped on those versions was inert in the browser.
 
 ### Added
@@ -280,7 +279,7 @@ All notable changes to `@warlock.js/web` are documented here.
   never ran, metadata never refreshed, and `<Link>` fell back to a full page reload.
   Fixed by declaring the React entries in the dev server's `optimizeDeps` so they are
   pre-bundled to ESM before the browser asks for them. This is not a hydration
-  *improvement* — hydration did not happen.
+  _improvement_ — hydration did not happen.
 - **The browser was loading two copies of every `@warlock.js/web` client module.**
   Module-level state (context, the navigation runtime) existed twice, so a value written
   through one copy was invisible to the component reading the other.

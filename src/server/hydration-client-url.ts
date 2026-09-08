@@ -96,7 +96,9 @@ type ManifestEntry = { file?: unknown; name?: unknown; isEntry?: unknown };
  * chunk can carry a `name` too, and only entries are addressable as a module
  * URL.
  */
-function findHydrationEntry(manifest: Record<string, ManifestEntry | undefined>): ManifestEntry | undefined {
+function findHydrationEntry(
+  manifest: Record<string, ManifestEntry | undefined>,
+): ManifestEntry | undefined {
   for (const entry of Object.values(manifest)) {
     if (
       entry !== undefined &&

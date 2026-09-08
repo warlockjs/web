@@ -4,8 +4,7 @@ import type { RegisterableModuleNamespace } from "../../runtime/register-modules
  * A real ESM namespace returned by dynamic import(), retained so universal
  * lifecycle exports and the default React component remain available together.
  */
-export type ClientProjectedModule = Readonly<Record<string, unknown>> &
-  RegisterableModuleNamespace;
+export type ClientProjectedModule = Readonly<Record<string, unknown>> & RegisterableModuleNamespace;
 
 export type ClientRouteComposition = {
   readonly Page: ClientProjectedModule;
@@ -20,9 +19,7 @@ export type ClientRouteComposition = {
   readonly ErrorPage?: ClientProjectedModule;
 };
 
-export type ClientRouteLoad = () =>
-  | ClientRouteComposition
-  | Promise<ClientRouteComposition>;
+export type ClientRouteLoad = () => ClientRouteComposition | Promise<ClientRouteComposition>;
 
 export type ClientPageEntry = {
   readonly type: "page";

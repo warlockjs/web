@@ -136,7 +136,4 @@ export type TwitterKeysAreExact = [
  */
 export type PageMetadata<TLoader extends LoaderFunction | undefined = undefined> =
   | MetadataOutput
-  | ((context: {
-      data: LoaderData<TLoader>;
-      shared: Readonly<SharedContext>;
-    }) => MetadataOutput);
+  | ((context: { data: LoaderData<TLoader>; shared: Readonly<SharedContext> }) => MetadataOutput);

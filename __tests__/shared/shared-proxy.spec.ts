@@ -1,10 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import {
-  connectSharedStore,
-  enterSharedScope,
-  shared,
-  useShared,
-} from "../../src/shared";
+import { connectSharedStore, enterSharedScope, shared, useShared } from "../../src/shared";
 import { makeStore, TestRequestContext } from "./test-request-context";
 
 /**
@@ -14,7 +9,7 @@ import { makeStore, TestRequestContext } from "./test-request-context";
  */
 const sharedAny = shared as Record<string, any>;
 
-const tick = () => new Promise<void>(resolve => setTimeout(resolve, 0));
+const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 describe("shared proxy — ALS forwarding", () => {
   let context: TestRequestContext;

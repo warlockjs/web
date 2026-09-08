@@ -46,7 +46,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyReply, FastifyRequest, HookHandlerDoneFunction } from "fastify";
 import type { Alias, Plugin, PluginOption, ViteDevServer } from "vite";
-import { Application, BaseConnector, ConnectorLifecyclePhase, type ConnectorName, container, type FastifyInstance, requestContext, router } from "@warlock.js/core";
+import {
+  Application,
+  BaseConnector,
+  ConnectorLifecyclePhase,
+  type ConnectorName,
+  container,
+  type FastifyInstance,
+  requestContext,
+  router,
+} from "@warlock.js/core";
 import { resolveWebPackageRoot } from "../build/contribution";
 import { appConventionAliases } from "../vite/app-convention-aliases";
 import {
@@ -551,24 +560,25 @@ export class WebConnector extends BaseConnector {
       },
     );
 
-    this.installDevPageRoutes = () => webServerSsr.installPageRoutes({
-      router,
-      vite: this.vite,
-      appSrcRoot: paths.appSrcRoot,
-      appFile: paths.appFile,
-      hydrationClientModuleUrl: this.resolveHydrationClientModuleUrl(paths.webRoot),
-      // Without these the first paint of every full page load is unstyled: the
-      // client bundle imports the CSS, so JavaScript applies it only after the
-      // module graph loads. A render-blocking <link> in <head> is what makes
-      // the page arrive styled instead of arriving and then correcting itself.
-      stylesheetUrls: webServerSsr.devStylesheetUrls(paths.appRoot, paths.appFile),
-      // Resolved here, on the NODE side, and forwarded — see
-      // `InstallPageRoutesOptions.httpServer` (`install-page-routes.ts`) for
-      // why `createPageRouteHandler` cannot read this out of the container
-      // itself from inside Vite's SSR module graph. `fastify` is this same
-      // request's `resolveFastify()` result, already in scope above.
-      httpServer: fastify,
-    });
+    this.installDevPageRoutes = () =>
+      webServerSsr.installPageRoutes({
+        router,
+        vite: this.vite,
+        appSrcRoot: paths.appSrcRoot,
+        appFile: paths.appFile,
+        hydrationClientModuleUrl: this.resolveHydrationClientModuleUrl(paths.webRoot),
+        // Without these the first paint of every full page load is unstyled: the
+        // client bundle imports the CSS, so JavaScript applies it only after the
+        // module graph loads. A render-blocking <link> in <head> is what makes
+        // the page arrive styled instead of arriving and then correcting itself.
+        stylesheetUrls: webServerSsr.devStylesheetUrls(paths.appRoot, paths.appFile),
+        // Resolved here, on the NODE side, and forwarded — see
+        // `InstallPageRoutesOptions.httpServer` (`install-page-routes.ts`) for
+        // why `createPageRouteHandler` cannot read this out of the container
+        // itself from inside Vite's SSR module graph. `fastify` is this same
+        // request's `resolveFastify()` result, already in scope above.
+        httpServer: fastify,
+      });
 
     this.installedPages = await this.installDevPageRoutes();
   }
@@ -710,59 +720,61 @@ export class WebConnector extends BaseConnector {
 
   protected enqueuePageRouteReload(changes: PageFileChanges): Promise<boolean> {
     const eventVersions = pageChangeVersions(changes);
-    const run = this.pageRouteReloadQueue.catch(() => undefined).then(async () => {
-      const vite = this.vite;
-      const install = this.installDevPageRoutes;
-      const paths = this.resolvedPaths;
+    const run = this.pageRouteReloadQueue
+      .catch(() => undefined)
+      .then(async () => {
+        const vite = this.vite;
+        const install = this.installDevPageRoutes;
+        const paths = this.resolvedPaths;
 
-      if (vite === undefined || install === undefined || paths === undefined) return false;
+        if (vite === undefined || install === undefined || paths === undefined) return false;
 
-      const matchingCommittedFiles = new Set<string>();
+        const matchingCommittedFiles = new Set<string>();
 
-      // This check belongs inside the queue: a matching core transaction may
-      // commit while a Vite callback is waiting behind it. File versions are
-      // captured when the job is queued so a later edit cannot consume an
-      // earlier event's marker.
-      for (const [file, eventVersion] of eventVersions) {
-        const committedVersion = this.pendingHotUpdateSuppressions.get(file);
-        if (committedVersion === undefined) continue;
+        // This check belongs inside the queue: a matching core transaction may
+        // commit while a Vite callback is waiting behind it. File versions are
+        // captured when the job is queued so a later edit cannot consume an
+        // earlier event's marker.
+        for (const [file, eventVersion] of eventVersions) {
+          const committedVersion = this.pendingHotUpdateSuppressions.get(file);
+          if (committedVersion === undefined) continue;
 
-        // Matching markers are consumed exactly once. A mismatched marker is
-        // obsolete and must not survive to suppress a future reverted edit.
-        this.pendingHotUpdateSuppressions.delete(file);
-        if (committedVersion === eventVersion) matchingCommittedFiles.add(file);
-      }
-
-      if (eventVersions.size > 0 && matchingCommittedFiles.size === eventVersions.size) {
-        return true;
-      }
-
-      const replace = await pageRoutesNeedReplacement(changes, {
-        vite,
-        appSrcRoot: paths.appSrcRoot,
-        installedPages: this.installedPages,
-      });
-
-      if (!replace) return false;
-
-      const nextInstalledPages = await router.replaceRoutesBySourceFiles(
-        pageRouteSourceFiles(router.list()),
-        install,
-      );
-
-      // Advance observable state only after the router transaction commits.
-      // A rejected install keeps both the old route table and browser live.
-      this.installedPages = nextInstalledPages;
-      invalidateClientPageRegistry(vite);
-
-      for (const [file, eventVersion] of eventVersions) {
-        if (!matchingCommittedFiles.has(file)) {
-          this.pendingHotUpdateSuppressions.set(file, eventVersion);
+          // Matching markers are consumed exactly once. A mismatched marker is
+          // obsolete and must not survive to suppress a future reverted edit.
+          this.pendingHotUpdateSuppressions.delete(file);
+          if (committedVersion === eventVersion) matchingCommittedFiles.add(file);
         }
-      }
 
-      return true;
-    });
+        if (eventVersions.size > 0 && matchingCommittedFiles.size === eventVersions.size) {
+          return true;
+        }
+
+        const replace = await pageRoutesNeedReplacement(changes, {
+          vite,
+          appSrcRoot: paths.appSrcRoot,
+          installedPages: this.installedPages,
+        });
+
+        if (!replace) return false;
+
+        const nextInstalledPages = await router.replaceRoutesBySourceFiles(
+          pageRouteSourceFiles(router.list()),
+          install,
+        );
+
+        // Advance observable state only after the router transaction commits.
+        // A rejected install keeps both the old route table and browser live.
+        this.installedPages = nextInstalledPages;
+        invalidateClientPageRegistry(vite);
+
+        for (const [file, eventVersion] of eventVersions) {
+          if (!matchingCommittedFiles.has(file)) {
+            this.pendingHotUpdateSuppressions.set(file, eventVersion);
+          }
+        }
+
+        return true;
+      });
 
     this.pageRouteReloadQueue = run;
     return run;
@@ -820,7 +832,7 @@ export class WebConnector extends BaseConnector {
     if (!container.has("http.server")) {
       throw new Error(
         "WebConnector requires the HTTP connector's Fastify instance, but " +
-          '`http.server` is not in the container. The `http` config is missing — add `src/config/http.ts` ' +
+          "`http.server` is not in the container. The `http` config is missing — add `src/config/http.ts` " +
           "so `HttpConnector.boot()` runs (core/src/connectors/http-connector.ts:61-74).",
       );
     }
@@ -930,7 +942,7 @@ export class WebConnector extends BaseConnector {
         "[warlock:web] React Fast Refresh is OFF: this `@vitejs/plugin-react` no longer exports " +
           "`preambleCode`, so the refresh preamble cannot be injected into the hydration entry. " +
           "Registering the plugin without it would make every component module throw " +
-          "\"can't detect preamble\" in the browser.",
+          '"can\'t detect preamble" in the browser.',
       );
 
       return [];
@@ -938,7 +950,9 @@ export class WebConnector extends BaseConnector {
 
     // `base` is never set on the config below, so it is Vite's default `"/"`.
     const preambleSource = preambleCode.replace("__BASE__", "/");
-    const hydrationEntryId = normalizeModuleId(createHydrationClientEntry(paths.webRoot).sourcePath);
+    const hydrationEntryId = normalizeModuleId(
+      createHydrationClientEntry(paths.webRoot).sourcePath,
+    );
 
     const preamblePlugin: Plugin = {
       name: "warlock:react-refresh-preamble",
@@ -952,7 +966,7 @@ export class WebConnector extends BaseConnector {
       // environment must never evaluate it — there is no `window` there, and
       // the server render must stay byte-identical to what it produced before
       // this plugin existed.
-      applyToEnvironment: environment => environment.config.consumer === "client",
+      applyToEnvironment: (environment) => environment.config.consumer === "client",
       resolveId(source) {
         if (source === REACT_REFRESH_PREAMBLE_ID) return RESOLVED_REACT_REFRESH_PREAMBLE_ID;
 

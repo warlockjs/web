@@ -1,8 +1,5 @@
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
-import {
-  loadClientRouteComposition,
-  validateClientRouteManifest,
-} from "./index";
+import { loadClientRouteComposition, validateClientRouteManifest } from "./index";
 import type { ClientRouteComposition, ClientRouteLoad } from "./types";
 
 const validComposition = () => ({
@@ -66,16 +63,14 @@ describe("validateClientRouteManifest", () => {
   it.each(["type", "name", "path", "load"] as const)(
     "rejects a missing %s key and identifies it",
     (key) => {
-      expect(() => validateClientRouteManifest([withoutKey(key)])).toThrow(
-        new RegExp(key),
-      );
+      expect(() => validateClientRouteManifest([withoutKey(key)])).toThrow(new RegExp(key));
     },
   );
 
   it("rejects an unknown type and identifies its value", () => {
-    expect(() =>
-      validateClientRouteManifest([validEntry({ type: "endpoint" })]),
-    ).toThrow(/endpoint/);
+    expect(() => validateClientRouteManifest([validEntry({ type: "endpoint" })])).toThrow(
+      /endpoint/,
+    );
   });
 
   it("continues to reject an error entry type instead of changing the page manifest", () => {
@@ -118,19 +113,13 @@ describe("validateClientRouteManifest", () => {
 
   it("rejects duplicate names and identifies the colliding value", () => {
     expect(() =>
-      validateClientRouteManifest([
-        validEntry(),
-        validEntry({ path: "/members/:id" }),
-      ]),
+      validateClientRouteManifest([validEntry(), validEntry({ path: "/members/:id" })]),
     ).toThrow(/users\.show/);
   });
 
   it("rejects duplicate paths and identifies the colliding value", () => {
     expect(() =>
-      validateClientRouteManifest([
-        validEntry(),
-        validEntry({ name: "members.show" }),
-      ]),
+      validateClientRouteManifest([validEntry(), validEntry({ name: "members.show" })]),
     ).toThrow(/\/users\/:id/);
   });
 });
@@ -153,9 +142,7 @@ describe("loadClientRouteComposition", () => {
   it("accepts and preserves an optional projected ErrorPage module", async () => {
     const ErrorPage = { default: () => null };
     const composition = { ...validComposition(), ErrorPage };
-    const [entry] = validateClientRouteManifest([
-      validEntry({ load: async () => composition }),
-    ]);
+    const [entry] = validateClientRouteManifest([validEntry({ load: async () => composition })]);
 
     const loaded = await loadClientRouteComposition(entry);
 
@@ -175,18 +162,14 @@ describe("loadClientRouteComposition", () => {
     ["an explicitly blank ErrorPage", { Page: {}, layouts: [], ErrorPage: undefined }],
     ["an extra composition key", { Page: {}, layouts: [], providerId: "dev" }],
   ])("rejects %s rather than returning fallback data", async (_caseName, value) => {
-    const [entry] = validateClientRouteManifest([
-      validEntry({ load: async () => value }),
-    ]);
+    const [entry] = validateClientRouteManifest([validEntry({ load: async () => value })]);
 
     await expect(loadClientRouteComposition(entry)).rejects.toThrow();
   });
 
   it("allows App to be absent", async () => {
     const composition = { Page: {}, layouts: [] };
-    const [entry] = validateClientRouteManifest([
-      validEntry({ load: async () => composition }),
-    ]);
+    const [entry] = validateClientRouteManifest([validEntry({ load: async () => composition })]);
 
     await expect(loadClientRouteComposition(entry)).resolves.toBe(composition);
   });

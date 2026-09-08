@@ -85,10 +85,7 @@ export class MissingHydrationErrorPageError extends Error {
   }
 }
 
-function findEntryByName(
-  pages: readonly ClientPageEntry[],
-  name: string,
-): ClientPageEntry {
+function findEntryByName(pages: readonly ClientPageEntry[], name: string): ClientPageEntry {
   const entry = pages.find((candidate) => candidate.name === name);
 
   if (entry === undefined) {
@@ -114,9 +111,7 @@ function componentOf<Props extends object>(
 ): ComponentType<Props> | undefined {
   const component = module.default;
 
-  return typeof component === "function"
-    ? (component as ComponentType<Props>)
-    : undefined;
+  return typeof component === "function" ? (component as ComponentType<Props>) : undefined;
 }
 
 function wrap(
@@ -203,18 +198,12 @@ export async function buildHydratedTree(
           });
   } else {
     const ErrorPage = componentOf<SerializedErrorPageProps>(selectedPageModule);
-    element =
-      ErrorPage === undefined ? null : createElement(ErrorPage, errorPageProps);
+    element = ErrorPage === undefined ? null : createElement(ErrorPage, errorPageProps);
   }
 
   // Innermost layout wraps the page, so walk the outermost-first list backwards.
   for (let index = composition.layouts.length - 1; index >= 0; index -= 1) {
-    element = wrap(
-      composition.layouts[index]!,
-      payload.layoutData,
-      shared,
-      element,
-    );
+    element = wrap(composition.layouts[index]!, payload.layoutData, shared, element);
   }
 
   return element;

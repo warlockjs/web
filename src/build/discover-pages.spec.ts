@@ -130,9 +130,7 @@ describe("discoverPages — the recipe", () => {
     const [page, ...rest] = discoverPages({ appRoot });
 
     expect(rest).toEqual([]);
-    expect(relative(appRoot, [page.pageFile])).toEqual([
-      "src/web/users/account/settings.page.tsx",
-    ]);
+    expect(relative(appRoot, [page.pageFile])).toEqual(["src/web/users/account/settings.page.tsx"]);
     expect(relative(appRoot, page.layouts)).toEqual(["src/web/users/account/layout.tsx"]);
     expect(relative(appRoot, [page.appFile as string])).toEqual(["src/web/root.tsx"]);
     expect(page.routePath).toBe("/account/settings");
@@ -152,9 +150,12 @@ describe("discoverPages — the recipe", () => {
 
     const pages = discoverPages({ appRoot });
 
-    expect(relative(appRoot, pages.map((page) => page.pageFile)).sort()).toEqual([
-      "src/web/dashboard.page.tsx",
-    ]);
+    expect(
+      relative(
+        appRoot,
+        pages.map((page) => page.pageFile),
+      ).sort(),
+    ).toEqual(["src/web/dashboard.page.tsx"]);
 
     const dashboard = pages.find((page) => page.routeName === "dashboard");
 
@@ -226,8 +227,7 @@ describe("discoverPages — every page renders a default export", () => {
   it("accepts a runtime binding re-exported as default", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/web/home.page.tsx":
-        "function Home() { return null; }\nexport { Home as default };\n",
+      "src/web/home.page.tsx": "function Home() { return null; }\nexport { Home as default };\n",
     });
 
     expect(discoverPages({ appRoot }).map((page) => page.routePath)).toEqual(["/home"]);
@@ -257,7 +257,12 @@ describe("discoverPages — property A: a defined total order", () => {
     // Route-path order would be /a-first, /m-middle, /z-last. The file decides:
     // a page's route is one line an author can rewrite, and reordering the whole
     // artefact on that edit is churn nobody asked for.
-    expect(relative(appRoot, pages.map((page) => page.pageFile))).toEqual([
+    expect(
+      relative(
+        appRoot,
+        pages.map((page) => page.pageFile),
+      ),
+    ).toEqual([
       "src/web/about.page.tsx",
       "src/web/shop/index.page.tsx",
       "src/web/shop/items/detail.page.tsx",
@@ -297,10 +302,7 @@ describe("discoverPages — property A: a defined total order", () => {
     // `/profile` matches ahead of `/[id]` at runtime, and this array says the
     // opposite: the order is serialization, and reading precedence out of it
     // is the mistake this fixture exists to make impossible to sustain.
-    expect(discoverPages({ appRoot }).map((page) => page.routePath)).toEqual([
-      "/[id]",
-      "/profile",
-    ]);
+    expect(discoverPages({ appRoot }).map((page) => page.routePath)).toEqual(["/[id]", "/profile"]);
   });
 
   it("returns the identical order under reversed directory enumeration", () => {
@@ -317,15 +319,19 @@ describe("discoverPages — property A: a defined total order", () => {
     const reversedRoot = makeAppTree(files);
 
     const forward = discoverPages({ appRoot: forwardRoot });
-    const reversed = withReversedDirectoryListings(() =>
-      discoverPages({ appRoot: reversedRoot }),
-    );
+    const reversed = withReversedDirectoryListings(() => discoverPages({ appRoot: reversedRoot }));
 
-    expect(reversed.map((page) => page.routeName)).toEqual(
-      forward.map((page) => page.routeName),
-    );
-    expect(relative(reversedRoot, reversed.map((page) => page.pageFile))).toEqual(
-      relative(forwardRoot, forward.map((page) => page.pageFile)),
+    expect(reversed.map((page) => page.routeName)).toEqual(forward.map((page) => page.routeName));
+    expect(
+      relative(
+        reversedRoot,
+        reversed.map((page) => page.pageFile),
+      ),
+    ).toEqual(
+      relative(
+        forwardRoot,
+        forward.map((page) => page.pageFile),
+      ),
     );
   });
 });
@@ -380,9 +386,7 @@ describe("discoverPages — property C: the canonical route is the DECLARED one"
   it("(a) takes the declared route path over the filesystem-derived one", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/web/users/list.page.tsx": pageDeclaring(
-        'export const route = "/people/directory";',
-      ),
+      "src/web/users/list.page.tsx": pageDeclaring('export const route = "/people/directory";'),
     });
 
     const [page, ...rest] = discoverPages({ appRoot });
@@ -424,21 +428,14 @@ describe("discoverPages — property C: the canonical route is the DECLARED one"
       // The prefix deliberately does NOT echo the directory name: a composition
       // that only ever agreed with the tree would be indistinguishable from the
       // filesystem derivation it replaced.
-      "src/web/shop/products/layout.tsx": layoutDeclaring(
-        'export const prefix = "/catalogue";',
-      ),
+      "src/web/shop/products/layout.tsx": layoutDeclaring('export const prefix = "/catalogue";'),
       "src/web/shop/products/index.page.tsx": pageDeclaring('export const route = "/";'),
-      "src/web/shop/products/detail.page.tsx": pageDeclaring(
-        'export const route = "/detail";',
-      ),
+      "src/web/shop/products/detail.page.tsx": pageDeclaring('export const route = "/detail";'),
     });
 
     const pages = discoverPages({ appRoot });
 
-    expect(pages.map((page) => page.routePath).sort()).toEqual([
-      "/catalogue",
-      "/catalogue/detail",
-    ]);
+    expect(pages.map((page) => page.routePath).sort()).toEqual(["/catalogue", "/catalogue/detail"]);
   });
 
   it("(d) collides on the DECLARED route name, however the files are named", () => {
@@ -468,7 +465,9 @@ describe("discoverPages — property C: the canonical route is the DECLARED one"
       "src/web/shop/live.page.tsx": pageDeclaring('export const route = "/live";'),
     });
 
-    const draft = discoverPages({ appRoot }).find((page) => page.pageFile.endsWith("draft.page.tsx"));
+    const draft = discoverPages({ appRoot }).find((page) =>
+      page.pageFile.endsWith("draft.page.tsx"),
+    );
 
     expect(draft?.routePath).toBe("/shop/draft");
     expect(draft?.routeName).toBe("shop.draft");
@@ -606,9 +605,7 @@ describe("discoverPages — property D: at most one RENDERING layout on a page's
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
       "src/web/users/layout.tsx": layoutDeclaring('export const prefix = "/users";'),
-      "src/web/users/account/layout.tsx": nonRenderingLayout(
-        'export const prefix = "/account";',
-      ),
+      "src/web/users/account/layout.tsx": nonRenderingLayout('export const prefix = "/account";'),
       "src/web/users/account/settings.page.tsx": routed("/settings"),
     });
 
@@ -644,9 +641,7 @@ describe("discoverPages — property D: at most one RENDERING layout on a page's
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
       "src/web/users/layout.tsx": layoutDeclaring('export const prefix = "/users";'),
-      "src/web/users/account/layout.tsx": nonRenderingLayout(
-        "export const somethingElse = 1;",
-      ),
+      "src/web/users/account/layout.tsx": nonRenderingLayout("export const somethingElse = 1;"),
       "src/web/users/account/settings.page.tsx": routed("/settings"),
     });
 
@@ -657,9 +652,7 @@ describe("discoverPages — property D: at most one RENDERING layout on a page's
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
       "src/web/users/layout.tsx": LAYOUT,
-      "src/web/users/account/layout.tsx": nonRenderingLayout(
-        'export const prefix = "/account";',
-      ),
+      "src/web/users/account/layout.tsx": nonRenderingLayout('export const prefix = "/account";'),
       "src/web/users/account/settings/layout.tsx": LAYOUT,
       "src/web/users/account/settings/edit.page.tsx": routed("/edit"),
     });
@@ -700,9 +693,7 @@ describe("discoverPages — the middleware chain, and the temporary refusal that
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
       "src/web/users/layout.tsx": layoutDeclaring('export const prefix = "/users";'),
-      "src/web/users/account/layout.tsx": nonRenderingLayout(
-        'export const prefix = "/account";',
-      ),
+      "src/web/users/account/layout.tsx": nonRenderingLayout('export const prefix = "/account";'),
       "src/web/users/account/settings.page.tsx": routed("/settings"),
     });
 
@@ -729,9 +720,7 @@ describe("discoverPages — the middleware chain, and the temporary refusal that
 
     const [page] = discoverPages({ appRoot });
 
-    expect(relative(appRoot, page.middlewareLayouts)).toEqual([
-      "src/web/users/account/layout.tsx",
-    ]);
+    expect(relative(appRoot, page.middlewareLayouts)).toEqual(["src/web/users/account/layout.tsx"]);
     expect(page.routePath).toBe("/users/account/settings");
   });
 
@@ -746,9 +735,7 @@ describe("discoverPages — the middleware chain, and the temporary refusal that
 
     const [page] = discoverPages({ appRoot });
 
-    expect(relative(appRoot, page.middlewareLayouts)).toEqual([
-      "src/web/users/account/layout.tsx",
-    ]);
+    expect(relative(appRoot, page.middlewareLayouts)).toEqual(["src/web/users/account/layout.tsx"]);
   });
 
   it("reports EVERY layout that carries a guard, outermost first — the order they must run in", () => {
@@ -796,9 +783,7 @@ describe("discoverPages — the middleware chain, and the temporary refusal that
 
     const [page] = discoverPages({ appRoot });
 
-    expect(relative(appRoot, page.middlewareLayouts)).toEqual([
-      "src/web/users/account/layout.tsx",
-    ]);
+    expect(relative(appRoot, page.middlewareLayouts)).toEqual(["src/web/users/account/layout.tsx"]);
   });
 });
 
@@ -838,7 +823,9 @@ describe("discoverPages — 404.page.tsx", () => {
 
     const pages = discoverPages({ appRoot });
 
-    expect(pages.find((page) => page.pageFile.endsWith("draft.page.tsx"))?.routePath).toBe("/draft");
+    expect(pages.find((page) => page.pageFile.endsWith("draft.page.tsx"))?.routePath).toBe(
+      "/draft",
+    );
   });
 
   it("refuses a `route` export on it — the opposite error, for the opposite reason", () => {
@@ -1078,9 +1065,7 @@ describe("discoverPages — the `metadata` contract", () => {
   });
 
   it("a spread adds keys but excuses none written beside it", () => {
-    const discover = discoverWith(
-      'export const metadata = { ...base, tittle: "x" };',
-    );
+    const discover = discoverWith('export const metadata = { ...base, tittle: "x" };');
 
     expect(discover).toThrow(/`metadata\.tittle`/);
   });
@@ -1113,9 +1098,7 @@ describe("discoverPages — the `metadata` contract", () => {
   it("still validates metadata when the route is derived", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/web/shop/products.page.tsx": pageDeclaring(
-        'export const metadata = { tittle: "x" };',
-      ),
+      "src/web/shop/products.page.tsx": pageDeclaring('export const metadata = { tittle: "x" };'),
     });
 
     expect(() => discoverPages({ appRoot })).toThrow(/`metadata\.tittle`/);

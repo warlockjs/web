@@ -1,8 +1,4 @@
-import {
-  transFrom,
-  type Converter,
-  type Translatable,
-} from "@mongez/localization";
+import { transFrom, type Converter, type Translatable } from "@mongez/localization";
 import { createContext, useCallback, useContext, type ReactNode } from "react";
 
 export type LocaleProviderProps = {
@@ -42,8 +38,7 @@ export function useTrans(): Translate {
   const locale = useLocale();
 
   return useCallback(
-    (keyword, placeholders, converter) =>
-      transFrom(locale, keyword, placeholders, converter),
+    (keyword, placeholders, converter) => transFrom(locale, keyword, placeholders, converter),
     [locale],
   );
 }

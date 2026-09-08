@@ -28,8 +28,7 @@ export const REQUIRED_PAYLOAD_KEYS = [
 const ABSENT_PAYLOAD_MESSAGE =
   `Warlock hydration payload is absent: #${PAYLOAD_SCRIPT_ID}, owned by ` +
   "web/src/components/document-context.ts, was not found.";
-const MALFORMED_PAYLOAD_MESSAGE =
-  `Warlock hydration payload was found at #${PAYLOAD_SCRIPT_ID} but could not be read.`;
+const MALFORMED_PAYLOAD_MESSAGE = `Warlock hydration payload was found at #${PAYLOAD_SCRIPT_ID} but could not be read.`;
 
 function malformedPayload(): never {
   throw new Error(MALFORMED_PAYLOAD_MESSAGE);

@@ -112,14 +112,8 @@ function parsePattern(entry: ClientPageEntry): CompiledRoute {
     throw new Error(`Client route pattern '${original}' must start with '/'`);
   }
 
-  const pattern = original.length > 1 && original.endsWith("/")
-    ? original.slice(0, -1)
-    : original;
-  const segments = isExactRootCatchAll
-    ? ["*"]
-    : pattern === "/"
-      ? []
-      : pattern.slice(1).split("/");
+  const pattern = original.length > 1 && original.endsWith("/") ? original.slice(0, -1) : original;
+  const segments = isExactRootCatchAll ? ["*"] : pattern === "/" ? [] : pattern.slice(1).split("/");
   const tokens: RouteToken[] = [];
   const parameterNames: string[] = [];
 
@@ -151,7 +145,12 @@ function parsePattern(entry: ClientPageEntry): CompiledRoute {
       continue;
     }
 
-    if (segment.includes(":") || segment.includes("*") || segment.includes("?") || segment.includes("%")) {
+    if (
+      segment.includes(":") ||
+      segment.includes("*") ||
+      segment.includes("?") ||
+      segment.includes("%")
+    ) {
       throw new Error(`Client route pattern '${original}' contains unsupported syntax`);
     }
     tokens.push({ type: "static", value: segment });

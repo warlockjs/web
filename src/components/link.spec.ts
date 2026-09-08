@@ -1,9 +1,6 @@
 import type { FocusEvent, MouseEvent } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  resetPrefetchCache,
-  takePrefetchedPageData,
-} from "../client/navigation/prefetch";
+import { resetPrefetchCache, takePrefetchedPageData } from "../client/navigation/prefetch";
 import { connectNavigator, type Navigator } from "../routing/navigator";
 import { publishRouteTable, resetRouteTable } from "../routing/route-table";
 import {
@@ -210,7 +207,7 @@ describe("Link — `newTab`", () => {
     expect(preventDefault).not.toHaveBeenCalled();
   });
 
-  it("bypasses the navigator for an explicit target=\"_blank\" too", () => {
+  it('bypasses the navigator for an explicit target="_blank" too', () => {
     const { preventDefault } = clickOn(render({ to: "main.home", target: "_blank" }));
 
     expect(navigate).not.toHaveBeenCalled();
@@ -239,9 +236,7 @@ describe("Link — `component`", () => {
   });
 
   it("does not leak `component` onto the element as a prop", () => {
-    expect(render({ to: "main.home", component: "button" }).props).not.toHaveProperty(
-      "component",
-    );
+    expect(render({ to: "main.home", component: "button" }).props).not.toHaveProperty("component");
   });
 });
 
@@ -278,15 +273,11 @@ describe("Link — literal URLs and paths", () => {
 
   it("passes any other scheme through untouched", () => {
     expect(render({ href: "tel:+201000000000" }).props.href).toBe("tel:+201000000000");
-    expect(render({ href: "whatsapp://send?phone=1" }).props.href).toBe(
-      "whatsapp://send?phone=1",
-    );
+    expect(render({ href: "whatsapp://send?phone=1" }).props.href).toBe("whatsapp://send?phone=1");
   });
 
   it("still resolves a bare route NAME through the route table", () => {
-    expect(render({ to: "products.details", params: { id: 7 } }).props.href).toBe(
-      "/products/7",
-    );
+    expect(render({ to: "products.details", params: { id: 7 } }).props.href).toBe("/products/7");
   });
 
   /*
@@ -380,15 +371,14 @@ describe("Link — prefetch", () => {
 
   /** Lets every pending microtask of the speculative fetch settle. */
   function flush(): Promise<void> {
-    return new Promise(resolve => {
+    return new Promise((resolve) => {
       setTimeout(resolve, 0);
     });
   }
 
   async function hover(rendered: { props: RenderedProps }): Promise<void> {
     const onMouseEnter = rendered.props.onMouseEnter as
-      | ((event: MouseEvent<HTMLAnchorElement>) => void)
-      | undefined;
+      ((event: MouseEvent<HTMLAnchorElement>) => void) | undefined;
 
     onMouseEnter?.({} as MouseEvent<HTMLAnchorElement>);
 

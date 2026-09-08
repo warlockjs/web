@@ -50,10 +50,7 @@ describe("production static asset Cache-Control headers", () => {
   // The hashed-asset shape: content-hashed filename, served through
   // `router.directory` exactly as `web-connector.ts` configures it for
   // `<clientDir>/assets`.
-  const hashedAssetsDir = writeTempFile(
-    "assets/index-a1b2c3d4.js",
-    "console.log('hashed');",
-  );
+  const hashedAssetsDir = writeTempFile("assets/index-a1b2c3d4.js", "console.log('hashed');");
 
   router.directory(productionAssetsDirectoryOptions(hashedAssetsDir));
 

@@ -1,11 +1,7 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import { type RequestHandler, type Route, RouteRegistry } from "@warlock.js/core";
 import { matchClientRoute } from "./index";
-import type {
-  ClientPageEntry,
-  ClientRouteMatch,
-  ClientRouteParams,
-} from "./types";
+import type { ClientPageEntry, ClientRouteMatch, ClientRouteParams } from "./types";
 
 const load = () => ({ Page: {}, layouts: [] });
 
@@ -80,7 +76,11 @@ const corpus: readonly CorpusCase[] = [
   { pathname: "/users/a/b", expectedEntry: pages.usersCatchAll, params: { "*": "a/b" } },
   { pathname: "/", expectedEntry: pages.home, params: {} },
   { pathname: "/outside/deep", expectedEntry: pages.rootCatchAll, params: { "*": "outside/deep" } },
-  { pathname: "/docs/guide/start", expectedEntry: pages.docsCatchAll, params: { "*": "guide/start" } },
+  {
+    pathname: "/docs/guide/start",
+    expectedEntry: pages.docsCatchAll,
+    params: { "*": "guide/start" },
+  },
   {
     pathname: "/teams/red/members/blue",
     expectedEntry: pages.member,
@@ -214,7 +214,10 @@ describe("matchClientRoute", () => {
       [pages.exactRootCatchAll, "/", "/alpha/beta"],
       [pages.rootCatchAll, "", "alpha/beta"],
     ] as const) {
-      for (const [pathname, value] of [["/", rootValue], ["/alpha/beta", tailValue]] as const) {
+      for (const [pathname, value] of [
+        ["/", rootValue],
+        ["/alpha/beta", tailValue],
+      ] as const) {
         const literal = { entry: page, params: { "*": value } };
         const server = serverMatch([page], pathname);
         const client = matchClientRoute([page], pathname);

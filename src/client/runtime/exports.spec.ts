@@ -41,8 +41,8 @@ describe("client package export", () => {
       import: "./src/client/runtime/index.ts",
       default: "./src/client/runtime/index.ts",
     });
-    const allExportTargets = Object.values(packageJson.exports).flatMap(
-      (packageExport) => Object.values(packageExport),
+    const allExportTargets = Object.values(packageJson.exports).flatMap((packageExport) =>
+      Object.values(packageExport),
     );
 
     expect(allExportTargets).not.toContain("./src/hydration/index.ts");

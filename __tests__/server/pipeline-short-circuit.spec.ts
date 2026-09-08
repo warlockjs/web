@@ -37,7 +37,7 @@ function runInline(triple: PageRouteEntry["triple"], url = "/inline") {
   return executePageRequest({
     url,
     routes: [{ path: "/inline", name: "inline", triple }],
-    createHttp: match => createCoreHttp({ url, params: match.params, query: match.query }),
+    createHttp: (match) => createCoreHttp({ url, params: match.params, query: match.query }),
   });
 }
 
@@ -46,7 +46,7 @@ describe("executePageRequest — middleware short-circuit", () => {
     const bundle = await executePageRequest({
       url: "/products/42?deny=1",
       routes,
-      createHttp: match =>
+      createHttp: (match) =>
         createCoreHttp({ url: "/products/42?deny=1", params: match.params, query: match.query }),
     });
 
@@ -166,7 +166,8 @@ describe("executePageRequest — validation failure (422 designation)", () => {
     const bundle = await executePageRequest({
       url: "/products/x",
       routes,
-      createHttp: match => createCoreHttp({ url: "/products/x", params: match.params, query: match.query }),
+      createHttp: (match) =>
+        createCoreHttp({ url: "/products/x", params: match.params, query: match.query }),
     });
 
     expect(bundle!.shortCircuit).toMatchObject({ stage: "validation", status: 422 });
@@ -199,7 +200,6 @@ describe("executePageRequest — validation failure (422 designation)", () => {
     expect(layoutLoader).not.toHaveBeenCalled();
     expect(pageLoader).not.toHaveBeenCalled();
   });
-
 });
 
 describe("executePageRequest — validation over params (real request.validated)", () => {
@@ -226,7 +226,7 @@ describe("executePageRequest — validation over params (real request.validated)
           },
         },
       ],
-      createHttp: match => createCoreHttp({ url, params: match.params, query: match.query }),
+      createHttp: (match) => createCoreHttp({ url, params: match.params, query: match.query }),
     });
 
     expect(bundle!.shortCircuit).toBeUndefined();

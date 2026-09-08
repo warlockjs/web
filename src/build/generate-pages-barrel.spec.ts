@@ -36,9 +36,9 @@ afterEach(() => {
   }
 });
 
-const APP = 'export default function App() { return null; }\n';
+const APP = "export default function App() { return null; }\n";
 const PAGE = 'export const route = "/";\nexport default function Page() { return null; }\n';
-const LAYOUT = 'export default function Layout() { return null; }\n';
+const LAYOUT = "export default function Layout() { return null; }\n";
 
 describe("generatePagesBarrel", () => {
   it("writes named namespace imports and a route-free manifest call", async () => {
@@ -56,17 +56,13 @@ describe("generatePagesBarrel", () => {
 
     const contents = fs.readFileSync(result.barrelFile as string, "utf-8");
 
-    expect(contents).toContain(
-      'import { providePageManifest } from "@warlock.js/web/connector";',
-    );
+    expect(contents).toContain('import { providePageManifest } from "@warlock.js/web/connector";');
     expect(contents).toContain('import * as app from "../../src/web/root";');
     expect(contents).toContain('import * as l0 from "../../src/web/main/layout";');
     expect(contents).toContain('import * as p0 from "../../src/web/main/home.page";');
     expect(contents).toContain('app: { module: app, sourceFile: "src/web/root.tsx" }');
     expect(contents).toContain('sourceFile: "src/web/main/home.page.tsx"');
-    expect(contents).toContain(
-      'layouts: [{ module: l0, sourceFile: "src/web/main/layout.tsx" }]',
-    );
+    expect(contents).toContain('layouts: [{ module: l0, sourceFile: "src/web/main/layout.tsx" }]');
     // No route paths in the table — they are read off the modules at boot.
     expect(contents).not.toContain("path:");
   });
@@ -124,9 +120,9 @@ describe("generatePagesBarrel", () => {
     });
     const productionDir = path.join(appRoot, ".warlock", "production");
 
-    await expect(generatePagesBarrel({ appRoot, productionDir, clientDir: "dist/client" })).rejects.toThrowError(
-      NestedLayoutsNotSupportedError,
-    );
+    await expect(
+      generatePagesBarrel({ appRoot, productionDir, clientDir: "dist/client" }),
+    ).rejects.toThrowError(NestedLayoutsNotSupportedError);
     expect(fs.existsSync(path.join(productionDir, "pages.ts"))).toBe(false);
   });
 
@@ -162,9 +158,7 @@ describe("generatePagesBarrel", () => {
     const contents = fs.readFileSync(barrelFile, "utf-8");
 
     expect(contents).toBe(result.contents);
-    expect(contents).toContain(
-      'import { providePageManifest } from "@warlock.js/web/connector";',
-    );
+    expect(contents).toContain('import { providePageManifest } from "@warlock.js/web/connector";');
     // The whole point of the empty table: the call happens, with no pages…
     expect(contents).toContain("providePageManifest({ pages: [] });");
     // …and with no app entry, since nothing renders inside it.
@@ -205,9 +199,7 @@ describe("generatePagesBarrel", () => {
     });
 
     expect(result.contents).toContain('clientDir: "dist/client"');
-    expect(result.contents).toContain(
-      'publicFiles: ["docs/rem-public.txt","favicon.svg"]',
-    );
+    expect(result.contents).toContain('publicFiles: ["docs/rem-public.txt","favicon.svg"]');
 
     vi.restoreAllMocks();
   });
@@ -216,7 +208,11 @@ describe("generatePagesBarrel", () => {
     const appRoot = makeAppTree({ "src/web/main/home.page.tsx": PAGE });
 
     await expect(
-      generatePagesBarrel({ appRoot, productionDir: path.join(appRoot, ".warlock/production"), clientDir: "dist/client" }),
+      generatePagesBarrel({
+        appRoot,
+        productionDir: path.join(appRoot, ".warlock/production"),
+        clientDir: "dist/client",
+      }),
     ).rejects.toThrowError(/src\/web\/root.tsx/);
   });
 
@@ -286,21 +282,26 @@ describe("the Vite-switch tripwire", () => {
     });
 
     await expect(
-      generatePagesBarrel({ appRoot, productionDir: path.join(appRoot, ".warlock/production"), clientDir: "dist/client" }),
+      generatePagesBarrel({
+        appRoot,
+        productionDir: path.join(appRoot, ".warlock/production"),
+        clientDir: "dist/client",
+      }),
     ).rejects.toThrowError(WebPageGraphUnsupportedImportError);
   });
 
   it("scans non-page sources under the web roots too, and leaves the barrel unwritten", async () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/web/components/button.tsx": 'import icon from "./button.svg";\nexport const Button = icon;\n',
+      "src/web/components/button.tsx":
+        'import icon from "./button.svg";\nexport const Button = icon;\n',
       "src/web/main/home.page.tsx": PAGE,
     });
     const productionDir = path.join(appRoot, ".warlock/production");
 
-    await expect(generatePagesBarrel({ appRoot, productionDir, clientDir: "dist/client" })).rejects.toThrowError(
-      /button\.tsx/,
-    );
+    await expect(
+      generatePagesBarrel({ appRoot, productionDir, clientDir: "dist/client" }),
+    ).rejects.toThrowError(/button\.tsx/);
     expect(fs.existsSync(path.join(productionDir, "pages.ts"))).toBe(false);
   });
 
@@ -312,7 +313,11 @@ describe("the Vite-switch tripwire", () => {
     });
 
     await expect(
-      generatePagesBarrel({ appRoot, productionDir: path.join(appRoot, ".warlock/production"), clientDir: "dist/client" }),
+      generatePagesBarrel({
+        appRoot,
+        productionDir: path.join(appRoot, ".warlock/production"),
+        clientDir: "dist/client",
+      }),
     ).resolves.toMatchObject({ pageCount: 1 });
   });
 
@@ -337,7 +342,11 @@ describe("the Vite-switch tripwire", () => {
     });
 
     await expect(
-      generatePagesBarrel({ appRoot, productionDir: path.join(appRoot, ".warlock/production"), clientDir: "dist/client" }),
+      generatePagesBarrel({
+        appRoot,
+        productionDir: path.join(appRoot, ".warlock/production"),
+        clientDir: "dist/client",
+      }),
     ).resolves.toMatchObject({ pageCount: 1 });
   });
 
@@ -348,7 +357,11 @@ describe("the Vite-switch tripwire", () => {
     });
 
     await expect(
-      generatePagesBarrel({ appRoot, productionDir: path.join(appRoot, ".warlock/production"), clientDir: "dist/client" }),
+      generatePagesBarrel({
+        appRoot,
+        productionDir: path.join(appRoot, ".warlock/production"),
+        clientDir: "dist/client",
+      }),
     ).rejects.toThrowError(WebPageGraphUnsupportedImportError);
   });
 });
@@ -387,7 +400,7 @@ describe("the page-route manifest", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
       "src/web/main/home.page.tsx": PAGE,
-      "src/web/404.page.tsx": 'export default function NotFound() { return null; }\n',
+      "src/web/404.page.tsx": "export default function NotFound() { return null; }\n",
     });
 
     const { pageRoutes } = await generatePagesBarrel({

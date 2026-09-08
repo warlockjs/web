@@ -113,7 +113,7 @@ export class UnknownRouteNameError extends Error {
       `Warlock href(${JSON.stringify(routeName)}) does not name a known route. ` +
         (knownRouteNames.length === 0
           ? "The route table is published but empty, so no page declared a `route` discovery could see."
-          : `The table knows: ${knownRouteNames.map(name => JSON.stringify(name)).join(", ")}.`),
+          : `The table knows: ${knownRouteNames.map((name) => JSON.stringify(name)).join(", ")}.`),
     );
     this.name = "UnknownRouteNameError";
   }
@@ -144,7 +144,7 @@ export class UnknownRouteParameterError extends Error {
   ) {
     super(
       `Warlock href(${JSON.stringify(routeName)}) was given ` +
-        `${parameterNames.map(name => JSON.stringify(name)).join(", ")}, which the route path ` +
+        `${parameterNames.map((name) => JSON.stringify(name)).join(", ")}, which the route path ` +
         `"${routePath}" does not declare. Passing an undeclared parameter is a typo often ` +
         "enough that it is refused rather than dropped; values meant for the query string go " +
         "in the third argument.",
@@ -233,14 +233,14 @@ function interpolate(
   params: RouteParameters | undefined,
 ): string {
   const declared = parameterNamesOf(routePath);
-  const supplied = Object.keys(params ?? {}).filter(key => params?.[key] !== undefined);
-  const undeclared = supplied.filter(key => !declared.includes(key));
+  const supplied = Object.keys(params ?? {}).filter((key) => params?.[key] !== undefined);
+  const undeclared = supplied.filter((key) => !declared.includes(key));
 
   if (undeclared.length > 0) {
     throw new UnknownRouteParameterError(routeName, undeclared, routePath);
   }
 
-  return routePath.replace(PARAMETER_PATTERN, match => {
+  return routePath.replace(PARAMETER_PATTERN, (match) => {
     const name = match === "*" ? "*" : match.slice(1);
     const value = params?.[name];
 
@@ -268,11 +268,7 @@ function interpolate(
  * @throws {UnserializableQueryValueError} when a query value nests deeper than
  * the wire format core parses can carry.
  */
-export function href(
-  name: string,
-  params?: RouteParameters,
-  query?: RouteQuery,
-): string {
+export function href(name: string, params?: RouteParameters, query?: RouteQuery): string {
   const slot = readSlot();
 
   if (slot === undefined) throw new RouteTableNotPublishedError(name);

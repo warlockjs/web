@@ -84,8 +84,14 @@ function walk(node: unknown, visit: (node: Record<string, any>) => void): void {
   if (typeof record.type !== "string") return;
   visit(record);
   for (const key of Object.keys(record)) {
-    if (key === "type" || key === "start" || key === "end" || key === "loc" || key === "range") continue;
-    if (key === "leadingComments" || key === "trailingComments" || key === "innerComments" || key === "extra") {
+    if (key === "type" || key === "start" || key === "end" || key === "loc" || key === "range")
+      continue;
+    if (
+      key === "leadingComments" ||
+      key === "trailingComments" ||
+      key === "innerComments" ||
+      key === "extra"
+    ) {
       continue;
     }
     walk(record[key], visit);

@@ -37,9 +37,7 @@ export function registeredPageFiles(
 export function pageRouteSourceFiles(routes: ReturnType<Router["list"]>): string[] {
   return [
     ...new Set(
-      routes
-        .filter((route) => route.isPage && route.sourceFile)
-        .map((route) => route.sourceFile),
+      routes.filter((route) => route.isPage && route.sourceFile).map((route) => route.sourceFile),
     ),
   ];
 }

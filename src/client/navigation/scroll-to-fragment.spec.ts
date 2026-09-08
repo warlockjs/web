@@ -19,18 +19,14 @@ describe("scrollToFragment", () => {
   it("scrolls to the element whose id matches", () => {
     const scrollIntoView = vi.fn();
 
-    expect(scrollToFragment(documentWith({ install: { scrollIntoView } }), "install")).toBe(
-      true,
-    );
+    expect(scrollToFragment(documentWith({ install: { scrollIntoView } }), "install")).toBe(true);
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
   });
 
   it("decodes the fragment before looking the id up", () => {
     const scrollIntoView = vi.fn();
 
-    expect(
-      scrollToFragment(documentWith({ "a b": { scrollIntoView } }), "a%20b"),
-    ).toBe(true);
+    expect(scrollToFragment(documentWith({ "a b": { scrollIntoView } }), "a%20b")).toBe(true);
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
   });
 
@@ -56,8 +52,7 @@ describe("scrollToFragment", () => {
     const result = scrollToFragment(
       {
         getElementById: () => null,
-        getElementsByName: (name: string) =>
-          name === "install" ? [{ scrollIntoView }] : [],
+        getElementsByName: (name: string) => (name === "install" ? [{ scrollIntoView }] : []),
       },
       "install",
     );

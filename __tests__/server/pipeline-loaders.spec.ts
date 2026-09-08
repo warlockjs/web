@@ -37,7 +37,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-const tick = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms));
+const tick = (ms = 10) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function runInline(triple: PageRouteEntry["triple"], url = "/inline") {
   const created: ReturnType<typeof createCoreHttp>[] = [];
@@ -298,7 +298,7 @@ describe("executePageRequest — loader short-circuits", () => {
     const bundle = await executePageRequest({
       url,
       routes,
-      createHttp: match => createCoreHttp({ url, params: match.params, query: match.query }),
+      createHttp: (match) => createCoreHttp({ url, params: match.params, query: match.query }),
     });
 
     expect(bundle!.shortCircuit).toEqual({

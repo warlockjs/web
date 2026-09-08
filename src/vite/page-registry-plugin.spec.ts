@@ -55,11 +55,23 @@ function pageSource(routePath: string, body: string): string {
 function callHook<T>(plugin: Plugin, hook: "resolveId" | "load", ...args: any[]): T {
   const handler = plugin[hook];
   const fn = typeof handler === "function" ? handler : (handler as any)?.handler;
-  return fn.apply({ error: (message: string) => { throw new Error(message); } }, args) as T;
+  return fn.apply(
+    {
+      error: (message: string) => {
+        throw new Error(message);
+      },
+    },
+    args,
+  ) as T;
 }
 
 /** Invokes a plugin hook with an explicit `this` (for `transform`/`hotUpdate`, which read `this.environment`). */
-function callHookWith<T>(plugin: Plugin, hook: "transform" | "hotUpdate", thisArg: any, ...args: any[]): T {
+function callHookWith<T>(
+  plugin: Plugin,
+  hook: "transform" | "hotUpdate",
+  thisArg: any,
+  ...args: any[]
+): T {
   const handler = plugin[hook];
   const fn = typeof handler === "function" ? handler : (handler as any)?.handler;
   return fn.apply(thisArg, args) as T;
@@ -79,7 +91,11 @@ function metadataPageSource(routePath: string, title: string, bodyText: string):
   ].join("\n");
 }
 
-function registerPageSource(signature: string, registerBody: string, componentText: string): string {
+function registerPageSource(
+  signature: string,
+  registerBody: string,
+  componentText: string,
+): string {
   return [
     `export const route = { path: "/registered" };`,
     ``,
@@ -222,18 +238,10 @@ describe("clientPageRegistry — virtual module id contract", () => {
     );
 
     expect(() =>
-      callHook<string>(
-        clientPageRegistry({ appRoot }),
-        "load",
-        RESOLVED_CLIENT_PAGE_REGISTRY_ID,
-      ),
+      callHook<string>(clientPageRegistry({ appRoot }), "load", RESOLVED_CLIENT_PAGE_REGISTRY_ID),
     ).toThrow(MissingPageDefaultExportError);
     expect(() =>
-      callHook<string>(
-        clientPageRegistry({ appRoot }),
-        "load",
-        RESOLVED_CLIENT_PAGE_REGISTRY_ID,
-      ),
+      callHook<string>(clientPageRegistry({ appRoot }), "load", RESOLVED_CLIENT_PAGE_REGISTRY_ID),
     ).toThrow(/src\/web\/no-default\.page\.tsx/);
   });
 });
@@ -327,13 +335,22 @@ describe("clientPageRegistry — the server half wins: metadata edits force a fu
   function hotUpdateContext() {
     const sent: any[] = [];
     return {
-      thisArg: { environment: { mode: "dev", hot: { send: (payload: any) => sent.push(payload) } } },
+      thisArg: {
+        environment: { mode: "dev", hot: { send: (payload: any) => sent.push(payload) } },
+      },
       sent,
     };
   }
 
   function hotUpdateOptions(file: string, source: string) {
-    return { type: "update" as const, file, timestamp: 1, modules: [], read: () => source, server: {} as any };
+    return {
+      type: "update" as const,
+      file,
+      timestamp: 1,
+      modules: [],
+      read: () => source,
+      server: {} as any,
+    };
   }
 
   it("the capture spy returns nothing (projection still owns the real transform) and only runs in dev", () => {
@@ -347,18 +364,31 @@ describe("clientPageRegistry — the server half wins: metadata edits force a fu
       callHookWith(plugin, "transform", { environment: { mode: "build" } }, source, PAGE),
     ).toBeUndefined();
     // Not a page module: ignored.
-    expect(callHookWith(plugin, "transform", transformContext(), source, "/app/util.ts")).toBeUndefined();
+    expect(
+      callHookWith(plugin, "transform", transformContext(), source, "/app/util.ts"),
+    ).toBeUndefined();
   });
 
   it("a metadata-only edit (projected client code unchanged) sends full-reload and suppresses the Fast Refresh update", async () => {
     const plugin = clientPageRegistry({ appRoot: makeAppRoot() });
 
     // Baseline capture, then edit ONLY the server `metadata` title.
-    callHookWith(plugin, "transform", transformContext(), metadataPageSource("/blog/article", "First", "hello"), PAGE);
+    callHookWith(
+      plugin,
+      "transform",
+      transformContext(),
+      metadataPageSource("/blog/article", "First", "hello"),
+      PAGE,
+    );
     const edited = metadataPageSource("/blog/article", "Second", "hello");
 
     const { thisArg, sent } = hotUpdateContext();
-    const result = await callHookWith<Promise<any>>(plugin, "hotUpdate", thisArg, hotUpdateOptions(PAGE, edited));
+    const result = await callHookWith<Promise<any>>(
+      plugin,
+      "hotUpdate",
+      thisArg,
+      hotUpdateOptions(PAGE, edited),
+    );
 
     expect(sent).toEqual([{ type: "full-reload", path: "*" }]);
     // Empty array: the plugin owns this update, Vite must not also Fast-Refresh.
@@ -393,12 +423,23 @@ describe("clientPageRegistry — the server half wins: metadata edits force a fu
   it("a JSX edit (projected client code changed) sends nothing and defers to Fast Refresh", async () => {
     const plugin = clientPageRegistry({ appRoot: makeAppRoot() });
 
-    callHookWith(plugin, "transform", transformContext(), metadataPageSource("/blog/article", "First", "hello"), PAGE);
+    callHookWith(
+      plugin,
+      "transform",
+      transformContext(),
+      metadataPageSource("/blog/article", "First", "hello"),
+      PAGE,
+    );
     // Same metadata, DIFFERENT component text — the client half moves.
     const edited = metadataPageSource("/blog/article", "First", "goodbye");
 
     const { thisArg, sent } = hotUpdateContext();
-    const result = await callHookWith<Promise<any>>(plugin, "hotUpdate", thisArg, hotUpdateOptions(PAGE, edited));
+    const result = await callHookWith<Promise<any>>(
+      plugin,
+      "hotUpdate",
+      thisArg,
+      hotUpdateOptions(PAGE, edited),
+    );
 
     expect(sent).toEqual([]);
     // No return value: Vite performs its normal Fast Refresh update.
@@ -407,7 +448,13 @@ describe("clientPageRegistry — the server half wins: metadata edits force a fu
 
   it("a register function body edit sends nothing and defers to the projected self-accept", async () => {
     const plugin = clientPageRegistry({ appRoot: makeAppRoot() });
-    callHookWith(plugin, "transform", transformContext(), registerPageSource("()", "installFirst();", "hello"), PAGE);
+    callHookWith(
+      plugin,
+      "transform",
+      transformContext(),
+      registerPageSource("()", "installFirst();", "hello"),
+      PAGE,
+    );
 
     const { thisArg, sent } = hotUpdateContext();
     const result = await callHookWith<Promise<any>>(
@@ -423,7 +470,13 @@ describe("clientPageRegistry — the server half wins: metadata edits force a fu
 
   it("a register and component body edit in one save defers to self-accept and Fast Refresh", async () => {
     const plugin = clientPageRegistry({ appRoot: makeAppRoot() });
-    callHookWith(plugin, "transform", transformContext(), registerPageSource("()", "installFirst();", "hello"), PAGE);
+    callHookWith(
+      plugin,
+      "transform",
+      transformContext(),
+      registerPageSource("()", "installFirst();", "hello"),
+      PAGE,
+    );
 
     const { thisArg, sent } = hotUpdateContext();
     const result = await callHookWith<Promise<any>>(
@@ -439,7 +492,13 @@ describe("clientPageRegistry — the server half wins: metadata edits force a fu
 
   it("masks the body of a one-declarator exported const register", async () => {
     const plugin = clientPageRegistry({ appRoot: makeAppRoot() });
-    callHookWith(plugin, "transform", transformContext(), constRegisterPageSource("installFirst();", "hello"), PAGE);
+    callHookWith(
+      plugin,
+      "transform",
+      transformContext(),
+      constRegisterPageSource("installFirst();", "hello"),
+      PAGE,
+    );
 
     const { thisArg, sent } = hotUpdateContext();
     const result = await callHookWith<Promise<any>>(
@@ -455,7 +514,13 @@ describe("clientPageRegistry — the server half wins: metadata edits force a fu
 
   it("a register signature edit forces a full reload", async () => {
     const plugin = clientPageRegistry({ appRoot: makeAppRoot() });
-    callHookWith(plugin, "transform", transformContext(), registerPageSource("()", "install();", "hello"), PAGE);
+    callHookWith(
+      plugin,
+      "transform",
+      transformContext(),
+      registerPageSource("()", "install();", "hello"),
+      PAGE,
+    );
 
     const { thisArg, sent } = hotUpdateContext();
     const result = await callHookWith<Promise<any>>(
@@ -500,7 +565,10 @@ describe("clientPageRegistry — the server half wins: metadata edits force a fu
       plugin,
       "transform",
       transformContext(),
-      declaredRegisterPageSource(`export const register = () => { installFirst(); }, version = 1;`, "hello"),
+      declaredRegisterPageSource(
+        `export const register = () => { installFirst(); }, version = 1;`,
+        "hello",
+      ),
       PAGE,
     );
 
@@ -511,7 +579,10 @@ describe("clientPageRegistry — the server half wins: metadata edits force a fu
       thisArg,
       hotUpdateOptions(
         PAGE,
-        declaredRegisterPageSource(`export const register = () => { installSecond(); }, version = 1;`, "hello"),
+        declaredRegisterPageSource(
+          `export const register = () => { installSecond(); }, version = 1;`,
+          "hello",
+        ),
       ),
     );
 
@@ -522,12 +593,23 @@ describe("clientPageRegistry — the server half wins: metadata edits force a fu
   it("a mixed edit (BOTH metadata and JSX changed in one save) reloads — the server half wins over Fast Refresh", async () => {
     const plugin = clientPageRegistry({ appRoot: makeAppRoot() });
 
-    callHookWith(plugin, "transform", transformContext(), metadataPageSource("/blog/article", "First", "hello"), PAGE);
+    callHookWith(
+      plugin,
+      "transform",
+      transformContext(),
+      metadataPageSource("/blog/article", "First", "hello"),
+      PAGE,
+    );
     // ONE save that moves BOTH halves: the `metadata` title AND the component text.
     const edited = metadataPageSource("/blog/article", "Second", "goodbye");
 
     const { thisArg, sent } = hotUpdateContext();
-    const result = await callHookWith<Promise<any>>(plugin, "hotUpdate", thisArg, hotUpdateOptions(PAGE, edited));
+    const result = await callHookWith<Promise<any>>(
+      plugin,
+      "hotUpdate",
+      thisArg,
+      hotUpdateOptions(PAGE, edited),
+    );
 
     // The client half moved too, yet the stale `<head>` must never ship: the
     // server-half change forces a full reload and suppresses the Fast Refresh.
@@ -542,7 +624,12 @@ describe("clientPageRegistry — the server half wins: metadata edits force a fu
     callHookWith(plugin, "transform", transformContext(), source, PAGE);
 
     const { thisArg, sent } = hotUpdateContext();
-    const result = await callHookWith<Promise<any>>(plugin, "hotUpdate", thisArg, hotUpdateOptions(PAGE, source));
+    const result = await callHookWith<Promise<any>>(
+      plugin,
+      "hotUpdate",
+      thisArg,
+      hotUpdateOptions(PAGE, source),
+    );
 
     expect(sent).toEqual([]);
     expect(result).toBeUndefined();
@@ -553,7 +640,12 @@ describe("clientPageRegistry — the server half wins: metadata edits force a fu
     const edited = metadataPageSource("/blog/article", "Second", "hello");
 
     const { thisArg, sent } = hotUpdateContext();
-    const result = await callHookWith<Promise<any>>(plugin, "hotUpdate", thisArg, hotUpdateOptions(PAGE, edited));
+    const result = await callHookWith<Promise<any>>(
+      plugin,
+      "hotUpdate",
+      thisArg,
+      hotUpdateOptions(PAGE, edited),
+    );
 
     expect(sent).toEqual([]);
     expect(result).toBeUndefined();
@@ -565,7 +657,12 @@ describe("clientPageRegistry — the server half wins: metadata edits force a fu
 
     const nonPage = hotUpdateContext();
     expect(
-      await callHookWith<Promise<any>>(plugin, "hotUpdate", nonPage.thisArg, hotUpdateOptions("/app/util.ts", source)),
+      await callHookWith<Promise<any>>(
+        plugin,
+        "hotUpdate",
+        nonPage.thisArg,
+        hotUpdateOptions("/app/util.ts", source),
+      ),
     ).toBeUndefined();
     expect(nonPage.sent).toEqual([]);
 

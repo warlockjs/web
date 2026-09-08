@@ -82,9 +82,12 @@ function firstChunkCode(result: BuildResult): string {
   return chunk.code;
 }
 
-function manifestOf(result: BuildResult): Array<{ key: string; value: string | null; redacted: boolean }> {
+function manifestOf(
+  result: BuildResult,
+): Array<{ key: string; value: string | null; redacted: boolean }> {
   const asset = outputOf(result).find((file) => file.fileName === "warlock-env-manifest.json");
-  if (!asset || asset.type !== "asset") throw new Error("expected a warlock-env-manifest.json asset in the output");
+  if (!asset || asset.type !== "asset")
+    throw new Error("expected a warlock-env-manifest.json asset in the output");
   return JSON.parse(asset.source as string);
 }
 
@@ -151,9 +154,7 @@ describe("gateCVerify — Gate C output verification (real Vite builds)", () => 
         expect.unreachable("expected the build to fail");
       } catch (error) {
         const message = (error as Error).message;
-        expect(message).toContain(
-          "Gate C refused a build: a server-only import edge survived",
-        );
+        expect(message).toContain("Gate C refused a build: a server-only import edge survived");
         expect(message).toContain("File: out.js");
         expect(message).toContain("Module:");
         expect(message).toContain("@warlock.js/fake-server-pkg");
@@ -184,9 +185,7 @@ describe("gateCVerify — Gate C output verification (real Vite builds)", () => 
         expect.unreachable("expected the build to fail");
       } catch (error) {
         const message = (error as Error).message;
-        expect(message).toContain(
-          "Gate C refused a build: a server-only import edge survived",
-        );
+        expect(message).toContain("Gate C refused a build: a server-only import edge survived");
         expect(message).toContain("File: out.js");
         expect(message).toContain("Module:");
         expect(message).toContain("@warlock.js/fake-server-pkg");
@@ -231,9 +230,7 @@ describe("gateCVerify — Gate C output verification (real Vite builds)", () => 
         },
       };
 
-      expect(() => findLeakedServerExports(bundle)).toThrow(
-        /assets\/broken\.page-4f2a1c\.js/,
-      );
+      expect(() => findLeakedServerExports(bundle)).toThrow(/assets\/broken\.page-4f2a1c\.js/);
 
       try {
         findLeakedServerExports(bundle);
@@ -275,7 +272,11 @@ describe("gateCVerify — Gate C output verification (real Vite builds)", () => 
     it("case 6: a parseable chunk sitting alongside the unparseable one does not rescue the build — the gate still fails", () => {
       expect(() =>
         findLeakedServerExports({
-          "assets/fine.js": { type: "chunk", fileName: "assets/fine.js", code: "export const x = 1;" },
+          "assets/fine.js": {
+            type: "chunk",
+            fileName: "assets/fine.js",
+            code: "export const x = 1;",
+          },
           "assets/broken.page-4f2a1c.js": {
             type: "chunk",
             fileName: "assets/broken.page-4f2a1c.js",

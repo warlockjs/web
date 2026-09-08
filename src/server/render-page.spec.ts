@@ -9,9 +9,8 @@ const { resolvePageMetadata } = vi.hoisted(() => ({
 }));
 
 vi.mock("./resolve-page-metadata", async () => {
-  const actual = await vi.importActual<
-    typeof import("./resolve-page-metadata")
-  >("./resolve-page-metadata");
+  const actual =
+    await vi.importActual<typeof import("./resolve-page-metadata")>("./resolve-page-metadata");
   return { ...actual, resolvePageMetadata };
 });
 vi.mock("../shared", () => ({
@@ -19,10 +18,7 @@ vi.mock("../shared", () => ({
   sealShared: vi.fn(async () => Object.freeze({})),
 }));
 
-import {
-  connectPageContext,
-  type PageRouteEntry,
-} from "./execute-page-request";
+import { connectPageContext, type PageRouteEntry } from "./execute-page-request";
 import { isNonHydrating } from "./page-render-bundle";
 import { renderPage, renderPageFailure } from "./render-page";
 import type { ErrorPageModule } from "./error-page";
@@ -172,8 +168,7 @@ describe("finishRender — normal app error page path", () => {
       loadErrorPage: async () => fakeErrorPageModule(),
     });
 
-    if (rendered instanceof Response)
-      throw new Error("unexpected terminal Response");
+    if (rendered instanceof Response) throw new Error("unexpected terminal Response");
 
     expect(isNonHydrating(rendered.bundle)).toBe(false);
     expect(rendered.html).toContain(PAYLOAD_SCRIPT_ID);

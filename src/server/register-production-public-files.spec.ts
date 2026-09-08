@@ -38,11 +38,10 @@ describe("registerProductionPublicFiles", () => {
     });
     const file = vi.fn();
 
-    registerProductionPublicFiles(
-      { file } as unknown as Router,
-      clientDir,
-      ["favicon.svg", "docs/rem-public.txt"],
-    );
+    registerProductionPublicFiles({ file } as unknown as Router, clientDir, [
+      "favicon.svg",
+      "docs/rem-public.txt",
+    ]);
 
     expect(file).toHaveBeenCalledTimes(2);
     expect(file).toHaveBeenNthCalledWith(

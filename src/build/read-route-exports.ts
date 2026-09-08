@@ -63,7 +63,8 @@ export type RouteExportsReadResult =
   | { ok: false; rejection: RouteExportsRejection };
 
 const EXAMPLES: Record<"route" | "prefix", string> = {
-  route: 'export const route = "/list"; (or export const route = { path: "/list", name: "shop.list" };)',
+  route:
+    'export const route = "/list"; (or export const route = { path: "/list", name: "shop.list" };)',
   prefix: 'export const prefix = "/shop";',
 };
 

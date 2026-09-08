@@ -1,10 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  connectSharedStore,
-  enterSharedScope,
-  sealShared,
-  shared,
-} from "../../src/shared";
+import { connectSharedStore, enterSharedScope, sealShared, shared } from "../../src/shared";
 import { makeStore, TestRequestContext, type TestStore } from "./test-request-context";
 
 const sharedAny = shared as Record<string, any>;
@@ -49,7 +44,7 @@ describe("sealShared — gate → parse → freeze", () => {
       public theme = "dark";
     }
 
-    await inRequest(async store => {
+    await inRequest(async (store) => {
       sharedAny.settings = new Settings();
 
       await expect(sealShared(store)).rejects.toThrowError(
@@ -59,7 +54,7 @@ describe("sealShared — gate → parse → freeze", () => {
   });
 
   it("prototype gate names NESTED offending keys, including array paths", async () => {
-    await inRequest(async store => {
+    await inRequest(async (store) => {
       sharedAny.user = { profile: { avatar: new Map() } };
 
       await expect(sealShared(store)).rejects.toThrowError(
@@ -69,9 +64,7 @@ describe("sealShared — gate → parse → freeze", () => {
       sharedAny.user = { profile: { avatar: "x" } };
       sharedAny.items = [1, { tags: new Set() }];
 
-      await expect(sealShared(store)).rejects.toThrowError(
-        /`shared\.items\[1\]\.tags` is a Set/,
-      );
+      await expect(sealShared(store)).rejects.toThrowError(/`shared\.items\[1\]\.tags` is a Set/);
     });
   });
 
@@ -98,7 +91,7 @@ describe("sealShared — gate → parse → freeze", () => {
   });
 
   it("second gate rejects a Date a Resource's toJSON introduces AFTER parse (parse re-entry hole)", async () => {
-    await inRequest(async store => {
+    await inRequest(async (store) => {
       // pre-parse this looks like a plain object with a callable toJSON — the
       // FIRST gate passes it untouched (not descended).
       // parse() resolves toJSON (response.ts:301-305) and never re-parses the
@@ -114,7 +107,7 @@ describe("sealShared — gate → parse → freeze", () => {
   });
 
   it("post-seal writes and deletes throw naming the key; reads keep working", async () => {
-    await inRequest(async store => {
+    await inRequest(async (store) => {
       sharedAny.locale = "en";
 
       await sealShared(store);
@@ -152,7 +145,7 @@ describe("sealShared — gate → parse → freeze", () => {
   it("the prototype gate itself runs in production too", async () => {
     vi.stubEnv("NODE_ENV", "production");
 
-    await inRequest(async store => {
+    await inRequest(async (store) => {
       sharedAny.startedAt = new Date();
 
       await expect(sealShared(store)).rejects.toThrowError(/`shared\.startedAt` is a Date/);
@@ -171,7 +164,7 @@ describe("sealShared — gate → parse → freeze", () => {
   });
 
   it("sealing twice throws", async () => {
-    await inRequest(async store => {
+    await inRequest(async (store) => {
       await sealShared(store);
       await expect(sealShared(store)).rejects.toThrowError(/called twice/);
     });

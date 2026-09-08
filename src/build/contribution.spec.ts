@@ -38,11 +38,7 @@ afterEach(() => {
 });
 
 /** This spec lives at `web/src/build/` — two levels up is the real package root. */
-const realWebRoot = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "..",
-);
+const realWebRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 describe("assertWebPackageRoot", () => {
   it("accepts the real @warlock.js/web package root", () => {
@@ -52,9 +48,7 @@ describe("assertWebPackageRoot", () => {
   it("throws WebPackageRootResolutionError naming a root with no package.json", () => {
     const bogus = makeTree({ "readme.md": "not a package\n" });
 
-    expect(() => assertWebPackageRoot(bogus)).toThrow(
-      WebPackageRootResolutionError,
-    );
+    expect(() => assertWebPackageRoot(bogus)).toThrow(WebPackageRootResolutionError);
     expect(() => assertWebPackageRoot(bogus)).toThrow(bogus);
   });
 
@@ -81,9 +75,7 @@ describe("assertWebPackageRoot", () => {
   it("throws WebPackageRootResolutionError on unparsable package.json", () => {
     const bogus = makeTree({ "package.json": "{ not json" });
 
-    expect(() => assertWebPackageRoot(bogus)).toThrow(
-      WebPackageRootResolutionError,
-    );
+    expect(() => assertWebPackageRoot(bogus)).toThrow(WebPackageRootResolutionError);
   });
 });
 
@@ -118,8 +110,7 @@ function buildContext(appRoot: string): ConnectorBuildContext {
 }
 
 const APP = "export default function App() { return null; }\n";
-const PAGE =
-  'export const route = "/";\nexport default function Page() { return null; }\n';
+const PAGE = 'export const route = "/";\nexport default function Page() { return null; }\n';
 
 /**
  * Keep emit-path tests focused on contribution orchestration. The real barrel
@@ -222,17 +213,15 @@ describe("web build contribution — zero pages", () => {
     // is absent from `connectors`": the builder only calls hooks it was given.
     createWebBuildContribution();
 
-    expect(
-      fs.existsSync(path.join(appRoot, ".warlock", "production", "pages.ts")),
-    ).toBe(false);
+    expect(fs.existsSync(path.join(appRoot, ".warlock", "production", "pages.ts"))).toBe(false);
   });
 });
 
 describe("web build contribution — clientOutDir", () => {
   it("refuses a config that sets build.clientOutDir", () => {
-    expect(() =>
-      createWebBuildContribution({ clientOutDir: "/tmp/wherever" }),
-    ).toThrow(ClientOutDirNotSupportedError);
+    expect(() => createWebBuildContribution({ clientOutDir: "/tmp/wherever" })).toThrow(
+      ClientOutDirNotSupportedError,
+    );
 
     let thrown: unknown;
 
@@ -280,9 +269,9 @@ describe("web build contribution — clientOutDir", () => {
     generatePagesBarrelSpy.mockClear();
     buildHydrationClient.mockClear();
 
-    expect(() =>
-      createWebBuildContribution({ clientOutDir: "/tmp/wherever" }),
-    ).toThrow(ClientOutDirNotSupportedError);
+    expect(() => createWebBuildContribution({ clientOutDir: "/tmp/wherever" })).toThrow(
+      ClientOutDirNotSupportedError,
+    );
 
     expect(generatePagesBarrelSpy).not.toHaveBeenCalled();
     expect(buildHydrationClient).not.toHaveBeenCalled();
@@ -334,9 +323,7 @@ describe("web build contribution — connector plugins", () => {
 
     expect(generatePagesBarrelSpy).toHaveBeenCalledTimes(1);
     expect(buildHydrationClient).toHaveBeenCalledTimes(1);
-    expect(buildHydrationClient).toHaveBeenCalledWith(
-      expect.objectContaining({ plugins: [] }),
-    );
+    expect(buildHydrationClient).toHaveBeenCalledWith(expect.objectContaining({ plugins: [] }));
 
     log.mockRestore();
   });

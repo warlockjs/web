@@ -184,7 +184,9 @@ describe("gateBSecrets — Gate B inline-secret transform gate (real Vite builds
         // Same file/line/expression/cause/fix shape as every other Gate B
         // violation (case 1-8 above) — NOT the whole-build generateBundle
         // message ("Gate B refused a build: an unread PUBLIC_ env var...").
-        expect(message).toContain("Gate B refused a module: forbidden inline env read in the client build.");
+        expect(message).toContain(
+          "Gate B refused a module: forbidden inline env read in the client build.",
+        );
         expect(message).toContain("case10-import-meta-env-aliased.tsx:");
         expect(message).toContain("Expression: import.meta.env");
         expect(message).toContain("Cause:");
@@ -193,13 +195,15 @@ describe("gateBSecrets — Gate B inline-secret transform gate (real Vite builds
       }
     });
 
-    it('case 11: fn({...import.meta.env}) (spread) fails at transform time, source-line-pointing', async () => {
+    it("case 11: fn({...import.meta.env}) (spread) fails at transform time, source-line-pointing", async () => {
       try {
         await buildEntry("case11-import-meta-env-spread.tsx");
         expect.unreachable("expected the build to fail");
       } catch (error) {
         const message = (error as Error).message;
-        expect(message).toContain("Gate B refused a module: forbidden inline env read in the client build.");
+        expect(message).toContain(
+          "Gate B refused a module: forbidden inline env read in the client build.",
+        );
         expect(message).toContain("case11-import-meta-env-spread.tsx:");
         expect(message).toContain("Expression: import.meta.env");
         expect(message).toContain("Cause:");
@@ -312,7 +316,9 @@ describe("gateBSecrets — Gate B inline-secret transform gate (real Vite builds
         expect.unreachable("expected the build to fail");
       } catch (error) {
         const message = (error as Error).message;
-        expect(message).toContain("Gate B refused a module: forbidden inline env read in the client build.");
+        expect(message).toContain(
+          "Gate B refused a module: forbidden inline env read in the client build.",
+        );
         expect(message).toContain("case21-process-env-aliased.tsx:");
         expect(message).toContain("Expression: process.env");
         expect(message).toContain("Cause:");
@@ -327,7 +333,9 @@ describe("gateBSecrets — Gate B inline-secret transform gate (real Vite builds
         expect.unreachable("expected the build to fail");
       } catch (error) {
         const message = (error as Error).message;
-        expect(message).toContain("Gate B refused a module: forbidden inline env read in the client build.");
+        expect(message).toContain(
+          "Gate B refused a module: forbidden inline env read in the client build.",
+        );
         expect(message).toContain("case22-process-env-spread.tsx:");
         expect(message).toContain("Expression: process.env");
         expect(message).toContain("Cause:");
@@ -342,7 +350,9 @@ describe("gateBSecrets — Gate B inline-secret transform gate (real Vite builds
         expect.unreachable("expected the build to fail");
       } catch (error) {
         const message = (error as Error).message;
-        expect(message).toContain("Gate B refused a module: forbidden inline env read in the client build.");
+        expect(message).toContain(
+          "Gate B refused a module: forbidden inline env read in the client build.",
+        );
         expect(message).toContain("case23-process-env-destructure.tsx:");
         expect(message).toContain("Expression: process.env");
         expect(message).toContain("whole object");
@@ -355,7 +365,9 @@ describe("gateBSecrets — Gate B inline-secret transform gate (real Vite builds
         expect.unreachable("expected the build to fail");
       } catch (error) {
         const message = (error as Error).message;
-        expect(message).toContain("Gate B refused a module: forbidden inline env read in the client build.");
+        expect(message).toContain(
+          "Gate B refused a module: forbidden inline env read in the client build.",
+        );
         expect(message).toContain("case24-process-env-object-keys.tsx:");
         expect(message).toContain("Expression: process.env");
         expect(message).toContain("whole object");
@@ -368,7 +380,9 @@ describe("gateBSecrets — Gate B inline-secret transform gate (real Vite builds
         expect.unreachable("expected the build to fail");
       } catch (error) {
         const message = (error as Error).message;
-        expect(message).toContain("Gate B refused a module: forbidden inline env read in the client build.");
+        expect(message).toContain(
+          "Gate B refused a module: forbidden inline env read in the client build.",
+        );
         expect(message).toContain("case25-process-env-json-stringify.tsx:");
         expect(message).toContain("Expression: process.env");
         expect(message).toContain("whole object");

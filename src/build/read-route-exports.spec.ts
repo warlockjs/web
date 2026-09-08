@@ -64,9 +64,9 @@ describe("readRouteExports — the literal forms it accepts", () => {
   });
 
   it("reads TSX sources, and reports neither export when the file declares neither", () => {
-    expect(
-      read("export default function Page() { return <div>hi</div>; }", "page.tsx"),
-    ).toEqual({ ok: true });
+    expect(read("export default function Page() { return <div>hi</div>; }", "page.tsx")).toEqual({
+      ok: true,
+    });
   });
 
   it("ignores keys it does not know, the same way the server does", () => {

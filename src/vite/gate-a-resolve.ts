@@ -116,18 +116,13 @@ function findWorkspaceIndex(startDir: string): WorkspaceIndex | undefined {
     if (existsSync(candidate)) {
       try {
         const pkg = JSON.parse(readFileSync(candidate, "utf-8"));
-        if (
-          pkg?.name === "warlock-workspace" &&
-          Array.isArray(pkg.workspaces)
-        ) {
+        if (pkg?.name === "warlock-workspace" && Array.isArray(pkg.workspaces)) {
           const packageJsonByName = new Map<string, string>();
           for (const workspace of pkg.workspaces as string[]) {
             const workspacePkgPath = path.join(dir, workspace, "package.json");
             if (!existsSync(workspacePkgPath)) continue;
             try {
-              const workspacePkg = JSON.parse(
-                readFileSync(workspacePkgPath, "utf-8"),
-              );
+              const workspacePkg = JSON.parse(readFileSync(workspacePkgPath, "utf-8"));
               if (
                 typeof workspacePkg.name === "string" &&
                 isGovernedScope(`${workspacePkg.name}/`)
@@ -158,10 +153,7 @@ function findWorkspaceIndex(startDir: string): WorkspaceIndex | undefined {
  * dependencies, e.g. `@mongez/reinforcements`, or any governed package when
  * this module runs standalone outside the monorepo).
  */
-function findNodeModulesPackageJson(
-  pkgName: string,
-  startDir: string,
-): string | undefined {
+function findNodeModulesPackageJson(pkgName: string, startDir: string): string | undefined {
   let dir = startDir;
   for (let depth = 0; depth < 20; depth++) {
     const candidate = path.join(dir, "node_modules", pkgName, "package.json");
@@ -181,9 +173,7 @@ function findNodeModulesPackageJson(
  * `undefined` for paths with no `node_modules` segment, or whose owning
  * package isn't in a governed scope.
  */
-function packageNameFromNodeModulesPath(
-  normalized: string,
-): string | undefined {
+function packageNameFromNodeModulesPath(normalized: string): string | undefined {
   const segments = normalized.split("node_modules/");
   if (segments.length < 2) return undefined;
   const afterLast = segments[segments.length - 1];
@@ -223,11 +213,8 @@ const BOUNDARY_DECLARATION_PACKAGES: Record<string, WarlockEnvironment> = {
 function boundaryDeclarationOf(
   source: string,
 ): { name: string; declares: WarlockEnvironment } | undefined {
-  for (const [name, declares] of Object.entries(
-    BOUNDARY_DECLARATION_PACKAGES,
-  )) {
-    if (source === name || source.startsWith(`${name}/`))
-      return { name, declares };
+  for (const [name, declares] of Object.entries(BOUNDARY_DECLARATION_PACKAGES)) {
+    if (source === name || source.startsWith(`${name}/`)) return { name, declares };
   }
   return undefined;
 }
@@ -286,8 +273,7 @@ export function isServerFile(resolvedPath: string, appRoot: string): boolean {
   // framework itself. `isAppSourcePath` is the same app-source/dependency
   // distinction rule 4 draws, not a second one.
   if (isAppSourcePath(bare, appRoot)) {
-    if (APP_SERVER_SEGMENT.test(normalize(path.relative(appRoot, bare))))
-      return true;
+    if (APP_SERVER_SEGMENT.test(normalize(path.relative(appRoot, bare)))) return true;
   }
   return false;
 }
@@ -338,13 +324,8 @@ const MODULE_WEB_SEGMENT = /(^|\/)web(\/|$)/;
  * subfolder of `web/` is inside it. `web/components/`, `web/layouts/` and
  * `web/utils/` are ordinary app layout, not a way around the fence.
  */
-export function isWithinModuleWebFolder(
-  resolvedPath: string,
-  appRoot: string,
-): boolean {
-  return MODULE_WEB_SEGMENT.test(
-    normalize(path.relative(appRoot, resolvedPath)),
-  );
+export function isWithinModuleWebFolder(resolvedPath: string, appRoot: string): boolean {
+  return MODULE_WEB_SEGMENT.test(normalize(path.relative(appRoot, resolvedPath)));
 }
 
 /**
@@ -377,16 +358,7 @@ const LOCAL_MODULE_EXTENSIONS = /\.([cm]?[jt]sx?)$/;
  * `isRecognizedUniversalSurface`) answers identically for `x.ts` and `x.js`, so
  * matching Vite is for least surprise rather than for correctness.
  */
-const IMPLICIT_MODULE_EXTENSIONS = [
-  ".mjs",
-  ".js",
-  ".mts",
-  ".ts",
-  ".jsx",
-  ".tsx",
-  ".cjs",
-  ".cts",
-];
+const IMPLICIT_MODULE_EXTENSIONS = [".mjs", ".js", ".mts", ".ts", ".jsx", ".tsx", ".cjs", ".cts"];
 
 function isFile(candidate: string): boolean {
   try {
@@ -444,8 +416,7 @@ function completeLocalModulePath(judgedPath: string): string {
   if (judgedPath.includes("\0")) return judgedPath;
 
   const queryIndex = judgedPath.indexOf("?");
-  const barePath =
-    queryIndex === -1 ? judgedPath : judgedPath.slice(0, queryIndex);
+  const barePath = queryIndex === -1 ? judgedPath : judgedPath.slice(0, queryIndex);
   const querySuffix = queryIndex === -1 ? "" : judgedPath.slice(queryIndex);
 
   return `${completeBareLocalModulePath(barePath)}${querySuffix}`;
@@ -503,10 +474,7 @@ function completeBareLocalModulePath(judgedPath: string): string {
  * gets here, or the extension test below is a way OUT of this rule rather than
  * a narrowing of it — see that function.
  */
-function isOutsideUniversalScope(
-  resolvedPath: string,
-  appRoot: string,
-): boolean {
+function isOutsideUniversalScope(resolvedPath: string, appRoot: string): boolean {
   if (!LOCAL_MODULE_EXTENSIONS.test(resolvedPath)) return false;
   if (!isAppSourcePath(resolvedPath, appRoot)) return false;
   // Order matters: `isAppSourcePath` above is what makes the app-root-relative
@@ -535,10 +503,7 @@ function isOutsideUniversalScope(
  * "judged path" is still the specifier string itself (see `resolveId`), which
  * is not absolute. They are rule 2's business.
  */
-export function isAppSourcePath(
-  resolvedPath: string,
-  appRoot: string,
-): boolean {
+export function isAppSourcePath(resolvedPath: string, appRoot: string): boolean {
   if (!path.isAbsolute(resolvedPath)) return false;
   if (!isInsideAppRoot(resolvedPath, appRoot)) return false;
   return !normalize(resolvedPath).includes("/node_modules/");
@@ -587,9 +552,7 @@ function parserPluginsFor(id: string): ("typescript" | "jsx")[] {
   // `jsx` on a `.ts` file mis-parses the type-assertion form `<T>value`, which
   // is legal there and only there. Everything else (including plain `.js`) is
   // parsed with both, since JSX in a `.js` file is ordinary in this ecosystem.
-  return /\.[cm]?ts$/.test(moduleKey(id))
-    ? ["typescript"]
-    : ["typescript", "jsx"];
+  return /\.[cm]?ts$/.test(moduleKey(id)) ? ["typescript"] : ["typescript", "jsx"];
 }
 
 /**
@@ -612,18 +575,14 @@ function parserPluginsFor(id: string): ("typescript" | "jsx")[] {
 function importDeclarationKind(decl: any): ImportKind {
   if (decl.importKind === "type") return "type";
   if (decl.specifiers.length === 0) return "value";
-  return decl.specifiers.every((spec: any) => spec.importKind === "type")
-    ? "type"
-    : "value";
+  return decl.specifiers.every((spec: any) => spec.importKind === "type") ? "type" : "value";
 }
 
 function exportDeclarationKind(stmt: any): ImportKind {
   if (stmt.exportKind === "type") return "type";
   const specifiers = stmt.specifiers ?? [];
   if (specifiers.length === 0) return "value"; // `export * from "P"` — a runtime edge.
-  return specifiers.every((spec: any) => spec.exportKind === "type")
-    ? "type"
-    : "value";
+  return specifiers.every((spec: any) => spec.exportKind === "type") ? "type" : "value";
 }
 
 /**
@@ -655,18 +614,11 @@ function collectRuntimeSpecifiers(node: unknown, into: Set<string>): void {
       (callee?.type === "Identifier" && callee.name === "require");
     if (isRuntimeLoad) {
       const arg = (record as any).source ?? (record as any).arguments?.[0];
-      if (arg?.type === "StringLiteral" && typeof arg.value === "string")
-        into.add(arg.value);
+      if (arg?.type === "StringLiteral" && typeof arg.value === "string") into.add(arg.value);
     }
   }
   for (const key of Object.keys(record)) {
-    if (
-      key === "type" ||
-      key === "start" ||
-      key === "end" ||
-      key === "loc" ||
-      key === "range"
-    )
+    if (key === "type" || key === "start" || key === "end" || key === "loc" || key === "range")
       continue;
     if (
       key === "leadingComments" ||
@@ -685,10 +637,7 @@ function collectRuntimeSpecifiers(node: unknown, into: Set<string>): void {
  * `undefined` when the source could not be parsed — the caller reads that as
  * "no information", which leaves rule 2 refusing exactly as it does today.
  */
-function classifyImportKinds(
-  code: string,
-  id: string,
-): Map<string, ImportKind> | undefined {
+function classifyImportKinds(code: string, id: string): Map<string, ImportKind> | undefined {
   let ast;
   try {
     ast = parse(code, {
@@ -714,8 +663,7 @@ function classifyImportKinds(
       continue;
     }
     if (
-      (stmt.type === "ExportNamedDeclaration" ||
-        stmt.type === "ExportAllDeclaration") &&
+      (stmt.type === "ExportNamedDeclaration" || stmt.type === "ExportAllDeclaration") &&
       stmt.source
     ) {
       record(stmt.source.value as string, exportDeclarationKind(stmt));
@@ -802,14 +750,9 @@ function ruleViolation(
   // to switch a fence off. Rules 1, 3, 4 and 5 are untouched by this flag on
   // purpose: they judge the importer's own nature or a file name, neither of
   // which a type-only spelling changes.
-  if (
-    !isTypeOnlyEdge &&
-    isServerMarkedGovernedPackage(source, importer, environmentOf, appRoot)
-  ) {
+  if (!isTypeOnlyEdge && isServerMarkedGovernedPackage(source, importer, environmentOf, appRoot)) {
     const pkgName = governedPackageNameOf(source);
-    const scopeLabel = pkgName.startsWith("@warlock.js/")
-      ? "@warlock.js"
-      : "@mongez";
+    const scopeLabel = pkgName.startsWith("@warlock.js/") ? "@warlock.js" : "@mongez";
     return {
       cause: `"${source}" resolves into ${pkgName}, a server-only ${scopeLabel} package — it declares "warlock": { "environment": "server" } in its package.json.`,
       fix: `Move this import behind a *.server.ts file, a server/ folder, a loader, or a controller — the client only needs the serialized data it returns — or, if ${pkgName} is genuinely universal/client-safe, change its marker to "warlock": { "environment": "universal" } (or "client").`,
@@ -878,11 +821,7 @@ function displayName(id: string): string {
 }
 
 /** Rollup's normalized `external`, as `buildStart` receives it. */
-type ExternalPredicate = (
-  id: string,
-  importer: string | undefined,
-  isResolved: boolean,
-) => unknown;
+type ExternalPredicate = (id: string, importer: string | undefined, isResolved: boolean) => unknown;
 
 /**
  * Every Node builtin the Rollup config would externalize — empty when none,
@@ -989,9 +928,7 @@ export interface EnvironmentClassifier {
 export function createEnvironmentClassifier(
   options: EnvironmentClassifierOptions = {},
 ): EnvironmentClassifier {
-  const forcedServerPackages = options.serverPackages
-    ? new Set(options.serverPackages)
-    : undefined;
+  const forcedServerPackages = options.serverPackages ? new Set(options.serverPackages) : undefined;
   const appRoot = path.resolve(options.appRoot ?? process.cwd());
   const workspaceIndex = findWorkspaceIndex(__dirname);
   const environmentCache = new Map<string, WarlockEnvironment>();
@@ -1010,11 +947,7 @@ export function createEnvironmentClassifier(
       try {
         const pkg = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
         const marker = pkg?.warlock?.environment;
-        if (
-          marker === "server" ||
-          marker === "universal" ||
-          marker === "client"
-        ) {
+        if (marker === "server" || marker === "universal" || marker === "client") {
           environment = marker;
         }
       } catch {
@@ -1144,10 +1077,7 @@ export function gateAResolve(options: GateAOptions = {}): Plugin {
     }
   }
 
-  function isTypeOnlyEdge(
-    source: string,
-    importer: string | undefined,
-  ): boolean {
+  function isTypeOnlyEdge(source: string, importer: string | undefined): boolean {
     if (!importer) return false;
     return importKindsByModule.get(moduleKey(importer))?.get(source) === "type";
   }
@@ -1211,8 +1141,7 @@ export function gateAResolve(options: GateAOptions = {}): Plugin {
       const externalized = externalizedBuiltins(inputOptions.external);
       if (externalized.length === 0) return;
       const shown = externalized.slice(0, 5).join(", ");
-      const rest =
-        externalized.length > 5 ? `, and ${externalized.length - 5} more` : "";
+      const rest = externalized.length > 5 ? `, and ${externalized.length - 5} more` : "";
       this.error(
         [
           `Gate A refused this build: its Rollup "external" config would let Node builtins through the fence.`,
@@ -1277,12 +1206,9 @@ export function gateAResolve(options: GateAOptions = {}): Plugin {
       // `./helper`, which rule 4 does not recognize as code and therefore
       // never judges. `completeLocalModulePath` is a no-op for bare
       // specifiers, virtual ids and paths that already carry an extension.
-      const isRelativeOrAbsolute =
-        source.startsWith(".") || path.isAbsolute(source);
+      const isRelativeOrAbsolute = source.startsWith(".") || path.isAbsolute(source);
       const judgedPath = completeLocalModulePath(
-        isRelativeOrAbsolute && importer
-          ? path.resolve(path.dirname(importer), source)
-          : source,
+        isRelativeOrAbsolute && importer ? path.resolve(path.dirname(importer), source) : source,
       );
 
       if (source === TYPE_ONLY_ERASED_ID) return source;
@@ -1316,10 +1242,7 @@ export function gateAResolve(options: GateAOptions = {}): Plugin {
       // `ruleViolation` has run to completion, so rules 3 and 4 keep the last
       // word over a type-only specifier (`@warlock.js/core/db.server` is still
       // refused by rule 3, whatever the import kind).
-      if (
-        typeOnly &&
-        isServerMarkedGovernedPackage(source, importer, environmentOf, appRoot)
-      ) {
+      if (typeOnly && isServerMarkedGovernedPackage(source, importer, environmentOf, appRoot)) {
         return TYPE_ONLY_ERASED_ID;
       }
 

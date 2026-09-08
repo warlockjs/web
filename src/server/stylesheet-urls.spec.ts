@@ -76,9 +76,7 @@ describe("devStylesheetUrls — one file's own imports", () => {
   it("returns nothing for a file it cannot read, rather than throwing", () => {
     const appRoot = makeTree({});
 
-    expect(devStylesheetUrls(appRoot, path.join(appRoot, "src/web/missing.page.tsx"))).toEqual(
-      [],
-    );
+    expect(devStylesheetUrls(appRoot, path.join(appRoot, "src/web/missing.page.tsx"))).toEqual([]);
   });
 });
 

@@ -248,7 +248,8 @@ function isSafeToShowValue(value: unknown): boolean {
   if (typeof value !== "string" || value.length === 0) return true;
   if (CREDENTIALED_URL_RE.test(value)) return false;
   if (KNOWN_SECRET_PREFIX_RES.some((re) => re.test(value))) return false;
-  if (HIGH_ENTROPY_TOKEN_RE.test(value) && /[0-9]/.test(value) && /[a-zA-Z]/.test(value)) return false;
+  if (HIGH_ENTROPY_TOKEN_RE.test(value) && /[0-9]/.test(value) && /[a-zA-Z]/.test(value))
+    return false;
   return true;
 }
 
@@ -272,13 +273,11 @@ function stringifyEnvValue(value: unknown): string {
  * BUILD FAILURE (see `gate-b-secrets.ts`), never silently listed here.
  */
 export function buildPublicEnvManifest(tracker: PublicEnvTracker): PublicEnvManifestEntry[] {
-  return [...tracker.referencedKeys]
-    .sort()
-    .map((key) => {
-      const value = tracker.declaredEnv[key];
-      const safe = isSafeToShowValue(value);
-      return { key, value: safe ? stringifyEnvValue(value) : null, redacted: !safe };
-    });
+  return [...tracker.referencedKeys].sort().map((key) => {
+    const value = tracker.declaredEnv[key];
+    const safe = isSafeToShowValue(value);
+    return { key, value: safe ? stringifyEnvValue(value) : null, redacted: !safe };
+  });
 }
 
 export interface GateCOptions extends EnvironmentClassifierOptions {

@@ -86,9 +86,7 @@ describe("resolveValidationData — the page default", () => {
   });
 
   it("treats an empty list as the default", () => {
-    expect(resolveValidationData([], request)).toEqual(
-      resolveValidationData(undefined, request),
-    );
+    expect(resolveValidationData([], request)).toEqual(resolveValidationData(undefined, request));
   });
 
   it("lets params win over a query key of the same name", () => {

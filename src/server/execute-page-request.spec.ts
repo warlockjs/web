@@ -38,7 +38,7 @@ function route(
 beforeEach(() => {
   resolvePageMetadata.mockClear();
   connectPageContext({
-    buildStore: payload => payload as never,
+    buildStore: (payload) => payload as never,
     getStore: () => undefined,
     run: async (_store, callback) => callback(),
   });

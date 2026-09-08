@@ -98,9 +98,7 @@ describe("generateClientRegistry", () => {
   });
 
   it("includes App only when the page has an appFile", async () => {
-    const withApp = await evaluate(
-      generate([aPage({ appFile: "C:/app/src/web/root.tsx" })]),
-    );
+    const withApp = await evaluate(generate([aPage({ appFile: "C:/app/src/web/root.tsx" })]));
     const withoutApp = await evaluate(generate([aPage()]));
 
     const composedWithApp = await withApp[0].load();
@@ -137,10 +135,7 @@ describe("generateClientRegistry", () => {
       generate([
         aPage({
           pageFile: "C:/app/src/web/users/account/settings.page.tsx",
-          layouts: [
-            "C:/app/src/web/users/layout.tsx",
-            "C:/app/src/web/users/account/layout.tsx",
-          ],
+          layouts: ["C:/app/src/web/users/layout.tsx", "C:/app/src/web/users/account/layout.tsx"],
         }),
       ]),
     );
@@ -173,8 +168,9 @@ describe("generateClientRegistry", () => {
     ]);
     expect(modules.every((module) => typeof module.default === "function")).toBe(true);
     expect(modules.every((module) => typeof module.register === "function")).toBe(true);
-    expect(modules.every((module) => Object.prototype.toString.call(module) === "[object Module]"))
-      .toBe(true);
+    expect(
+      modules.every((module) => Object.prototype.toString.call(module) === "[object Module]"),
+    ).toBe(true);
   });
 
   it("preserves 404 and error entries on the ordinary client registry path", async () => {

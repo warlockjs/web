@@ -1,8 +1,4 @@
-import type {
-  ClientPageEntry,
-  ClientProjectedModule,
-  ClientRouteComposition,
-} from "./types";
+import type { ClientPageEntry, ClientProjectedModule, ClientRouteComposition } from "./types";
 
 const ENTRY_KEYS = ["type", "name", "path", "load"] as const;
 const COMPOSITION_REQUIRED_KEYS = ["Page", "layouts"] as const;
@@ -101,12 +97,7 @@ function validateComposition(input: unknown): ClientRouteComposition {
     throw new TypeError(`${label} must be a non-array object.`);
   }
 
-  assertExactDataKeys(
-    input,
-    COMPOSITION_REQUIRED_KEYS,
-    COMPOSITION_OPTIONAL_KEYS,
-    label,
-  );
+  assertExactDataKeys(input, COMPOSITION_REQUIRED_KEYS, COMPOSITION_OPTIONAL_KEYS, label);
   validateProjectedModule(input.Page, `${label} Page`);
 
   if (!Array.isArray(input.layouts)) {

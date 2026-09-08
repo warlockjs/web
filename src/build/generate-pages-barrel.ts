@@ -216,8 +216,7 @@ function withoutComments(source: string): string {
     for (const comment of ast.comments ?? []) {
       const { start, end } = comment as { start: number; end: number };
 
-      stripped =
-        stripped.slice(0, start) + " ".repeat(end - start) + stripped.slice(end);
+      stripped = stripped.slice(0, start) + " ".repeat(end - start) + stripped.slice(end);
     }
 
     return stripped;
@@ -364,7 +363,7 @@ const EMPTY_BARREL_CONTENTS = [
   ...BARREL_HEADER,
   "",
   "// Zero pages were discovered. The empty table is still provided, because that",
-  "// is what tells the boot-time reader \"this bundle WAS built with web, it just",
+  '// is what tells the boot-time reader "this bundle WAS built with web, it just',
   '// has no pages" — as opposed to a bundle built without web at all, where no',
   "// barrel runs and the manifest stays absent.",
   "providePageManifest({ pages: [] });",
@@ -452,19 +451,27 @@ export async function generatePagesBarrel(
   const pageRoutes: PageRoutesManifest = {
     version: 1,
     routes: [
-      ...routablePages.filter((page) => !isNotFoundPageFile(page.pageFile)).map((page) => ({
-      method: "GET" as const,
-      path: normalizeRoutePath(page.routePath),
-      name: page.routeName,
-      source: toPosix(path.relative(appRoot, page.pageFile)),
-      })),
+      ...routablePages
+        .filter((page) => !isNotFoundPageFile(page.pageFile))
+        .map((page) => ({
+          method: "GET" as const,
+          path: normalizeRoutePath(page.routePath),
+          name: page.routeName,
+          source: toPosix(path.relative(appRoot, page.pageFile)),
+        })),
       {
         method: "GET" as const,
         path: normalizeRoutePath(NOT_FOUND_ROUTE_PATH),
         name: NOT_FOUND_ROUTE_NAME,
-        source: routablePages.find((page) => isNotFoundPageFile(page.pageFile)) === undefined
-          ? "\u0000warlock:framework-default-404"
-          : toPosix(path.relative(appRoot, routablePages.find((page) => isNotFoundPageFile(page.pageFile))!.pageFile)),
+        source:
+          routablePages.find((page) => isNotFoundPageFile(page.pageFile)) === undefined
+            ? "\u0000warlock:framework-default-404"
+            : toPosix(
+                path.relative(
+                  appRoot,
+                  routablePages.find((page) => isNotFoundPageFile(page.pageFile))!.pageFile,
+                ),
+              ),
       },
     ],
   };
@@ -490,7 +497,9 @@ export async function generatePagesBarrel(
       : [`import * as app from ${quote(importSpecifierFor(productionDir, appFile))};`]),
     ...(errorPage === undefined
       ? []
-      : [`import * as errorPage from ${quote(importSpecifierFor(productionDir, errorPage.pageFile))};`]),
+      : [
+          `import * as errorPage from ${quote(importSpecifierFor(productionDir, errorPage.pageFile))};`,
+        ]),
     ...[...layoutIdentifiers.entries()].map(
       ([layoutFile, identifier]) =>
         `import * as ${identifier} from ${quote(importSpecifierFor(productionDir, layoutFile))};`,
@@ -505,7 +514,10 @@ export async function generatePagesBarrel(
 
   const pageEntries = pages.map((page) => {
     const layouts = page.layouts
-      .map((layout) => `{ module: ${layout.identifier}, sourceFile: ${relativeToApp(layout.sourceFile)} }`)
+      .map(
+        (layout) =>
+          `{ module: ${layout.identifier}, sourceFile: ${relativeToApp(layout.sourceFile)} }`,
+      )
       .join(", ");
 
     return [
@@ -525,10 +537,10 @@ export async function generatePagesBarrel(
     ...(routablePages.length === 0 && publicFiles.length === 0
       ? []
       : [`  clientDir: ${quote(clientDir)},`]),
-    ...(publicFiles.length === 0
+    ...(publicFiles.length === 0 ? [] : [`  publicFiles: ${JSON.stringify([...publicFiles])},`]),
+    ...(routablePages.length === 0
       ? []
-      : [`  publicFiles: ${JSON.stringify([...publicFiles])},`]),
-    ...(routablePages.length === 0 ? [] : [`  app: { module: app, sourceFile: ${relativeToApp(appFile)} },`]),
+      : [`  app: { module: app, sourceFile: ${relativeToApp(appFile)} },`]),
     ...(errorPage === undefined
       ? []
       : [`  errorPage: { module: errorPage, sourceFile: ${relativeToApp(errorPage.pageFile)} },`]),

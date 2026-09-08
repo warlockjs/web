@@ -45,7 +45,9 @@ function assertEntryFile(entry: HydrationClientEntry): void {
   }
 
   if (!entryStat.isFile()) {
-    throw new Error(`Cannot build the hydration client: entry "${entry.sourcePath}" is not a file.`);
+    throw new Error(
+      `Cannot build the hydration client: entry "${entry.sourcePath}" is not a file.`,
+    );
   }
 }
 

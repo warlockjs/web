@@ -20,10 +20,7 @@ import {
 } from "./gate-a-resolve";
 import { createPublicEnvTracker, gateBSecrets } from "./gate-b-secrets";
 import { gateCVerify } from "./gate-c-verify";
-import {
-  clientPageRegistry,
-  type ClientPageRegistryPluginOptions,
-} from "./page-registry-plugin";
+import { clientPageRegistry, type ClientPageRegistryPluginOptions } from "./page-registry-plugin";
 import { isProjectableFile, projectModule, projection } from "./projection";
 
 export { buildHydrationClient } from "./build-client";
@@ -52,10 +49,7 @@ export type {
   ServerExportLeak,
   ServerImportEdgeLeak,
 } from "./gate-c-verify";
-export {
-  HYDRATION_CLIENT_ENTRY_NAME,
-  createHydrationClientEntry,
-} from "./hydration-entries";
+export { HYDRATION_CLIENT_ENTRY_NAME, createHydrationClientEntry } from "./hydration-entries";
 export type { HydrationClientEntry } from "./hydration-entries";
 export {
   CLIENT_PAGE_REGISTRY_ID,
@@ -67,9 +61,7 @@ export type { ClientPageRegistryPluginOptions } from "./page-registry-plugin";
 export { projection, ProjectionAmbiguityError } from "./projection";
 export type { ProjectionResult } from "./projection";
 
-export type WarlockClientBoundaryOptions = Parameters<
-  typeof gateAResolve
->[0] & {
+export type WarlockClientBoundaryOptions = Parameters<typeof gateAResolve>[0] & {
   beforePageHotUpdate?: ClientPageRegistryPluginOptions["beforePageHotUpdate"];
 };
 
@@ -138,10 +130,7 @@ function collectImportSpecifiers(code: string): Set<string> {
     ) {
       imports.add(record.arguments[0].value);
     }
-    if (
-      record.type === "ImportExpression" &&
-      record.source?.type === "StringLiteral"
-    ) {
+    if (record.type === "ImportExpression" && record.source?.type === "StringLiteral") {
       imports.add(record.source.value);
     }
 
@@ -165,16 +154,9 @@ function collectImportSpecifiers(code: string): Set<string> {
   return imports;
 }
 
-function clientViewOf(
-  state: SsrBoundaryState,
-  code: string,
-  id: string,
-): string | undefined {
+function clientViewOf(state: SsrBoundaryState, code: string, id: string): string | undefined {
   const key = moduleKey(id);
-  if (
-    !state.clientBoundModules.has(key) &&
-    !isStatelessClientSurface(key, state.appRoot)
-  ) {
+  if (!state.clientBoundModules.has(key) && !isStatelessClientSurface(key, state.appRoot)) {
     return undefined;
   }
 
@@ -184,9 +166,7 @@ function clientViewOf(
     return code;
   }
 
-  const clientCode = isProjectableFile(key)
-    ? projectModule(code, key).code
-    : code;
+  const clientCode = isProjectableFile(key) ? projectModule(code, key).code : code;
   state.clientImportsByModule.set(key, collectImportSpecifiers(clientCode));
   return clientCode;
 }
@@ -213,25 +193,15 @@ function isServerEnvironment(context: {
  * projected client view, so loader/server exports retain their legitimate
  * server access while component-visible code is refused before evaluation.
  */
-function clientEnvironmentOnly(
-  plugin: Plugin,
-  ssrState: SsrBoundaryState,
-): Plugin {
+function clientEnvironmentOnly(plugin: Plugin, ssrState: SsrBoundaryState): Plugin {
   const validatesDevSsr =
-    plugin.name === "warlock:gate-a-resolve" ||
-    plugin.name === "warlock:gate-b-secrets";
+    plugin.name === "warlock:gate-a-resolve" || plugin.name === "warlock:gate-b-secrets";
   const originalTransform =
-    typeof plugin.transform === "function"
-      ? plugin.transform
-      : plugin.transform?.handler;
+    typeof plugin.transform === "function" ? plugin.transform : plugin.transform?.handler;
   const originalResolveId =
-    typeof plugin.resolveId === "function"
-      ? plugin.resolveId
-      : plugin.resolveId?.handler;
+    typeof plugin.resolveId === "function" ? plugin.resolveId : plugin.resolveId?.handler;
   const originalBuildStart =
-    typeof plugin.buildStart === "function"
-      ? plugin.buildStart
-      : plugin.buildStart?.handler;
+    typeof plugin.buildStart === "function" ? plugin.buildStart : plugin.buildStart?.handler;
 
   return {
     ...plugin,
@@ -256,24 +226,17 @@ function clientEnvironmentOnly(
           const clientCode = clientViewOf(ssrState, code, id);
           if (clientCode === undefined) return null;
 
-          const transformed = await originalTransform.call(
-            this,
-            clientCode,
-            id,
-            {
-              ...options,
-              ssr: false,
-            },
-          );
+          const transformed = await originalTransform.call(this, clientCode, id, {
+            ...options,
+            ssr: false,
+          });
 
           // Vite can externalize a package in the SSR environment before its
           // normal resolver walk offers that edge to a plugin. Gate A cannot
           // wait for that walk: validate every import that survived projection
           // now, while the original TypeScript source and importer are known.
           if (plugin.name === "warlock:gate-a-resolve" && originalResolveId) {
-            for (const source of ssrState.clientImportsByModule.get(
-              moduleKey(id),
-            ) ?? []) {
+            for (const source of ssrState.clientImportsByModule.get(moduleKey(id)) ?? []) {
               const resolved = await originalResolveId.call(this, source, id, {
                 attributes: {},
                 isEntry: false,
@@ -299,19 +262,13 @@ function clientEnvironmentOnly(
             isStatelessClientSurface(importerKey, ssrState.appRoot);
           if (!isClientBound) return null;
 
-          const survivingImports =
-            ssrState.clientImportsByModule.get(importerKey);
+          const survivingImports = ssrState.clientImportsByModule.get(importerKey);
           if (survivingImports && !survivingImports.has(source)) return null;
 
-          const resolved = await originalResolveId.call(
-            this,
-            source,
-            importer,
-            {
-              ...options,
-              ssr: false,
-            },
-          );
+          const resolved = await originalResolveId.call(this, source, importer, {
+            ...options,
+            ssr: false,
+          });
           markResolvedClientModule(ssrState, resolved);
           return resolved;
         }
@@ -417,9 +374,7 @@ function clientEnvironmentOnly(
  * chunk while the page's own component text is proven present. Inspecting this
  * array's order would prove nothing about what reaches the browser.
  */
-export function warlockClientBoundary(
-  options: WarlockClientBoundaryOptions = {},
-): Plugin[] {
+export function warlockClientBoundary(options: WarlockClientBoundaryOptions = {}): Plugin[] {
   const tracker = createPublicEnvTracker();
   const ssrState: SsrBoundaryState = {
     appRoot: path.resolve(options.appRoot ?? process.cwd()),
@@ -451,9 +406,6 @@ export async function buildWarlockHydrationClient(
     outDir: options.outDir,
     resolveAliases: options.resolveAliases,
     external: options.external,
-    plugins: [
-      ...warlockClientBoundary({ appRoot: options.appRoot }),
-      ...(options.plugins ?? []),
-    ],
+    plugins: [...warlockClientBoundary({ appRoot: options.appRoot }), ...(options.plugins ?? [])],
   });
 }

@@ -14,15 +14,7 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const FIXTURE_ROOT = path.join(
-  __dirname,
-  "..",
-  "..",
-  "__tests__",
-  "vite",
-  "fixtures",
-  "composed",
-);
+const FIXTURE_ROOT = path.join(__dirname, "..", "..", "__tests__", "vite", "fixtures", "composed");
 const PAGE_DIR = path.join(FIXTURE_ROOT, "app", "blog", "web");
 const WEB_ROOT = path.resolve(__dirname, "..", "..");
 
@@ -43,16 +35,11 @@ const GATE_A_PAGE_DIR = path.join(GATE_A_FIXTURE_ROOT, "app", "blog", "web");
  * fixture page — never the two plugins in isolation. Verifies the actual
  * emitted outcome, matching D.1/D.2's verification convention.
  */
-async function buildPage(
-  fileName: string,
-  boundaryOptions: WarlockClientBoundaryOptions = {},
-) {
+async function buildPage(fileName: string, boundaryOptions: WarlockClientBoundaryOptions = {}) {
   return build({
     root: FIXTURE_ROOT,
     logLevel: "silent",
-    plugins: [
-      warlockClientBoundary({ appRoot: FIXTURE_ROOT, ...boundaryOptions }),
-    ],
+    plugins: [warlockClientBoundary({ appRoot: FIXTURE_ROOT, ...boundaryOptions })],
     build: {
       write: false,
       minify: false,
@@ -73,8 +60,7 @@ async function buildPage(
 function firstChunkCode(result: Awaited<ReturnType<typeof buildPage>>): string {
   const output = Array.isArray(result) ? result[0] : result;
   const chunk = "output" in output ? output.output[0] : undefined;
-  if (!chunk || chunk.type !== "chunk")
-    throw new Error("expected a JS chunk in the build output");
+  if (!chunk || chunk.type !== "chunk") throw new Error("expected a JS chunk in the build output");
   return chunk.code;
 }
 
@@ -87,9 +73,7 @@ async function serveSsrSource(
   source: string,
   extraFiles: Readonly<Record<string, string>> = {},
 ): Promise<ServedSsrResult> {
-  const appRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "warlock-dev-ssr-boundary-"),
-  );
+  const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), "warlock-dev-ssr-boundary-"));
   const pagePath = path.join(appRoot, "src", "web", "probe.page.tsx");
   fs.mkdirSync(path.dirname(pagePath), { recursive: true });
   fs.writeFileSync(pagePath, source);
@@ -263,8 +247,7 @@ describe("warlockClientBoundary - development SSR projected-client gate", () => 
       const response = await serveSsrSource(
         `import { secret } from "../shared";\nexport default function Page() { return secret(); }\n`,
         {
-          "src/shared.ts":
-            "export function secret() { return process.env.APP_SECRET; }\n",
+          "src/shared.ts": "export function secret() { return process.env.APP_SECRET; }\n",
         },
       );
 
@@ -304,9 +287,7 @@ describe("warlockClientBoundary - development SSR projected-client gate", () => 
   });
 
   it("leaves an explicitly server-only SSR entry unrestricted", async () => {
-    const appRoot = fs.mkdtempSync(
-      path.join(os.tmpdir(), "warlock-dev-ssr-server-only-"),
-    );
+    const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), "warlock-dev-ssr-server-only-"));
     const serverFile = path.join(appRoot, "src", "server", "secret.server.ts");
     fs.mkdirSync(path.dirname(serverFile), { recursive: true });
     fs.writeFileSync(
@@ -337,9 +318,7 @@ describe("warlockClientBoundary - development SSR projected-client gate", () => 
 
 describe("buildWarlockHydrationClient — configured plugin parity", () => {
   it("runs a Tailwind-style Vite plugin after Warlock's boundary and emits its CSS asset", async () => {
-    const outDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "warlock-vite-plugin-build-"),
-    );
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "warlock-vite-plugin-build-"));
     const tailwindStylePlugin: Plugin = {
       name: "tailwindcss-vite-style",
       generateBundle() {
@@ -359,16 +338,10 @@ describe("buildWarlockHydrationClient — configured plugin parity", () => {
         resolveAliases: [{ find: "web", replacement: WEB_ROOT }],
         plugins: [tailwindStylePlugin],
       });
-      const outputs = Array.isArray(result.output)
-        ? result.output
-        : [result.output];
+      const outputs = Array.isArray(result.output) ? result.output : [result.output];
       const asset = outputs
         .flatMap((output) => output.output)
-        .find(
-          (file) =>
-            file.type === "asset" &&
-            file.fileName === "assets/tailwind-generated.css",
-        );
+        .find((file) => file.type === "asset" && file.fileName === "assets/tailwind-generated.css");
 
       expect(asset?.type).toBe("asset");
       expect(asset && "source" in asset ? asset.source : undefined).toContain(
@@ -400,8 +373,7 @@ describe("hook ordering pin — transform runs before resolveId", () => {
       // resolve "./helper" before this plugin's `resolveId` runs at all.
       enforce: "pre",
       transform(_code, id) {
-        if (id.endsWith(entryFile))
-          events.push(`transform:${path.basename(id)}`);
+        if (id.endsWith(entryFile)) events.push(`transform:${path.basename(id)}`);
         return null;
       },
       resolveId(source, importer) {

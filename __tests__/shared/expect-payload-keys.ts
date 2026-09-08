@@ -1,8 +1,5 @@
 import { expect } from "vitest";
-import {
-  OPTIONAL_OBJECT_PAYLOAD_KEYS,
-  REQUIRED_PAYLOAD_KEYS,
-} from "../../src/hydration-payload";
+import { OPTIONAL_OBJECT_PAYLOAD_KEYS, REQUIRED_PAYLOAD_KEYS } from "../../src/hydration-payload";
 
 /**
  * Assert a serialized hydration payload's key set against the CONTRACT rather
@@ -27,7 +24,7 @@ export function expectHydrationPayloadKeys(payload: Record<string, unknown>): vo
   expect(keys).toEqual(expect.arrayContaining([...REQUIRED_PAYLOAD_KEYS]));
 
   const allowed: string[] = [...REQUIRED_PAYLOAD_KEYS, ...OPTIONAL_OBJECT_PAYLOAD_KEYS];
-  const unexpected = keys.filter(key => !allowed.includes(key));
+  const unexpected = keys.filter((key) => !allowed.includes(key));
 
   expect(unexpected).toEqual([]);
 }

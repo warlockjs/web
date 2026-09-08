@@ -42,7 +42,10 @@ function respondWith(
     },
   };
 
-  vi.stubGlobal("fetch", vi.fn(async () => response));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => response),
+  );
 }
 
 afterEach(() => {
@@ -87,16 +90,31 @@ describe("fetchPageData", () => {
   });
 
   it.each([
-    ["a network failure", () => vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("offline"); }))],
+    [
+      "a network failure",
+      () =>
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(async () => {
+            throw new TypeError("offline");
+          }),
+        ),
+    ],
     ["a non-2xx status", () => respondWith(PAYLOAD, { status: 500 })],
-    ["an HTML body from a portal or proxy", () => respondWith(PAYLOAD, { contentType: "text/html" })],
+    [
+      "an HTML body from a portal or proxy",
+      () => respondWith(PAYLOAD, { contentType: "text/html" }),
+    ],
     ["a response with no content-type", () => respondWith(PAYLOAD, { contentType: null })],
     ["malformed JSON", () => respondWith("<!DOCTYPE html>")],
     ["a JSON body that is not a payload", () => respondWith({ error: "nope" })],
-    ["a payload with no declared locale", () => {
-      const { locale: _locale, ...withoutLocale } = PAYLOAD;
-      respondWith(withoutLocale);
-    }],
+    [
+      "a payload with no declared locale",
+      () => {
+        const { locale: _locale, ...withoutLocale } = PAYLOAD;
+        respondWith(withoutLocale);
+      },
+    ],
     ["a payload with an empty locale", () => respondWith({ ...PAYLOAD, locale: "" })],
   ])("falls back to a real navigation on %s", async (_label, arrange) => {
     arrange();

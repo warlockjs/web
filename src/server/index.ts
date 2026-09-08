@@ -36,10 +36,7 @@ export {
   type PipelineMiddleware,
   type PipelineStore,
 } from "./execute-page-request";
-export {
-  createPageModuleLoader,
-  PageModuleNotInManifestError,
-} from "./create-page-module-loader";
+export { createPageModuleLoader, PageModuleNotInManifestError } from "./create-page-module-loader";
 export {
   installPageRoutesFromManifest,
   type InstalledManifestPageRoute,

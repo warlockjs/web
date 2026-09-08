@@ -74,18 +74,20 @@ describe("resolvePageMetadata — the error path", () => {
   });
 
   it("emits the framework's error metadata, noindex included", () => {
-    expect(resolve({ metadata: dataReadingMetadata, failed: true, error: new Error("x") })).toEqual({
-      metadata: ERROR_PAGE_METADATA,
-    });
+    expect(resolve({ metadata: dataReadingMetadata, failed: true, error: new Error("x") })).toEqual(
+      {
+        metadata: ERROR_PAGE_METADATA,
+      },
+    );
 
     // The part that is not cosmetic: a 500 must never be indexed.
     expect(ERROR_PAGE_METADATA.robots).toBe("noindex");
   });
 
   it("skips the object form too — a failed page is not 'Sign in'", () => {
-    expect(resolve({ metadata: { title: "Sign in" }, failed: true, error: new Error("x") })).toEqual(
-      { metadata: ERROR_PAGE_METADATA },
-    );
+    expect(
+      resolve({ metadata: { title: "Sign in" }, failed: true, error: new Error("x") }),
+    ).toEqual({ metadata: ERROR_PAGE_METADATA });
   });
 });
 

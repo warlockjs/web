@@ -130,10 +130,7 @@ interface LocalDeclaration {
   removed: boolean;
 }
 
-function hasSurvivingReader(
-  local: LocalDeclaration,
-  survivingNames: Set<string>,
-): boolean {
+function hasSurvivingReader(local: LocalDeclaration, survivingNames: Set<string>): boolean {
   for (const name of local.names) {
     if (survivingNames.has(name)) return true;
   }
@@ -186,13 +183,7 @@ function collectIdentifierNames(node: unknown, names: Set<string>): void {
     names.add((record as any).name);
   }
   for (const key of Object.keys(record)) {
-    if (
-      key === "type" ||
-      key === "start" ||
-      key === "end" ||
-      key === "loc" ||
-      key === "range"
-    )
+    if (key === "type" || key === "start" || key === "end" || key === "loc" || key === "range")
       continue;
     if (
       key === "leadingComments" ||
@@ -248,8 +239,7 @@ function collectPatternNames(node: any, names: Set<string>): void {
 function declaredNames(stmt: any): Set<string> {
   const names = new Set<string>();
   if (stmt.type === "VariableDeclaration") {
-    for (const declarator of stmt.declarations)
-      collectPatternNames(declarator.id, names);
+    for (const declarator of stmt.declarations) collectPatternNames(declarator.id, names);
   } else if (stmt.id?.type === "Identifier") {
     names.add(stmt.id.name);
   }
@@ -288,18 +278,13 @@ function isDefinitionShapedInit(node: any): boolean {
     case "Identifier":
       return true;
     case "TemplateLiteral":
-      return node.expressions.every((expression: any) =>
-        isDefinitionShapedInit(expression),
-      );
+      return node.expressions.every((expression: any) => isDefinitionShapedInit(expression));
     case "UnaryExpression":
-      return (
-        node.operator !== "delete" && isDefinitionShapedInit(node.argument)
-      );
+      return node.operator !== "delete" && isDefinitionShapedInit(node.argument);
     case "ArrayExpression":
       return node.elements.every(
         (element: any) =>
-          element === null ||
-          (element.type !== "SpreadElement" && isDefinitionShapedInit(element)),
+          element === null || (element.type !== "SpreadElement" && isDefinitionShapedInit(element)),
       );
     case "ObjectExpression":
       // Spread and computed keys both evaluate arbitrary expressions; a getter
@@ -332,9 +317,7 @@ function isDefinitionShapedInit(node: any): boolean {
 function isDefinitionShapedStatement(stmt: any): boolean {
   if (stmt.type === "FunctionDeclaration") return true;
   if (stmt.type !== "VariableDeclaration") return false;
-  return stmt.declarations.every((declarator: any) =>
-    isDefinitionShapedInit(declarator.init),
-  );
+  return stmt.declarations.every((declarator: any) => isDefinitionShapedInit(declarator.init));
 }
 
 function removeStatement(s: MagicString, code: string, node: any): void {
@@ -360,10 +343,7 @@ function statementSnippet(code: string, node: any): string {
  * ambiguous. `filePath` is only used for error messages (`c604f0bc` §7 —
  * fence errors must name the file).
  */
-export function projectModule(
-  code: string,
-  filePath: string,
-): ProjectionResult {
+export function projectModule(code: string, filePath: string): ProjectionResult {
   const ast = parse(code, {
     sourceType: "module",
     plugins: ["typescript", "jsx"],
@@ -456,8 +436,7 @@ export function projectModule(
     const names = new Set<string>();
     for (const stmt of body) {
       if (stmt.type === "ImportDeclaration") continue;
-      if (removedServerExports.includes(stmt) || removedLocals.has(stmt))
-        continue;
+      if (removedServerExports.includes(stmt) || removedLocals.has(stmt)) continue;
       const own = new Set<string>();
       collectIdentifierNames(stmt, own);
       if (DECLARATION_STATEMENT_TYPES.has(stmt.type)) {
@@ -517,9 +496,7 @@ export function projectModule(
       );
     }
 
-    const isUsed = decl.specifiers.some((spec: any) =>
-      survivingNames.has(spec.local.name),
-    );
+    const isUsed = decl.specifiers.some((spec: any) => survivingNames.has(spec.local.name));
     if (!isUsed) removeStatement(s, code, decl);
   }
 
