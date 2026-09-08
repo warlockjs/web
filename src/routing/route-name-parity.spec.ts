@@ -1,10 +1,10 @@
 /**
- * Proves dev and production AGREE on a page's route name, not merely that
- * both delegate to the same function. `resolvePageRouteIdentity`
- * (`../server/install-page-routes.ts`, dev's own derivation) and
- * `resolveRoute` (`../server/install-page-routes-from-manifest.ts`,
- * production's) are called here exactly as their own installers call them —
- * this file reimplements neither.
+ * Proves dev and production AGREE on a page's route name. Both installers now
+ * call the SAME `resolvePageRouteIdentity` (`./route-identity.ts`) rather than
+ * each deriving its own, so agreement is structural — this spec exercises
+ * production's own `resolveRoute` (`../server/install-page-routes-from-manifest.ts`)
+ * alongside the shared function directly, calling neither's internals and
+ * reimplementing neither.
  *
  * Regression coverage for the defect this module's addition fixed: before
  * `resolvePageRouteName` existed, an explicit `route.path` with no `name`
@@ -14,14 +14,18 @@
  */
 import { describe, expect, it } from "vitest";
 import { resolveRoute } from "../server/install-page-routes-from-manifest";
-import { resolvePageRouteIdentity, type PageRouteExport } from "../server/install-page-routes";
+import type { PageRouteExport } from "../server/install-page-routes";
+import { resolvePageRouteIdentity } from "./route-identity";
 
 /** Dev identifies a page by an absolute file path plus the `appSrcRoot` it sits under. */
 const APP_SRC_ROOT = "/app/src";
 
 function devName(route: PageRouteExport | undefined, webRelativePageFile: string): string {
-  return resolvePageRouteIdentity(route, `${APP_SRC_ROOT}/web/${webRelativePageFile}`, APP_SRC_ROOT)
-    .name;
+  return resolvePageRouteIdentity(
+    route,
+    webRelativePageFile,
+    `${APP_SRC_ROOT}/web/${webRelativePageFile}`,
+  ).name;
 }
 
 /** Production identifies a page by its manifest `sourceFile`, `"<srcDir>/web/..."`. */

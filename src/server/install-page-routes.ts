@@ -40,22 +40,23 @@ import {
 } from "../build/discover-pages";
 import { NonLiteralRouteExportError, readRouteExports } from "../build/read-route-exports";
 import { composeRoutePath } from "../routing/compose-route-path";
+import { duplicateRoutePathMessage } from "../routing/duplicate-route-path";
 import { deriveFilesystemRoutePath } from "../routing/filesystem-route";
-import { NestedLayoutsNotSupportedError, selectPageLayout } from "../routing/layout-policy";
+import { resolveLayoutLevel as resolveComposedLayoutLevel } from "../routing/layout-level";
 import { PageFileSegmentNotSupportedError } from "../routing/page-file-segment";
 import { toPosix } from "../shared/to-posix";
 import {
-  canonicalizeRouteExport,
   resolvePageRouteCache,
+  resolvePageRouteIdentity,
   resolvePageRouteName,
   type PageCacheOptIn,
 } from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
-import { Response, type FastifyInstance, type Router } from "@warlock.js/core";
+import { type FastifyInstance, type Router } from "@warlock.js/core";
 import { createPageRouteHandler } from "./create-page-route-handler";
 import type { ErrorPageModule } from "./error-page";
 import type { PipelineLoader, PipelineMiddleware } from "./execute-page-request";
-import { isLoaderShortCircuit } from "./settle-page-response";
+import { foldLayoutLoaders } from "./fold-layout-loaders";
 import { devHandlerStylesheetUrls } from "./stylesheet-urls";
 import {
   createNotFoundRouteHandler,
@@ -101,7 +102,7 @@ function canonicalSourceFileFor(pageFile: string, appSrcRoot: string): string {
   return `${path.basename(appSrcRoot)}/${toPosix(path.relative(appSrcRoot, pageFile))}`;
 }
 
-function filesystemPageFileFor(pageFile: string, appSrcRoot: string): string {
+export function filesystemPageFileFor(pageFile: string, appSrcRoot: string): string {
   return toPosix(path.relative(path.join(appSrcRoot, "web"), pageFile));
 }
 
@@ -187,11 +188,7 @@ async function registerFailedPageRoute(input: {
   const existingFile = fileByPath.get(effectivePath);
 
   if (existingFile) {
-    throw new Error(
-      `installPageRoutes: composed route path "${effectivePath}" is declared by two ` +
-        `pages (web/src/server/install-page-routes.ts) — "${existingFile}" and ` +
-        `"${pageFile}". Every page's composed route path must be unique.`,
-    );
+    throw new Error(duplicateRoutePathMessage({ effectivePath, existingFile, newFile: pageFile }));
   }
 
   fileByPath.set(effectivePath, pageFile);
@@ -205,32 +202,6 @@ async function registerFailedPageRoute(input: {
       { name: resolvePageRouteName(undefined, filesystemPageFile), isPage: true },
     ),
   );
-}
-
-/**
- * Resolve the stable identity used to distinguish a route-export edit from an
- * ordinary component-body edit. The declared path is retained before layout
- * composition so `/settings` under `/admin` compares with the next declared
- * `/settings`, not with the effective `/admin/settings` route.
- */
-export function resolvePageRouteIdentity(
-  routeExport: PageRouteExport | undefined,
-  pageFile: string,
-  appSrcRoot: string,
-): Pick<InstalledPageRoute, "declaredPath" | "name"> {
-  const filesystemPageFile = filesystemPageFileFor(pageFile, appSrcRoot);
-
-  if (routeExport === undefined) {
-    return {
-      declaredPath: deriveFilesystemRoutePath({ pageFile: filesystemPageFile }),
-      name: resolvePageRouteName(routeExport, filesystemPageFile),
-    };
-  }
-
-  return {
-    declaredPath: canonicalizeRouteExport(routeExport, pageFile).path,
-    name: resolvePageRouteName(routeExport, filesystemPageFile),
-  };
 }
 
 export type LayoutModuleShape = {
@@ -265,12 +236,20 @@ type LoadLayout = (layoutFile: string) => Promise<LayoutModuleShape>;
  *   the policy picks it. `renders` is read off the loaded module
  *   (`typeof module.default !== "undefined"`), never off the filename — a
  *   `middleware`-only layout has no default export and is not a wrapper, and
- *   passing a bare path to `selectPageLayout` would have it read as a rendering
- *   one, which is the conservative default and the wrong answer here.
+ *   passing a bare path to the policy would have it read as a rendering one,
+ *   which is the conservative default and the wrong answer here.
  * - MIDDLEWARE and PREFIX are compositions: every layout on the path
  *   contributes, outermost first. A guard on an outer layout that the page's
  *   own directory knows nothing about is exactly the guard that must still run,
  *   and a prefix nobody composed is a URL nobody wrote down.
+ *
+ * The selection and prefix composition rules themselves do not depend on
+ * where a layout's module came from, so they are not re-derived here — see
+ * `../routing/layout-level.ts`'s `resolveLayoutLevel`, which production's
+ * installer calls against the same rules. This function's own job is
+ * everything that DOES depend on the source: walking the chain
+ * (`layoutChainFor`), loading each module (`loadLayout`) and keying declared
+ * prefixes by filesystem directory for {@link deriveFilesystemRoutePath}.
  */
 type LayoutLevel = {
   /** Every `layout.tsx` from the web root down to the page's directory, outermost first. */
@@ -296,24 +275,19 @@ async function resolveLayoutLevel(
 ): Promise<LayoutLevel> {
   const chain = layoutChainFor(pageFile, webRoot);
   const modules = await Promise.all(chain.map(loadLayout));
-  const selection = selectPageLayout(
-    chain.map((layout, index) => ({
-      layout,
+  const level = resolveComposedLayoutLevel(
+    pageFile,
+    chain.map((layoutFile, index) => ({
+      id: layoutFile,
       renders: typeof modules[index].default !== "undefined",
+      prefix: modules[index].prefix,
     })),
   );
 
-  if (selection.type === "rejected") {
-    throw new NestedLayoutsNotSupportedError(pageFile, selection.layouts);
-  }
-
   return {
     chain,
-    layoutFile: selection.type === "selected" ? selection.layout : chain.at(-1),
-    prefix: modules.reduce(
-      (composed, layoutModule) => composeRoutePath(composed, layoutModule.prefix ?? "/"),
-      "/",
-    ),
+    layoutFile: level.hostId,
+    prefix: level.prefix,
     prefixesByDirectory: Object.fromEntries(
       chain.flatMap((layoutFile, index) => {
         const prefix = modules[index].prefix;
@@ -347,18 +321,10 @@ async function composeLayoutLevel(
   return {
     ...host,
     middleware: modules.flatMap((layoutModule) => [...(layoutModule.middleware ?? [])]),
-    loader: async (context) => {
-      let hostData: unknown;
-
-      for (let index = 0; index < modules.length; index++) {
-        const value = await modules[index].loader?.(context);
-
-        if (value instanceof Response || isLoaderShortCircuit(value)) return value;
-        if (index === hostIndex) hostData = value;
-      }
-
-      return hostData;
-    },
+    loader: foldLayoutLoaders(
+      modules.map((layoutModule) => layoutModule.loader),
+      hostIndex,
+    ),
   };
 }
 
@@ -502,10 +468,10 @@ export async function installPageRoutes(
     const sourceFile = canonicalSourceFileFor(pageFile, appSrcRoot);
 
     // Route identity is explicit when declared and filesystem-derived otherwise.
-    const { declaredPath: routePath, name } = resolvePageRouteIdentity(
+    const { path: routePath, name } = resolvePageRouteIdentity(
       pageModule.route,
+      filesystemPageFileFor(pageFile, appSrcRoot),
       pageFile,
-      appSrcRoot,
     );
 
     // Validated at INSTALL time, with everything else — a malformed `cache`
@@ -529,10 +495,12 @@ export async function installPageRoutes(
 
     if (existingFile) {
       throw new Error(
-        `installPageRoutes: composed route path "${effectivePath}" (layout ` +
-          `prefix "${layoutPrefix}" + route.path "${routePath}") is declared by two ` +
-          `pages (web/src/server/install-page-routes.ts) — "${existingFile}" and ` +
-          `"${pageFile}". Every page's composed route path must be unique.`,
+        duplicateRoutePathMessage({
+          effectivePath,
+          existingFile,
+          newFile: pageFile,
+          composition: { layoutPrefix, routePath },
+        }),
       );
     }
 

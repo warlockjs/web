@@ -42,7 +42,7 @@
  * environments along.
  */
 
-import { deriveFilesystemRouteName } from "./filesystem-route";
+import { deriveFilesystemRoutePath, deriveFilesystemRouteName } from "./filesystem-route";
 import { classifyPageRoutePath, PageRoutePathNotSupportedError } from "./page-route-grammar";
 
 /**
@@ -178,4 +178,37 @@ export function resolvePageRouteName(
   }
 
   return canonicalizeRouteExport(route, pageFile).name ?? deriveFilesystemRouteName(pageFile);
+}
+
+/**
+ * Resolves a page's route IDENTITY — its declared path (before layout-prefix
+ * composition) and its name — the one derivation both page installers
+ * (`../server/install-page-routes.ts`'s `resolvePageRouteIdentity`,
+ * `../server/install-page-routes-from-manifest.ts`'s `resolveRoute`) call
+ * before composing a layout prefix into it. Proven to agree between the two
+ * callers by `route-name-parity.spec.ts`, which calls each installer's own
+ * wrapper rather than reimplementing either.
+ *
+ * `pageFile` must already be canonical (see {@link resolvePageRouteName}).
+ * `errorContextFile` is the identifier {@link canonicalizeRouteExport} names
+ * in a rejected-path error — dev's absolute page file, production's manifest
+ * `sourceFile` — which is why it is taken separately from `pageFile` rather
+ * than reused from it.
+ */
+export function resolvePageRouteIdentity(
+  route: DeclaredRouteExport | undefined,
+  pageFile: string,
+  errorContextFile: string,
+): { path: string; name: string } {
+  if (route === undefined) {
+    return {
+      path: deriveFilesystemRoutePath({ pageFile }),
+      name: resolvePageRouteName(route, pageFile),
+    };
+  }
+
+  return {
+    path: canonicalizeRouteExport(route, errorContextFile).path,
+    name: resolvePageRouteName(route, pageFile),
+  };
 }

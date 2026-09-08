@@ -296,6 +296,28 @@ describe("installPageRoutes — the global root", () => {
     expect(installed.map((page) => page.path).sort()).toEqual(["/", "/dashboard"]);
     expect(installed.find((page) => page.path === "/dashboard")?.file).toBe(dashboardFile);
   });
+
+  it("refuses two pages that compose to the same route path, naming both and neither installer by file", async () => {
+    const appRoot = makeAppTree({
+      "src/web/one.page.tsx": "",
+      "src/web/two.page.tsx": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+    const oneFile = path.join(appSrcRoot, "web", "one.page.tsx");
+    const twoFile = path.join(appSrcRoot, "web", "two.page.tsx");
+
+    const vite = fakeVite({
+      [oneFile]: { route: "/shared" },
+      [twoFile]: { route: "/shared" },
+    });
+
+    const { run } = install(appSrcRoot, vite);
+
+    await expect(run()).rejects.toThrow(
+      /composed route path "\/shared".*declared by two pages.*one\.page\.tsx.*two\.page\.tsx/s,
+    );
+    await expect(run()).rejects.not.toThrow(/install-page-routes(-from-manifest)?\.ts/);
+  });
 });
 
 describe("installPageRoutes — a page with no route export", () => {

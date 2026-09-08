@@ -13,26 +13,29 @@
  * and the guards that run before it renders. A page's `route` export and the
  * `prefix` and `middleware` exports of EVERY layout on its path are read off the
  * module namespaces here, at boot, and composed by the same rules dev composes
- * them by ({@link layoutLevelOf}, {@link composeLayoutLevel}) — so the URL a page
- * answers on and the chain that guards it are decided by the page's own source
- * in both modes, and a build cannot quietly disagree with the dev server about
- * either.
+ * them by — a shared mechanism now, not a promise: {@link layoutLevelOf} calls
+ * `../routing/layout-level.ts`'s `resolveLayoutLevel`, the same selection and
+ * prefix-composition rule dev's own `resolveLayoutLevel` calls, and
+ * {@link composeLayoutLevel} folds loaders through the same
+ * `./fold-layout-loaders.ts` dev's does — so the URL a page answers on and the
+ * chain that guards it are decided by the page's own source in both modes, and
+ * a build cannot quietly disagree with the dev server about either.
  *
  * WHAT IS DELIBERATELY DIFFERENT: this is synchronous. Every module is already
  * in memory, so registration has nothing to await; the loader handed to each
  * handler is a lookup over the same table, not an evaluation step.
  */
 import { composeRoutePath } from "../routing/compose-route-path";
+import { duplicateRoutePathMessage } from "../routing/duplicate-route-path";
 import { deriveFilesystemRoutePath } from "../routing/filesystem-route";
-import { NestedLayoutsNotSupportedError, selectPageLayout } from "../routing/layout-policy";
+import { resolveLayoutLevel } from "../routing/layout-level";
 import {
-  canonicalizeRouteExport,
   resolvePageRouteCache,
-  resolvePageRouteName,
+  resolvePageRouteIdentity,
   type PageCacheOptIn,
 } from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
-import { Response, type Router } from "@warlock.js/core";
+import { type Router } from "@warlock.js/core";
 import { createPageModuleLoader } from "./create-page-module-loader";
 import type { ErrorPageModule } from "./error-page";
 import {
@@ -41,7 +44,7 @@ import {
   type PageRouteHandlerOptions,
 } from "./create-page-route-handler";
 import type { PipelineLoader, PipelineMiddleware } from "./execute-page-request";
-import { isLoaderShortCircuit } from "./settle-page-response";
+import { foldLayoutLoaders } from "./fold-layout-loaders";
 import { productionStylesheetUrls } from "./stylesheet-urls";
 import {
   createNotFoundRouteHandler,
@@ -70,7 +73,7 @@ type LayoutModuleShape = {
    * therefore the ONLY export that decides whether a layout counts against the
    * single-rendering-layout rule (`../routing/layout-policy.ts`). The manifest
    * carries LOADED modules, so this is a fact rather than a guess, exactly as it
-   * is in dev (`install-page-routes.ts:145-150`).
+   * is in dev's own `LayoutModuleShape`.
    */
   default?: unknown;
   /** The layout's guards, in the order it declared them. */
@@ -127,39 +130,34 @@ export type InstallPageRoutesFromManifestOptions = {
  * app-root-relative (`"src/web/..."`, `page-manifest.ts`'s own doc comment),
  * so dropping the first two segments — `<srcDir>`, then the literal `"web"` —
  * recovers exactly what `deriveFilesystemRoutePath`/`deriveFilesystemRouteName`
- * expect: the same value dev computes as `filesystemPageFileFor`
- * (`install-page-routes.ts:101-103`).
+ * expect: the same value dev computes as `install-page-routes.ts`'s
+ * `filesystemPageFileFor`.
  */
 function webRelativeSourceFile(sourceFile: string): string {
   return sourceFile.split("/").slice(2).join("/");
 }
 
-/** Exported for `../routing/route-name-parity.spec.ts`, which proves this and dev's `resolvePageRouteIdentity` agree. */
+/**
+ * Exported for `../routing/route-name-parity.spec.ts`, which proves this and
+ * dev's own call agree — both now call the same `../routing/route-identity.ts`
+ * `resolvePageRouteIdentity`, so this wrapper's only job is supplying THIS
+ * installer's identifiers: the manifest `sourceFile` doubles as the
+ * `route.path` rejection context, and its web-root-relative form is the
+ * filesystem-derivation input.
+ */
 export function resolveRoute(
   routeExport: PageRouteExport | undefined,
   sourceFile: string,
 ): { path: string; name: string } {
-  const pageFile = webRelativeSourceFile(sourceFile);
-
-  if (routeExport === undefined) {
-    return {
-      path: deriveFilesystemRoutePath({ pageFile }),
-      name: resolvePageRouteName(routeExport, pageFile),
-    };
-  }
-
-  return {
-    path: canonicalizeRouteExport(routeExport, sourceFile).path,
-    name: resolvePageRouteName(routeExport, pageFile),
-  };
+  return resolvePageRouteIdentity(routeExport, webRelativeSourceFile(sourceFile), sourceFile);
 }
 
 /**
  * Every layout's declared `prefix`, keyed by its directory relative to the
- * web root — the same table dev builds as `LayoutLevel.prefixesByDirectory`
- * (`install-page-routes.ts:214-222`) and the one
- * {@link deriveFilesystemRoutePath} uses to let a directory's own layout
- * rename the URL segment a bare directory name would otherwise contribute.
+ * web root — the same table dev builds as its own `LayoutLevel.prefixesByDirectory`,
+ * and the one {@link deriveFilesystemRoutePath} uses to let a directory's own
+ * layout rename the URL segment a bare directory name would otherwise
+ * contribute.
  */
 function layoutPrefixesOf(page: PageManifestPageEntry): Record<string, string> {
   return Object.fromEntries(
@@ -179,8 +177,14 @@ function layoutPrefixesOf(page: PageManifestPageEntry): Record<string, string> {
 
 /**
  * The page's layout LEVEL, resolved from the whole chain the manifest carries
- * rather than from the one layout nearest to it — the same resolution dev makes
- * (`install-page-routes.ts:138-164`), against loaded modules instead of Vite's.
+ * rather than from the one layout nearest to it. The selection and prefix
+ * rules themselves do not depend on where a layout's module came from, so
+ * they live in one place both installers call —
+ * `../routing/layout-level.ts`'s `resolveLayoutLevel` — rather than being
+ * re-derived here against loaded modules instead of Vite's. This function's
+ * own job is reading THIS installer's inputs off the manifest (`renders` and
+ * `prefix` off each already-loaded module, `host` recovered from the shared
+ * result's `hostId`) and nothing else.
  *
  * The manifest carries the FULL chain, outermost first, and the render pipeline
  * has exactly one layout slot per page (`execute-page-request.ts`'s
@@ -200,10 +204,11 @@ function layoutPrefixesOf(page: PageManifestPageEntry): Record<string, string> {
  *   a prefix nobody composed is a URL nobody wrote down.
  *
  * A chain with more than one RENDERING layout is still refused here, at boot,
- * before a single request can observe the wrong document. Like the missing
- * app-root refusal below, that arm defends against stale or hand-edited build
- * artifacts: the build refuses to emit such a chain, but a manifest can reach a
- * running process without that build having produced it.
+ * before a single request can observe the wrong document (raised by the
+ * shared `resolveLayoutLevel` itself). Like the missing app-root refusal
+ * below, that defends against stale or hand-edited build artifacts: the build
+ * refuses to emit such a chain, but a manifest can reach a running process
+ * without that build having produced it.
  */
 type LayoutLevel = {
   /**
@@ -219,27 +224,18 @@ type LayoutLevel = {
 };
 
 function layoutLevelOf(page: PageManifestPageEntry): LayoutLevel {
-  const selection = selectPageLayout(
+  const level = resolveLayoutLevel(
+    page.sourceFile,
     page.layouts.map((layout) => ({
-      layout: layout.sourceFile,
+      id: layout.sourceFile,
       renders: typeof (layout.module as LayoutModuleShape).default !== "undefined",
+      prefix: (layout.module as LayoutModuleShape).prefix,
     })),
   );
 
-  if (selection.type === "rejected") {
-    throw new NestedLayoutsNotSupportedError(page.sourceFile, selection.layouts);
-  }
-
   return {
-    host:
-      selection.type === "selected"
-        ? page.layouts.find((layout) => layout.sourceFile === selection.layout)
-        : page.layouts.at(-1),
-    prefix: page.layouts.reduce(
-      (composed, layout) =>
-        composeRoutePath(composed, (layout.module as LayoutModuleShape).prefix ?? "/"),
-      "/",
-    ),
+    host: page.layouts.find((layout) => layout.sourceFile === level.hostId),
+    prefix: level.prefix,
   };
 }
 
@@ -268,18 +264,10 @@ function composeLayoutLevel(
     middleware: page.layouts.flatMap((layout) => [
       ...((layout.module as LayoutModuleShape).middleware ?? []),
     ]),
-    loader: async (context: Parameters<NonNullable<LayoutModuleShape["loader"]>>[0]) => {
-      let hostData: unknown;
-
-      for (let index = 0; index < page.layouts.length; index++) {
-        const value = await (page.layouts[index].module as LayoutModuleShape).loader?.(context);
-
-        if (value instanceof Response || isLoaderShortCircuit(value)) return value;
-        if (index === hostIndex) hostData = value;
-      }
-
-      return hostData;
-    },
+    loader: foldLayoutLoaders(
+      page.layouts.map((layout) => (layout.module as LayoutModuleShape).loader),
+      hostIndex,
+    ),
   };
 }
 
@@ -359,17 +347,16 @@ export function installPageRoutesFromManifest(
 
     const { path: routePath, name } = resolveRoute(routeExport, page.sourceFile);
 
-    // Validated at INSTALL time — the same boot-time gate dev applies
-    // (`install-page-routes.ts`) — so a malformed `cache` opt-in fails a
-    // production boot instead of shipping a page whose freshness window the
-    // framework silently guessed.
+    // Validated at INSTALL time — the same boot-time gate dev applies in its
+    // own installer — so a malformed `cache` opt-in fails a production boot
+    // instead of shipping a page whose freshness window the framework
+    // silently guessed.
     const cache = resolvePageRouteCache(routeExport, page.sourceFile);
 
     // Explicit wins; otherwise the path is derived from the page's own source
     // location and the layouts on its path — the same rule dev applies at
-    // registration (`install-page-routes.ts:377-382`) and discovery applies at
-    // build (`discover-pages.ts:925-935`), read here off the manifest's own
-    // `sourceFile`s instead of the filesystem.
+    // registration and discovery applies at build (`discover-pages.ts`), read
+    // here off the manifest's own `sourceFile`s instead of the filesystem.
     const effectivePath =
       routeExport === undefined
         ? deriveFilesystemRoutePath({
@@ -381,10 +368,12 @@ export function installPageRoutesFromManifest(
 
     if (existingFile) {
       throw new Error(
-        `installPageRoutesFromManifest: composed route path "${effectivePath}" (layout ` +
-          `prefix "${layoutPrefix}" + route.path "${routePath}") is declared by two pages — ` +
-          `"${existingFile}" and "${page.sourceFile}". Every page's composed route path must ` +
-          "be unique.",
+        duplicateRoutePathMessage({
+          effectivePath,
+          existingFile,
+          newFile: page.sourceFile,
+          composition: { layoutPrefix, routePath },
+        }),
       );
     }
 

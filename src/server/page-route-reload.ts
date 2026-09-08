@@ -1,8 +1,8 @@
 import path from "node:path";
+import { resolvePageRouteIdentity } from "../routing/route-identity";
 import type { Router } from "@warlock.js/core";
 import type { ViteDevServer } from "vite";
-import type { InstalledPageRoute, PageModuleShape } from "./install-page-routes";
-import { resolvePageRouteIdentity } from "./install-page-routes";
+import { filesystemPageFileFor, type InstalledPageRoute, type PageModuleShape } from "./install-page-routes";
 import { isNotFoundPageFile } from "./not-found-page";
 import type { PageFileChanges } from "./page-file-change";
 import { isErrorPageFilePath } from "./page-file-change";
@@ -85,8 +85,12 @@ export async function pageRoutesNeedReplacement(
       continue;
     }
 
-    const next = resolvePageRouteIdentity(pageModule.route, file, options.appSrcRoot);
-    if (next.declaredPath !== installed.declaredPath || next.name !== installed.name) {
+    const next = resolvePageRouteIdentity(
+      pageModule.route,
+      filesystemPageFileFor(file, options.appSrcRoot),
+      file,
+    );
+    if (next.path !== installed.declaredPath || next.name !== installed.name) {
       replace = true;
     }
   }
