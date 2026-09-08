@@ -89,7 +89,7 @@ const CODE_MODULE_EXTENSION = /\.([cm]?[jt]sx?)$/;
  * projected-import walk first — the seed set `clientViewOf` marks before any
  * graph traversal has happened.
  *
- * Deliberately does NOT ask `isWithinModuleWebFolder`. A file living under
+ * Deliberately asks nothing about WHERE the file lives. A file under
  * `src/web/**` is not, by that location alone, on the client boundary: dev's
  * `middleware`/`loader`/etc. exports are stripped by projection before this
  * function is ever consulted for THEM specifically, and a plain server-only

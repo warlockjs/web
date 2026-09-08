@@ -429,7 +429,17 @@ export class WebConnector extends BaseConnector {
     // The manifest is guaranteed present by the guard above; naming it again is
     // what narrows the type, not a second check of the same condition.
     if (isProductionRuntime() && this.pageManifest) {
-      if ((this.pageManifest.publicFiles?.length ?? 0) > 0) {
+      // Gated on `clientDir`, never on `publicFiles.length`: a zero-page,
+      // zero-public-file build legitimately carries no `clientDir` at all (see
+      // `resolveClientDir`'s note), and calling this without one would demand
+      // a client build that had no reason to exist. But once a `clientDir` IS
+      // present — a client build actually ran — registering an EMPTY
+      // `publicFiles` is free (the loop inside is a no-op) and the staleness
+      // check this runs (`warnIfPublicBuildIsStale`) is most needed exactly
+      // here: an app that shipped a build with NO public files still needs a
+      // file added to `public/` afterwards to be caught, not 404 in silence
+      // because a length check skipped the call that would have named it.
+      if (this.pageManifest.clientDir !== undefined) {
         registerProductionPublicFiles(
           router,
           this.resolveClientDir(),

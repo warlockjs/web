@@ -1100,7 +1100,8 @@ describe("gateAResolve — path completion is not escapable by omitting a file e
     "./middleware/base.middleware"` — the very specifier this hole was reported
     through. It resolves to `src/web/middleware/base.middleware.ts`, which is
     INSIDE `src/web/` and therefore universal by rule 4's own premise. But
-    `isWithinModuleWebFolder` used to admit only files sitting DIRECTLY in a
+    the location predicate of the day (since deleted with rule 4) admitted only
+    files sitting DIRECTLY in a
     `web/` folder, so completing the extension without also fixing the depth
     would have made the reference app's root un-buildable. A fence that refuses
     the framework's own recommended layout is one people switch off.

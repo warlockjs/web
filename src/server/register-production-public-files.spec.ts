@@ -125,4 +125,65 @@ describe("registerProductionPublicFiles", () => {
     expect(message).toContain("404");
     expect(message).toContain("warlock build");
   });
+
+  /*
+   * `web-connector.ts:431` used to call this function only when
+   * `pageManifest.publicFiles.length > 0`, so a build that captured ZERO
+   * public files never reached the staleness check at all — the exact case a
+   * build-time snapshot is most likely to miss on the very next file drop.
+   * These three cases are the red control that fix relies on: GUILTY names a
+   * file the empty manifest cannot know about, and the two INNOCENT cases
+   * prove the fix does not turn "no public/ files" into false positives.
+   */
+  describe("empty manifest — the case the removed length guard used to skip", () => {
+    it("GUILTY: an empty manifest still names a file present on disk", () => {
+      const clientDir = clientDirectory({ "logo.svg": "<svg />" });
+      const warn = vi.fn();
+
+      registerProductionPublicFiles({ file: vi.fn() } as unknown as Router, clientDir, [], warn);
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      const [message] = warn.mock.calls[0] as [string];
+      expect(message).toContain("public/ is stale");
+      expect(message).toContain("logo.svg");
+    });
+
+    it("INNOCENT: an empty manifest with an existing, empty public/ directory stays silent", () => {
+      const clientDir = clientDirectory({});
+      fs.mkdirSync(path.join(clientDir, "public"), { recursive: true });
+      const warn = vi.fn();
+
+      registerProductionPublicFiles({ file: vi.fn() } as unknown as Router, clientDir, [], warn);
+
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it("INNOCENT: an empty manifest with no public/ directory at all stays silent — the ordinary no-public-directory case, not staleness", () => {
+      const clientDir = fs.mkdtempSync(path.join(os.tmpdir(), "warlock-client-public-"));
+      temporaryDirectories.push(clientDir);
+      const warn = vi.fn();
+
+      registerProductionPublicFiles({ file: vi.fn() } as unknown as Router, clientDir, [], warn);
+
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it("THE DEFECT RETURNING: gating the call on publicFiles.length (the removed guard) hides the GUILTY case", () => {
+      const clientDir = clientDirectory({ "logo.svg": "<svg />" });
+      const warn = vi.fn();
+      const publicFiles: string[] = [];
+
+      // Mirrors the exact conditional removed from `web-connector.ts:431-438`.
+      if (publicFiles.length > 0) {
+        registerProductionPublicFiles(
+          { file: vi.fn() } as unknown as Router,
+          clientDir,
+          publicFiles,
+          warn,
+        );
+      }
+
+      expect(warn).not.toHaveBeenCalled();
+    });
+  });
 });

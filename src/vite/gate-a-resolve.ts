@@ -285,12 +285,8 @@ export function isRecognizedUniversalSurface(resolvedPath: string): boolean {
   if (/\.page\.tsx?$/.test(base)) return true;
   if (base === "layout.tsx" || base === "layout.ts") return true;
   // There is deliberately NO app-root (`src/web/root.tsx`) case here, and
-  // adding one would be dead code. The app root lives directly inside a
-  // `web/` folder, so `isWithinModuleWebFolder` already admits it by folder
-  // wherever this function is reached through `isOutsideUniversalScope`
-  // (which tests it on the line before). This function has a second caller,
-  // `isStatelessClientSurface` (`vite/index.ts`), which does not ask
-  // `isWithinModuleWebFolder` at all — there the app root is admitted instead
+  // adding one would be dead code. This function's only caller,
+  // `isStatelessClientSurface` (`vite/index.ts`), admits the app root instead
   // by `resolveId`'s graph walk once something already in the client graph
   // imports it (see that function's comment), so the omission here still
   // costs nothing. A name test here could never fire; the root's name is not
@@ -300,41 +296,7 @@ export function isRecognizedUniversalSurface(resolvedPath: string): boolean {
 }
 
 /**
- * A `web/` path segment, tested — like `APP_SERVER_SEGMENT` above and for the
- * same reason — against a path ALREADY made relative to the app root.
- *
- * Never against the absolute path, and this repo is its own proof: Gate A's
- * fixtures live at `@warlock.js/web/__tests__/vite/fixtures/gate-a/...`, so
- * EVERY absolute path under them contains a `/web/` segment belonging to the
- * package directory rather than to any app module. Matched absolutely, rule 4
- * would admit the whole fixture tree and cases 9 and 25-28 would all go green
- * for the wrong reason.
- */
-const MODULE_WEB_SEGMENT = /(^|\/)web(\/|$)/;
-
-/**
- * Whether a judged path is anywhere INSIDE a module's `web/` folder — at any
- * depth, not merely directly inside one.
- *
- * The depth matters and used to be wrong: this asked for `/web/<one-segment>`,
- * so `src/web/middleware/base.middleware.ts` — two segments in — did not count
- * as being within `src/web/` at all. Nothing had noticed because the only way
- * to reach such a file is a relative import, and rule 4 was not judging those
- * (see `completeLocalModulePath`): a nested universal file escaped the rule
- * rather than being admitted by it, and the two are indistinguishable until the
- * escape is closed. Closing it without this would have turned the v5 app's own
- * `src/web/root.tsx` — which imports exactly that middleware — into a refusal.
- *
- * Rule 4's premise is a FOLDER ("outside a `$module/web/` folder"), and a
- * subfolder of `web/` is inside it. `web/components/`, `web/layouts/` and
- * `web/utils/` are ordinary app layout, not a way around the fence.
- */
-export function isWithinModuleWebFolder(resolvedPath: string, appRoot: string): boolean {
-  return MODULE_WEB_SEGMENT.test(toPosix(path.relative(appRoot, resolvedPath)));
-}
-
-/**
- * Rule 4's subject set: local files that CARRY CODE. Deliberately the same
+ * Local files that CARRY CODE. Deliberately the same
  * shape as `PARSEABLE_MODULE_EXTENSIONS` below — one notion of "this is a
  * JS/TS module" for the whole file — which also picks up `.mts`/`.cts`, absent
  * from the earlier hand-spelled `/\.(tsx?|jsx?|mjs|cjs)$/`. `.mts` is a real
@@ -359,9 +321,9 @@ const LOCAL_MODULE_EXTENSIONS = /\.([cm]?[jt]sx?)$/;
  * escape hatch of exactly the shape this completion exists to close — the
  * judged path would gain a suffix and still be waved through. Pinned by case 32
  * in the spec. The order only decides which of two same-named files gets
- * judged, and every rule downstream (`isServerFile`, `isWithinModuleWebFolder`,
- * `isRecognizedUniversalSurface`) answers identically for `x.ts` and `x.js`, so
- * matching Vite is for least surprise rather than for correctness.
+ * judged, and every rule downstream (`isServerFile`, `isRecognizedUniversalSurface`)
+ * answers identically for `x.ts` and `x.js`, so matching Vite is for least
+ * surprise rather than for correctness.
  */
 const IMPLICIT_MODULE_EXTENSIONS = [".mjs", ".js", ".mts", ".ts", ".jsx", ".tsx", ".cjs", ".cts"];
 
@@ -449,53 +411,10 @@ function completeBareLocalModulePath(judgedPath: string): string {
 }
 
 /**
- * Rule 4 only judges local, code-carrying files INSIDE the app's own project
- * root — package specifiers are already covered by rules 1/2, non-code assets
- * (css, images, ...) are not the "server/client leak" shape this rule exists to
- * catch, and a dependency's own internal file layout (e.g. `@warlock.js/seal`'s
- * `src/rules/**`) is not organized by the `$module/web/` convention at all,
- * so judging it by that convention would fence out every third-party import.
- *
- * NOTHING HERE READS THE SPECIFIER, and that is the fix for the escape this
- * rule shipped with. It used to open with
- * `source.startsWith(".") || path.isAbsolute(source)` and return `false` for
- * anything else — so an import written in ALIAS form (`app/users/...`,
- * `web/...`, the shape `v5/app/tsconfig.json`'s `paths` and
- * `web-connector.ts`'s `resolve.alias` give every v5 app) was never judged at
- * all, whatever file it reached. Rule 4's subject is a FILE; the string the
- * author happened to type to name that file is not evidence about it. See the
- * spelling-equivalence suite in the spec — one target file, four spellings, one
- * judgement.
- *
- * Dropping that test narrows nothing and widens nothing for the specifiers it
- * used to admit, because `isAppSourcePath` below already requires an ABSOLUTE
- * path: a bare specifier's "judged path" is still the specifier string itself
- * (see `resolveId`), which is never absolute, so it falls out one line later
- * exactly as before. What changed is that a CALLER may now hand this rule a
- * resolved absolute path for a specifier that was not written relatively —
- * which is what `resolveId`'s alias pass does.
- *
- * `resolvedPath` must have been through `completeLocalModulePath` before it
- * gets here, or the extension test below is a way OUT of this rule rather than
- * a narrowing of it — see that function.
- */
-function isOutsideUniversalScope(resolvedPath: string, appRoot: string): boolean {
-  if (!LOCAL_MODULE_EXTENSIONS.test(resolvedPath)) return false;
-  if (!isAppSourcePath(resolvedPath, appRoot)) return false;
-  // Order matters: `isAppSourcePath` above is what makes the app-root-relative
-  // test in `isWithinModuleWebFolder` meaningful — it has already established
-  // the path is absolute and inside `appRoot`.
-  if (isWithinModuleWebFolder(resolvedPath, appRoot)) return false;
-  if (isRecognizedUniversalSurface(resolvedPath)) return false;
-  return true;
-}
-
-/**
  * Whether a judged path is the APP'S OWN SOURCE, as opposed to a dependency's
- * internals. This is Gate A's single definition of that boundary — rules 3
- * and 4 both call it, and `packageNameForFilePath` draws the same line for
- * Gate C. Two conditions, both already required by rule 4 before this was
- * extracted:
+ * internals. This is Gate A's single definition of that boundary — rule 3
+ * calls it, and `packageNameForFilePath` draws the same line for
+ * Gate C. Two conditions:
  *
  *   - inside `appRoot` (a monorepo sibling or any other path resolution has
  *     left the app root for is that package's own business), and
