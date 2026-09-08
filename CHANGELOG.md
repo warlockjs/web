@@ -2,6 +2,30 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.6.0
+
+### Added
+
+- **A page can declare its input contract on its `route` export.** The export now accepts an object as well as a string: `{ path, name?, cache?, validate?, middleware? }`. `validate` is a Seal schema over `{ params, query }` — kept separate, never merged — and the validated value reaches the loader typed from the schema. A failure renders the **error page at 400** carrying the failure, and travels the same way over the client-navigation wire. Layout middleware runs outermost-first with the page's own last, so a layout's auth gate cannot be bypassed by a page that declares its own.
+- `useQueryString(key)` — a subscription to one query-string parameter that re-renders on client navigation. Wiring it up exposed that `routerEvents` was only ever fired by `refresh()`: `<Link>` and browser back/forward emitted nothing, so anything subscribed to navigation silently never updated. Navigation now emits its events on every path.
+
+### Fixed
+
+- **Every rendered page returned 500 in `warlock dev`.** The dev server decided the client/server boundary by FILE LOCATION — anything under `src/web/**` was treated as inherently client-safe — which contradicts the rule the production build applies and made a server-only import reachable from the client graph. Dev now decides the boundary by the import graph, exactly as production does.
+- **A page route could not be served at all in `warlock dev`.** The handler read the Fastify instance from the container while running inside Vite's SSR module graph, where that lookup can never hit. The instance is now resolved on the Node side and handed in.
+- **Page files were ignored in silence.** A `*.page.tsx` or a layout under `src/app/**/web/**` was discovered by nothing and reported by nothing — an app with seven pages served zero. Discovery now NAMES every file it ignores, at boot, and for a layout it says what was lost: its `prefix`, `middleware` and `loader` apply to no page, so a guard a page relied on is silently absent.
+- **A file added to `public/` after the last build 404'd in production with no diagnostic.** The build-time snapshot is deliberate and stays — but production now names the files its snapshot missed instead of failing them wordlessly.
+- One page that fails to import no longer takes the whole dev boot down with it.
+- Writing to `shared` from the browser failed with a message that read as a fixable wiring bug — "the server bootstrap must call `connectSharedStore(...)`". It now names the value, explains that what the client holds is a dead server-render snapshot that can never be written to, and says what to use instead.
+- The `public/` staleness check runs on every client build rather than only some.
+
+### Changed
+
+- **The dev and production page installers now share their composition rules** — layout-level selection, loader folding, route identity, and the duplicate-route message — instead of implementing them twice. A route collision reported in dev used to quote a dev-only file path in a message production also raises.
+- The published `./vite` subpath is a barrel again: the connector no longer authors Vite plugins, so importing the runtime never drags the build tooling in behind it.
+- Importing the metadata linter no longer pulls 4544 modules and 18 MB into a build-tool module for the sake of one function; it now costs 17 modules.
+- One name for one thing: "runtime" everywhere, `hydration/` renamed to `entry/`, and four files renamed to match what they contain.
+
 ## 5.5.0 - 2026-09-07
 
 ### Fixed
