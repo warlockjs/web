@@ -17,6 +17,12 @@
  * authors to delete the boundary to make the build pass. Nested RENDERING
  * layouts remain unsupported; everything else composes freely.
  *
+ * A page's OWN middleware, declared on `route.middleware` (`../route.ts`), is
+ * the other half of this story and is documented together with this module's
+ * layout middleware in one place: `../server/execute-page-request.ts`'s
+ * middleware loop (canon `b79c4f55`, point 5) — read that comment for the one
+ * ordering rule that covers both surfaces.
+ *
  * DIRECTORY CONTRACT — applies to everything in `web/src/routing/`: nothing
  * here may import `node:fs`, `node:path`, `vite`, or `fastify`. This module
  * receives a canonical chain and trusts nothing about it beyond the input

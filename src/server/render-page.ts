@@ -452,7 +452,11 @@ async function finishRender(
   ): Promise<string | undefined> => {
     if (!loadErrorPage) return undefined;
 
-    const props: ServerErrorPageProps = { error: thrown, status: 500 };
+    // The status is the FAILURE's own — 500 for an ordinary escalated throw,
+    // but a `route.validate` rejection carries its own 400
+    // (`PageErrorRecord.statusCode`, canon `b79c4f55`, point 2) and the error
+    // page must receive that, not a blanket 500.
+    const props: ServerErrorPageProps = { error: thrown, status: currentError?.statusCode ?? 500 };
     const module = await loadErrorPage();
     registerModules([module as RegisterableModuleNamespace]);
     const errorPage = hydrationErrorPageProps(props, serializableError);
@@ -531,13 +535,17 @@ async function finishRender(
   // flushes immediately after (stage 10a/10b). "The framework owns the status
   // whenever a boundary renders" (design/request-lifecycle.md stage 7): ANY
   // boundary — nested or app-level, discovered pre-render or escalated during
-  // render — forces 500. The boundary's LEVEL only decides which component
-  // renders, never the status; the committed status from stage 7
+  // render — forces 500, UNLESS the failure carries its own status
+  // (`PageErrorRecord.statusCode` — a `route.validate` rejection's 400, canon
+  // `b79c4f55` point 2). The boundary's LEVEL only decides which component
+  // renders; the committed status from stage 7
   // (`bundle.commit.statusCode`) stands only for a page with no error at all
   // — read off the commit, never off the live `response`, same as `headers`
   // above. No committed status (no loader called `setStatusCode`) is the
   // ordinary 200.
-  const status = currentError ? 500 : ((bundle as Bundle).commit?.statusCode ?? 200);
+  const status = currentError
+    ? (currentError.statusCode ?? 500)
+    : ((bundle as Bundle).commit?.statusCode ?? 200);
 
   const html = emitDocument(body);
 

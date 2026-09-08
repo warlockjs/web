@@ -30,6 +30,7 @@ export function buildErrorRecord(
   thrown: unknown,
   boundary: PageBoundaryDesignation,
   requestPath?: string,
+  statusCode?: number,
 ): PageErrorRecord {
   const digest = randomUUID();
 
@@ -40,7 +41,14 @@ export function buildErrorRecord(
 
     (surrogate as Error & { digest: string }).digest = digest;
 
-    return { originalError: thrown, error: surrogate, boundary, digest, scrubbed: true };
+    return {
+      originalError: thrown,
+      error: surrogate,
+      boundary,
+      digest,
+      scrubbed: true,
+      statusCode,
+    };
   }
 
   // `error` already IS the real thrown value here — `originalError` only ever
@@ -49,7 +57,7 @@ export function buildErrorRecord(
   // keeps the record's `toEqual` shape honest (undefined properties compare as
   // absent) and readers still get the real error via
   // `record.originalError ?? record.error`.
-  return { originalError: undefined, error: thrown, boundary, digest, scrubbed: false };
+  return { originalError: undefined, error: thrown, boundary, digest, scrubbed: false, statusCode };
 }
 
 // ---------------------------------------------------------------------------

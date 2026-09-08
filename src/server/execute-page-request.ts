@@ -5,6 +5,8 @@ import { enterAdditionalSharedScope, requireRunner } from "./page-context";
 import { matchRoute } from "./match-page-route";
 import { resolvePageMetadata } from "./resolve-page-metadata";
 import { resolveValidationData } from "./resolve-validation-data";
+import { resolveRouteValidationInput } from "./resolve-route-validation-input";
+import { RouteValidationError } from "./route-validation-error";
 import {
   buildErrorRecord,
   commitBuffers,
@@ -78,8 +80,35 @@ export async function executePageRequest<TResult = PageDataBundle>(
       },
     };
 
+    const pageRoute = typeof triple.page.route === "object" ? triple.page.route : undefined;
+
+    /**
+     * THE TWO MIDDLEWARE SURFACES, TOGETHER — the one place both are
+     * documented, so they cannot again be found "separately and
+     * inconsistently" (canon `b79c4f55`, point 5):
+     *
+     * - A LAYOUT'S `middleware` export (`../routing/layout-policy.ts` — a
+     *   middleware-only layout, one with no default export, is treated as a
+     *   deliberate authorization boundary and composes freely). Every layout
+     *   on a page's chain contributes, outermost first
+     *   (`install-page-routes.ts`'s `composeLayoutLevel` folds the whole
+     *   chain into `triple.layout.middleware` before this runs).
+     * - A PAGE's OWN guards, declared on `route.middleware` (`../route.ts`)
+     *   — a page's own answer to "what does this URL require", one level
+     *   below the layout instead of borrowed from it (canon `f2e514c0`).
+     *
+     * ONE ordering rule covers both: `LEVEL_ORDER` (app, layout, page) runs
+     * outermost-first, and `route.middleware` is appended to the PAGE level's
+     * own list, so it always runs LAST — closest to the loader. A layout's
+     * auth gate can therefore never be bypassed by a page's own middleware.
+     */
     for (const level of LEVEL_ORDER) {
-      for (const middleware of triple[level].middleware ?? []) {
+      const middlewareForLevel =
+        level === "page"
+          ? [...(triple.page.middleware ?? []), ...(pageRoute?.middleware ?? [])]
+          : (triple[level].middleware ?? []);
+
+      for (const middleware of middlewareForLevel) {
         let output: unknown;
 
         try {
@@ -145,6 +174,37 @@ export async function executePageRequest<TResult = PageDataBundle>(
 
     for (let index = 0; index < LEVEL_ORDER.length; index++) {
       const level = LEVEL_ORDER[index];
+
+      // `route.validate` — the PAGE's own declared schema, over `{ params,
+      // query }` kept as two separate keys (canon `b79c4f55`, point 1). Runs
+      // HERE, at the front of the page level's own turn: app and layout
+      // loaders have already run (their data survives a rejection, exactly
+      // as an ordinary page-level throw leaves them untouched) and the
+      // page's OWN loader has not (mirrors the top-level `validation`
+      // export's "before the loader" contract). A failure is folded into the
+      // ordinary THROW signal below rather than given a fourth code path: it
+      // designates a boundary and renders the application's error
+      // page/boundary with status 400 (point 2) — a page is a document, not
+      // an API endpoint, so this must never answer a raw JSON body.
+      if (level === "page" && pageRoute?.validate) {
+        const routeInput = resolveRouteValidationInput(request);
+        const result = await v.validate(pageRoute.validate, routeInput);
+
+        if (result.isValid && result.data) {
+          // Merged, never overwritten: a page using BOTH the top-level
+          // `validation` export and `route.validate` must see every field
+          // either one produced, not just whichever ran last.
+          request.setValidatedData({ ...request.validated(), ...result.data });
+        }
+
+        if (!result.isValid) {
+          signalIndex = index;
+          signalKind = "throw";
+          signalThrown = new RouteValidationError(result.errors);
+          break;
+        }
+      }
+
       const loader = triple[level].loader;
 
       if (!loader) continue;
@@ -187,11 +247,16 @@ export async function executePageRequest<TResult = PageDataBundle>(
       committedLevels = LEVEL_ORDER.slice(0, signalIndex);
 
       const boundary = designateBoundary(LEVEL_ORDER[signalIndex], triple);
-      bundle.error = buildErrorRecord(signalThrown, boundary, pathname);
+      // A failure that OWNS its own status (a `RouteValidationError`'s 400)
+      // carries it through here; an ordinary throw carries none and keeps
+      // the pipeline's ordinary answer, 500.
+      const ownStatusCode = (signalThrown as { statusCode?: number } | null)?.statusCode;
+      bundle.error = buildErrorRecord(signalThrown, boundary, pathname, ownStatusCode);
 
       if (boundary.boundaryLevel === "app") {
-        response.setStatusCode(500);
-        forcedStatusCode = 500;
+        const status = ownStatusCode ?? 500;
+        response.setStatusCode(status);
+        forcedStatusCode = status;
       }
     } else {
       // Short-circuit: the signalling level's OWN buffer commits too

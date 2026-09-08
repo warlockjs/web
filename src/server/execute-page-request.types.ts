@@ -37,7 +37,16 @@ export type PipelineLoader = (ctx: PipelineLoaderContext) => unknown | Promise<u
 
 export type PageTripleModule = {
   register?: () => unknown;
-  route?: string | { readonly path: string; readonly name?: string };
+  route?:
+    | string
+    | {
+        readonly path: string;
+        readonly name?: string;
+        /** A Seal object schema validated against `{ params, query }` — `route.ts`'s `RouteDeclaration`. */
+        readonly validate?: BaseValidator;
+        /** This page's own guards, run LAST — see `LEVEL_ORDER` below. */
+        readonly middleware?: readonly PipelineMiddleware[];
+      };
   middleware?: readonly PipelineMiddleware[];
   validation?: { schema?: BaseValidator; validating?: readonly string[] };
   loader?: PipelineLoader;
@@ -90,6 +99,13 @@ export type PageErrorRecord = {
   boundary: PageBoundaryDesignation;
   digest: string;
   scrubbed: boolean;
+  /**
+   * Undefined means the pipeline's ordinary answer to any escalated failure:
+   * 500. Set only by a failure that OWNS its own status — today, a
+   * `route.validate` rejection's 400 (canon `b79c4f55`, point 2: the visitor's
+   * malformed input, never the server's fault).
+   */
+  statusCode?: number;
 };
 
 export type PageDataBundle = {
