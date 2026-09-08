@@ -13,12 +13,12 @@ import {
   DuplicatePageRoutePathError,
   ErrorPageDeclaresRouteError,
   isDiscoveredRoutablePage,
-  UnknownMetadataKeyError,
   type DiscoverPagesOptions,
   type DiscoveredRoutablePage,
 } from "./discover-pages";
 import { NotFoundPageDeclaresRouteError } from "../server/not-found-page";
 import { MissingPageDefaultExportError } from "./page-default-export";
+import { UnknownMetadataKeyError } from "./read-metadata-keys";
 import { NonLiteralRouteExportError } from "./read-route-exports";
 
 /**

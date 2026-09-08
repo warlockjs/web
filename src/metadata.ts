@@ -6,9 +6,9 @@ import type { LoaderData, LoaderFunction } from "./props";
  * `<head>` before the first byte; `<Head />` only decides placement.
  *
  * **Every member here is a member something READS.** The two renderers are
- * `components/head.ts:28-70` (the SSR'd document) and
- * `client/navigation/navigation-root.tsx:105-123` (the same head, rewritten
- * after a client navigation), and they agree key for key. This type is the list
+ * `components/head.ts` (the SSR'd document) and
+ * `client/navigation/document-metadata.ts` (the same head, rewritten after a
+ * client navigation), and they agree key for key. This type is the list
  * of those keys and deliberately not one entry longer: a field the type promises
  * and no renderer consumes is the same silence as an unknown key — the page is
  * served without it and nothing says so.
@@ -16,7 +16,7 @@ import type { LoaderData, LoaderFunction } from "./props";
  * Adding a member is therefore a two-file change by construction. Add it here
  * and {@link METADATA_KEYS} stops matching, which is a compile error
  * ({@link MetadataKeysAreExact}); make it match and the build gate in
- * `build/discover-pages.ts` accepts the key — but until a renderer emits a tag
+ * `build/read-metadata-keys.ts` accepts the key — but until a renderer emits a tag
  * for it, the key still does nothing. Write the renderer.
  */
 export type MetadataOutput = {

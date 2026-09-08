@@ -29,7 +29,7 @@ type Modules = {
   previousRoute: typeof import("./current-route").previousRoute;
   recordCurrentRoute: typeof import("./current-route").recordCurrentRoute;
   NavigationRoot: typeof import("./navigation-root").NavigationRoot;
-  applyDocumentMetadata: typeof import("./navigation-root").applyDocumentMetadata;
+  applyDocumentMetadata: typeof import("./document-metadata").applyDocumentMetadata;
   useLocale: typeof import("../../localization").useLocale;
 };
 
@@ -37,7 +37,8 @@ async function freshModules(): Promise<Modules> {
   vi.resetModules();
 
   const { currentRoute, previousRoute, recordCurrentRoute } = await import("./current-route");
-  const { NavigationRoot, applyDocumentMetadata } = await import("./navigation-root");
+  const { NavigationRoot } = await import("./navigation-root");
+  const { applyDocumentMetadata } = await import("./document-metadata");
   const { useLocale } = await import("../../localization");
 
   return {
