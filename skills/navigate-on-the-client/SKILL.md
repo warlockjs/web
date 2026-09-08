@@ -1,6 +1,6 @@
 ---
 name: navigate-on-the-client
-description: 'Navigate hydrated pages with `<Link>`, resolve named URLs with `href()`, use `navigateTo` / `navigateBack`, prefetch on interaction, inspect the server match with `currentRoute()`, and re-fetch loaders after a mutation with `refresh()`. Triggers: `Link`, `href`, `navigateTo`, `navigateBack`, `refresh`, `currentRoute`, `previousRoute`; "navigate without a reload", "link to a named route", "refresh page data", "revalidate loaders", "client-side back"; typical import `import { Link, refresh } from "@warlock.js/web"`. Skip: define a page route — `@warlock.js/web/create-a-page/SKILL.md`; loader mechanics — `@warlock.js/web/load-page-data/SKILL.md`; root hydration boundary — `@warlock.js/web/write-the-root/SKILL.md`; competing routers `@mongez/react-router`, `react-router-dom`, Next navigation.'
+description: 'Navigate hydrated pages with `<Link>`, resolve named URLs with `href()`, use `navigateTo` / `navigateBack`, prefetch on interaction, inspect the server match with `currentRoute()`, re-fetch loaders after a mutation with `refresh()`, and read one query-string key live with `useQueryString`. Triggers: `Link`, `href`, `navigateTo`, `navigateBack`, `refresh`, `currentRoute`, `previousRoute`, `useQueryString`; "navigate without a reload", "link to a named route", "refresh page data", "revalidate loaders", "client-side back", "read query string in a component", "query string stale after Link navigation"; typical import `import { Link, refresh, useQueryString } from "@warlock.js/web"`. Skip: define a page route — `@warlock.js/web/create-a-page/SKILL.md`; loader mechanics — `@warlock.js/web/load-page-data/SKILL.md`; root hydration boundary — `@warlock.js/web/write-the-root/SKILL.md`; competing routers `@mongez/react-router`, `react-router-dom`, Next navigation.'
 ---
 
 # Warlock — navigate on the client
@@ -138,6 +138,29 @@ export function DeleteProductButton({ id }: { id: string }) {
 `refresh()` re-fetches the current URL's App, Layout, and Page loaders and swaps fresh data without pushing history. It returns `true` only when fresh data reached the screen. On network/build failure it returns `false` and leaves the current page intact.
 
 This is an ordinary API mutation followed by a re-fetch. Server actions are not supported.
+
+## Read the query string live — `useQueryString`
+
+```tsx title="src/web/products/product-list-filters.tsx"
+import { useQueryString } from "@warlock.js/web";
+
+export function ProductListFilters() {
+  const tab = useQueryString("tab");
+  // Narrow before rendering: anyone can type `?tab[]=a` or `?tab[x]=1`, so the
+  // hook's type says the value may not be a string.
+  const active = typeof tab === "string" ? tab : "all";
+
+  return <p>Tab: {active}</p>;
+}
+```
+
+`useQueryString(key)` returns the decoded value at `key` from the current query string — a string, an array (`key[]`), or a one-level bag (`key[sub]`). **A missing key returns `undefined`, never `""`**: an absent key and a present-but-empty one (`?q=`, which parses to `""`) are different values, and there is no default-value parameter — the caller decides what "absent" means for its own UI.
+
+**The return type is a union, and you have to narrow it.** `QueryStringValue | undefined` is not a `ReactNode`, so putting the raw value in JSX does not compile — deliberately. The URL is user input: a page expecting `?tab=specs` can be handed `?tab[]=a&tab[]=b` by anyone with an address bar, and the compiler makes you decide what that means instead of rendering `[object Object]`. Narrow with `typeof value === "string"`; do not cast it away.
+
+It re-renders the calling component after a client navigation completes — `<Link>`, `navigateTo()`, or Back/Forward — and the value it reads changed. A `<Link>` navigation moves the URL with `pushState`/`replaceState` directly rather than firing `popstate`, so a component that only read `location.search` once would render a stale value the moment a link changed just the query string; this hook exists because of that gap.
+
+Safe to call during SSR: it reads the search string of the request being rendered rather than returning empty, so the server's answer matches the first client render and hydration does not mismatch.
 
 ## Current and previous routes
 

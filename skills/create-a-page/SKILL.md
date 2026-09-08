@@ -1,6 +1,6 @@
 ---
 name: create-a-page
-description: 'Create an SSR React page under `src/web/**`, with either a literal `route` or a filesystem-derived one, an explicit public-cache opt-in, a default component, an optional typed `loader`, page `metadata`, the `error.page.tsx` boundary, and the universal `register()` hook. Triggers: `*.page.tsx`, `route`, `route.cache`, `maxAge`, `PageLoader`, `PageProps`, `PageMetadata`, `error.page.tsx`, `register`, `[...slug]`; "create a page", "cache a public page", "add an SSR route", "make a React page", "type page loader data", "add an error boundary", "catch-all route", "page renders blank 200", "page has no default export"; typical import `import type { PageLoader, PageProps } from "@warlock.js/web"`. Skip: root document shell — `@warlock.js/web/write-the-root/SKILL.md`; layout wrappers and prefixes — `@warlock.js/web/use-layouts/SKILL.md`; loader lifecycle and `shared` — `@warlock.js/web/load-page-data/SKILL.md`; competing frameworks `next`, `remix`, `react-router` file routes.'
+description: 'Create an SSR React page under `src/web/**`, with either a literal `route` or a filesystem-derived one, an explicit public-cache opt-in, a `route.validate` schema and `route.middleware` guards, a default component, an optional typed `loader`, page `metadata`, the `error.page.tsx` boundary, and the universal `register()` hook. Triggers: `*.page.tsx`, `route`, `route.cache`, `maxAge`, `route.validate`, `route.middleware`, `PageLoader`, `PageProps`, `PageMetadata`, `error.page.tsx`, `register`, `[...slug]`; "create a page", "cache a public page", "add an SSR route", "make a React page", "type page loader data", "add an error boundary", "catch-all route", "page renders blank 200", "page has no default export", "validate route params and query", "page-level middleware"; typical import `import type { PageLoader, PageProps } from "@warlock.js/web"`. Skip: root document shell — `@warlock.js/web/write-the-root/SKILL.md`; layout wrappers and prefixes — `@warlock.js/web/use-layouts/SKILL.md`; loader lifecycle and `shared` — `@warlock.js/web/load-page-data/SKILL.md`; competing frameworks `next`, `remix`, `react-router` file routes.'
 ---
 
 # Warlock — create a page
@@ -101,6 +101,59 @@ Prefer an explicit stable `name` for links. Without one, Warlock derives a name 
 Every segment of a page's URL is written down somewhere: `route.path` (or the derived filesystem path), prefixed by the literal `prefix` exports of the positional layouts above it ([use-layouts](../use-layouts/SKILL.md)). Where the file sits always decides which layouts are above it, and — only when `route` is absent — the path segments too.
 
 The build reads `route` without executing application code. Declare it directly with `export const` and literal strings. Variables, function calls, computed object keys, spreads, and `export { route }` are refused.
+
+### Validate the route's own input — `route.validate`
+
+The object form also accepts `validate`: a [Seal](https://www.npmjs.com/package/@warlock.js/seal) object schema run against `{ params, query }`, kept as two separate keys — never merged into one bag, so a `:id` path segment and a `?id=` query key can never collide or silently shadow one another:
+
+```tsx title="src/web/products/product-details.page.tsx"
+import { v } from "@warlock.js/seal";
+import type { PageLoader, PageProps } from "@warlock.js/web";
+
+export const route = {
+  path: "/products/:id",
+  name: "products.details",
+  validate: v.object({
+    params: v.object({ id: v.string().minLength(2) }),
+    query: v.object({ tab: v.string().optional() }),
+  }),
+} as const;
+
+export const loader = (async ({ request }) => {
+  const { params, query } = request.validated();
+
+  return { id: params.id, tab: query.tab };
+}) satisfies PageLoader<undefined, typeof route>;
+
+export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
+  return <h1>Product {data.id}</h1>;
+}
+```
+
+`request.validated()` types `params` and `query` from the schema — never a flattened merge of the two. If the page also declares the top-level `validation` export ([load-page-data](../load-page-data/SKILL.md)), both surfaces' fields are merged by intersection into the one `validated()` call; neither overwrites the other.
+
+Rejected input never reaches the loader. It renders the application's `error.page.tsx` boundary at status 400 carrying the failure — a page is a document, not an API endpoint, so invalid input never gets a raw JSON body. The same 400 travels the same way over the `_loader` client-navigation wire.
+
+### `route.middleware` — a page's own guard, run last
+
+The object form also accepts `middleware`: an array of `(ctx) => unknown | Promise<unknown>` guards declared on the page itself, alongside any layout `middleware` above it ([use-layouts](../use-layouts/SKILL.md)). Ordering is fixed pipeline-wide: every layout on the chain runs outermost-first, and `route.middleware` runs LAST, closest to the loader — a layout's auth gate can never be bypassed by a page declaring its own middleware.
+
+```tsx
+export const route = {
+  path: "/account",
+  middleware: [
+    async ({ request, response }) => {
+      if (!request.header("authorization")) {
+        response.setStatusCode(401);
+
+        return { error: "Unauthorized" };
+      }
+    },
+  ],
+} as const;
+```
+
+Returning anything other than `undefined` from a middleware short-circuits the request with that value, exactly as an app or layout middleware does.
 
 ## Page caching
 
