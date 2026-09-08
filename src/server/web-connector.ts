@@ -562,6 +562,12 @@ export class WebConnector extends BaseConnector {
       // module graph loads. A render-blocking <link> in <head> is what makes
       // the page arrive styled instead of arriving and then correcting itself.
       stylesheetUrls: webServerSsr.devStylesheetUrls(paths.appRoot, paths.appFile),
+      // Resolved here, on the NODE side, and forwarded — see
+      // `InstallPageRoutesOptions.httpServer` (`install-page-routes.ts`) for
+      // why `createPageRouteHandler` cannot read this out of the container
+      // itself from inside Vite's SSR module graph. `fastify` is this same
+      // request's `resolveFastify()` result, already in scope above.
+      httpServer: fastify,
     });
 
     this.installedPages = await this.installDevPageRoutes();

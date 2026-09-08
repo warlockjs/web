@@ -51,7 +51,7 @@ import {
   type PageCacheOptIn,
 } from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
-import { Response, type Router } from "@warlock.js/core";
+import { Response, type FastifyInstance, type Router } from "@warlock.js/core";
 import { createPageRouteHandler } from "./create-page-route-handler";
 import type { ErrorPageModule } from "./error-page";
 import type { PipelineLoader, PipelineMiddleware } from "./execute-page-request";
@@ -396,7 +396,26 @@ export type InstallPageRoutesOptions = {
    * page's own CSS" without also carrying every other page's.
    */
   stylesheetUrls?: readonly string[];
-  /** Same helper `dev-server.ts` exports — passed in, not imported, to avoid a dev-server.ts <-> this-file cycle. */
+  /**
+   * The Fastify instance `HttpConnector.boot()` published, resolved by the
+   * caller on the NODE side (`web-connector.ts`) and forwarded to every
+   * `createPageRouteHandler` call below instead of letting that factory read
+   * `container.get("http.server")` for itself.
+   *
+   * Load-bearing, not a convenience: Vite's SSR module runner
+   * (`vite.ssrLoadModule`, used throughout this file) evaluates
+   * `create-page-route-handler.ts` as a SECOND copy of `@warlock.js/core`, with
+   * its own `container` that `HttpConnector.boot()` never wrote to. Reading the
+   * container from inside that SSR graph therefore always misses, however
+   * early or late this file calls it — the value has to arrive as a plain
+   * argument from a caller on the Node side, where the real container lives.
+   *
+   * OPTIONAL so existing callers (and this file's own unit tests, which seed
+   * `container.set("http.server", …)` instead) keep resolving through the
+   * container exactly as before — omitted here means "not supplied", the same
+   * distinction `createPageRouteHandler` itself draws from `PageRouteHandlerOptions.httpServer`.
+   */
+  httpServer?: FastifyInstance;
 };
 
 /**
@@ -411,7 +430,14 @@ export type InstallPageRoutesOptions = {
 export async function installPageRoutes(
   options: InstallPageRoutesOptions,
 ): Promise<InstalledPageRoute[]> {
-  const { router, vite, appSrcRoot, appFile, hydrationClientModuleUrl } = options;
+  const { router, vite, appSrcRoot, appFile, hydrationClientModuleUrl, httpServer } = options;
+  // Spread conditionally, never as a bare `httpServer,` property: an explicit
+  // `httpServer: undefined` key is its own signal to `createPageRouteHandler`
+  // (`"httpServer" in options"`, `create-page-route-handler.ts`) — "no server,
+  // on purpose" — and this file must not manufacture that signal on behalf of
+  // a caller (this file's own unit tests, most callers) that never supplied
+  // one and means to fall back to the container instead.
+  const httpServerOption = httpServer === undefined ? {} : { httpServer };
   // See `InstallPageRoutesOptions.appRoot` for why this default, not
   // `appSrcRoot` itself, is the root every handler's CSS is resolved against.
   const stylesheetRoot = options.appRoot ?? path.dirname(appSrcRoot);
@@ -560,6 +586,7 @@ export async function installPageRoutes(
           loadErrorPage,
           stylesheetUrls,
           cache,
+          ...httpServerOption,
         }),
         // `isPage` marks this route as SSR-served. Pages and API routes share one
         // router and one route-name namespace, so the router's duplicate-name
@@ -633,6 +660,7 @@ export async function installPageRoutes(
                   matchPath: (requestPath) => requestPath,
                   statusForRenderedOk: 404,
                   skipPageLoader: true,
+                  ...httpServerOption,
                 }),
         }),
         // `isPage` for the same reason every other page route carries it: the
