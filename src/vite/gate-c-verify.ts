@@ -141,7 +141,7 @@ export class UnverifiableChunkError extends Error {
 
 /**
  * Part 1, item 1: parses each emitted chunk's ACTUAL code (never pre-transform
- * source) and looks for a top-level binding named one of the five server
+ * source) and looks for a top-level binding named one of the six server
  * exports. A parse failure on an emitted chunk FAILS the gate
  * (`UnverifiableChunkError`) — it is never skipped. Skipping would report the
  * bundle clean on the one chunk the gate did not actually inspect, which is a

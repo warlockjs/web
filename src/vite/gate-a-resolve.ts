@@ -7,6 +7,10 @@
  *      `externalizedBuiltins` for the one route that reaches a chunk
  *      without passing through `resolveId` at all. This rule is judged for
  *      EVERY importer, in or out of `GOVERNED_SCOPES` — see its note below.
+ *   1b. The `server-only` npm package — a module importing it has declared
+ *      itself server-side and cannot reach the browser. Judged by NAME, right
+ *      after rule 1 and ahead of rule 2's scope check; see
+ *      `BOUNDARY_DECLARATION_PACKAGES`.
  *   2. `@warlock.js/*` / `@mongez/*` packages whose `package.json` carries
  *      `"warlock": { "environment": "server" }`. An ABSENT marker is NOT a
  *      refusal — see the burden note on `createEnvironmentClassifier`. Judged
@@ -17,17 +21,16 @@
  *   3. Server-only modules declared by FILE NAME: `*.server.ts` files,
  *      anything under a `.server/` directory, and — for the app's OWN source
  *      only — anything under a plain `server/` directory segment.
- *   4. Local modules outside a `$module/web/` (or `src/web/`) folder that are
- *      not a recognized universal surface (`*.page.tsx`, `layout.tsx`). The app
- *      root (`src/web/root.tsx`) is admitted by the `web/` FOLDER rule above,
- *      not by its name — see the note in `isRecognizedUniversalSurface`. A
- *      specifier that omits its file extension is judged on the file it will
- *      actually load, not on the extensionless string — see
- *      `completeLocalModulePath`.
- *   5. The `server-only` npm package — a module importing it has declared
- *      itself server-side and cannot reach the browser. Judged by NAME, right
- *      after rule 1 and ahead of rule 2's scope check; see
- *      `BOUNDARY_DECLARATION_PACKAGES`.
+ *
+ * A former rule 4 — refusing a local module outside a `$module/web/` folder
+ * that was not a recognized universal surface — is GONE, deliberately. Owner
+ * ruling 2026-08-24 (canon `10f6041c`, see `ruleViolation`'s "RULE 4 IS GONE"
+ * note): it was a location PROXY for danger and refused genuinely universal
+ * files for their address alone. The client boundary is now decided by the
+ * import GRAPH — rules 1, 1b, 2 and 3 above — not by where a file sits. A
+ * specifier that omits its file extension is judged on the file it will
+ * actually load, not on the extensionless string — see
+ * `completeLocalModulePath`.
  *
  * Gate B (inline secrets), Gate C (output verification) and the SSR mirror
  * rule for a future client-only rendering primitive is NOT this gate. Do not
@@ -283,12 +286,16 @@ export function isRecognizedUniversalSurface(resolvedPath: string): boolean {
   if (base === "layout.tsx" || base === "layout.ts") return true;
   // There is deliberately NO app-root (`src/web/root.tsx`) case here, and
   // adding one would be dead code. The app root lives directly inside a
-  // `web/` folder, so `isWithinModuleWebFolder` — which the only caller,
-  // `isOutsideUniversalScope`, tests on the line BEFORE this function is
-  // reached — already admits it by folder, whatever the file is named. A name
-  // test here could never fire; the root's name is not what makes it
-  // universal. (Verified: removing such a test leaves the app-root and
-  // ordinary-sibling cases in `gate-a-resolve.spec.ts` passing.)
+  // `web/` folder, so `isWithinModuleWebFolder` already admits it by folder
+  // wherever this function is reached through `isOutsideUniversalScope`
+  // (which tests it on the line before). This function has a second caller,
+  // `isStatelessClientSurface` (`vite/index.ts`), which does not ask
+  // `isWithinModuleWebFolder` at all — there the app root is admitted instead
+  // by `resolveId`'s graph walk once something already in the client graph
+  // imports it (see that function's comment), so the omission here still
+  // costs nothing. A name test here could never fire; the root's name is not
+  // what makes it universal. (Verified: removing such a test leaves the
+  // app-root and ordinary-sibling cases in `gate-a-resolve.spec.ts` passing.)
   return false;
 }
 
@@ -726,8 +733,9 @@ function ruleViolation(
   }
 
   // Rule 2 is judged only for imports whose importer is app-authored code
-  // (inside `appRoot`) — mirroring rule 4's existing dependency-internals
-  // exemption below. A governed package's OWN internal composition (e.g.
+  // (inside `appRoot`) — the same dependency-internals exemption rule 3's
+  // server-folder half draws through `isAppSourcePath`. A governed package's
+  // OWN internal composition (e.g.
   // `@warlock.js/seal` importing `@mongez/reinforcements`) is that package's
   // business, not the app's; what Gate A polices is the app reaching INTO a
   // server-only package, not what a package it's already allowed to use does
@@ -736,7 +744,7 @@ function ruleViolation(
   // statement about what the app will EXECUTE, and an import statement with no
   // value binding executes nothing from the package — refusing it would be a
   // false positive on code that is already correct, which is how people learn
-  // to switch a fence off. Rules 1, 3, 4 and 5 are untouched by this flag on
+  // to switch a fence off. Rules 1, 1b and 3 are untouched by this flag on
   // purpose: they judge the importer's own nature or a file name, neither of
   // which a type-only spelling changes.
   if (!isTypeOnlyEdge && isServerMarkedGovernedPackage(source, importer, environmentOf, appRoot)) {
@@ -862,11 +870,12 @@ export interface EnvironmentClassifierOptions {
   serverPackages?: Iterable<string>;
   /**
    * The app's project root. Defines what counts as APP SOURCE (see
-   * `isAppSourcePath`), which two rules depend on: rule 4 ("outside
-   * `$module/web/`") and rule 3's plain-`server/`-folder half. A dependency's
+   * `isAppSourcePath`), which rule 3's plain-`server/`-folder half depends on
+   * (rule 4, "outside `$module/web/`", drew on the same distinction before it
+   * was removed — see `ruleViolation`'s "RULE 4 IS GONE" note). A dependency's
    * own internal file layout — reached once resolution has left the app root,
-   * or through a `node_modules/` segment — is exempt from both, though rules
-   * 1, 2 and the `.server` half of rule 3 still apply to it. Defaults to
+   * or through a `node_modules/` segment — is exempt from it, though rules 1,
+   * 2 and the `.server` half of rule 3 still apply to it. Defaults to
    * `process.cwd()`, matching Vite's own default `root`.
    */
   appRoot?: string;
@@ -1247,14 +1256,14 @@ export function gateAResolve(options: GateAOptions = {}): Plugin {
       }
 
       /*
-        THE ALIAS PASS — rules 3 and 4, judged a SECOND time on the file the
+        THE ALIAS PASS — rule 3, judged a SECOND time on the file the
         specifier actually reached rather than on the string that named it.
 
         Everything above judges `judgedPath`, which for a specifier that is
         neither relative nor absolute is the specifier STRING itself. That is
-        the right answer for rules 1, 2 and 5, which judge names. It is the
-        wrong answer for rules 3 and 4, which judge files — and it is why an
-        import written in alias form (`app/users/...`) walked past both.
+        the right answer for rules 1, 1b and 2, which judge names. It is the
+        wrong answer for rule 3, which judges files — and it is why an
+        import written in alias form (`app/users/...`) walked past it.
 
         Resolution, not re-derivation. The card that raised this asked for the
         alias TABLE to be read out of the config and applied here. Asking
@@ -1270,7 +1279,7 @@ export function gateAResolve(options: GateAOptions = {}): Plugin {
         The `isAppSourcePath` pre-filter is what keeps this from being a second,
         broader rule: everything in `node_modules` and everything outside
         `appRoot` is out before `ruleViolation` is asked anything, exactly as
-        rules 3 and 4 already require of their own subjects.
+        rule 3 already requires of its own subject.
 
         WARNING, NOT REFUSAL — and this is the deliberate, temporary half. The
         judgement above is now spelling-independent; the consequence is not yet.

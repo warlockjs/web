@@ -292,7 +292,7 @@ function clientEnvironmentOnly(plugin: Plugin, ssrState: SsrBoundaryState): Plug
 
 /**
  * The composed client-build pipeline: projection
- * strips the 5 server exports first, THEN Gate B's `transform` checks
+ * strips the 6 server exports first, THEN Gate B's `transform` checks
  * whatever source remains for inline secret reads, THEN Gate A's
  * `resolveId` judges whatever imports remain. Array order here is
  * `[projection(), gateBSecrets(), gateAResolve()]` to match Vite's own
