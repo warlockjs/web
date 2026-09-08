@@ -63,6 +63,7 @@ import { canonicalizeRouteExport, resolvePageRouteName } from "../routing/route-
 import { assertPageHasDefaultExport } from "./page-default-export";
 import type { RouteExportsReadResult } from "./read-route-exports";
 import { NonLiteralRouteExportError, readRouteExports } from "./read-route-exports";
+import { toPosix } from "../shared/to-posix";
 
 export type DiscoverPagesOptions = {
   /** Absolute path to the application root (where `package.json` lives). */
@@ -181,10 +182,6 @@ export class DuplicatePageRoutePathError extends Error {
     );
     this.name = "DuplicatePageRoutePathError";
   }
-}
-
-export function toPosix(value: string): string {
-  return value.replace(/\\/g, "/");
 }
 
 function isDirectory(candidate: string): boolean {

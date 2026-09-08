@@ -22,6 +22,7 @@ import { createPublicEnvTracker, gateBSecrets } from "./gate-b-secrets";
 import { gateCVerify } from "./gate-c-verify";
 import { clientPageRegistry, type ClientPageRegistryPluginOptions } from "./page-registry-plugin";
 import { isProjectableFile, projectModule, projection } from "./projection";
+import { moduleKey } from "../shared/module-key";
 
 export { buildHydrationClient } from "./build-client";
 export type {
@@ -81,10 +82,6 @@ type SsrBoundaryState = {
   readonly clientBoundModules: Set<string>;
   readonly clientImportsByModule: Map<string, Set<string>>;
 };
-
-function moduleKey(id: string): string {
-  return id.split("?")[0].replace(/\\/g, "/");
-}
 
 const CODE_MODULE_EXTENSION = /\.([cm]?[jt]sx?)$/;
 

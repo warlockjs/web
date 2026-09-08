@@ -27,7 +27,6 @@ import {
   discoverWebRoots,
   isDiscoveredRoutablePage,
   isFile,
-  toPosix,
   walkFiles,
 } from "./discover-pages";
 import {
@@ -35,6 +34,7 @@ import {
   NOT_FOUND_ROUTE_NAME,
   NOT_FOUND_ROUTE_PATH,
 } from "../server/not-found-page";
+import { toPosix } from "../shared/to-posix";
 
 // Re-exported, not redefined: discovery's helpers were this module's before the
 // split, and the callers that already reach for them here should keep getting

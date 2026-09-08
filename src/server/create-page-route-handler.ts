@@ -238,7 +238,7 @@ function installHydrationClientModule(
   const closingBodyIndex = html.lastIndexOf("</body>");
   if (closingBodyIndex === -1) {
     throw new Error(
-      "installPageRoutes: cannot install the hydration client module because the rendered document has no closing </body> tag.",
+      "createPageRouteHandler: cannot install the hydration client module because the rendered document has no closing </body> tag.",
     );
   }
 

@@ -39,6 +39,8 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Plugin } from "vite";
+import { moduleKey } from "../shared/module-key";
+import { toPosix } from "../shared/to-posix";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -238,10 +240,6 @@ function isNodeBuiltin(source: string): boolean {
   return NODE_BUILTINS.has(source);
 }
 
-function normalize(filePath: string): string {
-  return filePath.replace(/\\/g, "/");
-}
-
 /**
  * A plain `server/` path segment, tested against a path ALREADY made relative
  * to the app root — never against the absolute path. An app checked out at
@@ -259,7 +257,7 @@ export function isServerFile(resolvedPath: string, appRoot: string): boolean {
   // matching `completeLocalModulePath`'s own bare/query split for the same
   // specifier (see its note).
   const bare = resolvedPath.split("?")[0];
-  const normalized = normalize(bare);
+  const normalized = toPosix(bare);
   // `.server` may or may not carry an extension by the time Gate A judges it
   // — a bare specifier like `./blog.server` (extension resolved later by
   // Vite) must be caught just as `./blog.server.ts` is.
@@ -273,13 +271,13 @@ export function isServerFile(resolvedPath: string, appRoot: string): boolean {
   // framework itself. `isAppSourcePath` is the same app-source/dependency
   // distinction rule 4 draws, not a second one.
   if (isAppSourcePath(bare, appRoot)) {
-    if (APP_SERVER_SEGMENT.test(normalize(path.relative(appRoot, bare)))) return true;
+    if (APP_SERVER_SEGMENT.test(toPosix(path.relative(appRoot, bare)))) return true;
   }
   return false;
 }
 
 export function isRecognizedUniversalSurface(resolvedPath: string): boolean {
-  const normalized = normalize(resolvedPath);
+  const normalized = toPosix(resolvedPath);
   const base = path.basename(normalized);
   if (/\.page\.tsx?$/.test(base)) return true;
   if (base === "layout.tsx" || base === "layout.ts") return true;
@@ -325,7 +323,7 @@ const MODULE_WEB_SEGMENT = /(^|\/)web(\/|$)/;
  * `web/utils/` are ordinary app layout, not a way around the fence.
  */
 export function isWithinModuleWebFolder(resolvedPath: string, appRoot: string): boolean {
-  return MODULE_WEB_SEGMENT.test(normalize(path.relative(appRoot, resolvedPath)));
+  return MODULE_WEB_SEGMENT.test(toPosix(path.relative(appRoot, resolvedPath)));
 }
 
 /**
@@ -506,7 +504,7 @@ function isOutsideUniversalScope(resolvedPath: string, appRoot: string): boolean
 export function isAppSourcePath(resolvedPath: string, appRoot: string): boolean {
   if (!path.isAbsolute(resolvedPath)) return false;
   if (!isInsideAppRoot(resolvedPath, appRoot)) return false;
-  return !normalize(resolvedPath).includes("/node_modules/");
+  return !toPosix(resolvedPath).includes("/node_modules/");
 }
 
 function isInsideAppRoot(resolvedPath: string, appRoot: string): boolean {
@@ -538,15 +536,6 @@ const GOVERNED_SCOPE_MENTION = /@warlock\.js\/|@mongez\//;
  * `undefined` for any id containing `\0` — see its note).
  */
 const TYPE_ONLY_ERASED_ID = "\0warlock:type-only-erased";
-
-/**
- * Rollup module ids carry query suffixes (`?v=`, `?used`, ...) that differ
- * between the `transform` id and a later `importer`. Both sides key through
- * here so they agree.
- */
-function moduleKey(id: string): string {
-  return normalize(id.split("?")[0]);
-}
 
 function parserPluginsFor(id: string): ("typescript" | "jsx")[] {
   // `jsx` on a `.ts` file mis-parses the type-assertion form `<T>value`, which
@@ -814,7 +803,7 @@ function ruleViolation(
  * than the one at the top of the tree.
  */
 function displayName(id: string): string {
-  const normalized = normalize(id);
+  const normalized = toPosix(id);
   const segments = normalized.split("node_modules/");
   if (segments.length < 2) return path.basename(normalized);
   return segments[segments.length - 1];
@@ -977,7 +966,7 @@ export function createEnvironmentClassifier(
     // subject to Gate C's server-export scan and Gate B's transform.
     if (absPath.includes("\0")) return undefined;
 
-    const normalized = normalize(path.resolve(absPath));
+    const normalized = toPosix(path.resolve(absPath));
 
     // node_modules is unambiguous — always a dependency, even when nested
     // inside appRoot (the ordinary case: `appRoot/node_modules/...`).
@@ -991,7 +980,7 @@ export function createEnvironmentClassifier(
 
     if (workspaceIndex) {
       for (const [name, pkgJsonPath] of workspaceIndex.packageJsonByName) {
-        const root = `${normalize(path.dirname(pkgJsonPath))}/`;
+        const root = `${toPosix(path.dirname(pkgJsonPath))}/`;
         if (normalized.startsWith(root)) return name;
       }
     }

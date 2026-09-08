@@ -15,9 +15,10 @@ import { parse } from "@babel/parser";
 import MagicString from "magic-string";
 import path from "node:path";
 import type { Plugin, ViteDevServer } from "vite";
-import { discoverPages, toPosix } from "../build/discover-pages";
+import { discoverPages } from "../build/discover-pages";
 import { generateClientRegistry } from "../build/generate-client-registry";
-import { SERVER_EXPORT_NAMES } from "./projection";
+import { toPosix } from "../shared/to-posix";
+import { isProjectableFile, SERVER_EXPORT_NAMES } from "./projection";
 
 /**
  * The specifier application code writes.
@@ -78,11 +79,9 @@ export type ClientPageRegistryPluginOptions = {
  * directory. `./blog.page.tsx` from that importer resolves to nonsense that
  * fails at bundle time with a path no user authored and no user can act on.
  *
- * Separator normalization is `hydration-entries.ts`'s
- * (`hydration-entries.ts:12-14`) and `discover-pages.ts`'s single
- * `.replace(/\\/g, "/")` rule, reused via the already-exported `toPosix` rather
- * than spelled a third time — keeping the drive colon (`D:/...`) is exactly
- * what Vite's resolver wants on Windows.
+ * Separator normalization goes through the one shared `toPosix`
+ * (`../shared/to-posix`) — keeping the drive colon (`D:/...`) is exactly what
+ * Vite's resolver wants on Windows.
  */
 function toImportSpecifier(absoluteFilePath: string): string {
   return toPosix(path.resolve(absoluteFilePath));
@@ -134,23 +133,6 @@ function eraseTypes(source: string): string {
   }
 
   return magic.toString();
-}
-
-/**
- * The four file shapes that carry SERVER data (`metadata` chief among them)
- * and are therefore projected before the client graph forms — the exact set
- * `projection.ts`'s `isProjectableFile` matches, spelled here by BASENAME so
- * the two agree by construction on what "a server-side page module" is. A
- * change to one of these is the only kind of change whose SERVER half
- * (`metadata`, `loader`, …) can move without the client half moving at all.
- */
-function isServerPageModule(file: string): boolean {
-  const base = path.basename(file.split("?")[0]);
-  if (/\.page\.tsx?$/.test(base)) return true;
-  if (base === "layout.tsx" || base === "layout.ts") return true;
-  if (/\.layout\.tsx?$/.test(base)) return true;
-  if (base === "root.tsx") return true;
-  return false;
 }
 
 /**
@@ -469,7 +451,7 @@ export function clientPageRegistry(options: ClientPageRegistryPluginOptions = {}
      */
     transform(code, id) {
       if (this.environment?.mode !== "dev") return undefined;
-      if (!isServerPageModule(id)) return undefined;
+      if (!isProjectableFile(id)) return undefined;
 
       const skeleton = captureSkeleton(code);
       if (skeleton !== undefined) skeletonCache.set(id, skeleton);
@@ -491,7 +473,7 @@ export function clientPageRegistry(options: ClientPageRegistryPluginOptions = {}
      * construction.
      */
     async hotUpdate(context) {
-      if (isServerPageModule(context.file)) {
+      if (isProjectableFile(context.file)) {
         const routeGraphHandled = await options.beforePageHotUpdate?.({
           file: context.file,
           type: context.type,
@@ -503,7 +485,7 @@ export function clientPageRegistry(options: ClientPageRegistryPluginOptions = {}
       // `create`/`delete` are page graph churn, not in-place edits — leave them
       // to Vite's normal handling (a new/removed module reloads on its own).
       if (context.type !== "update") return undefined;
-      if (!isServerPageModule(context.file)) return undefined;
+      if (!isProjectableFile(context.file)) return undefined;
 
       const nextSource = await context.read();
       const next = captureSkeleton(nextSource);

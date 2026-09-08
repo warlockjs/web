@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { toPosix } from "../shared/to-posix";
 
 /** Stable Rollup/Vite entry name shared by development and production wiring. */
 export const HYDRATION_CLIENT_ENTRY_NAME = "hydration";
@@ -9,10 +10,6 @@ export type HydrationClientEntry = Readonly<{
   sourcePath: string;
   devUrl: string;
 }>;
-
-function normalizeFileSystemPath(filePath: string): string {
-  return filePath.replace(/\\/g, "/");
-}
 
 /**
  * Where the hydration entry lives inside an INSTALLED `@warlock.js/web`, and
@@ -49,7 +46,7 @@ export function createHydrationClientEntry(webRoot: string): HydrationClientEntr
   }
 
   const packagedPath = path.resolve(webRoot, PACKAGED_ENTRY);
-  const sourcePath = normalizeFileSystemPath(
+  const sourcePath = toPosix(
     existsSync(packagedPath) ? packagedPath : path.resolve(webRoot, CHECKOUT_ENTRY),
   );
 

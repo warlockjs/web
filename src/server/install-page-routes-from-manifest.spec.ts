@@ -2,9 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { discoverPages, isDiscoveredRoutablePage, toPosix } from "../build/discover-pages";
+import { discoverPages, isDiscoveredRoutablePage } from "../build/discover-pages";
 import { NestedLayoutsNotSupportedError } from "../routing/layout-policy";
 import { href, resetRouteTable, routeTablePublisher } from "../routing/route-table";
+import { toPosix } from "../shared/to-posix";
 import type { PageRouteHandler, PageRouteHandlerOptions } from "./create-page-route-handler";
 import {
   installPageRoutesFromManifest,

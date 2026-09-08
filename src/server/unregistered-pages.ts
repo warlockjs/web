@@ -2,12 +2,12 @@ import path from "node:path";
 import {
   discoverPages,
   isDiscoveredRoutablePage,
-  toPosix,
   type DiscoverPagesOptions,
   type DiscoveredPage,
 } from "../build/discover-pages";
 import { matchPath } from "./match-page-route";
 import { isNotFoundPageFile } from "./not-found-page";
+import { toPosix } from "../shared/to-posix";
 
 type DiscoveredGlobalPage = Extract<DiscoveredPage, { type: "page" }>;
 type DiscoverPages = (options: DiscoverPagesOptions) => readonly DiscoveredPage[];

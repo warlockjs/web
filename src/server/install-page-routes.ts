@@ -37,13 +37,13 @@ import {
   ErrorPageDeclaresRouteError,
   isErrorPageFile,
   layoutChainFor,
-  toPosix,
 } from "../build/discover-pages";
 import { NonLiteralRouteExportError, readRouteExports } from "../build/read-route-exports";
 import { composeRoutePath } from "../routing/compose-route-path";
 import { deriveFilesystemRoutePath } from "../routing/filesystem-route";
 import { NestedLayoutsNotSupportedError, selectPageLayout } from "../routing/layout-policy";
 import { PageFileSegmentNotSupportedError } from "../routing/page-file-segment";
+import { toPosix } from "../shared/to-posix";
 import {
   canonicalizeRouteExport,
   resolvePageRouteCache,
