@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { NestedLayoutsNotSupportedError } from "../routing/layout-policy";
 import { PageRoutePathNotSupportedError } from "../routing/page-route-grammar";
 import {
+  discoverIgnoredAppWebFiles,
   discoverPages as discoverPagesRaw,
   DuplicateErrorPageError,
   DuplicatePageRouteNameError,
@@ -1178,5 +1179,93 @@ describe("discoverPages — filesystem route derivation", () => {
       expect(error).toBeInstanceOf(DuplicatePageRoutePathError);
       expect((error as Error).message).toContain(".page.tsx");
     }
+  });
+});
+
+describe("discoverPages — src/app/**/web/** is named, not registered, when ignored", () => {
+  it("GUILTY: names a stray page under src/app/**/web/**, does not register it, does not crash", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/web/home.page.tsx": pageDeclaring(""),
+      "src/app/products/web/stray.page.tsx": pageDeclaring(""),
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const pages = discoverPages({ appRoot });
+
+      // Never registered: only the src/web page reaches the graph.
+      expect(pages).toHaveLength(1);
+      expect(pages[0].pageFile.endsWith("home.page.tsx")).toBe(true);
+
+      // Named, not silent: the message identifies the exact file and the
+      // supported location.
+      expect(warn).toHaveBeenCalledTimes(1);
+      const message = warn.mock.calls[0][0] as string;
+      expect(message).toContain("src/app/products/web/stray.page.tsx");
+      expect(message).toContain("src/web/**");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("GUILTY: names a stray NAMED layout (*.layout.tsx) under src/app/**/web/**", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/app/users/web/dashboard.layout.tsx": layoutDeclaring(""),
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      discoverPages({ appRoot });
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0] as string).toContain("src/app/users/web/dashboard.layout.tsx");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("INNOCENT: a clean app produces NO diagnostic at all", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/web/home.page.tsx": pageDeclaring(""),
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      discoverPages({ appRoot });
+
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not warn a second time for the same file within the same process (once per boot)", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/app/products/web/stray.page.tsx": pageDeclaring(""),
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      discoverPages({ appRoot });
+      discoverPages({ appRoot });
+      discoverPages({ appRoot });
+
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not report a positional layout.tsx — that gap is tracked separately", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/app/products/web/layout.tsx": layoutDeclaring(""),
+    });
+
+    expect(discoverIgnoredAppWebFiles(path.join(appRoot, "src"))).toEqual([]);
   });
 });

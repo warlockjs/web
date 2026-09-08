@@ -214,6 +214,102 @@ function byName(left: { name: string }, right: { name: string }): number {
   return left.name < right.name ? -1 : left.name > right.name ? 1 : 0;
 }
 
+/**
+ * Every directory named exactly `web` beneath `src/app`, at any depth — the
+ * shape a page or a named layout takes BEFORE it moves to the one supported
+ * page root, {@link discoverWebRoots}. Descent stops at a `web` directory
+ * itself: a `web` folder nested inside another is not a shape this codebase
+ * uses, so there is nothing further down worth walking.
+ */
+function discoverIgnoredAppWebDirs(srcRoot: string): string[] {
+  const appDir = path.join(srcRoot, "app");
+
+  if (!isDirectory(appDir)) return [];
+
+  const found: string[] = [];
+
+  const walk = (dir: string) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+
+      const full = path.join(dir, entry.name);
+
+      if (entry.name === "web") {
+        found.push(full);
+      } else {
+        walk(full);
+      }
+    }
+  };
+
+  walk(appDir);
+
+  return found;
+}
+
+/**
+ * Absolute paths of every `*.page.tsx` and NAMED `*.layout.tsx` file beneath
+ * `src/app/**\/web/**`, sorted lexicographically (POSIX) for a stable
+ * diagnostic.
+ *
+ * `src/web` is the only page root (canon `4a6524f3`) — nothing found here is
+ * registered, ever. This function exists only to NAME what is being ignored
+ * instead of ignoring it in silence; see {@link discoverPages}'s call site.
+ *
+ * Deliberately excludes the POSITIONAL `layout.tsx` filename: that exact name,
+ * and the middleware a positional layout may declare, are not scanned here —
+ * tracked separately as its own card, not this one.
+ */
+export function discoverIgnoredAppWebFiles(srcRoot: string): string[] {
+  const found: string[] = [];
+
+  for (const webDir of discoverIgnoredAppWebDirs(srcRoot)) {
+    found.push(
+      ...walkFiles(
+        webDir,
+        (fileName) => fileName.endsWith(".page.tsx") || fileName.endsWith(".layout.tsx"),
+      ),
+    );
+  }
+
+  return found.sort((left, right) => compareStrings(toPosix(left), toPosix(right)));
+}
+
+/**
+ * Files {@link discoverIgnoredAppWebFiles} has already reported once this
+ * process — the "once per boot" guard. Keyed by absolute path rather than
+ * cleared between calls: {@link discoverPages} runs once per dev reload as
+ * well as once per production build, and the point of this set is that the
+ * same stray file does not get a fresh warning on every one of those calls
+ * within a single boot.
+ */
+const warnedIgnoredAppWebFiles = new Set<string>();
+
+/**
+ * The one place this module writes to the console. Reports every file
+ * {@link discoverIgnoredAppWebFiles} found and has not already warned about
+ * this boot — never crashes the build, because an application mid-migration
+ * off `src/app/**\/web/**` is legitimate, not broken.
+ */
+function warnIgnoredAppWebFiles(files: readonly string[], appRoot: string): void {
+  const unwarned = files.filter((file) => !warnedIgnoredAppWebFiles.has(file));
+
+  if (unwarned.length === 0) return;
+
+  for (const file of unwarned) warnedIgnoredAppWebFiles.add(file);
+
+  const plural = unwarned.length === 1 ? "" : "s";
+  const named = unwarned.map((file) => `  - ${toPosix(path.relative(appRoot, file))}`).join("\n");
+
+  console.warn(
+    `[warlock:web] ${unwarned.length} page file${plural} under src/app/**/web/** ` +
+      `${unwarned.length === 1 ? "is" : "are"} ignored — the only supported page root is ` +
+      `src/web/**, so ${unwarned.length === 1 ? "it is" : "they are"} absent from the route ` +
+      `graph:\n${named}\nMove ${unwarned.length === 1 ? "it" : "them"} under src/web/** to register ` +
+      `${unwarned.length === 1 ? "it" : "them"}.`,
+  );
+}
+
 export type DiscoveredPageFile = {
   /** Absolute path to the `*.page.tsx` file. */
   pageFile: string;
@@ -834,6 +930,11 @@ function readLayoutShape(layoutFile: string, cache: Map<string, LayoutShape>): L
  * with a silently missing tag; and a page whose layout chain holds more than one RENDERING layout, which
  * the production installer would refuse anyway — discovery refuses it first so
  * that artefact is never produced.
+ *
+ * It also WARNS — never refuses — when it finds a `*.page.tsx` or named
+ * `*.layout.tsx` under `src/app/**\/web/**`, the shape the page root took
+ * before it moved to `src/web`. Those files are not registered either way;
+ * see {@link discoverIgnoredAppWebFiles}.
  */
 export function discoverPages(options: DiscoverPagesOptions): DiscoveredPage[] {
   const { appRoot } = options;
@@ -848,6 +949,9 @@ export function discoverPages(options: DiscoverPagesOptions): DiscoveredPage[] {
   const pages: DiscoveredPage[] = [];
   const explicitRouteFiles = new Set<string>();
   let errorPage: DiscoveredErrorPage | undefined;
+
+  const ignoredAppWebFiles = discoverIgnoredAppWebFiles(srcRoot);
+  if (ignoredAppWebFiles.length > 0) warnIgnoredAppWebFiles(ignoredAppWebFiles, appRoot);
 
   for (const webRoot of webRoots) {
     for (const pageFile of walkFiles(webRoot, (fileName) => fileName.endsWith(".page.tsx"))) {
