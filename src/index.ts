@@ -94,7 +94,21 @@ export type {
 // `UnserializableQueryValueError` is thrown rather than encoded for shapes core
 // would silently destroy — refusing to write a value beats writing one that
 // arrives as something else.
-export { queryStringOf, UnserializableQueryValueError } from "./routing/query-string";
+//
+// `connectRequestSearch` is the SAME boot-wiring seam `connectSharedStore`
+// and `connectPageContext` are — a server bootstrap connects it once, the
+// pipeline resolves it per request (`routing/query-string.ts`'s module
+// header). `useQueryString` is the one caller most apps reach for: the
+// hook itself lives in `client/` because it uses React, but it belongs on
+// this surface for the same reason `href` does — nothing works until it can
+// be imported.
+export {
+  queryStringOf,
+  connectRequestSearch,
+  UnserializableQueryValueError,
+} from "./routing/query-string";
+export type { RequestSearchResolver } from "./routing/query-string";
+export { useQueryString } from "./client/navigation/use-query-string";
 export { Head } from "./components/head";
 export { Scripts } from "./components/scripts";
 

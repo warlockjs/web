@@ -18,10 +18,12 @@ vi.mock("../shared", () => ({
   sealShared: vi.fn(async () => Object.freeze({})),
 }));
 
+import { useQueryString } from "@warlock.js/web";
 import { connectPageContext, type PageRouteEntry } from "./execute-page-request";
 import { isNonHydrating } from "./page-render-bundle";
 import { renderPageFailure, renderPageRequest } from "./render-page";
 import type { ErrorPageModule } from "./error-page";
+import type { PipelineStore } from "./execute-page-request.types";
 
 beforeEach(() => {
   resolvePageMetadata.mockClear();
@@ -99,6 +101,57 @@ describe("request-bound locale provider", () => {
     expect(english).toContain('"locale":"en"');
     expect(arabic).toContain('<main lang="ar">ar</main>');
     expect(arabic).toContain('"locale":"ar"');
+  });
+});
+
+describe("useQueryString — package entry, SSR answer matches the request URL", () => {
+  it("resolves the query key the request's own URL carries, from the pipeline's per-request store", async () => {
+    // A real per-request ALS stand-in: `run` records the store WHILE its
+    // callback is in flight and clears it after, so `getStore()` answers
+    // truthfully for the one request currently rendering — the exact shape
+    // `connectSharedStore`/`connectPageContext`'s own resolver relies on.
+    let liveStore: PipelineStore | undefined;
+
+    connectPageContext({
+      buildStore: (payload) => payload as PipelineStore,
+      getStore: () => liveStore,
+      run: async (store, callback) => {
+        liveStore = store;
+        try {
+          return await callback();
+        } finally {
+          liveStore = undefined;
+        }
+      },
+    });
+
+    const entry: PageRouteEntry = {
+      path: "/search",
+      name: "search",
+      triple: {
+        app: {},
+        layout: {},
+        page: {
+          default: () => createElement("p", null, String(useQueryString("q") ?? "")),
+        },
+      },
+    };
+
+    const response = new Response();
+    const request = {
+      nonce: undefined,
+      locale: "en",
+      url: "/search?q=widgets",
+    } as unknown as Request;
+
+    const rendered = await renderPageRequest("/search?q=widgets", {
+      routes: [entry],
+      createHttp: () => ({ request, response }),
+    });
+
+    if (rendered instanceof Response) throw new Error("unexpected terminal Response");
+
+    expect(rendered.html).toContain("<p>widgets</p>");
   });
 });
 

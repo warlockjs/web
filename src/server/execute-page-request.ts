@@ -1,6 +1,7 @@
 import { Response } from "@warlock.js/core";
 import { v } from "@warlock.js/seal";
 import { enterSharedScope, sealShared } from "../shared";
+import { connectRequestSearch } from "../routing/query-string";
 import { enterAdditionalSharedScope, requireRunner } from "./page-context";
 import { matchRoute } from "./match-page-route";
 import { resolvePageMetadata } from "./resolve-page-metadata";
@@ -47,10 +48,35 @@ type Bundle = PageDataBundle & {
   };
 };
 
+/**
+ * Self-wires `useQueryString`'s SSR seam to the SAME per-request store
+ * `connectSharedStore`/`connectPageContext` already read (canon `1ca1e8ae`'s
+ * scoping) — done HERE, once, rather than asking every server bootstrap
+ * (dev's Vite-graph wiring in `web-connector.ts`, prod's
+ * `installProductionPageRoutes`) to remember a THIRD `connect*` call for the
+ * same store.
+ *
+ * The resolver calls `requireRunner()` on every read, not the `runner`
+ * closed over by its caller: `runner.getStore()` is only valid for as long as
+ * that particular runner is connected, and a test (or a later reconnect)
+ * that swaps in a new one via `connectPageContext` must not leave this
+ * resolver reading a stale runner's store.
+ */
+let requestSearchWired = false;
+
+function wireRequestSearch(): void {
+  if (requestSearchWired) return;
+
+  requestSearchWired = true;
+  connectRequestSearch(() => requireRunner().getStore()?.request.url);
+}
+
 export async function executePageRequest<TResult = PageDataBundle>(
   options: ExecutePageRequestOptions<TResult>,
 ): Promise<TResult | Response | undefined> {
   const runner = requireRunner();
+
+  wireRequestSearch();
   const [pathname, queryString] = options.url.split("?");
   const matched = matchRoute(pathname, options.routes);
 

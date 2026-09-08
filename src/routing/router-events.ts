@@ -13,10 +13,11 @@
  *
  * ## This module ships the emitter only
  *
- * Nothing here is wired into the navigation runtime yet — `navigation-root.tsx`
- * calls the `emit*` methods in a later change. Until then this is a complete,
- * self-contained emitter with no callers, which is why it has no dependency on
- * anything in `client/`.
+ * `navigation-root.tsx` calls the `emit*` methods — `emitNavigating` before a
+ * navigation's fetch starts, `emitNavigated` after the tree swap commits,
+ * `emitNavigationError` on either path's failure. This module still has no
+ * dependency on anything in `client/`: the wiring runs the other direction,
+ * `navigation-root.tsx` imports `routerEvents` and calls it, never the reverse.
  *
  * ## What it deliberately does NOT do
  *
