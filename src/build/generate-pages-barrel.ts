@@ -21,7 +21,17 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parse } from "@babel/parser";
-import { normalizeRoutePath, type ConnectorEsbuildPatch } from "@warlock.js/core";
+import type { ConnectorEsbuildPatch } from "@warlock.js/core";
+// Deep import, not the barrel: `@warlock.js/core`'s root re-exports database,
+// http, socket, mail and connectors alongside the router. Measured with
+// esbuild (bundle a single entry point, read the metafile) — importing the
+// barrel for this one function pulled in 215 core/src files (955 KB, and the
+// package's own database/http/socket/mail/connectors/react graph, 4544
+// modules total once their dependencies are counted) into this build-tool
+// module's graph; importing this file directly pulls in 2 (itself and
+// `@mongez/concat-route`). Same pattern as `web-connector-factory.ts`'s
+// `../../../core/src/connectors/types` deep import, for the same reason.
+import { normalizeRoutePath } from "../../../core/src/router/normalize-route-path";
 import {
   discoverPages,
   discoverWebRoots,
