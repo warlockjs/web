@@ -79,4 +79,50 @@ describe("registerProductionPublicFiles", () => {
       InvalidProductionPublicFileError,
     );
   });
+
+  it("stays silent when disk matches the manifest exactly", () => {
+    const clientDir = clientDirectory({ "favicon.svg": "<svg />" });
+    const warn = vi.fn();
+
+    registerProductionPublicFiles(
+      { file: vi.fn() } as unknown as Router,
+      clientDir,
+      ["favicon.svg"],
+      warn,
+    );
+
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("stays silent when there is no public directory at all", () => {
+    const clientDir = fs.mkdtempSync(path.join(os.tmpdir(), "warlock-client-public-"));
+    temporaryDirectories.push(clientDir);
+    const warn = vi.fn();
+
+    registerProductionPublicFiles({ file: vi.fn() } as unknown as Router, clientDir, [], warn);
+
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("names a file added to public/ after the build, without failing to boot", () => {
+    const clientDir = clientDirectory({
+      "favicon.svg": "<svg />",
+      "docs/new-report.pdf": "pdf",
+    });
+    const warn = vi.fn();
+
+    registerProductionPublicFiles(
+      { file: vi.fn() } as unknown as Router,
+      clientDir,
+      ["favicon.svg"],
+      warn,
+    );
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [message] = warn.mock.calls[0] as [string];
+    expect(message).toContain("public/ is stale");
+    expect(message).toContain("docs/new-report.pdf");
+    expect(message).toContain("404");
+    expect(message).toContain("warlock build");
+  });
 });

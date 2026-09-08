@@ -39,6 +39,45 @@ export async function collectPublicFiles(publicRoot: string): Promise<string[]> 
   return files;
 }
 
+/**
+ * The synchronous twin of {@link collectPublicFiles}, for callers that walk
+ * `public/` at a point that cannot await — production boot registers routes
+ * synchronously, so its staleness check needs this instead of the build-time
+ * async walk.
+ */
+export function collectPublicFilesSync(publicRoot: string): string[] {
+  let root: fs.Stats;
+
+  try {
+    root = fs.statSync(publicRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+
+  if (!root.isDirectory()) return [];
+
+  const files: string[] = [];
+
+  function visit(directory: string): void {
+    const entries = fs.readdirSync(directory, { withFileTypes: true });
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+
+    for (const entry of entries) {
+      const absolute = path.join(directory, entry.name);
+
+      if (entry.isDirectory()) {
+        visit(absolute);
+      } else if (entry.isFile()) {
+        files.push(path.relative(publicRoot, absolute).split(path.sep).join("/"));
+      }
+    }
+  }
+
+  visit(publicRoot);
+  return files;
+}
+
 /** Copy exactly the files recorded by {@link collectPublicFiles}. */
 export async function copyPublicFiles(
   publicRoot: string,

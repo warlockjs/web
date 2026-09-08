@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Router } from "@warlock.js/core";
+import { collectPublicFilesSync } from "../build/public-files";
 
 export class InvalidProductionPublicFileError extends Error {
   public constructor(publicFile: string) {
@@ -56,13 +57,53 @@ function assertRelativePublicFile(publicFile: string): string[] {
   return segments;
 }
 
+/**
+ * Report the `public/` files present on disk that the build manifest did not
+ * record — i.e. files added after the last `warlock build`. They are not
+ * registered (the manifest, not the disk, is what production serves — see
+ * the module-level note on {@link PUBLIC_FILE_CACHE_MAX_AGE_SECONDS}'s
+ * neighbours), so they will 404 until the app is rebuilt. A missing
+ * `publicRoot` is the ordinary no-public-directory case, not staleness, and
+ * {@link collectPublicFilesSync} already reports it as `[]`.
+ */
+function warnIfPublicBuildIsStale(
+  publicRoot: string,
+  publicFiles: readonly string[],
+  warn: (message: string) => void,
+): void {
+  let onDisk: string[];
+
+  try {
+    onDisk = collectPublicFilesSync(publicRoot);
+  } catch {
+    return;
+  }
+
+  const recorded = new Set(publicFiles);
+  const staleFiles = onDisk.filter((file) => !recorded.has(file));
+
+  if (staleFiles.length === 0) return;
+
+  const named = staleFiles.map((file) => `  - ${file}`).join("\n");
+
+  warn(
+    "[warlock:web] public/ is stale: the last `warlock build` did not see these files, " +
+      "so they will 404 in production until the app is rebuilt:\n" +
+      `${named}\n` +
+      "Run `warlock build` again to include them.",
+  );
+}
+
 /** Register the exact app-public files recorded by the successful build. */
 export function registerProductionPublicFiles(
   router: Router,
   clientDir: string,
   publicFiles: readonly string[],
+  warn: (message: string) => void = console.warn,
 ): void {
   const publicRoot = path.join(clientDir, "public");
+
+  warnIfPublicBuildIsStale(publicRoot, publicFiles, warn);
 
   for (const publicFile of publicFiles) {
     const absoluteFile = path.join(publicRoot, ...assertRelativePublicFile(publicFile));

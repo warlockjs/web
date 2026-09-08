@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { collectPublicFiles, copyPublicFiles } from "./public-files";
+import { collectPublicFiles, collectPublicFilesSync, copyPublicFiles } from "./public-files";
 
 const temporaryDirectories: string[] = [];
 
@@ -39,5 +39,21 @@ describe("production public files", () => {
     const root = temporaryDirectory("warlock-public-missing-");
 
     await expect(collectPublicFiles(path.join(root, "public"))).resolves.toEqual([]);
+  });
+
+  it("collects the same tree synchronously as the async walk", () => {
+    const source = temporaryDirectory("warlock-public-sync-source-");
+
+    fs.mkdirSync(path.join(source, "images"), { recursive: true });
+    fs.writeFileSync(path.join(source, "favicon.svg"), "<svg />", "utf-8");
+    fs.writeFileSync(path.join(source, "images", "logo.txt"), "logo", "utf-8");
+
+    expect(collectPublicFilesSync(source)).toEqual(["favicon.svg", "images/logo.txt"]);
+  });
+
+  it("treats a missing public directory as an empty public surface synchronously", () => {
+    const root = temporaryDirectory("warlock-public-missing-sync-");
+
+    expect(collectPublicFilesSync(path.join(root, "public"))).toEqual([]);
   });
 });
