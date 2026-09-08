@@ -4,13 +4,8 @@ import {
   createPageRouteHandler,
   type PageModuleLoader,
 } from "../../src/server/create-page-route-handler";
-import type { BufferedCookie } from "../../src/server/buffered-response";
-import {
-  connectPageContext,
-  connectPageRoutes,
-  type PageContextRunner,
-  type PageRoutesRegistry,
-} from "../../src/server/index";
+import type { BufferedCookie } from "../../src/server/execute-page-request";
+import { connectPageContext, type PageContextRunner } from "../../src/server/index";
 import { connectSharedStore, type SharedStoreResolver } from "../../src/shared";
 import { createCoreHttp, createReplyShim, requestContext } from "./fixtures/core-http";
 import * as App from "./fixtures/root";
@@ -30,7 +25,7 @@ import * as App from "./fixtures/root";
  * against real core `Request`/`Response` instances (`createCoreHttp`), reading
  * back what the fastify reply was actually handed. Nothing is asserted about
  * the bundle except as a control — the point is the four-hop path
- * buffered-response → commit → finishRender → emit, end to end.
+ * commit → applyBufferedCookie → finishRender → emit, end to end.
  */
 
 const APP_FILE = "/fixtures/web/root.tsx";
@@ -39,19 +34,15 @@ const PAGE_FILE = "/fixtures/web/guarded.page.tsx";
 
 let previousRunner: PageContextRunner | undefined;
 let previousResolver: SharedStoreResolver | undefined;
-let previousRegistry: PageRoutesRegistry | undefined;
 
 beforeAll(() => {
   previousRunner = connectPageContext(requestContext as unknown as PageContextRunner);
   previousResolver = connectSharedStore(() => requestContext.getStore() as never);
-  // The handler must render off the one-entry registry it builds per request.
-  previousRegistry = connectPageRoutes(undefined);
 });
 
 afterAll(() => {
   connectPageContext(previousRunner);
   connectSharedStore(previousResolver);
-  connectPageRoutes(previousRegistry);
 });
 
 beforeEach(() => {
@@ -162,9 +153,8 @@ describe("loader redirect on a DOCUMENT render reaches the wire", () => {
 
   it("permanentRedirect writes Location and 301 — same shape, same path", async () => {
     // `permanentRedirect` returns the identical `kind: "redirect"` signal at a
-    // different status (`buffered-response.ts:98-101`). It is deliberately NOT
-    // special-cased anywhere; if it ever needs to be, this spec is where that
-    // divergence becomes visible.
+    // different status. It is deliberately NOT special-cased anywhere; if it
+    // ever needs to be, this spec is where that divergence becomes visible.
     const movedPage = {
       loader: async ({ response }: any) => response.permanentRedirect("/new-home"),
       default: () => null,

@@ -6,14 +6,10 @@
  */
 export { connectSharedStore } from "../shared";
 export {
-  connectPageRoutes,
   escapePayload,
   PAYLOAD_SCRIPT_ID,
-  renderPage,
   renderPageRequest,
-  type PageRoutesRegistry,
   type RenderedPage,
-  type RenderPageOptions,
   type RenderPageRequestOptions,
 } from "./render-page";
 export {

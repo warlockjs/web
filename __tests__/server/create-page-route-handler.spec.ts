@@ -6,10 +6,8 @@ import {
 } from "../../src/server/create-page-route-handler";
 import {
   connectPageContext,
-  connectPageRoutes,
   type BufferedCookie,
   type PageContextRunner,
-  type PageRoutesRegistry,
 } from "../../src/server/index";
 import { connectSharedStore, type SharedStoreResolver } from "../../src/shared";
 import { expectHydrationPayloadKeys } from "../shared/expect-payload-keys";
@@ -40,7 +38,6 @@ const PAGE_FILE = "/fixtures/web/contact-us.page.tsx";
 
 let previousRunner: PageContextRunner | undefined;
 let previousResolver: SharedStoreResolver | undefined;
-let previousRegistry: PageRoutesRegistry | undefined;
 
 beforeAll(() => {
   // The pipeline's two boot-time seams. The handler does not own them — the
@@ -48,16 +45,11 @@ beforeAll(() => {
   // of the handler has to stand them up exactly as the bootstrap would.
   previousRunner = connectPageContext(requestContext as unknown as PageContextRunner);
   previousResolver = connectSharedStore(() => requestContext.getStore() as never);
-  // Deliberately UNSET: the handler must render off the one-entry registry it
-  // builds per request, never off a connected global one. Leaving a registry
-  // here would let a handler that forgot to pass `routes` still pass.
-  previousRegistry = connectPageRoutes(undefined);
 });
 
 afterAll(() => {
   connectPageContext(previousRunner);
   connectSharedStore(previousResolver);
-  connectPageRoutes(previousRegistry);
 });
 
 beforeEach(() => {
@@ -325,7 +317,7 @@ describe("createPageRouteHandler — constructible without Vite", () => {
 
   it("applies every committed cookie to the core Response, in commit order", async () => {
     // A page whose loader writes two cookies and a header — the buffered
-    // surface the commit stage drains (`buffered-response.ts:76-92`).
+    // surface the commit stage drains.
     const cookiePage = {
       loader: async ({ response }: { response: any }) => {
         response.cookie("first", "1", { httpOnly: true });

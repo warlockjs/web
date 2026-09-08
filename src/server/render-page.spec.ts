@@ -20,7 +20,7 @@ vi.mock("../shared", () => ({
 
 import { connectPageContext, type PageRouteEntry } from "./execute-page-request";
 import { isNonHydrating } from "./page-render-bundle";
-import { renderPage, renderPageFailure } from "./render-page";
+import { renderPageFailure, renderPageRequest } from "./render-page";
 import type { ErrorPageModule } from "./error-page";
 
 beforeEach(() => {
@@ -76,7 +76,7 @@ describe("request-bound locale provider", () => {
 
     const renderLocale = async (locale: string) => {
       const { request, response } = createHttp(locale);
-      const rendered = await renderPage("locale", {
+      const rendered = await renderPageRequest("/locale", {
         routes: [entry],
         createHttp: () => ({ request, response }),
       });
@@ -162,7 +162,7 @@ describe("finishRender — normal app error page path", () => {
     const entry = throwingPageEntry();
     const { request, response } = createHttp();
 
-    const rendered = await renderPage("boom", {
+    const rendered = await renderPageRequest("/boom", {
       routes: [entry],
       createHttp: () => ({ request, response }),
       loadErrorPage: async () => fakeErrorPageModule(),
@@ -224,8 +224,7 @@ describe("finishRender ordinary page props", () => {
       },
     };
 
-    await renderPage(entry.name, {
-      params: { category: "books", productId: "42" },
+    await renderPageRequest("/catalog/books/products/42", {
       routes: [entry],
       createHttp: () => ({ request, response }),
     });

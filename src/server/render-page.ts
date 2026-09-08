@@ -64,61 +64,31 @@ function committedCookies(bundle: PageDataBundle): BufferedCookie[] {
  * 10a the caller applies status + headers (the single live-response write,
  * after render, before anything flushes), 10b it flushes
  * the document. Nothing in this module writes the live response. It never
- * re-runs any earlier stage — `renderPage` calls `executePageRequest` and
- * everything here consumes its bundle as-is.
+ * re-runs any earlier stage — `renderPageRequest` calls `executePageRequest`
+ * and everything here consumes its bundle as-is.
  *
- * `renderPage` is deliberately double-duty (dx-differentiators.md §3): it is
- * the production orchestrator AND the test helper. Because a loader IS a
- * controller, `renderPage("products.details", { params: { id: "42" } })`
- * returns `{ html, status, headers, data }` in one call — asserting a page's
- * data and its response headers is a unit test, no browser, no server boot.
+ * `renderPageRequest` is deliberately double-duty (dx-differentiators.md §3):
+ * it is the production orchestrator AND the test helper. Because a loader IS
+ * a controller, `renderPageRequest("/products/42")` returns
+ * `{ html, status, headers, data }` in one call — asserting a page's data and
+ * its response headers is a unit test, no browser, no server boot.
  */
 
 // ---------------------------------------------------------------------------
-// The routes seam (same pattern as connectPageContext: boot wiring, once)
+// renderPageRequest surface
 // ---------------------------------------------------------------------------
 
-export type PageRoutesRegistry = {
+type RouteRegistry = {
   routes: readonly PageRouteEntry[];
-  /** Same contract as ExecutePageRequestOptions["createHttp"]. */
   createHttp: ExecutePageRequestOptions["createHttp"];
 };
 
-let pageRoutesRegistry: PageRoutesRegistry | undefined;
-
-/**
- * Boot-time wiring so `renderPage(name, options)` can resolve a route NAME
- * without each call site carrying the manifest. Returns the previous registry
- * so tests can restore it. A per-call `routes`/`createHttp` override wins.
- */
-export function connectPageRoutes(
-  registry: PageRoutesRegistry | undefined,
-): PageRoutesRegistry | undefined {
-  const previous = pageRoutesRegistry;
-  pageRoutesRegistry = registry;
-  return previous;
-}
-
-// ---------------------------------------------------------------------------
-// renderPage surface
-// ---------------------------------------------------------------------------
-
-export type RenderPageOptions = {
-  params?: Record<string, string>;
-  query?: Record<string, string>;
-  /** Per-call overrides of the connected registry (tests, mostly). */
-  routes?: readonly PageRouteEntry[];
-  createHttp?: ExecutePageRequestOptions["createHttp"];
+export type RenderPageRequestOptions = {
+  routes: readonly PageRouteEntry[];
+  createHttp: ExecutePageRequestOptions["createHttp"];
   /** Loaded only after the ordinary boundary chain has been exhausted. */
   loadErrorPage?: ErrorPageModuleLoader;
 };
-
-/**
- * `renderPageRequest` takes the URL itself, so `params`/`query` (the
- * name-based sugar buildUrl consumes) have no meaning here — everything else
- * is the same seam.
- */
-export type RenderPageRequestOptions = Omit<RenderPageOptions, "params" | "query">;
 
 export type RenderedPage = {
   /** The full document ("" when the pipeline short-circuited before render). */
@@ -137,7 +107,6 @@ export type RenderedPage = {
    * The full stages-1–8 bundle, for assertions beyond the page's own data.
    * Undefined ONLY on `renderPageRequest`'s no-match path: no route matched,
    * so no pipeline ran and there is no bundle — the 404 answer stands alone.
-   * `renderPage` always carries one (its no-match throws instead).
    */
   bundle: PageDataBundle | undefined;
 };
@@ -151,54 +120,18 @@ export type RenderPageFailureOptions = {
   loadErrorPage?: ErrorPageModuleLoader;
 };
 
-function requireRegistry(
-  options: Pick<RenderPageOptions, "routes" | "createHttp">,
-): PageRoutesRegistry {
-  const routes = options.routes ?? pageRoutesRegistry?.routes;
-  const createHttp = options.createHttp ?? pageRoutesRegistry?.createHttp;
+function requireRegistry(options: RenderPageRequestOptions): RouteRegistry {
+  const { routes, createHttp } = options;
 
   if (!routes || !createHttp) {
     throw new Error(
-      "renderPage()/renderPageRequest() has no route registry connected " +
-        "(web/src/server/render-page.ts). Both resolve against the page " +
-        "manifest, which the server bootstrap owns. Fix: " +
-        "call connectPageRoutes({ routes, createHttp }) at boot (tests: in " +
-        "beforeAll), or pass { routes, createHttp } to this call.",
+      "renderPageRequest() has no route registry (web/src/server/render-page.ts). " +
+        "It resolves against the page manifest, which the server bootstrap owns. " +
+        "Fix: pass { routes, createHttp } to this call.",
     );
   }
 
   return { routes, createHttp };
-}
-
-function buildUrl(
-  entry: PageRouteEntry,
-  params: Record<string, string>,
-  query: Record<string, string>,
-): string {
-  const path = entry.path
-    .split("/")
-    .map((segment) => {
-      if (!segment.startsWith(":")) return segment;
-
-      const name = segment.slice(1);
-      const value = params[name];
-
-      if (value === undefined) {
-        throw new Error(
-          `renderPage("${entry.name}"): route path "${entry.path}" needs ` +
-            `param "${name}" and the call did not provide it ` +
-            "(web/src/server/render-page.ts). Fix: pass it in " +
-            `\`params: { ${name}: … }\`.`,
-        );
-      }
-
-      return encodeURIComponent(value);
-    })
-    .join("/");
-
-  const queryString = new URLSearchParams(query).toString();
-
-  return queryString ? `${path}?${queryString}` : path;
 }
 
 // ---------------------------------------------------------------------------
@@ -378,7 +311,7 @@ type CapturedHttp = {
  * slots, `documentSlotsFrom` below) and the matched entry (the only place a
  * URL-based caller learns which triple to render).
  */
-function capturingCreateHttp(registry: PageRoutesRegistry): {
+function capturingCreateHttp(registry: RouteRegistry): {
   state: { captured?: CapturedHttp; match?: PageRouteMatch };
   createHttp: ExecutePageRequestOptions["createHttp"];
 } {
@@ -694,68 +627,21 @@ export async function renderPageFailure(options: RenderPageFailureOptions): Prom
 }
 
 // ---------------------------------------------------------------------------
-// The orchestrators
+// The orchestrator
 // ---------------------------------------------------------------------------
 
-export async function renderPage(
-  routeName: string,
-  options: RenderPageOptions = {},
-): Promise<RenderedPage | Response> {
-  const registry = requireRegistry(options);
-  const entry = registry.routes.find((candidate) => candidate.name === routeName);
-
-  if (!entry) {
-    const known = registry.routes.map((candidate) => `"${candidate.name}"`).join(", ");
-
-    throw new Error(
-      `renderPage("${routeName}"): no route with that name ` +
-        `(web/src/server/render-page.ts). Known route names: ${known}. ` +
-        "Fix: use a name from the manifest, or connect the manifest that " +
-        "declares this one.",
-    );
-  }
-
-  const url = buildUrl(entry, options.params ?? {}, options.query ?? {});
-  const { state, createHttp } = capturingCreateHttp(registry);
-
-  const rendered = await executePageRequest({
-    url,
-    routes: registry.routes,
-    createHttp,
-    finish: (bundle) =>
-      finishRender(
-        entry.triple,
-        bundle,
-        documentSlotsFrom(state.captured),
-        state.captured!.response,
-        options.loadErrorPage,
-      ),
-  });
-
-  if (!rendered) {
-    throw new Error(
-      `renderPage("${routeName}"): the built URL "${url}" did not match ` +
-        "stage 1 (web/src/server/render-page.ts). The name resolved but the " +
-        "matcher disagreed — that is a manifest bug, not a caller bug.",
-    );
-  }
-
-  return rendered;
-}
-
 /**
- * The URL-based sibling of `renderPage` — the production render surface: a
- * real HTTP server has a URL, not a route name. The url goes STRAIGHT to
- * executePageRequest's stage-1 matcher (no buildUrl), then the same shared
- * tail renders and emits.
+ * The production render surface: a real HTTP server has a URL. The url goes
+ * STRAIGHT to executePageRequest's stage-1 matcher, then the shared tail
+ * (`finishRender`) renders and emits.
  *
- * No-match here is NOT the manifest bug renderPage throws on: an arbitrary
- * URL matching no route is a legitimate 404, and a server must ANSWER it —
- * `{ html: "", status: 404 }` with an undefined `bundle` (see RenderedPage).
+ * No-match is not thrown on: an arbitrary URL matching no route is a
+ * legitimate 404, and a server must ANSWER it — `{ html: "", status: 404 }`
+ * with an undefined `bundle` (see RenderedPage).
  */
 export async function renderPageRequest(
   url: string,
-  options: RenderPageRequestOptions = {},
+  options: RenderPageRequestOptions,
 ): Promise<RenderedPage | Response> {
   const registry = requireRegistry(options);
   const { state, createHttp } = capturingCreateHttp(registry);

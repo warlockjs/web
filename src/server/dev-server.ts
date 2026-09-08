@@ -17,13 +17,6 @@ import type { Connect, Plugin } from "vite";
  */
 export const DEV_TRANSFORM_ERROR_BODY = Symbol.for("warlock.web.devTransformErrorBody");
 
-/**
- * Re-exported so a dev-only caller can reach the cookie commit seam through
- * this module without a second import path into `./buffered-response`, which
- * is where the implementation actually lives.
- */
-export { applyBufferedCookie, type BufferedCookie } from "./buffered-response";
-
 type DevTransformErrorCarrier = { [DEV_TRANSFORM_ERROR_BODY]?: string };
 
 /**

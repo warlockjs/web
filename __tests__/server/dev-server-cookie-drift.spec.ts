@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { Request, Response } from "@warlock.js/core";
-import { applyBufferedCookie } from "../../src/server/dev-server";
-import type { BufferedCookie } from "../../src/server/buffered-response";
+import { defaultApplyBufferedCookie as applyBufferedCookie } from "../../src/server/create-page-route-handler";
+import type { BufferedCookie } from "../../src/server/execute-page-request";
 
 /**
- * `applyBufferedCookie` commits a `BufferedCookie` by calling core's
+ * `defaultApplyBufferedCookie` commits a `BufferedCookie` by calling core's
  * `Response.cookie()` — the same method `execute-page-request.ts` uses for the
  * production commit and every ordinary controller uses for its own cookies.
  * There is no second serializer left to drift from, so what this spec checks is

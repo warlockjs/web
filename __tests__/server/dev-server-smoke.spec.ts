@@ -2,12 +2,10 @@ import { createServer, type Server } from "node:http";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   connectPageContext,
-  connectPageRoutes,
   PAYLOAD_SCRIPT_ID,
   renderPageRequest,
   type PageContextRunner,
   type PageRouteMatch,
-  type PageRoutesRegistry,
 } from "../../src/server/index";
 import { connectSharedStore, type SharedStoreResolver } from "../../src/shared";
 import { createCoreHttp, requestContext } from "./fixtures/core-http";
@@ -22,24 +20,21 @@ import { routes } from "./fixtures/routes";
 
 let previousRunner: PageContextRunner | undefined;
 let previousResolver: SharedStoreResolver | undefined;
-let previousRegistry: PageRoutesRegistry | undefined;
 let server: Server;
 let baseUrl: string;
+
+const createHttp = (match: PageRouteMatch) =>
+  createCoreHttp({ url: match.entry.path, params: match.params, query: match.query });
 
 beforeAll(async () => {
   previousRunner = connectPageContext(requestContext as unknown as PageContextRunner);
   previousResolver = connectSharedStore(() => requestContext.getStore() as any);
-  previousRegistry = connectPageRoutes({
-    routes,
-    createHttp: (match: PageRouteMatch) =>
-      createCoreHttp({ url: match.entry.path, params: match.params, query: match.query }),
-  });
 
   // The whole dev-server handler: url in, document out, headers copied over.
   // Note: content-type is set HERE — the pipeline's headers carry cache/cookie
   // semantics but never a content type (a finding for slice 4b's real server).
   server = createServer(async (req, res) => {
-    const rendered = await renderPageRequest(req.url ?? "/");
+    const rendered = await renderPageRequest(req.url ?? "/", { routes, createHttp });
 
     res.writeHead(rendered.status, {
       "content-type": "text/html; charset=utf-8",
@@ -61,7 +56,6 @@ afterAll(async () => {
   );
   connectPageContext(previousRunner);
   connectSharedStore(previousResolver);
-  connectPageRoutes(previousRegistry);
 });
 
 beforeEach(() => {

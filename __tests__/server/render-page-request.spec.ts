@@ -1,42 +1,37 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   connectPageContext,
-  connectPageRoutes,
   PAYLOAD_SCRIPT_ID,
-  renderPage,
   renderPageRequest,
   type PageContextRunner,
   type PageRouteMatch,
-  type PageRoutesRegistry,
 } from "../../src/server/index";
 import { connectSharedStore, type SharedStoreResolver } from "../../src/shared";
 import { createCoreHttp, requestContext } from "./fixtures/core-http";
 import { routes } from "./fixtures/routes";
 
 /**
- * The URL-based production entry over the same P1 fixture as
- * render-page.spec.ts. The url goes straight to stage 1 — no name lookup, no
- * buildUrl — and a url matching nothing is ANSWERED 404, never thrown.
+ * The URL-based production entry over the P1 fixture. The url goes straight
+ * to stage 1 — no name lookup — and a url matching nothing is ANSWERED 404,
+ * never thrown.
  */
 
 let previousRunner: PageContextRunner | undefined;
 let previousResolver: SharedStoreResolver | undefined;
-let previousRegistry: PageRoutesRegistry | undefined;
+
+const createHttp = (match: PageRouteMatch) =>
+  createCoreHttp({ url: match.entry.path, params: match.params, query: match.query });
+
+const renderRequest = (url: string) => renderPageRequest(url, { routes, createHttp });
 
 beforeAll(() => {
   previousRunner = connectPageContext(requestContext as unknown as PageContextRunner);
   previousResolver = connectSharedStore(() => requestContext.getStore() as any);
-  previousRegistry = connectPageRoutes({
-    routes,
-    createHttp: (match: PageRouteMatch) =>
-      createCoreHttp({ url: match.entry.path, params: match.params, query: match.query }),
-  });
 });
 
 afterAll(() => {
   connectPageContext(previousRunner);
   connectSharedStore(previousResolver);
-  connectPageRoutes(previousRegistry);
 });
 
 beforeEach(() => {
@@ -50,7 +45,7 @@ afterEach(() => {
 
 describe("renderPageRequest — url in, document out", () => {
   it("renders a url with params and query into the full document with the payload script", async () => {
-    const { html, status, data } = await renderPageRequest("/products/42?user=hasan");
+    const { html, status, data } = await renderRequest("/products/42?user=hasan");
 
     expect(status).toBe(200);
     expect(html.startsWith("<!DOCTYPE html>")).toBe(true);
@@ -66,7 +61,7 @@ describe("renderPageRequest — url in, document out", () => {
   });
 
   it("renders the two-line page: a document with no page data", async () => {
-    const { html, status, data } = await renderPageRequest("/contact-us");
+    const { html, status, data } = await renderRequest("/contact-us");
 
     expect(status).toBe(200);
     expect(html).toContain("<h1>Contact us</h1>");
@@ -76,7 +71,7 @@ describe("renderPageRequest — url in, document out", () => {
 
 describe("renderPageRequest — no-match is a 404 answer, not a throw", () => {
   it("answers a url matching NOTHING with status 404 and an empty document", async () => {
-    const page = await renderPageRequest("/no-such-page");
+    const page = await renderRequest("/no-such-page");
 
     expect(page.status).toBe(404);
     expect(page.html).toBe("");
@@ -86,27 +81,5 @@ describe("renderPageRequest — no-match is a 404 answer, not a throw", () => {
     // No route matched → no pipeline ran → no bundle (RenderedPage documents
     // this as the ONLY path where bundle is undefined).
     expect(page.bundle).toBeUndefined();
-  });
-});
-
-describe("renderPageRequest — parity with renderPage (the shared stages-9–10 tail)", () => {
-  it("yields the SAME html as renderPage for the same page", async () => {
-    const byUrl = await renderPageRequest("/products/42?user=hasan");
-    const byName = await renderPage("products.details", {
-      params: { id: "42" },
-      query: { user: "hasan" },
-    });
-
-    // Byte-identical EXCEPT the CSP nonce, which core's Request generates
-    // fresh per request — two renders are two requests, so a literal
-    // comparison would assert the one thing that must differ. Both must still
-    // carry a nonce; only its value is masked.
-    const maskNonce = (html: string) => html.replace(/ nonce="[^"]+"/g, ' nonce="…"');
-
-    expect(byUrl.html).toMatch(/ nonce="[^"]+"/);
-    expect(byName.html).toMatch(/ nonce="[^"]+"/);
-    expect(maskNonce(byUrl.html)).toBe(maskNonce(byName.html));
-    expect(byUrl.status).toBe(byName.status);
-    expect(byUrl.headers).toEqual(byName.headers);
   });
 });

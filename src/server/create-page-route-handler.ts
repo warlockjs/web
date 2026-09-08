@@ -77,12 +77,12 @@ export class MissingHttpServerForPageRouteError extends Error {
 /**
  * Replay ONE committed cookie through core's own `Response.cookie()` — the
  * same serializer every ordinary controller's cookie goes through, so there
- * is nothing here for a second implementation to drift from. The one-liner
- * `dev-server.ts` wires as the production default; passed in (`applyBufferedCookie`
- * option, below) rather than imported so this file stays free of anything
- * Vite-shaped.
+ * is nothing here for a second implementation to drift from. Passed in
+ * (`applyBufferedCookie` option, below) rather than imported at the call site
+ * so this file stays free of anything Vite-shaped. Exported for tests: this
+ * is the only production implementation of the cookie commit.
  */
-function defaultApplyBufferedCookie(response: Response, cookie: BufferedCookie): void {
+export function defaultApplyBufferedCookie(response: Response, cookie: BufferedCookie): void {
   response.cookie(cookie.name, cookie.value as never, cookie.options ?? {});
 }
 
