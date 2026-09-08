@@ -6,7 +6,7 @@
  * WHY THIS MODULE EXISTS AT ALL, rather than the barrel exporting
  * `WebConnector` directly: `./web-connector.ts` imports `../vite`
  * (`web-connector.ts:52` → `@babel/parser` + `magic-string`),
- * `../../../core/src/router/router` (`:51`) and `./dev-server` (`:53`, which
+ * `../../../core/src/router/router` (`:51`) and `./dev-error-transport` (`:53`, which
  * itself pulls core's http stack and `../vite`) at VALUE level. Re-exporting
  * that class from `web/src/connector/index.ts` would drag every one of those
  * into the static graph of every consuming app's config file — the exact

@@ -20,7 +20,7 @@ export type HydrationClientEntry = Readonly<{
  * `@warlock.js/web@5.0.2`: 191 files, none under `src/`. Note the published
  * `package.json` carries no `files` key at all; the release tooling rewrites
  * the manifest, so do not treat this repo's `files` field as the mechanism.)
- * Resolving the entry to `<webRoot>/src/hydration/index.ts` unconditionally
+ * Resolving the entry to `<webRoot>/src/entry/index.ts` unconditionally
  * therefore worked in this monorepo and failed for every consumer, with
  * `warlock build` unable to emit a client bundle at all.
  *
@@ -30,8 +30,8 @@ export type HydrationClientEntry = Readonly<{
  * through `esm/`, the hydration entry's relative imports through `src/`.
  * `publishRouteTable()` would write to one and `<Link>` would read the other.
  */
-const PACKAGED_ENTRY = "esm/hydration/index.mjs";
-const CHECKOUT_ENTRY = "src/hydration/index.ts";
+const PACKAGED_ENTRY = "esm/entry/index.mjs";
+const CHECKOUT_ENTRY = "src/entry/index.ts";
 
 /**
  * Describes the single framework hydration entry without importing Vite.

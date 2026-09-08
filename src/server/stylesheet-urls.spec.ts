@@ -231,7 +231,7 @@ describe("productionStylesheetUrls — recursive chunk collection", () => {
 
   it("never follows dynamicImports, so an unrelated page's CSS never leaks onto this handler", () => {
     const clientDir = makeClientDir({
-      "src/hydration/index.ts": {
+      "src/entry/index.ts": {
         file: "assets/hydration-abc.js",
         isEntry: true,
         dynamicImports: ["src/app/other/web/other.page.tsx"],
@@ -243,7 +243,7 @@ describe("productionStylesheetUrls — recursive chunk collection", () => {
       "src/web/root.tsx": {
         file: "assets/root-abc.js",
         css: ["assets/root-abc.css"],
-        imports: ["src/hydration/index.ts"],
+        imports: ["src/entry/index.ts"],
       },
     });
 

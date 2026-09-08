@@ -14,7 +14,7 @@ import {
   type RuntimeStrategy,
 } from "@warlock.js/core";
 
-import { DEV_TRANSFORM_ERROR_BODY } from "../../src/server/dev-server";
+import { DEV_TRANSFORM_ERROR_BODY } from "../../src/server/dev-error-transport";
 import type { PageManifest } from "../../src/server/page-manifest";
 import { connectSharedStore, type SharedStoreResolver } from "../../src/shared";
 import { WEB_CONNECTOR_PRIORITY, WebConnector } from "../../src/server/web-connector";
@@ -117,7 +117,7 @@ async function withClientBuild(body: () => Promise<void>): Promise<void> {
     path.join(clientDir, "manifest.json"),
     JSON.stringify({
       // The REAL Vite shape: keyed by source path, entry name in `name`.
-      "src/hydration/index.ts": {
+      "src/entry/index.ts": {
         name: "hydration",
         file: "assets/hydration-abc123.js",
         isEntry: true,

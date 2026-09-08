@@ -36,7 +36,7 @@ import {
   devErrorTransportPlugin,
   formatDevTransformError,
   sendCapturedDevError,
-} from "./dev-server";
+} from "./dev-error-transport";
 
 /**
  * The refusal under test — a REAL gate error, not a stand-in `new Error()`.

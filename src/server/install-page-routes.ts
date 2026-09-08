@@ -5,10 +5,10 @@
  * the sanctioned dev-server dispatch path (server matching is Warlock's
  * router; there is no second server matcher) — picks
  * it up. Replaces the two hand-rolled `fastify.get()` calls this file's
- * sibling, `dev-server.ts`, used to make directly.
+ * sibling, `dev-error-transport.ts`, used to make directly.
  *
  * DELIBERATE EXCEPTION to "web has no core dependency", same
- * reasoning `dev-server.ts`'s own header comment records: this module is not
+ * reasoning `dev-error-transport.ts`'s own header comment records: this module is not
  * exported from either package barrel and is not part of `web/package.json`'s
  * dependency graph — dev/CLI bootstrap only.
  *
@@ -335,7 +335,7 @@ export type InstallPageRoutesOptions = {
   /** v5/app/src/web/root.tsx — the single global app-root file. */
   appFile: string;
   /**
-   * The application root Vite's dev server serves from — `dev-server.ts`'s
+   * The application root Vite's dev server serves from — `dev-error-transport.ts`'s
    * `paths.appRoot`, i.e. `<appRoot>/src === appSrcRoot` by default. Every
    * handler's stylesheet URLs are expressed relative to THIS, because that is
    * the root Vite's dev server actually resolves `/…` URLs against

@@ -4,7 +4,7 @@
  * It runs BESIDE `HttpConnector`, never instead of it: `warlock dev` alone now boots the API *and* serves React
  * pages on one port, and `web` no longer owns a private copy of the HTTP
  * lifecycle. Everything this file does used to live in `startDevServer()`
- * (`web/src/server/dev-server.ts`), which created its own Fastify instance,
+ * (`web/src/server/dev-error-transport.ts`), which created its own Fastify instance,
  * scanned the router and called `listen()` itself — three responsibilities core
  * already owns at `core/src/connectors/http-connector.ts:72`, `:133` and `:147`.
  *
@@ -29,7 +29,7 @@
  * the ordinary `router.get(…)` API — there is no second server matcher.
  *
  * DELIBERATE EXCEPTION to A.3 §2 ("web has no core dependency"), the same one
- * `./dev-server.ts` and `./install-page-routes.ts` record in their own headers:
+ * `./dev-error-transport.ts` and `./install-page-routes.ts` record in their own headers:
  * this module is not re-exported from any package barrel (`web/src/index.ts`,
  * `web/src/server/index.ts`, `web/src/connector/index.ts`) and is not part of
  * `web/package.json`'s dependency graph. It is dev/CLI bootstrap code, only
@@ -38,7 +38,7 @@
  * `@warlock.js/web/connector` reaches this class ONLY through
  * `./web-connector-factory.ts`'s `await import("./web-connector")` — a
  * deliberate seam, because a static edge from that barrel to this file would
- * put `../vite`, core's router and `./dev-server` into the import graph of
+ * put `../vite`, core's router and `./dev-error-transport` into the import graph of
  * every consuming app's `warlock.config.ts`.
  */
 import fs from "node:fs";
@@ -60,7 +60,7 @@ import { resolveWebPackageRoot } from "../build/contribution";
 import { createHydrationClientEntry, invalidateClientPageRegistry } from "../vite";
 import { createWebConnectorViteConfig } from "../vite/dev-server-config";
 import { CLIENT_ASSET_URL_PREFIX } from "./client-asset-url-prefix";
-import { devErrorTransportPlugin, sendCapturedDevError } from "./dev-server";
+import { devErrorTransportPlugin, sendCapturedDevError } from "./dev-error-transport";
 import { resolveHydrationClientUrl } from "./hydration-client-url";
 import type { InstalledPageRoute } from "./install-page-routes";
 import { installProductionPageRoutes } from "./install-production-page-routes";

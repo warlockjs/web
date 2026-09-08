@@ -27,7 +27,7 @@ import {
   isDataRequest,
   WARLOCK_DATA_REQUEST_HEADER,
 } from "../routing/data-request";
-import { registerModules, type RegisterableModuleNamespace } from "../runtime/register-modules";
+import { registerModules, type RegisterableModuleNamespace } from "../register-modules";
 import { buildHydrationPayload } from "./build-hydration-payload";
 import { applyResponseCacheFloor } from "./response-cache-floor";
 import type { PageCacheOptIn } from "../routing/route-identity";
@@ -144,7 +144,7 @@ export type PageRouteHandlerOptions = {
    * a stylesheet failed to resolve, which is the build's job to report.
    */
   stylesheetUrls?: readonly string[];
-  /** Same helper `dev-server.ts` exports — passed in, never imported. */
+  /** Same helper `dev-error-transport.ts` exports — passed in, never imported. */
   /**
    * The pattern stage 1 matches `request.path` against, when it differs from
    * the REGISTERED path. Defaults to `path`, which is right for every route

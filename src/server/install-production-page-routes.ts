@@ -35,7 +35,7 @@ export type InstallProductionPageRoutesOptions = {
   pageContext: PageContextRunner;
   /** Reads the current request's store out of {@link pageContext}. */
   sharedStore: SharedStoreResolver;
-  /** Same helper `dev-server.ts` exports — passed in, never imported. */
+  /** Same helper `dev-error-transport.ts` exports — passed in, never imported. */
   /**
    * Where the browser fetches the hydration entry from.
    *

@@ -1,4 +1,4 @@
-import type { RegisterableModuleNamespace } from "../../runtime/register-modules";
+import type { RegisterableModuleNamespace } from "../../register-modules";
 
 /**
  * A real ESM namespace returned by dynamic import(), retained so universal

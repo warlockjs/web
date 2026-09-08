@@ -13,7 +13,7 @@ import { resolveReactFastRefreshPlugins } from "./react-refresh-preamble";
  * timed out` on whatever unrelated module happened to be in flight. Derived in
  * one pass from `peerDependenciesMeta.optional` across every workspace package
  * reachable from `core/src/index.ts`, and carried over verbatim from
- * `dev-server.ts`'s own list. Only THIRD-PARTY peers belong here — every
+ * `dev-error-transport.ts`'s own list. Only THIRD-PARTY peers belong here — every
  * `@warlock.js/*` sibling must stay in Vite's graph.
  *
  * This list is core's peer list, not web's; publishing it from core instead
@@ -139,8 +139,8 @@ export async function createWebConnectorViteConfig(
       hmr: { server: options.hmrServer },
       fs: {
         // `<Scripts />` points the browser at the hydration client entry under
-        // `<webRoot>`: the published `esm/hydration/index.mjs` when installed,
-        // or `src/hydration/index.ts` in this checkout. A dependency normally
+        // `<webRoot>`: the published `esm/entry/index.mjs` when installed,
+        // or `src/entry/index.ts` in this checkout. A dependency normally
         // lives under the app root's `node_modules`; when `@warlock.js/web` is
         // LINKED — a monorepo checkout, `npm link`, or a `file:` dependency —
         // its real path can sit outside every directory Vite allows by default
@@ -191,7 +191,7 @@ export async function createWebConnectorViteConfig(
      *
      *   `<Scripts />` points the browser at the hydration entry, and in an
      *   INSTALLED app that entry is
-     *   `<app>/node_modules/@warlock.js/web/esm/hydration/index.mjs`.
+     *   `<app>/node_modules/@warlock.js/web/esm/entry/index.mjs`.
      *   Every module it reaches is therefore inside `node_modules`, so every
      *   bare import it makes takes the skip branch and is served as the raw
      *   file with a `?v=<browserHash>` cache key bolted on.
@@ -228,7 +228,7 @@ export async function createWebConnectorViteConfig(
      * why it was the one that broke.
      *
      * This is INVISIBLE from the monorepo checkout: there the hydration entry
-     * resolves to `web/src/hydration/index.ts`, a path with no `node_modules`
+     * resolves to `web/src/entry/index.ts`, a path with no `node_modules`
      * segment, so the skip branch never fires and React optimizes normally.
      * Canon: nothing measured inside the checkout is evidence about a
      * published install.

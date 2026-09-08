@@ -18,7 +18,7 @@ import type {
   HydrationDocumentPayloadSource,
   SerializedErrorPageProps,
 } from "../hydration-payload";
-import { registerModules } from "../runtime/register-modules";
+import { registerModules } from "../register-modules";
 import { loadClientRouteComposition } from "./runtime";
 import type { ClientPageEntry, ClientProjectedModule } from "./runtime/types";
 

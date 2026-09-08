@@ -118,7 +118,7 @@ export type InstallPageRoutesFromManifestOptions = {
    * read stylesheets from — and no page that could need one either.
    */
   clientDir?: string;
-  /** Same helper `dev-server.ts` exports — passed in, never imported. */
+  /** Same helper `dev-error-transport.ts` exports — passed in, never imported. */
   createHandler?: PageRouteHandlerFactory;
 };
 

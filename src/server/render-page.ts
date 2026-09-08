@@ -17,7 +17,7 @@ import {
   type ErrorPageModuleLoader,
 } from "./error-page";
 import { ERROR_PAGE_METADATA } from "./resolve-page-metadata";
-import { registerModules, type RegisterableModuleNamespace } from "../runtime/register-modules";
+import { registerModules, type RegisterableModuleNamespace } from "../register-modules";
 import { markNonHydrating } from "./page-render-bundle";
 import type { ServerErrorPageProps } from "../props";
 import {
