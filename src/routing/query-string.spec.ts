@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  connectRequestSearch,
+  currentSearch,
   queryString,
   resetQueryStringOptions,
   setQueryStringOptions,
@@ -38,6 +40,7 @@ beforeEach(() => {
 afterEach(() => {
   resetRouteTable();
   resetQueryStringOptions();
+  connectRequestSearch(undefined);
   vi.unstubAllGlobals();
 });
 
@@ -325,6 +328,54 @@ describe("browser readers", () => {
 
     expect(queryString.all()).toEqual({});
     expect(queryString.toString()).toBe("");
+  });
+});
+
+describe("currentSearch(): the SSR/browser seam `useQueryString` reads", () => {
+  it("reads the browser location when there is one, ignoring any connected resolver", () => {
+    vi.stubGlobal("window", { location: { search: "?a=browser" } });
+    connectRequestSearch(() => "?a=resolver");
+
+    expect(currentSearch()).toBe("?a=browser");
+  });
+
+  it('answers "" on the server before a resolver is connected — no query, not a crash', () => {
+    expect(typeof window).toBe("undefined");
+
+    expect(() => currentSearch()).not.toThrow();
+    expect(currentSearch()).toBe("");
+  });
+
+  it("reads the connected resolver's answer on the server", () => {
+    connectRequestSearch(() => "?q=widgets&page=2");
+
+    expect(currentSearch()).toBe("?q=widgets&page=2");
+    expect(queryString.parse(currentSearch())).toEqual({ q: "widgets", page: "2" });
+  });
+
+  it('falls back to "" when the connected resolver itself answers undefined', () => {
+    connectRequestSearch(() => undefined);
+
+    expect(currentSearch()).toBe("");
+  });
+
+  it("calls the resolver fresh on every read — a per-request answer, not a cached value", () => {
+    let call = 0;
+    connectRequestSearch(() => `?call=${++call}`);
+
+    expect(currentSearch()).toBe("?call=1");
+    expect(currentSearch()).toBe("?call=2");
+  });
+
+  it("connectRequestSearch returns the previously connected resolver", () => {
+    const first = () => "?a=1";
+    const second = () => "?a=2";
+
+    connectRequestSearch(first);
+    const previous = connectRequestSearch(second);
+
+    expect(previous).toBe(first);
+    expect(currentSearch()).toBe("?a=2");
   });
 });
 

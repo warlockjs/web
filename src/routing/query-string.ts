@@ -353,6 +353,54 @@ function browserSearch(): string {
 }
 
 /**
+ * Resolves the search string of the REQUEST currently being server-rendered.
+ *
+ * Called by the pipeline, not read by it: the same `connect*`-resolver seam
+ * `shared.ts` uses for `connectSharedStore` and `page-context.ts` uses for
+ * `connectPageContext` — a FUNCTION is connected once at boot, and it is that
+ * function, not a cached value, that is asked again on every render. Two
+ * concurrent requests calling the resolver therefore each get their own
+ * answer; a value connected once would be the cross-request leak canon
+ * `9c8f878b`'s sibling defects are made of.
+ *
+ * `undefined` means the resolver has not been connected yet (a pipeline stage
+ * that has not wired this up) — not "no query string". `useQueryString`
+ * (`client/navigation/use-query-string.ts`) is the one caller and treats the
+ * two the same way its doc explains; nothing else in this module reads it.
+ */
+export type RequestSearchResolver = () => string | undefined;
+
+let resolveRequestSearch: RequestSearchResolver | undefined;
+
+/**
+ * Boot-time wiring for {@link resolveRequestSearch}. Returns the previously
+ * connected resolver, so a caller — a test, mainly — can restore it.
+ */
+export function connectRequestSearch(
+  resolve: RequestSearchResolver | undefined,
+): RequestSearchResolver | undefined {
+  const previous = resolveRequestSearch;
+
+  resolveRequestSearch = resolve;
+
+  return previous;
+}
+
+/**
+ * The search string `useQueryString` reads: {@link browserSearch} in the
+ * browser, the connected request's search on the server.
+ *
+ * `""` on the server before {@link connectRequestSearch} has been wired —
+ * the same "nothing to report yet" answer `browserSearch` gives outside a
+ * document, not a claim that the request has no query string.
+ */
+export function currentSearch(): string {
+  if (typeof window !== "undefined") return browserSearch();
+
+  return resolveRequestSearch?.() ?? "";
+}
+
+/**
  * Reduce anything search-shaped to the pairs themselves.
  *
  * Accepts `"?a=1"`, `"a=1"`, `"/path?a=1"` and a full URL, because

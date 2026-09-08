@@ -3,6 +3,7 @@ import { DocumentContext } from "../../components/document-context";
 import { LocaleProvider } from "../../localization";
 import type { HydrationDocumentPayloadSource } from "../../hydration-payload";
 import { connectNavigator } from "../../routing/navigator";
+import { routerEvents, type NavigationMode } from "../../routing/router-events";
 import {
   fragmentOf,
   samePageFragment,
@@ -138,6 +139,15 @@ export function NavigationRoot({
     const apply = async (url: string, replace: boolean, honourFragment: boolean): Promise<void> => {
       const ticket = ++token;
       /*
+        `"replace"` covers a Back/Forward press as well as an explicit
+        `<Link replace>` — both calls into `apply` pass `replace: true` for
+        exactly that reason (see `onPopState` below), and `NavigationMode`'s own
+        doc records why a listener does not need the two told apart.
+      */
+      const mode: NavigationMode = replace ? "replace" : "push";
+
+      routerEvents.emitNavigating({ url, mode });
+      /*
         A prefetched response is CONSUMED, never merely read — `take` removes it,
         so the same speculative fetch can satisfy exactly one navigation and a
         second click on the same link goes to the network. That matters because
@@ -155,8 +165,16 @@ export function NavigationRoot({
 
       if (result.type === "hard-navigate") {
         // The documented degradation: hand the URL back to the browser. The
-        // user still gets the page — see `fetch-page-data.ts`.
+        // user still gets the page — see `fetch-page-data.ts`. Announced as a
+        // navigation ERROR, not a navigated one: `NavigationErrorPayload`'s own
+        // doc names this exact case — the in-flight navigation is over, not
+        // completed within this document.
+        const error = new Error(
+          `Warlock navigation fell back to a full load (${result.reason}): ${url}`,
+        );
+
         console.warn(`Warlock navigation fell back to a full load (${result.reason}):`, url);
+        routerEvents.emitNavigationError({ url, mode, error });
         window.location.assign(url);
 
         return;
@@ -171,6 +189,7 @@ export function NavigationRoot({
         // a stale bundle after a deploy is the realistic cause. A full load
         // fetches the current bundle, which is also the fix.
         console.warn("Warlock navigation could not build the page tree:", error);
+        routerEvents.emitNavigationError({ url, mode, error });
         window.location.assign(url);
 
         return;
@@ -219,6 +238,8 @@ export function NavigationRoot({
       // A navigation IS the route moving, so the fetched payload is both the
       // page and the route's identity.
       setCurrent({ payload: result.payload, tree, routeSource: result.payload });
+
+      routerEvents.emitNavigated({ url, resolvedUrl: finalUrl, mode });
     };
 
     /*
