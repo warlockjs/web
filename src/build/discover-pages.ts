@@ -247,32 +247,53 @@ function discoverIgnoredAppWebDirs(srcRoot: string): string[] {
   return found;
 }
 
+/** One file {@link discoverIgnoredAppWebFiles} found, and what kind it is. */
+export type IgnoredAppWebFile = {
+  /** Absolute path to the file. */
+  file: string;
+  /**
+   * `"page"` for a `*.page.tsx`; `"layout"` for a NAMED `*.layout.tsx` or a
+   * POSITIONAL `layout.tsx` — both are wired to nothing, but a layout's loss
+   * is a dropped guard rather than a dropped page, and the two are worded
+   * differently; see {@link warnIgnoredAppWebFiles}.
+   */
+  kind: "page" | "layout";
+};
+
 /**
- * Absolute paths of every `*.page.tsx` and NAMED `*.layout.tsx` file beneath
+ * Every `*.page.tsx` and every `layout.tsx` (named or positional) beneath
  * `src/app/**\/web/**`, sorted lexicographically (POSIX) for a stable
  * diagnostic.
  *
  * `src/web` is the only page root (canon `4a6524f3`) — nothing found here is
  * registered, ever. This function exists only to NAME what is being ignored
- * instead of ignoring it in silence; see {@link discoverPages}'s call site.
+ * instead of ignoring it in silence; see {@link warnIgnoredAppWebFiles}.
  *
- * Deliberately excludes the POSITIONAL `layout.tsx` filename: that exact name,
- * and the middleware a positional layout may declare, are not scanned here —
- * tracked separately as its own card, not this one.
+ * A POSITIONAL `layout.tsx` is scanned here deliberately (closes board card
+ * `eb82c3c7`): it may declare `middleware`, and a page that loses its layout
+ * chain by moving to `src/app/**\/web/**` loses that guard with it, silently —
+ * the page still serves, just unprotected. This function does not read
+ * whether a given layout actually declares `middleware`; it reports every
+ * `layout.tsx` under the ignored tree, because a layout's whole job — prefix,
+ * middleware, loader — is lost the moment it is wired to nothing.
  */
-export function discoverIgnoredAppWebFiles(srcRoot: string): string[] {
-  const found: string[] = [];
+export function discoverIgnoredAppWebFiles(srcRoot: string): IgnoredAppWebFile[] {
+  const found: IgnoredAppWebFile[] = [];
 
   for (const webDir of discoverIgnoredAppWebDirs(srcRoot)) {
-    found.push(
-      ...walkFiles(
-        webDir,
-        (fileName) => fileName.endsWith(".page.tsx") || fileName.endsWith(".layout.tsx"),
-      ),
-    );
+    for (const file of walkFiles(webDir, (fileName) => fileName.endsWith(".page.tsx"))) {
+      found.push({ file, kind: "page" });
+    }
+
+    for (const file of walkFiles(
+      webDir,
+      (fileName) => fileName.endsWith(".layout.tsx") || fileName === "layout.tsx",
+    )) {
+      found.push({ file, kind: "layout" });
+    }
   }
 
-  return found.sort((left, right) => compareStrings(toPosix(left), toPosix(right)));
+  return found.sort((left, right) => compareStrings(toPosix(left.file), toPosix(right.file)));
 }
 
 /**
@@ -285,29 +306,78 @@ export function discoverIgnoredAppWebFiles(srcRoot: string): string[] {
  */
 const warnedIgnoredAppWebFiles = new Set<string>();
 
+/** Renders one ignored file's path, relative to `appRoot`, POSIX. */
+function namedFile(file: string, appRoot: string): string {
+  return `  - ${toPosix(path.relative(appRoot, file))}`;
+}
+
+/**
+ * The page half of the diagnostic: a missing page is visible the moment
+ * someone loads its URL, so this says only that it is absent from the route
+ * graph.
+ */
+function pageIgnoredMessage(files: readonly string[], appRoot: string): string {
+  const plural = files.length === 1 ? "" : "s";
+  const named = files.map((file) => namedFile(file, appRoot)).join("\n");
+
+  return (
+    `${files.length} page file${plural} under src/app/**/web/** ` +
+    `${files.length === 1 ? "is" : "are"} ignored — the only supported page root is ` +
+    `src/web/**, so ${files.length === 1 ? "it is" : "they are"} absent from the route ` +
+    `graph:\n${named}\nMove ${files.length === 1 ? "it" : "them"} under src/web/** to register ` +
+    `${files.length === 1 ? "it" : "them"}.`
+  );
+}
+
+/**
+ * The layout half of the diagnostic: worded differently from
+ * {@link pageIgnoredMessage} on purpose. A missing route guard is not visible
+ * at all — the page it would have gated still serves, just unprotected — so
+ * this names what is lost (`prefix`, `middleware`, `loader`) rather than
+ * merely saying a file was ignored.
+ */
+function layoutIgnoredMessage(files: readonly string[], appRoot: string): string {
+  const plural = files.length === 1 ? "" : "s";
+  const named = files.map((file) => namedFile(file, appRoot)).join("\n");
+
+  return (
+    `${files.length} layout file${plural} under src/app/**/web/** ` +
+    `${files.length === 1 ? "is" : "are"} ignored — the only supported page root is ` +
+    `src/web/**, so ${files.length === 1 ? "its" : "their"} \`prefix\`, \`middleware\` and ` +
+    `\`loader\` apply to no page at all:\n${named}\nA page that relied on ` +
+    `${files.length === 1 ? "it" : "them"} for a guard — auth, a redirect, anything in ` +
+    `\`middleware\` — is served with that guard silently absent. Move ` +
+    `${files.length === 1 ? "it" : "them"} under src/web/** to apply ` +
+    `${files.length === 1 ? "it" : "them"} again.`
+  );
+}
+
 /**
  * The one place this module writes to the console. Reports every file
  * {@link discoverIgnoredAppWebFiles} found and has not already warned about
  * this boot — never crashes the build, because an application mid-migration
  * off `src/app/**\/web/**` is legitimate, not broken.
+ *
+ * Pages and layouts are worded separately (see {@link pageIgnoredMessage},
+ * {@link layoutIgnoredMessage}) but printed in ONE `console.warn` call, so a
+ * boot that has both still prints once.
  */
-function warnIgnoredAppWebFiles(files: readonly string[], appRoot: string): void {
-  const unwarned = files.filter((file) => !warnedIgnoredAppWebFiles.has(file));
+function warnIgnoredAppWebFiles(files: readonly IgnoredAppWebFile[], appRoot: string): void {
+  const unwarned = files.filter((entry) => !warnedIgnoredAppWebFiles.has(entry.file));
 
   if (unwarned.length === 0) return;
 
-  for (const file of unwarned) warnedIgnoredAppWebFiles.add(file);
+  for (const entry of unwarned) warnedIgnoredAppWebFiles.add(entry.file);
 
-  const plural = unwarned.length === 1 ? "" : "s";
-  const named = unwarned.map((file) => `  - ${toPosix(path.relative(appRoot, file))}`).join("\n");
+  const pages = unwarned.filter((entry) => entry.kind === "page").map((entry) => entry.file);
+  const layouts = unwarned.filter((entry) => entry.kind === "layout").map((entry) => entry.file);
 
-  console.warn(
-    `[warlock:web] ${unwarned.length} page file${plural} under src/app/**/web/** ` +
-      `${unwarned.length === 1 ? "is" : "are"} ignored — the only supported page root is ` +
-      `src/web/**, so ${unwarned.length === 1 ? "it is" : "they are"} absent from the route ` +
-      `graph:\n${named}\nMove ${unwarned.length === 1 ? "it" : "them"} under src/web/** to register ` +
-      `${unwarned.length === 1 ? "it" : "them"}.`,
-  );
+  const sections = [
+    ...(pages.length > 0 ? [pageIgnoredMessage(pages, appRoot)] : []),
+    ...(layouts.length > 0 ? [layoutIgnoredMessage(layouts, appRoot)] : []),
+  ];
+
+  console.warn(sections.map((section) => `[warlock:web] ${section}`).join("\n\n"));
 }
 
 export type DiscoveredPageFile = {
@@ -327,9 +397,22 @@ export type DiscoveredPageFile = {
  * `ssrLoadModule`-driven installer, chiefly) can share the walk without
  * inheriting the static-parsing refusals that answering "what route is this"
  * requires.
+ *
+ * ALSO the ignored-`src/app/**\/web/**` diagnostic's boot-path call site: dev's
+ * route installer (`../server/install-page-routes.ts`) calls this function,
+ * not {@link discoverPages}, so the warning has to fire from here too or a
+ * plain `warlock dev` boot never prints it — only a request for a page's
+ * hydration bundle would. `appRoot` is derived as this srcRoot's parent, which
+ * holds for every real caller: both this function and {@link discoverPages}
+ * are only ever handed `<appRoot>/src`.
  */
 export function discoverPageFiles(srcRoot: string): DiscoveredPageFile[] {
   const found: DiscoveredPageFile[] = [];
+
+  const ignoredAppWebFiles = discoverIgnoredAppWebFiles(srcRoot);
+  if (ignoredAppWebFiles.length > 0) {
+    warnIgnoredAppWebFiles(ignoredAppWebFiles, path.dirname(srcRoot));
+  }
 
   for (const webRoot of discoverWebRoots(srcRoot)) {
     for (const pageFile of walkFiles(webRoot, (fileName) => fileName.endsWith(".page.tsx"))) {

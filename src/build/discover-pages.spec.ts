@@ -6,6 +6,7 @@ import { NestedLayoutsNotSupportedError } from "../routing/layout-policy";
 import { PageRoutePathNotSupportedError } from "../routing/page-route-grammar";
 import {
   discoverIgnoredAppWebFiles,
+  discoverPageFiles,
   discoverPages as discoverPagesRaw,
   DuplicateErrorPageError,
   DuplicatePageRouteNameError,
@@ -1260,12 +1261,74 @@ describe("discoverPages — src/app/**/web/** is named, not registered, when ign
     }
   });
 
-  it("does not report a positional layout.tsx — that gap is tracked separately", () => {
+  it("GUILTY: names a stray POSITIONAL layout.tsx, and says what it lost — not merely that it is ignored", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/app/products/web/layout.tsx": layoutDeclaring(
+        'export const prefix = "/products";\nexport const middleware = [];',
+      ),
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      discoverPages({ appRoot });
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      const message = warn.mock.calls[0][0] as string;
+      expect(message).toContain("src/app/products/web/layout.tsx");
+      expect(message).toContain("middleware");
+      expect(message).toContain("prefix");
+      expect(message).toContain("loader");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('discoverIgnoredAppWebFiles reports a positional layout.tsx with kind "layout"', () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
       "src/app/products/web/layout.tsx": layoutDeclaring(""),
     });
 
-    expect(discoverIgnoredAppWebFiles(path.join(appRoot, "src"))).toEqual([]);
+    const found = discoverIgnoredAppWebFiles(path.join(appRoot, "src"));
+
+    expect(found).toHaveLength(1);
+    expect(found[0].kind).toBe("layout");
+    expect(found[0].file.endsWith("layout.tsx")).toBe(true);
+  });
+
+  it("BOOT PATH: discoverPageFiles — dev's actual install-time call — also fires the diagnostic", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/web/home.page.tsx": pageDeclaring(""),
+      "src/app/products/web/layout.tsx": layoutDeclaring(""),
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      discoverPageFiles(path.join(appRoot, "src"));
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0] as string).toContain("src/app/products/web/layout.tsx");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("discoverPages and discoverPageFiles share the once-per-boot dedup — together, still once", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/app/products/web/stray.page.tsx": pageDeclaring(""),
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      discoverPages({ appRoot });
+      discoverPageFiles(path.join(appRoot, "src"));
+
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

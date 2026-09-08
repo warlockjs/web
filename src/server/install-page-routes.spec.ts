@@ -1277,3 +1277,48 @@ describe("installPageRoutes — route-local CSS", () => {
     ]);
   });
 });
+
+describe("installPageRoutes — the ignored src/app/**/web/** diagnostic fires at BOOT", () => {
+  beforeEach(seedHttpServer);
+  afterEach(() => container.delete("http.server"));
+
+  it("GUILTY: a plain install (no request, no hydration bundle) prints the diagnostic naming a stray positional layout", async () => {
+    const appRoot = makeAppTree({
+      "src/web/home.page.tsx": "",
+      "src/app/products/web/layout.tsx": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+    const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const { run } = install(appSrcRoot, fakeVite({ [homeFile]: { route: "/" } }));
+      await run();
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0] as string).toContain(
+        path.posix.join("src", "app", "products", "web", "layout.tsx"),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("INNOCENT: nothing stray under src/app/**/web/** — install prints no diagnostic at all", async () => {
+    const appRoot = makeAppTree({ "src/web/home.page.tsx": "" });
+    const appSrcRoot = path.join(appRoot, "src");
+    const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const { run } = install(appSrcRoot, fakeVite({ [homeFile]: { route: "/" } }));
+      await run();
+
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});

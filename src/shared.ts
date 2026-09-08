@@ -152,6 +152,40 @@ function requireScope(access: string): SharedScope {
   return scopeOf(currentStore(access), access);
 }
 
+/**
+ * Thrown by every write path on `shared` (the Proxy export, not `useShared()`)
+ * when it runs in the browser.
+ *
+ * On the client the value behind `shared` is a DEAD SNAPSHOT: `hydrateShared`
+ * (below) installed it from THIS page's hydration payload, there is no ALS
+ * store to write into (`connectSharedStore` is a server-boot call, never
+ * made in the browser bundle), a write cannot reach the server, and it does
+ * not survive a `Link` navigation — `navigation-root.tsx` and `refresh.ts`
+ * both call `hydrateShared()` again on the NEXT payload, replacing this
+ * snapshot outright. Silently accepting the write (or failing silently the
+ * way `Object.freeze` does in non-strict code) would let `shared.x = 1`
+ * *appear* to work while meaning nothing — the exact defect class this
+ * class exists to surface instead of hide.
+ */
+export class SharedClientWriteError extends Error {
+  public constructor(action: string, key: string | symbol) {
+    super(
+      `Cannot ${action} \`shared.${String(key)}\` in the browser (web/src/shared.ts). ` +
+        "`shared` is FROZEN on the client: the value behind it is a dead snapshot " +
+        "serialized into this page's hydration payload at SSR time, not a live " +
+        "connection to the server. A write here cannot reach the server, does not " +
+        "survive a `Link` navigation (the next page's payload replaces this snapshot " +
+        "outright, via hydrateShared()), and would silently disagree with the next SSR " +
+        "of this same page. Fix: request data reaches client components through the " +
+        "page's declared props (delivered via the hydration payload) or `useShared()` " +
+        "for read access at depth — never through a client-side write to `shared`. To " +
+        "send data back to the server, make a request (a loader re-run via refresh(), " +
+        "or a mutation) instead of assigning to `shared`.",
+    );
+    this.name = "SharedClientWriteError";
+  }
+}
+
 function sealedWriteError(action: string, key: string | symbol): Error {
   return new Error(
     `Cannot ${action} \`shared.${String(key)}\`: shared is SEALED for this ` +
@@ -416,6 +450,8 @@ export const shared: SharedContext = new Proxy({} as SharedTarget, {
   },
 
   set(_stub, key, value) {
+    if (typeof window !== "undefined") throw new SharedClientWriteError("write", key);
+
     const scope = requireScope(`write \`shared.${String(key)}\``);
 
     if (scope.sealed) throw sealedWriteError("write", key);
@@ -430,6 +466,8 @@ export const shared: SharedContext = new Proxy({} as SharedTarget, {
   },
 
   deleteProperty(_stub, key) {
+    if (typeof window !== "undefined") throw new SharedClientWriteError("delete", key);
+
     const scope = requireScope(`delete \`shared.${String(key)}\``);
 
     if (scope.sealed) throw sealedWriteError("delete", key);
@@ -459,6 +497,8 @@ export const shared: SharedContext = new Proxy({} as SharedTarget, {
   },
 
   defineProperty(_stub, key, descriptor) {
+    if (typeof window !== "undefined") throw new SharedClientWriteError("define", key);
+
     const scope = requireScope(`define \`shared.${String(key)}\``);
 
     if (scope.sealed) throw sealedWriteError("define", key);
