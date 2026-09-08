@@ -2,8 +2,7 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
-## 5.6.0
-
+## 5.6.0 - 2026-09-08
 ### Added
 
 - **A page can declare its input contract on its `route` export.** The export now accepts an object as well as a string: `{ path, name?, cache?, validate?, middleware? }`. `validate` is a Seal schema over `{ params, query }` — kept separate, never merged — and the validated value reaches the loader typed from the schema. A failure renders the **error page at 400** carrying the failure, and travels the same way over the client-navigation wire. Layout middleware runs outermost-first with the page's own last, so a layout's auth gate cannot be bypassed by a page that declares its own.
