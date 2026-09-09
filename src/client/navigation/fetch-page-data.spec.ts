@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as hydrationPayload from "../../hydration-payload";
 import { fetchPageData } from "./fetch-page-data";
 
 /**
@@ -50,6 +51,7 @@ function respondWith(
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("fetchPageData", () => {
@@ -70,6 +72,14 @@ describe("fetchPageData", () => {
     // load of the same URL is not.
     expect(init.credentials).toBe("same-origin");
     expect(init.redirect).toBe("follow");
+  });
+
+  it("uses the shared hydration payload validator", async () => {
+    respondWith(PAYLOAD);
+    const validator = vi.spyOn(hydrationPayload, "isHydrationPayload").mockReturnValue(false);
+
+    expect(await fetchPageData("/products")).toMatchObject({ type: "hard-navigate" });
+    expect(validator).toHaveBeenCalledWith(PAYLOAD);
   });
 
   /**
@@ -116,6 +126,14 @@ describe("fetchPageData", () => {
       },
     ],
     ["a payload with an empty locale", () => respondWith({ ...PAYLOAD, locale: "" })],
+    ...hydrationPayload.REQUIRED_PAYLOAD_KEYS.map((key) => [
+      `a payload missing required ${key}`,
+      () => {
+        const withoutKey = { ...PAYLOAD } as Record<string, unknown>;
+        delete withoutKey[key];
+        respondWith(withoutKey);
+      },
+    ] as const),
   ])("falls back to a real navigation on %s", async (_label, arrange) => {
     arrange();
 

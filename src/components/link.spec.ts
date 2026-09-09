@@ -337,11 +337,19 @@ describe("Link — literal URLs and paths", () => {
 });
 
 describe("Link — prefetch", () => {
-  // `locale` is not decoration here: `fetch-page-data`'s `isPayloadShape` gate
-  // requires a non-empty `locale` string, so a fixture without one is classified
-  // `hard-navigate` and never cached — and every assertion below that a prefetch
-  // landed then fails for a reason that has nothing to do with `<Link>`.
-  const PAYLOAD = { name: "main.home", shared: {}, locale: "en" };
+  // This fixture carries all six REQUIRED_PAYLOAD_KEYS on purpose. Navigation
+  // validates through the one shared `isHydrationPayload` gate, and a payload
+  // missing any required key is classified `hard-navigate` and never cached —
+  // at which point every assertion below that a prefetch landed fails for a
+  // reason that has nothing to do with `<Link>`.
+  const PAYLOAD = {
+    name: "main.home",
+    locale: "en",
+    appData: {},
+    layoutData: {},
+    pageData: {},
+    shared: {},
+  };
 
   function respondWithPayload(): ReturnType<typeof vi.fn> {
     const fetchMock = vi.fn(async () => ({

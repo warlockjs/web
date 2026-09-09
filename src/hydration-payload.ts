@@ -101,27 +101,37 @@ function requireErrorPagePayload(value: unknown): void {
   }
 }
 
-function requireHydrationPayload(value: unknown): HydrationDocumentPayloadSource {
-  if (!isPlainObject(value)) malformedPayload();
+/**
+ * The single runtime gate for hydration payloads, regardless of whether they
+ * arrived in the document or through a navigation data response.
+ */
+export function isHydrationPayload(value: unknown): value is HydrationDocumentPayloadSource {
+  if (!isPlainObject(value)) return false;
 
   for (const key of REQUIRED_PAYLOAD_KEYS) {
-    if (!Object.prototype.hasOwnProperty.call(value, key)) malformedPayload();
+    if (!Object.prototype.hasOwnProperty.call(value, key)) return false;
   }
 
-  if (typeof (value as Record<string, unknown>).name !== "string") malformedPayload();
+  if (typeof (value as Record<string, unknown>).name !== "string") return false;
   const locale = (value as Record<string, unknown>).locale;
-  if (typeof locale !== "string" || locale.length === 0) malformedPayload();
+  if (typeof locale !== "string" || locale.length === 0) return false;
 
   for (const key of OPTIONAL_OBJECT_PAYLOAD_KEYS) {
     const optional = (value as Record<string, unknown>)[key];
 
-    if (optional !== undefined && !isPlainObject(optional)) malformedPayload();
+    if (optional !== undefined && !isPlainObject(optional)) return false;
   }
 
   const errorPage = (value as Record<string, unknown>).errorPage;
-  if (errorPage !== undefined) requireErrorPagePayload(errorPage);
+  if (errorPage !== undefined) {
+    try {
+      requireErrorPagePayload(errorPage);
+    } catch {
+      return false;
+    }
+  }
 
-  return value as HydrationDocumentPayloadSource;
+  return true;
 }
 
 /**
@@ -146,5 +156,7 @@ export function readHydrationPayload(documentNode: Document): HydrationDocumentP
     malformedPayload();
   }
 
-  return requireHydrationPayload(parsed);
+  if (!isHydrationPayload(parsed)) malformedPayload();
+
+  return parsed;
 }

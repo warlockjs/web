@@ -24,7 +24,14 @@ import {
 // fixture missing it is silently rejected as `hard-navigate` and never cached,
 // which is what was actually failing every "caches"/"expires"/"bound" test
 // below (not a missing `window`; see the report for this file's history).
-const PAYLOAD = { name: "products.list", locale: "en", shared: {} };
+const PAYLOAD = {
+  appData: {},
+  layoutData: {},
+  pageData: {},
+  shared: {},
+  name: "products.list",
+  locale: "en",
+};
 
 function respondWith(
   init: { status?: number; contentType?: string; body?: unknown } = {},

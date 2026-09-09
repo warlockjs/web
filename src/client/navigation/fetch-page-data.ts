@@ -25,7 +25,10 @@ import {
   WARLOCK_DATA_REQUEST_HEADER,
   WARLOCK_DATA_REQUEST_VALUE,
 } from "../../routing/data-request";
-import type { HydrationDocumentPayloadSource } from "../../hydration-payload";
+import {
+  isHydrationPayload,
+  type HydrationDocumentPayloadSource,
+} from "../../hydration-payload";
 
 export type PageDataResult =
   | {
@@ -59,21 +62,6 @@ export type PageDataResult =
  */
 function isPayloadResponse(response: Response): boolean {
   return (response.headers.get("content-type") ?? "").includes(DATA_RESPONSE_CONTENT_TYPE);
-}
-
-/**
- * The shape check, kept deliberately narrow: `name` is the only field the tree
- * builder cannot proceed without — it selects the page. The data fields are
- * page-defined and may legitimately be anything, including `null`.
- */
-function isPayloadShape(value: unknown): value is HydrationDocumentPayloadSource {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as { name?: unknown }).name === "string" &&
-    typeof (value as { locale?: unknown }).locale === "string" &&
-    (value as { locale: string }).locale.length > 0
-  );
 }
 
 export async function fetchPageData(url: string): Promise<PageDataResult> {
@@ -125,13 +113,13 @@ export async function fetchPageData(url: string): Promise<PageDataResult> {
     return { type: "hard-navigate", url, reason: `malformed JSON: ${String(error)}` };
   }
 
-  if (!isPayloadShape(parsed)) {
+  if (!isHydrationPayload(parsed)) {
     // Deliberately recover through a full document load: malformed navigation
     // data must not crash the client when the server can still render the URL.
     return {
       type: "hard-navigate",
       url,
-      reason: "payload is missing required navigation identity",
+      reason: "payload is malformed",
     };
   }
 
