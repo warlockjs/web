@@ -43,11 +43,12 @@ export type PageTripleModule = {
         readonly path: string;
         readonly name?: string;
         /** A Seal object schema validated against `{ params, query }` — `route.ts`'s `RouteDeclaration`. */
-        readonly validate?: BaseValidator;
       };
   /** This page's own guards, run LAST — see `LEVEL_ORDER` below. */
   middleware?: readonly PipelineMiddleware[];
-  validation?: { schema?: BaseValidator; validating?: readonly string[] };
+  validation?:
+    | { schema?: BaseValidator; validating?: readonly string[]; params?: never; query?: never }
+    | { params?: BaseValidator; query?: BaseValidator; schema?: never; validating?: never };
   loader?: PipelineLoader;
   metadata?: PageMetadata<PipelineLoader>;
   default?: unknown;

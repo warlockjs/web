@@ -15,7 +15,7 @@ import { routes } from "./fixtures/routes";
 /**
  * The two pre-loader short-circuits, in stage order: middleware
  * (core's `output !== undefined` rule, request.ts:769) and validation
- * (422 designation, mirroring response.ts:1399-1404). Each must stop the
+ * (400 designation, mirroring response.ts:1399-1404). Each must stop the
  * pipeline BEFORE the seal — proven by `bundle.shared` being absent — and
  * before any loader runs — proven by spies.
  */
@@ -71,7 +71,7 @@ describe("executePageRequest — middleware short-circuit", () => {
       },
       page: {
         middleware: [laterMiddleware],
-        // Would 422 (no `id` in scope) — but validation must never run.
+        // Would 400 (no `id` in scope) — but validation must never run.
         validation: { schema: v.object({ id: v.string().minLength(2) }) },
         loader: pageLoader,
       },
@@ -161,7 +161,7 @@ describe("executePageRequest — middleware short-circuit", () => {
   });
 });
 
-describe("executePageRequest — validation failure (422 designation)", () => {
+describe("executePageRequest — validation failure (400 designation)", () => {
   it("fixture page: a 1-char id fails { schema, validating } and stops before the seal", async () => {
     const bundle = await executePageRequest({
       url: "/products/x",
@@ -170,7 +170,7 @@ describe("executePageRequest — validation failure (422 designation)", () => {
         createCoreHttp({ url: "/products/x", params: match.params, query: match.query }),
     });
 
-    expect(bundle!.shortCircuit).toMatchObject({ stage: "validation", status: 422 });
+    expect(bundle!.shortCircuit).toMatchObject({ stage: "validation", status: 400 });
     expect((bundle!.shortCircuit as any).errors).toBeInstanceOf(Array);
     expect((bundle!.shortCircuit as any).errors.length).toBeGreaterThan(0);
     // Stopped before stage 5 (seal) and stage 6 (loaders):
@@ -195,7 +195,7 @@ describe("executePageRequest — validation failure (422 designation)", () => {
       },
     });
 
-    expect(bundle!.shortCircuit).toMatchObject({ stage: "validation", status: 422 });
+    expect(bundle!.shortCircuit).toMatchObject({ stage: "validation", status: 400 });
     expect(appLoader).not.toHaveBeenCalled();
     expect(layoutLoader).not.toHaveBeenCalled();
     expect(pageLoader).not.toHaveBeenCalled();

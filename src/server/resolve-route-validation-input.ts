@@ -8,16 +8,16 @@
  * their own schema.
  */
 
-export type RouteValidationRequest = {
+export type PageValidationRequest = {
   params?: Record<string, unknown>;
   query?: Record<string, unknown>;
 };
 
-export type RouteValidationInput = {
+export type PageValidationInput = {
   params: Record<string, unknown>;
   query: Record<string, unknown>;
 };
 
-export function resolveRouteValidationInput(request: RouteValidationRequest): RouteValidationInput {
+export function resolvePageValidationInput(request: PageValidationRequest): PageValidationInput {
   return { params: request.params ?? {}, query: request.query ?? {} };
 }

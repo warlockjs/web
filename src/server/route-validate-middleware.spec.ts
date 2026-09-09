@@ -28,6 +28,7 @@ import {
 import {
   installPageRoutes,
   RouteMiddlewareRemovedError,
+  RouteValidationRemovedError,
   type InstallPageRoutesOptions,
 } from "./install-page-routes";
 import { renderPageRequest } from "./render-page";
@@ -240,28 +241,35 @@ describe("route.validate — red control", () => {
     expect(rendered.html).toContain("ok");
   });
 
-  it("GUILTY: invalid input renders the error page at 400, carrying the failure", async () => {
-    const loaderSpy = vi.fn();
-    // "x" fails `minLength(2)`.
-    const { request, response } = createHttp({ id: "x" }, {});
+  it("GUILTY: route.validate is refused at installation with its source file and replacement", async () => {
+    const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), "warlock-route-validation-"));
+    const appSrcRoot = path.join(appRoot, "src");
+    const pageFile = path.join(appSrcRoot, "web", "products.page.tsx");
+    fs.mkdirSync(path.dirname(pageFile), { recursive: true });
+    fs.writeFileSync(pageFile, "", "utf-8");
 
-    const rendered = await renderPageRequest("/products/x", {
-      routes: [pageEntry(true, loaderSpy)],
-      createHttp: () => ({ request, response }),
-      loadErrorPage: async () => fakeErrorPageModule(),
-    });
+    const vite = {
+      ssrLoadModule: vi.fn(async () => ({
+        route: { path: "/products/:id", validate: schema },
+      })),
+    } as unknown as InstallPageRoutesOptions["vite"];
+    const options: InstallPageRoutesOptions = {
+      router: {} as InstallPageRoutesOptions["router"],
+      vite,
+      appSrcRoot,
+      appFile: path.join(appSrcRoot, "web", "root.tsx"),
+    };
 
-    if (rendered instanceof Response) throw new Error("unexpected terminal Response");
+    try {
+      await expect(installPageRoutes(options)).rejects.toThrow(RouteValidationRemovedError);
+      await expect(installPageRoutes(options)).rejects.toThrow(
+        `"${pageFile}" declares \`route.validate\`, which no longer runs \u2014 it was withdrawn after 5.6.0. ` +
+          "Move it to the page's top-level `validation` export instead: `export const validation = { params: ..., query: ... }`.",
+      );
+    } finally {
+      fs.rmSync(appRoot, { recursive: true, force: true });
+    }
 
-    // The real status line a client would receive.
-    expect(rendered.status).toBe(400);
-    // The real rendered body — the error page, not raw JSON.
-    expect(rendered.html).toContain("id");
-    expect(rendered.html).toContain('role="alert"');
-    // The loader never ran on bad input.
-    expect(loaderSpy).not.toHaveBeenCalled();
-    // The SAME 400 travels in the `_loader` wire envelope (bundle.errorPage.status).
-    expect(rendered.bundle?.errorPage?.status).toBe(400);
   });
 
   it("THE DEFECT RETURNING: with route.validate removed, bad input reaches the page unchecked", async () => {

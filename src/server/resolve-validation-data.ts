@@ -37,14 +37,17 @@ export type ValidationRequest = {
   params?: Record<string, unknown>;
 };
 
-/** The four names a page may list in `validation.validating`. */
+/** The four names a legacy page may list in `validation.validating`. */
 const SOURCES = {
   body: (request: ValidationRequest) => request.body,
   query: (request: ValidationRequest) => request.query,
   params: (request: ValidationRequest) => request.params,
   headers: (request: ValidationRequest) => request.headers,
 } as const;
-
+export function resolveValidationData(
+  validating: readonly string[] | undefined,
+  request: ValidationRequest,
+): Record<string, unknown>;
 export function resolveValidationData(
   validating: readonly string[] | undefined,
   request: ValidationRequest,
@@ -59,9 +62,6 @@ export function resolveValidationData(
 
   for (const source of validating) {
     const read = SOURCES[source as keyof typeof SOURCES];
-
-    // An unknown source name contributes nothing rather than throwing: the
-    // list is app-authored, and stage 4 is not the place to litigate it.
     if (read) data = { ...data, ...(read(request) ?? {}) };
   }
 

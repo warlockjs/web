@@ -9,7 +9,21 @@ import type { Infer } from "@warlock.js/seal";
 export type PageValidation = {
   schema?: unknown;
   validating?: readonly string[];
+  params?: never;
+  query?: never;
+} | {
+  params?: unknown;
+  query?: unknown;
+  schema?: never;
+  validating?: never;
 };
+
+type ValidatedPart<TValidation, TKey extends "params" | "query"> = TValidation extends Record<
+  TKey,
+  infer TSchema
+>
+  ? { [TPart in TKey]: Infer.Output<TSchema> }
+  : Record<string, never>;
 
 /**
  * What `request.validated()` hands back: `Infer.Output`, not bare `Infer`.
@@ -27,4 +41,6 @@ export type ValidatedOutput<TValidation> = TValidation extends {
   schema: infer TSchema;
 }
   ? Infer.Output<TSchema>
-  : Record<string, never>;
+  : TValidation extends { params?: unknown; query?: unknown }
+    ? ValidatedPart<TValidation, "params"> & ValidatedPart<TValidation, "query">
+    : Record<string, never>;

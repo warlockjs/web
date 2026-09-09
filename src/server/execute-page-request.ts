@@ -6,8 +6,7 @@ import { enterAdditionalSharedScope, requireRunner } from "./page-context";
 import { matchRoute } from "./match-page-route";
 import { resolvePageMetadata } from "./resolve-page-metadata";
 import { resolveValidationData } from "./resolve-validation-data";
-import { resolveRouteValidationInput } from "./resolve-route-validation-input";
-import { RouteValidationError } from "./route-validation-error";
+import { resolvePageValidationInput } from "./resolve-route-validation-input";
 import {
   buildErrorRecord,
   commitBuffers,
@@ -131,8 +130,6 @@ export async function executePageRequest<TResult = PageDataBundle>(
       },
     };
 
-    const pageRoute = typeof triple.page.route === "object" ? triple.page.route : undefined;
-
     // `route.middleware` shipped in 5.6.0 and was withdrawn (owner ruling,
     // 2026-09-08): a page declares middleware in exactly ONE place, the
     // top-level `middleware` export. A page module built before the ruling
@@ -187,17 +184,29 @@ export async function executePageRequest<TResult = PageDataBundle>(
 
     const validation = triple.page.validation;
 
-    if (validation?.schema) {
-      const data = resolveValidationData(validation.validating, request);
-      const result = await v.validate(validation.schema, data);
+    if (validation) {
+      const legacyValidation = "schema" in validation || "validating" in validation;
+      const schema = legacyValidation
+        ? validation.schema
+        : v.object({
+            ...(validation.params === undefined ? {} : { params: validation.params }),
+            ...(validation.query === undefined ? {} : { query: validation.query }),
+          });
 
-      if (result.isValid && result.data) {
-        request.setValidatedData(result.data);
-      }
+      if (schema) {
+        const data = legacyValidation
+          ? resolveValidationData(validation.validating, request)
+          : resolvePageValidationInput(request);
+        const result = await v.validate(schema, data);
 
-      if (!result.isValid) {
-        bundle.shortCircuit = { stage: "validation", status: 422, errors: result.errors };
-        return finish(bundle);
+        if (result.isValid && result.data) {
+          request.setValidatedData(result.data);
+        }
+
+        if (!result.isValid) {
+          bundle.shortCircuit = { stage: "validation", status: 400, errors: result.errors };
+          return finish(bundle);
+        }
       }
     }
 
@@ -240,25 +249,6 @@ export async function executePageRequest<TResult = PageDataBundle>(
       // designates a boundary and renders the application's error
       // page/boundary with status 400 (point 2) — a page is a document, not
       // an API endpoint, so this must never answer a raw JSON body.
-      if (level === "page" && pageRoute?.validate) {
-        const routeInput = resolveRouteValidationInput(request);
-        const result = await v.validate(pageRoute.validate, routeInput);
-
-        if (result.isValid && result.data) {
-          // Merged, never overwritten: a page using BOTH the top-level
-          // `validation` export and `route.validate` must see every field
-          // either one produced, not just whichever ran last.
-          request.setValidatedData({ ...request.validated(), ...result.data });
-        }
-
-        if (!result.isValid) {
-          signalIndex = index;
-          signalKind = "throw";
-          signalThrown = new RouteValidationError(result.errors);
-          break;
-        }
-      }
-
       const loader = triple[level].loader;
 
       if (!loader) continue;

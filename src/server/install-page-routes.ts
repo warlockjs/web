@@ -83,6 +83,17 @@ export class RouteMiddlewareRemovedError extends Error {
   }
 }
 
+/** Raised at boot when a page still uses the withdrawn `route.validate` export. */
+export class RouteValidationRemovedError extends Error {
+  public constructor(public readonly pageFile: string) {
+    super(
+      `"${pageFile}" declares \`route.validate\`, which no longer runs — it was withdrawn after 5.6.0. ` +
+        "Move it to the page's top-level `validation` export instead: `export const validation = { params: ..., query: ... }`.",
+    );
+    this.name = "RouteValidationRemovedError";
+  }
+}
+
 export type InstalledPageRoute = {
   /** The canonical declared route path, before layout-prefix composition. */
   declaredPath: string;
@@ -473,8 +484,9 @@ export async function installPageRoutes(
 
     const route = pageModule.route as unknown;
 
-    if (typeof route === "object" && route !== null && "middleware" in route) {
-      throw new RouteMiddlewareRemovedError(pageFile);
+    if (typeof route === "object" && route !== null) {
+      if ("middleware" in route) throw new RouteMiddlewareRemovedError(pageFile);
+      if ("validate" in route) throw new RouteValidationRemovedError(pageFile);
     }
 
     const sourceFile = canonicalSourceFileFor(pageFile, appSrcRoot);

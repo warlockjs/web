@@ -1,5 +1,4 @@
 import type { HttpContext } from "@warlock.js/core";
-import type { Infer } from "@warlock.js/seal";
 
 /**
  * A guard declared on the page's own top-level `middleware` export — the same
@@ -38,8 +37,14 @@ export type RouteDeclaration =
       readonly path: string;
       readonly name?: string;
       /** A Seal object schema validated against `{ params, query }`. */
-      readonly validate?: unknown;
     };
+
+/**
+ * @deprecated Route validation is declared by the top-level `validation` export.
+ * Retained as the empty half of the loader's legacy route generic until that
+ * generic is removed; it never describes a second validation surface.
+ */
+export type RouteValidatedOutput<TRoute> = Record<string, never>;
 
 /**
  * What `request.validated()` types as when a `route.validate` schema is
@@ -49,10 +54,6 @@ export type RouteDeclaration =
  * `../validation.ts`'s `ValidatedOutput` for the pre-existing top-level
  * `validation` export.
  */
-export type RouteValidatedOutput<TRoute> = TRoute extends { readonly validate: infer TSchema }
-  ? Infer.Output<TSchema>
-  : Record<string, never>;
-
 type RoutePath<TRoute> = TRoute extends string
   ? TRoute
   : TRoute extends { readonly path: infer TPath extends string }
