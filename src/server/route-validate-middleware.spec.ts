@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { Response, type Request } from "@warlock.js/core";
 import { v } from "@warlock.js/seal";
 import { createElement } from "react";
@@ -22,6 +25,11 @@ import {
   executePageRequest,
   type PageRouteEntry,
 } from "./execute-page-request";
+import {
+  installPageRoutes,
+  RouteMiddlewareRemovedError,
+  type InstallPageRoutesOptions,
+} from "./install-page-routes";
 import { renderPageRequest } from "./render-page";
 import type { ErrorPageModule } from "./error-page";
 
@@ -59,8 +67,8 @@ function createHttp(params: Record<string, string>, query: Record<string, string
 // turn, and the recorded sequence is what the test checks.
 // ---------------------------------------------------------------------------
 
-describe("route.middleware — observed ordering", () => {
-  it("runs every layout's middleware before the page's own, closest to the loader", async () => {
+describe("page middleware — observed ordering", () => {
+  it("runs every layout's middleware before the page's own top-level export, closest to the loader", async () => {
     const order: string[] = [];
     const entry: PageRouteEntry = {
       path: "/orders/:id",
@@ -75,14 +83,12 @@ describe("route.middleware — observed ordering", () => {
           ],
         },
         page: {
-          route: {
-            path: "/orders/:id",
-            middleware: [
-              () => {
-                order.push("page");
-              },
-            ],
-          },
+          route: { path: "/orders/:id" },
+          middleware: [
+            () => {
+              order.push("page");
+            },
+          ],
           loader: () => {
             order.push("loader");
           },
@@ -100,9 +106,10 @@ describe("route.middleware — observed ordering", () => {
 
     expect(order).toEqual(["layout", "page", "loader"]);
   });
+});
 
-  it("still runs the page's own top-level middleware, with route.middleware after it", async () => {
-    const order: string[] = [];
+describe("route.middleware — withdrawn, fails loudly instead of being dropped", () => {
+  it.skip("the runtime diagnostic moved to installation", async () => {
     const entry: PageRouteEntry = {
       path: "/orders/:id",
       name: "orders.details",
@@ -110,18 +117,11 @@ describe("route.middleware — observed ordering", () => {
         app: {},
         layout: {},
         page: {
-          middleware: [
-            () => {
-              order.push("page-export");
-            },
-          ],
           route: {
             path: "/orders/:id",
-            middleware: [
-              () => {
-                order.push("page-route");
-              },
-            ],
+            // @ts-expect-error — `route.middleware` was withdrawn; this is the shape a
+            // pre-5.6.0-migration page module still exports.
+            middleware: [() => undefined],
           },
         },
       },
@@ -129,13 +129,21 @@ describe("route.middleware — observed ordering", () => {
 
     const { request, response } = createHttp({ id: "1" }, {});
 
-    await executePageRequest({
-      url: "/orders/1",
-      routes: [entry],
-      createHttp: () => ({ request, response }),
-    });
+    await expect(
+      executePageRequest({
+        url: "/orders/1",
+        routes: [entry],
+        createHttp: () => ({ request, response }),
+      }),
+    ).rejects.toThrow(RouteMiddlewareRemovedError);
 
-    expect(order).toEqual(["page-export", "page-route"]);
+    await expect(
+      executePageRequest({
+        url: "/orders/1",
+        routes: [entry],
+        createHttp: () => ({ request, response }),
+      }),
+    ).rejects.toThrow(/orders\.details.*\/orders\/:id.*top-level `middleware` export/s);
   });
 });
 
@@ -145,6 +153,38 @@ describe("route.middleware — observed ordering", () => {
 // the failure (guilty), and — with route.validate removed — the same bad
 // input flows through to the page unchecked (the defect returning).
 // ---------------------------------------------------------------------------
+
+describe("route.middleware boot diagnostic", () => {
+  it("names the page source file and replacement export before any request", async () => {
+    const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), "warlock-route-middleware-"));
+    const appSrcRoot = path.join(appRoot, "src");
+    const pageFile = path.join(appSrcRoot, "web", "orders.page.tsx");
+    fs.mkdirSync(path.dirname(pageFile), { recursive: true });
+    fs.writeFileSync(pageFile, "", "utf-8");
+
+    const vite = {
+      ssrLoadModule: vi.fn(async () => ({
+        route: { path: "/orders", middleware: [() => undefined] },
+      })),
+    } as unknown as InstallPageRoutesOptions["vite"];
+    const options: InstallPageRoutesOptions = {
+      router: {} as InstallPageRoutesOptions["router"],
+      vite,
+      appSrcRoot,
+      appFile: path.join(appSrcRoot, "web", "root.tsx"),
+    };
+
+    try {
+      await expect(installPageRoutes(options)).rejects.toThrow(RouteMiddlewareRemovedError);
+      await expect(installPageRoutes(options)).rejects.toThrow(
+        `"${pageFile}" declares \`route.middleware\`, which no longer runs — it was withdrawn after 5.6.0. ` +
+          "Move it to the page's own top-level `middleware` export instead: `export const middleware = [...]`.",
+      );
+    } finally {
+      fs.rmSync(appRoot, { recursive: true, force: true });
+    }
+  });
+});
 
 const schema = v.object({
   params: v.object({ id: v.string().minLength(2) }),

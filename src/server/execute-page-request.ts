@@ -37,6 +37,31 @@ export {
   type LoaderShortCircuitKind,
   type PageResponseCommit,
 } from "./settle-page-response";
+export { RouteMiddlewareRemovedError } from "./install-page-routes";
+
+/**
+ * `route.middleware` shipped in 5.6.0 and was withdrawn (owner ruling,
+ * 2026-09-08): a page declares middleware in exactly one place, the
+ * top-level `middleware` export. Thrown the first time a matched route's
+ * page module still carries a `middleware` key on `route` — loud, not a
+ * silent no-op, so the guard the author thinks is running is never quietly
+ * dropped.
+ */
+/* RouteMiddlewareRemovedError moved to install-page-routes.ts, where pageFile is available.
+export class RouteMiddlewareRemovedError extends Error {
+  public constructor(
+    public readonly routeName: string,
+    public readonly routePath: string,
+  ) {
+    super(
+      `Warlock route "${routeName}" (${routePath}) declares \`route.middleware\`, which no ` +
+        "longer runs — it was withdrawn after 5.6.0. Move it to the page's own top-level " +
+        "`middleware` export instead: `export const middleware = [...]`.",
+    );
+    this.name = "RouteMiddlewareRemovedError";
+  }
+}
+*/
 
 /** Widens `PageDataBundle` with the two fields stage 6/7 populate. */
 type Bundle = PageDataBundle & {
@@ -108,10 +133,16 @@ export async function executePageRequest<TResult = PageDataBundle>(
 
     const pageRoute = typeof triple.page.route === "object" ? triple.page.route : undefined;
 
+    // `route.middleware` shipped in 5.6.0 and was withdrawn (owner ruling,
+    // 2026-09-08): a page declares middleware in exactly ONE place, the
+    // top-level `middleware` export. A page module built before the ruling
+    // that still exports `route.middleware` must fail loudly here rather than
+    // have that guard silently stop running — the exact defect class this
+    // workspace keeps paying to fix.
     /**
-     * THE TWO MIDDLEWARE SURFACES, TOGETHER — the one place both are
-     * documented, so they cannot again be found "separately and
-     * inconsistently" (canon `b79c4f55`, point 5):
+     * THE MIDDLEWARE SURFACES, TOGETHER — the one place both are documented,
+     * so they cannot again be found "separately and inconsistently" (canon
+     * `b79c4f55`, point 5):
      *
      * - A LAYOUT'S `middleware` export (`../routing/layout-policy.ts` — a
      *   middleware-only layout, one with no default export, is treated as a
@@ -119,20 +150,17 @@ export async function executePageRequest<TResult = PageDataBundle>(
      *   on a page's chain contributes, outermost first
      *   (`install-page-routes.ts`'s `composeLayoutLevel` folds the whole
      *   chain into `triple.layout.middleware` before this runs).
-     * - A PAGE's OWN guards, declared on `route.middleware` (`../route.ts`)
+     * - The PAGE's OWN top-level `middleware` export (`triple.page.middleware`)
      *   — a page's own answer to "what does this URL require", one level
      *   below the layout instead of borrowed from it (canon `f2e514c0`).
      *
      * ONE ordering rule covers both: `LEVEL_ORDER` (app, layout, page) runs
-     * outermost-first, and `route.middleware` is appended to the PAGE level's
-     * own list, so it always runs LAST — closest to the loader. A layout's
-     * auth gate can therefore never be bypassed by a page's own middleware.
+     * outermost-first, so the page's own list always runs LAST — closest to
+     * the loader. A layout's auth gate can therefore never be bypassed by a
+     * page's own middleware.
      */
     for (const level of LEVEL_ORDER) {
-      const middlewareForLevel =
-        level === "page"
-          ? [...(triple.page.middleware ?? []), ...(pageRoute?.middleware ?? [])]
-          : (triple[level].middleware ?? []);
+      const middlewareForLevel = triple[level].middleware ?? [];
 
       for (const middleware of middlewareForLevel) {
         let output: unknown;

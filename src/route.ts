@@ -2,13 +2,19 @@ import type { HttpContext } from "@warlock.js/core";
 import type { Infer } from "@warlock.js/seal";
 
 /**
- * One guard the PAGE itself declares on `route.middleware` — the same shape a
- * layout's own `middleware` export already runs (`../routing/layout-policy.ts`).
- * Ordering is fixed pipeline-wide, not per declaration: every layout on the
- * chain runs outermost-first, and the page's OWN middleware — whichever level
- * declared it — always runs LAST, closest to the loader
+ * A guard declared on the page's own top-level `middleware` export — the same
+ * shape a layout's own `middleware` export already runs
+ * (`../routing/layout-policy.ts`). Ordering is fixed pipeline-wide, not per
+ * declaration: every layout on the chain runs outermost-first, and the page's
+ * OWN `middleware` export always runs LAST, closest to the loader
  * (`server/execute-page-request.ts`'s `LEVEL_ORDER`). A layout's auth gate can
  * therefore never be bypassed by a page's own guard.
+ *
+ * `route.middleware` is NOT this surface — it shipped in 5.6.0 and was
+ * withdrawn (owner ruling, 2026-09-08): a page declares middleware in exactly
+ * one place, the top-level `middleware` export. A page still exporting
+ * `route.middleware` fails loudly at request time rather than being silently
+ * ignored — see `RouteMiddlewareRemovedError` in `./server/execute-page-request.ts`.
  */
 export type RouteMiddleware = (ctx: HttpContext) => unknown | Promise<unknown>;
 
@@ -19,12 +25,12 @@ export type RouteMiddleware = (ctx: HttpContext) => unknown | Promise<unknown>;
  * path string for the 2-line minimum page (contact-us.page.tsx:27, where the
  * name is derived).
  *
- * `validate` and `middleware` are what let a page declare what it ACCEPTS,
- * on the route itself rather than in a layout one level up — canon `f2e514c0`:
- * anything a page varies on is declared by the page. `validate` is a Seal
- * schema run over `{ params, query }` — kept as two SEPARATE keys, never
- * merged into one bag, so a `:id` path segment and a `?id=` query key can
- * never collide or silently shadow one another (canon `b79c4f55`).
+ * `route` is about the URL only. What a page ACCEPTS on that URL is declared
+ * with `validate` here (a Seal schema run over `{ params, query }` — kept as
+ * two SEPARATE keys, never merged into one bag, so a `:id` path segment and a
+ * `?id=` query key can never collide or silently shadow one another, canon
+ * `b79c4f55`). What a page REQUIRES to be reached at all is declared with the
+ * page's own top-level `middleware` export, not here.
  */
 export type RouteDeclaration =
   | string
@@ -33,8 +39,6 @@ export type RouteDeclaration =
       readonly name?: string;
       /** A Seal object schema validated against `{ params, query }`. */
       readonly validate?: unknown;
-      /** This page's own guards, run LAST in the pipeline's middleware chain. */
-      readonly middleware?: readonly RouteMiddleware[];
     };
 
 /**

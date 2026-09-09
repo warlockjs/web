@@ -44,9 +44,8 @@ export type PageTripleModule = {
         readonly name?: string;
         /** A Seal object schema validated against `{ params, query }` — `route.ts`'s `RouteDeclaration`. */
         readonly validate?: BaseValidator;
-        /** This page's own guards, run LAST — see `LEVEL_ORDER` below. */
-        readonly middleware?: readonly PipelineMiddleware[];
       };
+  /** This page's own guards, run LAST — see `LEVEL_ORDER` below. */
   middleware?: readonly PipelineMiddleware[];
   validation?: { schema?: BaseValidator; validating?: readonly string[] };
   loader?: PipelineLoader;

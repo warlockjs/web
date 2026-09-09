@@ -76,6 +76,17 @@ export type PageModuleShape = {
   route?: PageRouteExport;
 };
 
+/** Raised at boot when a page still uses the withdrawn `route.middleware` export. */
+export class RouteMiddlewareRemovedError extends Error {
+  public constructor(public readonly pageFile: string) {
+    super(
+      `"${pageFile}" declares \`route.middleware\`, which no longer runs — it was withdrawn after 5.6.0. ` +
+        "Move it to the page's own top-level `middleware` export instead: `export const middleware = [...]`.",
+    );
+    this.name = "RouteMiddlewareRemovedError";
+  }
+}
+
 export type InstalledPageRoute = {
   /** The canonical declared route path, before layout-prefix composition. */
   declaredPath: string;
@@ -462,6 +473,12 @@ export async function installPageRoutes(
       await registerFailedPageRoute({ router, pageFile, appSrcRoot, loadError, fileByPath });
 
       continue;
+    }
+
+    const route = pageModule.route as unknown;
+
+    if (typeof route === "object" && route !== null && "middleware" in route) {
+      throw new RouteMiddlewareRemovedError(pageFile);
     }
 
     const sourceFile = canonicalSourceFileFor(pageFile, appSrcRoot);
