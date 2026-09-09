@@ -1027,6 +1027,10 @@ describe("installPageRoutes — the not-found page", () => {
     await expect(run()).resolves.toEqual([]);
     expect(registered).toEqual([]);
     expect(notFound).toHaveLength(1);
+    expect(notFound[0]).toMatchObject({
+      path: NOT_FOUND_ROUTE_PATH,
+      options: { name: NOT_FOUND_ROUTE_NAME, isPage: true },
+    });
   });
 
   it("builds its handler with no layout, the request's own path as the pattern, and a 404 status", async () => {

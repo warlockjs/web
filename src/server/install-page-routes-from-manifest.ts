@@ -32,7 +32,6 @@ import { resolveLayoutLevel } from "../routing/layout-level";
 import {
   resolvePageRouteCache,
   resolvePageRouteIdentity,
-  type PageCacheOptIn,
 } from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
 import { type Router } from "@warlock.js/core";
@@ -43,30 +42,20 @@ import {
   type PageRouteHandler,
   type PageRouteHandlerOptions,
 } from "./create-page-route-handler";
-import type { PipelineLoader, PipelineMiddleware } from "./execute-page-request";
 import { foldLayoutLoaders } from "./fold-layout-loaders";
 import { productionStylesheetUrls } from "./stylesheet-urls";
 import {
-  createNotFoundRouteHandler,
   DuplicateNotFoundPageError,
   isNotFoundPageFile,
   NotFoundPageDeclaresRouteError,
   NOT_FOUND_ROUTE_NAME,
   NOT_FOUND_ROUTE_PATH,
+  registerNotFoundPageRoute,
 } from "./not-found-page";
 import type { PageManifest, PageManifestLayoutEntry, PageManifestPageEntry } from "./page-manifest";
-
-/** A page declares either a bare path or a path plus an explicit route name. */
-type PageRouteExport = string | { path: string; name?: string; cache?: PageCacheOptIn };
-
-/** The only export this module reads off a page module namespace. */
-type PageModuleShape = {
-  route?: PageRouteExport;
-};
+import type { LayoutModuleShape, PageModuleShape, PageRouteExport } from "./page-module-shapes";
 
 /** The exports this module reads off a layout module namespace. */
-type LayoutModuleShape = {
-  prefix?: string;
   /**
    * The default export — the thing that puts an element in the document, and
    * therefore the ONLY export that decides whether a layout counts against the
@@ -74,11 +63,7 @@ type LayoutModuleShape = {
    * carries LOADED modules, so this is a fact rather than a guess, exactly as it
    * is in dev's own `LayoutModuleShape`.
    */
-  default?: unknown;
   /** The layout's guards, in the order it declared them. */
-  middleware?: readonly PipelineMiddleware[];
-  loader?: PipelineLoader;
-};
 
 /**
  * How a handler is built for one page. Defaults to `createPageRouteHandler`;
@@ -446,10 +431,9 @@ export function installPageRoutesFromManifest(
     the build carried no `404.page.tsx`, so a production deployment answers 404
     with the right STATUS whether or not anyone has designed the page yet.
   */
-  router.get(
-    NOT_FOUND_ROUTE_PATH,
-    createNotFoundRouteHandler({
-      renderPage:
+  registerNotFoundPageRoute({
+    router,
+    renderPage:
         notFoundPage === undefined
           ? undefined
           : createHandler({
@@ -474,11 +458,10 @@ export function installPageRoutesFromManifest(
               statusForRenderedOk: 404,
               skipPageLoader: true,
             }),
-    }),
+  });
     // `isPage` for the same reason the dev installer carries it — the router's
     // duplicate-name error reads the flag to say which claimant is the page.
-    { name: NOT_FOUND_ROUTE_NAME, isPage: true },
-  );
+  
 
   /*
     Same publish as the dev installer, for the same reason: `href()` and the

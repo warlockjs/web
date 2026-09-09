@@ -99,7 +99,10 @@ describe("fetchPageData", () => {
     });
   });
 
-  it.each([
+  // The spread of REQUIRED_PAYLOAD_KEYS.map() widens this table unless its element
+  // type is stated: without it TypeScript infers (string | (() => void))[] and the
+  // callback below stops being callable.
+  const fallbackCases: readonly (readonly [label: string, arrange: () => void])[] = [
     [
       "a network failure",
       () =>
@@ -134,7 +137,9 @@ describe("fetchPageData", () => {
         respondWith(withoutKey);
       },
     ] as const),
-  ])("falls back to a real navigation on %s", async (_label, arrange) => {
+  ];
+
+  it.each(fallbackCases)("falls back to a real navigation on %s", async (_label, arrange) => {
     arrange();
 
     const result = await fetchPageData("/products");

@@ -49,7 +49,6 @@ import {
   resolvePageRouteCache,
   resolvePageRouteIdentity,
   resolvePageRouteName,
-  type PageCacheOptIn,
 } from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
 import { type FastifyInstance, type Router } from "@warlock.js/core";
@@ -59,22 +58,19 @@ import type { PipelineLoader, PipelineMiddleware } from "./execute-page-request"
 import { foldLayoutLoaders } from "./fold-layout-loaders";
 import { devHandlerStylesheetUrls } from "./stylesheet-urls";
 import {
-  createNotFoundRouteHandler,
   DuplicateNotFoundPageError,
   isNotFoundPageFile,
   NotFoundPageDeclaresRouteError,
   NOT_FOUND_ROUTE_NAME,
   NOT_FOUND_ROUTE_PATH,
+  registerNotFoundPageRoute,
 } from "./not-found-page";
+import type { LayoutModuleShape, PageModuleShape, PageRouteExport } from "./page-module-shapes";
+
+export type { LayoutModuleShape, PageModuleShape, PageRouteExport } from "./page-module-shapes";
 
 /** Re-exported so `web/src/server/index.ts`'s existing barrel export keeps resolving. */
 export { composeRoutePath };
-
-export type PageRouteExport = string | { path: string; name?: string; cache?: PageCacheOptIn };
-
-export type PageModuleShape = {
-  route?: PageRouteExport;
-};
 
 /** Raised at boot when a page still uses the withdrawn `route.middleware` export. */
 export class RouteMiddlewareRemovedError extends Error {
@@ -214,21 +210,21 @@ async function registerFailedPageRoute(input: {
   );
 }
 
-export type LayoutModuleShape = {
-  /** Universal registration hook; invoked on this real namespace, never a composed wrapper. */
+/* Moved to page-module-shapes.ts so both installers consume one contract.
+  * Universal registration hook; invoked on this real namespace, never a composed wrapper.
   register?: () => unknown;
   prefix?: string;
-  /**
+  *
    * The default export — the thing that puts an element in the document, and
    * therefore the ONLY export that decides whether a layout counts against the
    * single-rendering-layout rule (`../routing/layout-policy.ts`). In dev the
    * module is loaded, so this is a fact rather than a guess.
-   */
+   *
   default?: unknown;
-  /** The layout's guards, in the order it declared them. */
+  * The layout's guards, in declaration order.
   middleware?: readonly PipelineMiddleware[];
   loader?: PipelineLoader;
-};
+*/
 
 /** How this module gets a layout module namespace — `vite.ssrLoadModule`, in practice. */
 type LoadLayout = (layoutFile: string) => Promise<LayoutModuleShape>;
@@ -614,10 +610,9 @@ export async function installPageRoutes(
     }
 
     const registerNotFoundRoute = () =>
-      router.get(
-        NOT_FOUND_ROUTE_PATH,
-        createNotFoundRouteHandler({
-          renderPage:
+      registerNotFoundPageRoute({
+        router,
+        renderPage:
             notFoundPageFile === undefined
               ? undefined
               : createPageRouteHandler({
@@ -646,12 +641,7 @@ export async function installPageRoutes(
                   skipPageLoader: true,
                   ...httpServerOption,
                 }),
-        }),
-        // `isPage` for the same reason every other page route carries it: the
-        // router's duplicate-name error reads the flag to say which claimant is
-        // the page.
-        { name: NOT_FOUND_ROUTE_NAME, isPage: true },
-      );
+      });
 
     if (notFoundPageFile === undefined) {
       await router.withSourceFile(FRAMEWORK_DEFAULT_NOT_FOUND_SOURCE_FILE, registerNotFoundRoute);

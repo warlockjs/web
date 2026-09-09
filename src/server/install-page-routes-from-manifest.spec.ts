@@ -809,6 +809,10 @@ describe("installPageRoutesFromManifest — the not-found page", () => {
     run();
 
     expect(notFound).toHaveLength(1);
+    expect(notFound[0]).toMatchObject({
+      path: NOT_FOUND_ROUTE_PATH,
+      options: { name: NOT_FOUND_ROUTE_NAME, isPage: true },
+    });
     // No page handler was built for it: there is no page to build one from.
     expect(built.map((options) => options.pageFile)).toEqual(["src/app/main/web/home.page.tsx"]);
   });

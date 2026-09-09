@@ -60,6 +60,7 @@
  */
 import type { HttpContext } from "@warlock.js/core";
 import type { PageRouteHandler } from "./create-page-route-handler";
+import type { Router } from "@warlock.js/core";
 import { buildFrameworkDefaultNotFoundStylesheetUrl } from "./framework-default-not-found-stylesheet";
 
 /**
@@ -338,4 +339,16 @@ export function createNotFoundRouteHandler(options: NotFoundRouteHandlerOptions)
 
     return renderPage(context);
   };
+}
+
+/** Registers the invariant catch-all route both page installers share. */
+export function registerNotFoundPageRoute(options: {
+  router: Router;
+  renderPage?: PageRouteHandler;
+}): void {
+  options.router.get(
+    NOT_FOUND_ROUTE_PATH,
+    createNotFoundRouteHandler({ renderPage: options.renderPage }),
+    { name: NOT_FOUND_ROUTE_NAME, isPage: true },
+  );
 }
