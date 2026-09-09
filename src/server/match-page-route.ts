@@ -3,17 +3,13 @@ import type { PageRouteEntry } from "./execute-page-request.types";
 /**
  * Stage 1 — turn a URL into a route entry plus its params.
  *
- * ⚠ **This is a SECOND matcher, and on the HTTP path it is redundant.** Core's
- * router has already matched by the time a page handler runs, and
- * `create-page-route-handler.ts` ignores the match it is handed. The one caller
- * that genuinely needs this is `renderPage(name, options)`, which synthesizes a
- * URL with no HTTP request behind it — and that path is not wired up
- * (`connectPageRoutes()` is never called).
+ * This matches only URL-driven render requests that have no HTTP router result
+ * to carry through. On the live HTTP path core has already selected the route
+ * and decoded its params; `create-page-route-handler.ts` passes that match into
+ * the pipeline rather than re-running this matcher.
  *
- * Removing it from the HTTP path is carded. Two things must be proven first:
- * that these params agree with core's, since `bundle.route.params` reaches the
- * hydration payload; and that dropping `bundle.route.query` — a public type
- * member — is announced rather than slipped in.
+ * `match-page-route.parity.spec.ts` keeps the param contract gated, including
+ * a multi-segment URL and the param-free page catch-all convention.
  */
 
 function splitSegments(path: string): string[] {

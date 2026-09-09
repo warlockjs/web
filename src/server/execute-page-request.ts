@@ -102,7 +102,10 @@ export async function executePageRequest<TResult = PageDataBundle>(
 
   wireRequestSearch();
   const [pathname, queryString] = options.url.split("?");
-  const matched = matchRoute(pathname, options.routes);
+  // HTTP page handlers arrive here after core's router selected their route.
+  // Keep its entry and decoded params authoritative; standalone rendering has
+  // no such request, so it still resolves against the supplied route table.
+  const matched = options.matched ?? matchRoute(pathname, options.routes);
 
   if (!matched) return undefined;
 

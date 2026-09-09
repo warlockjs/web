@@ -85,6 +85,8 @@ type RouteRegistry = {
 
 export type RenderPageRequestOptions = {
   routes: readonly PageRouteEntry[];
+  /** Core's already-resolved HTTP route, when this is serving a live request. */
+  matched?: Pick<PageRouteMatch, "entry" | "params">;
   createHttp: ExecutePageRequestOptions["createHttp"];
   /** Loaded only after the ordinary boundary chain has been exhausted. */
   loadErrorPage?: ErrorPageModuleLoader;
@@ -657,6 +659,7 @@ export async function renderPageRequest(
   const rendered = await executePageRequest({
     url,
     routes: registry.routes,
+    matched: options.matched,
     createHttp,
     finish: (bundle) =>
       finishRender(

@@ -64,4 +64,47 @@ describe("web's matcher agrees with core's router on params", () => {
     expect(fromCore).toBeTypeOf("string");
     expect(fromWeb).toBe(fromCore);
   });
+
+  it("resolves the same named multi-segment route and every param", async () => {
+    const pattern = "/stores/:storeId/products/:productId";
+    const url = "/stores/cairo/products/42";
+    const multiSegment = Fastify();
+    let coreMatch: Record<string, string> | undefined;
+
+    multiSegment.get(pattern, async (request) => {
+      coreMatch = request.params as Record<string, string>;
+      return {};
+    });
+
+    await multiSegment.inject({ method: "GET", url });
+    await multiSegment.close();
+
+    expect({ name: "product", params: matchPath(pattern, url) }).toEqual({
+      name: "product",
+      params: coreMatch,
+    });
+  });
+
+  it("keeps the catch-all route's page match param-free", async () => {
+    const url = "/missing/a/deep/path";
+    const catchAll = Fastify();
+    let matched = false;
+
+    catchAll.get("*", async () => {
+      matched = true;
+      return {};
+    });
+
+    await catchAll.inject({ method: "GET", url });
+    await catchAll.close();
+
+    // The page handler replaces `*` with this request path before the current
+    // web match, so the 404 page has a concrete named route and no invented
+    // wildcard param. This is the behaviour the core-match handoff preserves.
+    expect({ matched, name: "not-found", params: matchPath(url, url) }).toEqual({
+      matched: true,
+      name: "not-found",
+      params: {},
+    });
+  });
 });

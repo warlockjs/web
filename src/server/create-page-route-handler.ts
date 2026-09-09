@@ -388,16 +388,27 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
 
       const requestUrl = request.path;
       const [requestPathname] = requestUrl.split("?");
-      const routes: PageRouteEntry[] = [
-        { path: matchPath === undefined ? path : matchPath(requestPathname), name, triple },
-      ];
+      const entry: PageRouteEntry = {
+        path: matchPath === undefined ? path : matchPath(requestPathname),
+        name,
+        triple,
+      };
+
+      // Core selected this handler before it constructed the HTTP context and
+      // decoded dynamic segments into `request.params`. Passing that result
+      // through makes core the sole matcher on the live path. The catch-all
+      // page deliberately has no wildcard param: its virtual path is the
+      // missed URL itself, so it remains the named `not-found` route with `{}`.
+      const params =
+        matchPath === undefined ? (request.params as Record<string, string>) : {};
 
       // A DATA request runs everything above and below this line identically —
       // it is the same route, the same match and the same pipeline — and differs
       // only in what gets written at the end. Decided here, before the render, so
       // the branch is visibly about REPRESENTATION and not about behaviour.
       const rendered = await renderPageRequest(requestUrl, {
-        routes,
+        routes: [entry],
+        matched: { entry, params },
         createHttp: () => ({ request, response }),
         loadErrorPage,
       });

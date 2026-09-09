@@ -74,6 +74,12 @@ export type PageRouteMatch = {
 export type ExecutePageRequestOptions<TResult = PageDataBundle> = {
   url: string;
   routes: readonly PageRouteEntry[];
+  /**
+   * An HTTP router has already selected this entry and decoded its params.
+   * Supplying it prevents the page pipeline from matching the same URL again;
+   * callers without an HTTP request continue to resolve against `routes`.
+   */
+  matched?: Pick<PageRouteMatch, "entry" | "params">;
   createHttp(match: PageRouteMatch): HttpContext;
   finish?(bundle: PageDataBundle): TResult | Promise<TResult>;
 };

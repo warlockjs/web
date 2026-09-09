@@ -28,10 +28,11 @@ function renderedOk() {
   };
 }
 
-function context(path = "/account") {
+function context(path = "/account", params: Record<string, string> = {}) {
   return {
     request: {
       path,
+      params,
       locale: "en",
       header: vi.fn(() => undefined),
     },
@@ -95,6 +96,42 @@ beforeEach(() => {
 });
 
 describe("createPageRouteHandler — universal registration", () => {
+  it("hands core's selected route and multi-segment params to the page pipeline", async () => {
+    const handler = createPageRouteHandler(
+      handlerOptions(
+        { "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} },
+        { path: "/stores/:storeId/products/:productId", name: "product" },
+      ),
+    );
+
+    await handler(
+      context("/stores/cairo/products/42", { storeId: "cairo", productId: "42" }) as never,
+    );
+
+    const [, options] = renderPageRequest.mock.calls[0] as [string, RenderPageRequestOptions];
+    expect(options.matched).toMatchObject({
+      entry: { name: "product", path: "/stores/:storeId/products/:productId" },
+      params: { storeId: "cairo", productId: "42" },
+    });
+  });
+
+  it("preserves the catch-all page's param-free route convention", async () => {
+    const handler = createPageRouteHandler(
+      handlerOptions(
+        { "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} },
+        { path: "*", name: "not-found", matchPath: (requestPath) => requestPath },
+      ),
+    );
+
+    await handler(context("/missing/a/deep/path", { "*": "missing/a/deep/path" }) as never);
+
+    const [, options] = renderPageRequest.mock.calls[0] as [string, RenderPageRequestOptions];
+    expect(options.matched).toMatchObject({
+      entry: { name: "not-found", path: "/missing/a/deep/path" },
+      params: {},
+    });
+  });
+
   it("preserves a terminal core Response and skips every normal emit step", async () => {
     const terminal = new Response();
     const requestContext = context();
