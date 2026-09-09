@@ -533,7 +533,7 @@ export async function installPageRoutes(
       appFile,
       ...layoutLevel.chain,
       pageFile,
-    ]);
+    ], vite.moduleGraph);
 
     await router.withSourceFile(sourceFile, () =>
       router.get(
@@ -639,7 +639,7 @@ export async function installPageRoutes(
                   stylesheetUrls: devHandlerStylesheetUrls(stylesheetRoot, [
                     appFile,
                     notFoundPageFile,
-                  ]),
+                  ], vite.moduleGraph),
                   // The URL that missed IS this route's pattern for this request.
                   matchPath: (requestPath) => requestPath,
                   statusForRenderedOk: 404,

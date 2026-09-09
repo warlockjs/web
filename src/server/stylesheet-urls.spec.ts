@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { build, createServer } from "vite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   devHandlerStylesheetUrls,
@@ -35,6 +36,78 @@ function makeClientDir(manifest: Record<string, unknown>): string {
   fs.writeFileSync(path.join(viteDir, "manifest.json"), JSON.stringify(manifest), "utf-8");
 
   return root;
+}
+
+type StylesheetCollections = {
+  dev: Set<string>;
+  production: Set<string>;
+};
+
+/** Reads a collection's CSS payloads, making dev source URLs comparable with production asset URLs. */
+function stylesheetContents(root: string, urls: readonly string[]): Set<string> {
+  return new Set(
+    urls.map((url) => {
+      const relative = url.replace(/^\//, "").replace(VITE_DIRECT_CSS_QUERY, "");
+      return fs.readFileSync(path.join(root, relative), "utf-8");
+    }),
+  );
+}
+
+/** Builds the transitive-CSS fixture, then measures the real dev and production collectors. */
+async function collectTransitiveFixtureStylesheets(): Promise<StylesheetCollections> {
+  const appRoot = makeTree({
+    "src/web/root.ts": 'import "./root.css";\nexport const root = true;\n',
+    "src/web/root.css": ".root-fixture { color: black; }\n",
+    "src/pages/transitive.page.ts":
+      'import { component } from "./transitive.component";\nconsole.log(component);\n',
+    "src/pages/transitive.component.ts":
+      'import "./transitive.component.css";\nexport const component = "transitive";\n',
+    "src/pages/transitive.component.css": ".transitive-fixture { color: rebeccapurple; }\n",
+  });
+  const clientDir = path.join(appRoot, "dist", "client");
+  const sourceId = "src/pages/transitive.page.ts";
+
+  await build({
+    root: appRoot,
+    configFile: false,
+    logLevel: "silent",
+    build: {
+      cssCodeSplit: true,
+      manifest: true,
+      minify: false,
+      outDir: clientDir,
+      rollupOptions: {
+        input: {
+          root: path.join(appRoot, "src/web/root.ts"),
+          page: path.join(appRoot, sourceId),
+        },
+      },
+    },
+  });
+
+  const vite = await createServer({
+    root: appRoot,
+    configFile: false,
+    logLevel: "silent",
+    server: { middlewareMode: true },
+  });
+  await vite.ssrLoadModule("/src/web/root.ts");
+  await vite.ssrLoadModule(`/${sourceId}`);
+  await vite.transformRequest("/src/web/root.ts");
+  await vite.transformRequest(`/${sourceId}`);
+
+  const devUrls = devHandlerStylesheetUrls(
+    appRoot,
+    [path.join(appRoot, "src/web/root.ts"), path.join(appRoot, sourceId)],
+    vite.moduleGraph,
+  );
+  await vite.close();
+  const productionUrls = productionStylesheetUrls(clientDir, ["src/web/root.ts", sourceId]);
+
+  return {
+    dev: stylesheetContents(appRoot, devUrls),
+    production: stylesheetContents(clientDir, productionUrls),
+  };
 }
 
 afterEach(() => {
@@ -310,5 +383,13 @@ describe("productionStylesheetUrls — failure and boundary conditions", () => {
     });
 
     expect(productionStylesheetUrls(clientDir, ["src/web/root.tsx"])).toEqual([]);
+  });
+});
+
+describe("stylesheet collection parity gate", () => {
+  it("diffs a page whose component-only stylesheet is collected by both pipelines", async () => {
+    const stylesheets = await collectTransitiveFixtureStylesheets();
+
+    expect(stylesheets.dev).toEqual(stylesheets.production);
   });
 });

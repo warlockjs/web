@@ -27,6 +27,7 @@
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import type { ModuleGraph, ModuleNode } from "vite";
 import { CLIENT_ASSET_URL_PREFIX } from "./client-asset-url-prefix";
 
 /** Stylesheet extensions Vite can serve directly. Mirrors the build's list. */
@@ -42,6 +43,32 @@ const STYLE_EXTENSIONS = [".css", ".scss", ".sass", ".less", ".styl"];
  * page. `?direct` is what makes Vite reply with real `text/css`.
  */
 export const VITE_DIRECT_CSS_QUERY = "?direct";
+
+type StylesheetGraphNode = {
+  id: string;
+  stylesheets: string[];
+  imports: StylesheetGraphNode[];
+};
+
+/** Walk one stylesheet dependency graph, preserving each root's load order. */
+function collectStylesheetGraph(roots: readonly StylesheetGraphNode[]): string[] {
+  const stylesheets: string[] = [];
+
+  const visit = (node: StylesheetGraphNode, visited: Set<string>) => {
+    if (visited.has(node.id)) return;
+    visited.add(node.id);
+
+    for (const stylesheet of node.stylesheets) {
+      if (!stylesheets.includes(stylesheet)) stylesheets.push(stylesheet);
+    }
+
+    for (const imported of node.imports) visit(imported, visited);
+  };
+
+  for (const root of roots) visit(root, new Set());
+
+  return stylesheets;
+}
 
 /**
  * ONE source file's own directly imported stylesheets, as dev URLs.
@@ -75,7 +102,7 @@ export function devStylesheetUrls(appRoot: string, sourceFile: string): string[]
     return [];
   }
 
-  const urls: string[] = [];
+  const imports: StylesheetGraphNode[] = [];
   const pattern = /\bimport\s*(?:\(\s*)?["']([^"']+)["']/g;
 
   let match = pattern.exec(source);
@@ -94,14 +121,14 @@ export function devStylesheetUrls(appRoot: string, sourceFile: string): string[]
       if (!relative.startsWith("..")) {
         const url = `/${relative}${VITE_DIRECT_CSS_QUERY}`;
 
-        if (!urls.includes(url)) urls.push(url);
+        imports.push({ id: url, stylesheets: [url], imports: [] });
       }
     }
 
     match = pattern.exec(source);
   }
 
-  return urls;
+  return collectStylesheetGraph([{ id: sourceFile, stylesheets: [], imports }]);
 }
 
 /**
@@ -117,16 +144,68 @@ export function devStylesheetUrls(appRoot: string, sourceFile: string): string[]
 export function devHandlerStylesheetUrls(
   appRoot: string,
   sourceFiles: readonly string[],
+  moduleGraph?: ModuleGraph,
 ): string[] {
-  const urls: string[] = [];
-
-  for (const sourceFile of sourceFiles) {
-    for (const url of devStylesheetUrls(appRoot, sourceFile)) {
-      if (!urls.includes(url)) urls.push(url);
-    }
+  if (moduleGraph === undefined) {
+    return collectStylesheetGraph(
+      sourceFiles.map((sourceFile) => ({
+        id: sourceFile,
+        stylesheets: devStylesheetUrls(appRoot, sourceFile),
+        imports: [],
+      })),
+    );
   }
 
-  return urls;
+  const nodes = new Map<ModuleNode, StylesheetGraphNode>();
+
+  const adapt = (module: ModuleNode): StylesheetGraphNode => {
+    const existing = nodes.get(module);
+    if (existing !== undefined) return existing;
+
+    const node: StylesheetGraphNode = {
+      id: module.id ?? module.url,
+      stylesheets: devModuleStylesheetUrls(appRoot, module),
+      imports: [],
+    };
+    nodes.set(module, node);
+    node.imports = [...module.importedModules].map(adapt);
+    return node;
+  };
+
+  return collectStylesheetGraph(
+    sourceFiles.flatMap((sourceFile) => findDevModules(moduleGraph, sourceFile).map(adapt)),
+  );
+}
+
+/** Finds Vite's module node despite its normalized-path cache keys. */
+function findDevModules(moduleGraph: ModuleGraph, sourceFile: string): ModuleNode[] {
+  const direct = moduleGraph.getModulesByFile(sourceFile);
+  if (direct !== undefined) return [...direct];
+
+  const normalizedSource = path.resolve(sourceFile);
+  const nodes: ModuleNode[] = [];
+
+  for (const [file, modules] of moduleGraph.fileToModulesMap) {
+    if (path.resolve(file) === normalizedSource) nodes.push(...modules);
+  }
+
+  return nodes;
+}
+
+/** Turns a Vite CSS module into a browser stylesheet URL when it is served by the app. */
+function devModuleStylesheetUrls(appRoot: string, module: ModuleNode): string[] {
+  if (
+    module.file === null ||
+    (module.type !== "css" && !STYLE_EXTENSIONS.includes(path.extname(module.file).toLowerCase()))
+  ) {
+    return [];
+  }
+
+  const relative = path.relative(appRoot, module.file);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return [];
+
+  const url = module.url.split("?", 1)[0];
+  return url.startsWith("/") ? [`${url}${VITE_DIRECT_CSS_QUERY}`] : [];
 }
 
 type ManifestEntry = {
@@ -183,29 +262,32 @@ function findManifestKey(
  * and a fresh `visited` set per entry is simpler to reason about than one
  * threaded across unrelated chains.
  */
-function collectManifestCss(
+function manifestStylesheetGraph(
   manifest: Record<string, ManifestEntry | undefined>,
   key: string,
-  visited: Set<string>,
-): string[] {
-  if (visited.has(key)) return [];
-  visited.add(key);
+  nodes: Map<string, StylesheetGraphNode>,
+): StylesheetGraphNode {
+  const existing = nodes.get(key);
+  if (existing !== undefined) return existing;
 
   const entry = manifest[key];
-  if (entry === undefined) return [];
+  const node: StylesheetGraphNode = { id: key, stylesheets: [], imports: [] };
+  nodes.set(key, node);
 
-  const ownCss = Array.isArray(entry.css)
-    ? entry.css.filter((file): file is string => typeof file === "string" && file !== "")
+  if (entry === undefined) return node;
+
+  node.stylesheets = Array.isArray(entry.css)
+    ? entry.css
+        .filter((file): file is string => typeof file === "string" && file !== "")
+        .map((file) => `/${file}`)
+    : [];
+  node.imports = Array.isArray(entry.imports)
+    ? entry.imports
+        .filter((id): id is string => typeof id === "string")
+        .map((importedKey) => manifestStylesheetGraph(manifest, importedKey, nodes))
     : [];
 
-  const imports = Array.isArray(entry.imports)
-    ? entry.imports.filter((id): id is string => typeof id === "string")
-    : [];
-
-  return [
-    ...ownCss,
-    ...imports.flatMap((importedKey) => collectManifestCss(manifest, importedKey, visited)),
-  ];
+  return node;
 }
 
 /**
@@ -251,25 +333,24 @@ export function productionStylesheetUrls(
 
   if (typeof manifest !== "object" || manifest === null) return [];
 
-  const files: string[] = [];
+  const nodes = new Map<string, StylesheetGraphNode>();
+  const roots: StylesheetGraphNode[] = [];
 
   for (const sourceFile of sourceFiles) {
     const key = findManifestKey(manifest, sourceFile);
     if (key === undefined) continue;
 
-    files.push(...collectManifestCss(manifest, key, new Set()));
+    roots.push(manifestStylesheetGraph(manifest, key, nodes));
   }
 
   const urls: string[] = [];
 
-  for (const file of files) {
+  for (const url of collectStylesheetGraph(roots)) {
     // Built EXACTLY as the hydration entry's URL is built — `/${file}`, then
     // checked against the prefix — rather than reassembled from a basename.
     // The manifest already records `assets/root-<hash>.css`, and rebuilding
     // that path here would be a second expression of a convention
     // `client-asset-url-prefix.ts` owns.
-    const url = `/${file}`;
-
     // A stylesheet outside the directory the asset route mounts would 404.
     // Dropped rather than emitted, because a dead <link> in <head> is a
     // silent styling failure — the exact thing this module exists to end.

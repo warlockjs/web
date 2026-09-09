@@ -478,12 +478,8 @@ export class WebConnector extends BaseConnector {
         vite: this.vite,
         appSrcRoot: paths.appSrcRoot,
         appFile: paths.appFile,
+        appRoot: paths.appRoot,
         hydrationClientModuleUrl: this.resolveHydrationClientModuleUrl(paths.webRoot),
-        // Without these the first paint of every full page load is unstyled: the
-        // client bundle imports the CSS, so JavaScript applies it only after the
-        // module graph loads. A render-blocking <link> in <head> is what makes
-        // the page arrive styled instead of arriving and then correcting itself.
-        stylesheetUrls: webServerSsr.devStylesheetUrls(paths.appRoot, paths.appFile),
         // Resolved here, on the NODE side, and forwarded — see
         // `InstallPageRoutesOptions.httpServer` (`install-page-routes.ts`) for
         // why `createPageRouteHandler` cannot read this out of the container
