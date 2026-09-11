@@ -1,7 +1,7 @@
 import type { Request, Response } from "@warlock.js/core";
 import type { PageContext } from "./context";
 import type { SharedContext } from "./index";
-import type { RouteDeclaration, RouteValidatedOutput } from "./route";
+import type { RouteDeclaration } from "./route";
 import type { PageValidation, ValidatedOutput } from "./validation";
 
 type PageLoaderContext<
@@ -9,13 +9,18 @@ type PageLoaderContext<
   TRoute extends RouteDeclaration | undefined,
 > = {
   /**
-   * `validated()` carries BOTH validation surfaces a page may declare: the
-   * pre-existing top-level `validation` export's flat shape, and
-   * `route.validate`'s `{ params, query }` — merged by intersection so a page
-   * using either (or, at the type level, both) sees every field typed rather
-   * than validating again inside the loader (canon `1ca1e8ae`).
+   * `validated()` carries the page's ONE validation surface: the top-level
+   * `validation` export. `route.validate` was withdrawn after 5.6.0 and is
+   * refused at boot, so there is no second shape to merge in.
+   *
+   * The `RouteValidatedOutput<TRoute>` intersection that used to sit here is
+   * gone. It had already been emptied to `Record<string, never>`, which —
+   * measured, not assumed — does NOT collapse the declared properties to
+   * `never`; it was inert rather than harmful. Inert is still worth removing:
+   * a type that reads as a second validation surface is a type that gets
+   * treated as one.
    */
-  request: Request<ValidatedOutput<TValidation> & RouteValidatedOutput<TRoute>>;
+  request: Request<ValidatedOutput<TValidation>>;
   response: Response;
   shared: SharedContext;
 };
