@@ -387,9 +387,20 @@ describe("productionStylesheetUrls — failure and boundary conditions", () => {
 });
 
 describe("stylesheet collection parity gate", () => {
-  it("diffs a page whose component-only stylesheet is collected by both pipelines", async () => {
-    const stylesheets = await collectTransitiveFixtureStylesheets();
+  // This case runs a REAL Vite build, so it is slow by construction — and under
+  // the full suite it competes with ~87 other files for CPU. At vitest's 5s
+  // default it passed alone and intermittently timed out in the full run, which
+  // makes the gate report machine load as if it were a property of the code
+  // (canon c9f300bb). A build-backed gate states its own budget.
+  const REAL_BUILD_TIMEOUT_MS = 60_000;
 
-    expect(stylesheets.dev).toEqual(stylesheets.production);
-  });
+  it(
+    "diffs a page whose component-only stylesheet is collected by both pipelines",
+    async () => {
+      const stylesheets = await collectTransitiveFixtureStylesheets();
+
+      expect(stylesheets.dev).toEqual(stylesheets.production);
+    },
+    REAL_BUILD_TIMEOUT_MS,
+  );
 });
