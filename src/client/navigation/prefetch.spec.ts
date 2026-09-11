@@ -20,10 +20,19 @@ import {
  * because the happy path is not what makes this feature risky.
  */
 
-// `locale` is required by `fetch-page-data.ts`'s `isPayloadShape` guard — a
-// fixture missing it is silently rejected as `hard-navigate` and never cached,
-// which is what was actually failing every "caches"/"expires"/"bound" test
-// below (not a missing `window`; see the report for this file's history).
+// This fixture must carry ALL SIX required keys of canon `896ff771`, because
+// `fetch-page-data.ts` validates through the one shared gate,
+// `isHydrationPayload` (`../../hydration-payload.ts`). A fixture missing any of
+// them is rejected as `hard-navigate` and never cached, which is what was
+// actually failing every "caches"/"expires"/"bound" test below (not a missing
+// `window`; see the report for this file's history).
+//
+// This comment used to name a local `isPayloadShape` guard in
+// `fetch-page-data.ts` that checked only `name` and a non-empty `locale`. That
+// guard was deleted in `48caf92` — it was the weakest of three disagreeing
+// copies of the contract. A comment naming a function that no longer exists is
+// the same trap that commit fixed in `link.spec.ts`: a note that documents a
+// PAST revision and reads as the current rule.
 const PAYLOAD = {
   appData: {},
   layoutData: {},
