@@ -176,13 +176,34 @@ async function collectFixtureLayoutLevels(
     // `prefix` export. Applied to the OUTERMOST prefix-only layout — the shape
     // a tree-shaker is likeliest to drop, and the position where losing it
     // changes the page's whole URL rather than one segment of it.
-    productionReadings[0] = { ...productionReadings[0], prefix: undefined };
+    //
+    // Read the entry out first: under `noUncheckedIndexedAccess` spreading an
+    // index access would widen every field to optional, which is a different
+    // (and weaker) shape than the one this corruption is meant to produce.
+    const outermost = productionReadings[0];
+
+    if (outermost === undefined) {
+      throw new Error("Fixture invariant broken: the chain produced no readings to corrupt.");
+    }
+
+    productionReadings[0] = { ...outermost, prefix: undefined };
   }
 
-  const level = (readings: LayoutReading[]): LayoutLevel =>
+  const level = (readings: readonly LayoutReading[]): LayoutLevel =>
     resolveLayoutLevel(
       PAGE,
-      CHAIN.map((id, index) => ({ id, ...readings[index] })),
+      CHAIN.map((id, index) => {
+        const reading = readings[index];
+
+        if (reading === undefined) {
+          // Both readings arrays are built by mapping over CHAIN, so this is
+          // unreachable — but saying so out loud is what makes the compiler
+          // agree, and an invariant worth relying on is worth asserting.
+          throw new Error(`Fixture invariant broken: no reading for layout "${id}".`);
+        }
+
+        return { id, ...reading };
+      }),
     );
 
   return {

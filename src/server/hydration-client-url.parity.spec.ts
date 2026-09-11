@@ -155,7 +155,16 @@ describe("hydration client URL — real build meets real resolver", () => {
       // stops being unambiguous and the resolver's first match becomes load
       // bearing by accident rather than by contract.
       expect(entries).toHaveLength(1);
-      expect(entries[0].name).toBe(HYDRATION_CLIENT_ENTRY_NAME);
+
+      // Read through a named binding rather than indexing inline: under
+      // `noUncheckedIndexedAccess` an index access is `T | undefined`, and the
+      // `toHaveLength` above does not narrow it. Asserting the binding is
+      // defined states the same expectation the length check does, in the form
+      // the compiler can follow.
+      const [hydrationEntry] = entries;
+
+      expect(hydrationEntry).toBeDefined();
+      expect(hydrationEntry?.name).toBe(HYDRATION_CLIENT_ENTRY_NAME);
     },
     REAL_BUILD_TIMEOUT_MS,
   );
