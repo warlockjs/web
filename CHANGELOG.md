@@ -2,7 +2,7 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
-## Unreleased
+## 5.7.0
 
 ### Removed
 
