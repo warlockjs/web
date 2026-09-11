@@ -269,7 +269,6 @@ describe("route.validate — red control", () => {
     } finally {
       fs.rmSync(appRoot, { recursive: true, force: true });
     }
-
   });
 
   it("THE DEFECT RETURNING: with route.validate removed, bad input reaches the page unchecked", async () => {

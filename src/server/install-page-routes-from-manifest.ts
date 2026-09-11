@@ -29,10 +29,7 @@ import { composeRoutePath } from "../routing/compose-route-path";
 import { duplicateRoutePathMessage } from "../routing/duplicate-route-path";
 import { deriveFilesystemRoutePath } from "../routing/filesystem-route";
 import { resolveLayoutLevel } from "../routing/layout-level";
-import {
-  resolvePageRouteCache,
-  resolvePageRouteIdentity,
-} from "../routing/route-identity";
+import { resolvePageRouteCache, resolvePageRouteIdentity } from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
 import { type Router } from "@warlock.js/core";
 import { createPageModuleLoader } from "./create-page-module-loader";
@@ -56,14 +53,14 @@ import type { PageManifest, PageManifestLayoutEntry, PageManifestPageEntry } fro
 import type { LayoutModuleShape, PageModuleShape, PageRouteExport } from "./page-module-shapes";
 
 /** The exports this module reads off a layout module namespace. */
-  /**
-   * The default export — the thing that puts an element in the document, and
-   * therefore the ONLY export that decides whether a layout counts against the
-   * single-rendering-layout rule (`../routing/layout-policy.ts`). The manifest
-   * carries LOADED modules, so this is a fact rather than a guess, exactly as it
-   * is in dev's own `LayoutModuleShape`.
-   */
-  /** The layout's guards, in the order it declared them. */
+/**
+ * The default export — the thing that puts an element in the document, and
+ * therefore the ONLY export that decides whether a layout counts against the
+ * single-rendering-layout rule (`../routing/layout-policy.ts`). The manifest
+ * carries LOADED modules, so this is a fact rather than a guess, exactly as it
+ * is in dev's own `LayoutModuleShape`.
+ */
+/** The layout's guards, in the order it declared them. */
 
 /**
  * How a handler is built for one page. Defaults to `createPageRouteHandler`;
@@ -434,34 +431,33 @@ export function installPageRoutesFromManifest(
   registerNotFoundPageRoute({
     router,
     renderPage:
-        notFoundPage === undefined
-          ? undefined
-          : createHandler({
-              path: NOT_FOUND_ROUTE_PATH,
-              name: NOT_FOUND_ROUTE_NAME,
-              appFile: app.sourceFile,
-              pageFile: notFoundPage.sourceFile,
-              // No layout, and therefore no layout middleware — see the dev
-              // installer for why the not-found path takes nothing that can
-              // redirect or throw.
-              layoutFile: undefined,
-              loadModule,
-              hydrationClientModuleUrl,
-              loadErrorPage,
-              // NO LAYOUT means no layout CSS either — just root and the
-              // not-found page's own stylesheets, same reasoning as above.
-              stylesheetUrls:
-                clientDir === undefined
-                  ? []
-                  : productionStylesheetUrls(clientDir, [app.sourceFile, notFoundPage.sourceFile]),
-              matchPath: (requestPath) => requestPath,
-              statusForRenderedOk: 404,
-              skipPageLoader: true,
-            }),
+      notFoundPage === undefined
+        ? undefined
+        : createHandler({
+            path: NOT_FOUND_ROUTE_PATH,
+            name: NOT_FOUND_ROUTE_NAME,
+            appFile: app.sourceFile,
+            pageFile: notFoundPage.sourceFile,
+            // No layout, and therefore no layout middleware — see the dev
+            // installer for why the not-found path takes nothing that can
+            // redirect or throw.
+            layoutFile: undefined,
+            loadModule,
+            hydrationClientModuleUrl,
+            loadErrorPage,
+            // NO LAYOUT means no layout CSS either — just root and the
+            // not-found page's own stylesheets, same reasoning as above.
+            stylesheetUrls:
+              clientDir === undefined
+                ? []
+                : productionStylesheetUrls(clientDir, [app.sourceFile, notFoundPage.sourceFile]),
+            matchPath: (requestPath) => requestPath,
+            statusForRenderedOk: 404,
+            skipPageLoader: true,
+          }),
   });
-    // `isPage` for the same reason the dev installer carries it — the router's
-    // duplicate-name error reads the flag to say which claimant is the page.
-  
+  // `isPage` for the same reason the dev installer carries it — the router's
+  // duplicate-name error reads the flag to say which claimant is the page.
 
   /*
     Same publish as the dev installer, for the same reason: `href()` and the

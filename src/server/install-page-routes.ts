@@ -537,11 +537,11 @@ export async function installPageRoutes(
     // Computed once here, at registration, not per request: dev re-registers
     // on every restart, so a stale chain cannot outlive the source edit that
     // changed it.
-    const stylesheetUrls = devHandlerStylesheetUrls(stylesheetRoot, [
-      appFile,
-      ...layoutLevel.chain,
-      pageFile,
-    ], vite.moduleGraph);
+    const stylesheetUrls = devHandlerStylesheetUrls(
+      stylesheetRoot,
+      [appFile, ...layoutLevel.chain, pageFile],
+      vite.moduleGraph,
+    );
 
     await router.withSourceFile(sourceFile, () =>
       router.get(
@@ -625,34 +625,35 @@ export async function installPageRoutes(
       registerNotFoundPageRoute({
         router,
         renderPage:
-            notFoundPageFile === undefined
-              ? undefined
-              : createPageRouteHandler({
-                  path: NOT_FOUND_ROUTE_PATH,
-                  name: NOT_FOUND_ROUTE_NAME,
-                  appFile,
-                  pageFile: notFoundPageFile,
-                  // NO LAYOUT, deliberately, and it is the same trade as "no
-                  // loader on the 404 page": a layout brings its whole chain's
-                  // middleware with it, and a guard that redirects or throws on
-                  // the not-found path turns a missing page into an incident. The
-                  // page renders inside the application root and nothing else.
-                  layoutFile: undefined,
-                  loadModule: (moduleId) => vite.ssrLoadModule(moduleId),
-                  hydrationClientModuleUrl,
-                  loadErrorPage,
-                  // NO LAYOUT means no layout CSS either — just root and the
-                  // not-found page's own stylesheets, same reasoning as above.
-                  stylesheetUrls: devHandlerStylesheetUrls(stylesheetRoot, [
-                    appFile,
-                    notFoundPageFile,
-                  ], vite.moduleGraph),
-                  // The URL that missed IS this route's pattern for this request.
-                  matchPath: (requestPath) => requestPath,
-                  statusForRenderedOk: 404,
-                  skipPageLoader: true,
-                  ...httpServerOption,
-                }),
+          notFoundPageFile === undefined
+            ? undefined
+            : createPageRouteHandler({
+                path: NOT_FOUND_ROUTE_PATH,
+                name: NOT_FOUND_ROUTE_NAME,
+                appFile,
+                pageFile: notFoundPageFile,
+                // NO LAYOUT, deliberately, and it is the same trade as "no
+                // loader on the 404 page": a layout brings its whole chain's
+                // middleware with it, and a guard that redirects or throws on
+                // the not-found path turns a missing page into an incident. The
+                // page renders inside the application root and nothing else.
+                layoutFile: undefined,
+                loadModule: (moduleId) => vite.ssrLoadModule(moduleId),
+                hydrationClientModuleUrl,
+                loadErrorPage,
+                // NO LAYOUT means no layout CSS either — just root and the
+                // not-found page's own stylesheets, same reasoning as above.
+                stylesheetUrls: devHandlerStylesheetUrls(
+                  stylesheetRoot,
+                  [appFile, notFoundPageFile],
+                  vite.moduleGraph,
+                ),
+                // The URL that missed IS this route's pattern for this request.
+                matchPath: (requestPath) => requestPath,
+                statusForRenderedOk: 404,
+                skipPageLoader: true,
+                ...httpServerOption,
+              }),
       });
 
     if (notFoundPageFile === undefined) {

@@ -129,14 +129,17 @@ describe("fetchPageData", () => {
       },
     ],
     ["a payload with an empty locale", () => respondWith({ ...PAYLOAD, locale: "" })],
-    ...hydrationPayload.REQUIRED_PAYLOAD_KEYS.map((key) => [
-      `a payload missing required ${key}`,
-      () => {
-        const withoutKey = { ...PAYLOAD } as Record<string, unknown>;
-        delete withoutKey[key];
-        respondWith(withoutKey);
-      },
-    ] as const),
+    ...hydrationPayload.REQUIRED_PAYLOAD_KEYS.map(
+      (key) =>
+        [
+          `a payload missing required ${key}`,
+          () => {
+            const withoutKey = { ...PAYLOAD } as Record<string, unknown>;
+            delete withoutKey[key];
+            respondWith(withoutKey);
+          },
+        ] as const,
+    ),
   ];
 
   it.each(fallbackCases)("falls back to a real navigation on %s", async (_label, arrange) => {

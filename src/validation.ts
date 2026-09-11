@@ -6,24 +6,24 @@ import type { Infer } from "@warlock.js/seal";
  * generic carries the CONCRETE validator type through — the inference happens
  * in `ValidatedOutput`, not here.
  */
-export type PageValidation = {
-  schema?: unknown;
-  validating?: readonly string[];
-  params?: never;
-  query?: never;
-} | {
-  params?: unknown;
-  query?: unknown;
-  schema?: never;
-  validating?: never;
-};
+export type PageValidation =
+  | {
+      schema?: unknown;
+      validating?: readonly string[];
+      params?: never;
+      query?: never;
+    }
+  | {
+      params?: unknown;
+      query?: unknown;
+      schema?: never;
+      validating?: never;
+    };
 
-type ValidatedPart<TValidation, TKey extends "params" | "query"> = TValidation extends Record<
-  TKey,
-  infer TSchema
->
-  ? { [TPart in TKey]: Infer.Output<TSchema> }
-  : Record<string, never>;
+type ValidatedPart<TValidation, TKey extends "params" | "query"> =
+  TValidation extends Record<TKey, infer TSchema>
+    ? { [TPart in TKey]: Infer.Output<TSchema> }
+    : Record<string, never>;
 
 /**
  * What `request.validated()` hands back: `Infer.Output`, not bare `Infer`.

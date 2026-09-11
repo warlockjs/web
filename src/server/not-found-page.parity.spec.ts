@@ -179,8 +179,9 @@ describe("not-found route parity gate", () => {
     const appSrcRoot = path.join(appRoot, "src");
 
     for (const relative of Object.keys(subject.files)) {
-      subject.modules[path.join(appRoot, relative)] =
-        relative.endsWith("home.page.tsx") ? { default: () => null, route: "/" } : { default: () => null };
+      subject.modules[path.join(appRoot, relative)] = relative.endsWith("home.page.tsx")
+        ? { default: () => null, route: "/" }
+        : { default: () => null };
     }
 
     // Reuse the materialized fixture for both sides; production reads its manifest

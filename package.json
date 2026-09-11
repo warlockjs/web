@@ -36,6 +36,7 @@
   ],
   "scripts": {
     "build": "vite build && node node_modules/typescript/bin/tsc -p tsconfig.json",
+    "format:check": "node ../node_modules/prettier/bin/prettier.cjs --check src __tests__",
     "typecheck": "node node_modules/typescript/bin/tsc -p tsconfig.typecheck.json",
     "test": "vitest run"
   },

@@ -399,8 +399,7 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       // through makes core the sole matcher on the live path. The catch-all
       // page deliberately has no wildcard param: its virtual path is the
       // missed URL itself, so it remains the named `not-found` route with `{}`.
-      const params =
-        matchPath === undefined ? (request.params as Record<string, string>) : {};
+      const params = matchPath === undefined ? (request.params as Record<string, string>) : {};
 
       // A DATA request runs everything above and below this line identically —
       // it is the same route, the same match and the same pipeline — and differs

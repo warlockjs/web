@@ -25,10 +25,7 @@ import {
   WARLOCK_DATA_REQUEST_HEADER,
   WARLOCK_DATA_REQUEST_VALUE,
 } from "../../routing/data-request";
-import {
-  isHydrationPayload,
-  type HydrationDocumentPayloadSource,
-} from "../../hydration-payload";
+import { isHydrationPayload, type HydrationDocumentPayloadSource } from "../../hydration-payload";
 
 export type PageDataResult =
   | {
