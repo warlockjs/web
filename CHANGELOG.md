@@ -2,6 +2,32 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## Unreleased
+
+### Removed
+
+- **`route.validate` and `route.middleware` are withdrawn, one release after 5.6.0 added them.** They were a second way to say what the top-level `validation` and `middleware` exports already said, on the same file — and the two validation surfaces disagreed about the status code. **Migration is a move, not a rewrite:** the schema shape is unchanged (`params` and `query` stay separate, never merged) and the failure is still 400.
+
+  ```diff
+  - export const route = { path: "/products/:id", validate: v.object({ … }), middleware: [guard] } as const;
+  + export const route = { path: "/products/:id" } as const;
+  + export const validation = { params: v.object({ … }), query: v.object({ … }) };
+  + export const middleware = [guard];
+  ```
+
+  **A page still declaring either one refuses to boot and names the file.** It is never silently ignored — which for `route.middleware` is the difference between a deploy that fails and a route that serves without its auth guard.
+
+### Fixed
+
+- **Dev and production agree about stylesheets.** A stylesheet reached only through a component import was collected by production's bundler-graph walk and was structurally invisible to dev's scan of the page file — so a page rendered unstyled in development and correct in production. Both sides now end in one traversal, gated by a fixture built through **both** pipelines with the outputs diffed.
+- **A client navigation whose data payload is incomplete now loads the page normally instead of rendering it blank.** Navigation carried its own copy of the payload rule and checked two of the six required keys, so a payload that could not render a page was accepted and handed to React anyway; the failure surfaced later, somewhere else, pointing at nothing. It now falls back to a full page load — slower for that one click, and the page arrives.
+- **The dev server no longer says it is watching for changes while it is not yet serving.** On a slow boot that line arrived up to three minutes before the port was bound; every word of it was true and the impression it left was false.
+- **The `create-a-page` skill and `llms-full.txt` taught `route.validate` and `route.middleware`** — with a complete worked example — after both were withdrawn. Following our own documentation produced an app that would not start.
+
+### Changed
+
+- The dev and production page installers now agree on the layout **chain**, the layout **level**, and the hydration entry URL by construction rather than by inspection, each gated with a red control. The three places they still differ — live `public/` serving, its cache header, and hashed-asset caching — are deliberate and are now declared in the code that implements them.
+
 ## 5.6.0 - 2026-09-08
 ### Added
 
