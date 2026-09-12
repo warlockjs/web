@@ -220,6 +220,43 @@ describe("devHandlerStylesheetUrls — one handler's whole chain", () => {
   });
 });
 
+describe("devHandlerStylesheetUrls — cold module graph (FOUC regression)", () => {
+  // A COLD graph — a defined ModuleGraph with no modules loaded yet — is what
+  // a route's first SSR sees, right after `warlock dev` starts and before the
+  // client has fetched that route once. It must STILL yield the chain's own
+  // directly-imported stylesheets, or the first paint carries no
+  // render-blocking <link> and flashes unstyled (card 20bb184d). Before the
+  // fix this returned [] whenever a module graph was passed; the source-scan
+  // fallback only ran when the graph was `undefined`.
+  const coldModuleGraph = {
+    getModulesByFile: () => undefined,
+    fileToModulesMap: new Map(),
+  } as unknown as Parameters<typeof devHandlerStylesheetUrls>[2];
+
+  it("still emits the chain's own stylesheets from a cold graph", () => {
+    const appRoot = makeTree({
+      "src/web/root.tsx": 'import "./app.css";\n',
+      "src/web/app.css": "",
+      "src/app/main/web/home.page.tsx": 'import "./home.css";\n',
+      "src/app/main/web/home.css": "",
+    });
+
+    const urls = devHandlerStylesheetUrls(
+      appRoot,
+      [
+        path.join(appRoot, "src/web/root.tsx"),
+        path.join(appRoot, "src/app/main/web/home.page.tsx"),
+      ],
+      coldModuleGraph,
+    );
+
+    expect(urls).toEqual([
+      `/src/web/app.css${VITE_DIRECT_CSS_QUERY}`,
+      `/src/app/main/web/home.css${VITE_DIRECT_CSS_QUERY}`,
+    ]);
+  });
+});
+
 describe("productionStylesheetUrls — matching explicit source ids", () => {
   it("matches a manifest key that equals the source id exactly", () => {
     const clientDir = makeClientDir({

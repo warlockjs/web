@@ -236,6 +236,38 @@ describe("finishRender — normal app error page path", () => {
   });
 });
 
+describe("finishRender — render-error floor (d47f5696)", () => {
+  it("writes an SSR render throw to stderr, naming the route and passing the error", async () => {
+    const entry = throwingPageEntry();
+    const { request, response } = createHttp();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    let calls: unknown[][];
+    try {
+      const rendered = await renderPageRequest("/boom", {
+        routes: [entry],
+        createHttp: () => ({ request, response }),
+        loadErrorPage: async () => fakeErrorPageModule(),
+      });
+      if (rendered instanceof Response) throw new Error("unexpected terminal Response");
+      calls = errorSpy.mock.calls.map((args) => [...args]);
+    } finally {
+      errorSpy.mockRestore();
+    }
+
+    // The thrown error object itself is passed (so its stack reaches the terminal).
+    expect(
+      calls.some((args) =>
+        args.some((arg) => arg instanceof Error && arg.message === "page render exploded"),
+      ),
+    ).toBe(true);
+    // And the route is named, so the developer knows WHERE it threw.
+    expect(
+      calls.some((args) => args.some((arg) => typeof arg === "string" && arg.includes("/boom"))),
+    ).toBe(true);
+  });
+});
+
 describe("finishRender ordinary page props", () => {
   it("passes nested dynamic-route params only to the page, not its layout or root", async () => {
     type WrapperProps = {

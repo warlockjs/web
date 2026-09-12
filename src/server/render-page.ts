@@ -352,6 +352,30 @@ function documentSlotsFrom(captured: CapturedHttp | undefined): DocumentSlots {
   return { nonce: captured.request.nonce, locale: captured.request.locale };
 }
 
+/**
+ * Unconditional stderr floor for a render-time failure.
+ *
+ * An SSR component or boundary that throws during stage 9 is otherwise
+ * SWALLOWED: the escalation loop below renders the deliberately-generic
+ * `FrameworkRootBoundary` (or an authored boundary) in its place, the error is
+ * never serialized into the document (server knowledge, `FrameworkRootBoundary`
+ * above), and nothing in stages 1-9 logs it. In development that left a blank
+ * 500 with no message in the response, no dev overlay, and no line in the dev
+ * server's own log — the developer had nothing to debug with (finding
+ * `d47f5696`).
+ *
+ * This writes the error, with its stack, to stderr. It runs on BOTH dev and
+ * production on purpose: canon `8d3c13a8` — a fatal reported only through a
+ * configurable sink can vanish, so every fatal needs a floor that cannot be
+ * silenced. stderr never reaches the client, so this leaks nothing that the
+ * generic boundary was protecting; it only gives the terminal the one line
+ * that locates the throw.
+ */
+function reportRenderError(route: PageDataBundle["route"], thrown: unknown): void {
+  const where = route?.path ?? route?.name ?? "an unknown route";
+  console.error(`[warlock:web] SSR render error while rendering ${where}:`, thrown);
+}
+
 async function finishRender(
   triple: PageRouteEntry["triple"],
   bundle: PageDataBundle,
@@ -499,6 +523,10 @@ async function finishRender(
       break;
     } catch (thrown) {
       renderTimeThrow = true;
+
+      // Floor first: whatever we do next (escalate to a boundary, fall to the
+      // framework terminal), the throw must not vanish. See reportRenderError.
+      reportRenderError(bundle.route, thrown);
 
       if (currentError?.boundary.boundaryLevel === "app") {
         // The floor: the app-level boundary's own render just threw, so

@@ -146,14 +146,27 @@ export function devHandlerStylesheetUrls(
   sourceFiles: readonly string[],
   moduleGraph?: ModuleGraph,
 ): string[] {
+  // Source-scan baseline: each chain member's OWN directly imported
+  // stylesheets, read from the file text. ALWAYS computed, and placed FIRST.
+  //
+  // This is the only source that works on a COLD Vite module graph — a route's
+  // very first SSR, or the moments right after `warlock dev` starts, before
+  // the client has loaded that route once. The module-graph walk below is
+  // empty until then, so relying on it alone left the first paint of every
+  // route with NO render-blocking `<link rel="stylesheet">` — a flash of
+  // unstyled content that production (which reads a complete manifest) never
+  // has. The graph walk still runs, and adds the transitive CSS the warm graph
+  // knows about; `collectStylesheetGraph` dedupes by URL across both, and the
+  // baseline coming first keeps the chain's own CSS render-blocking and in
+  // outer-to-inner order.
+  const baseline: StylesheetGraphNode[] = sourceFiles.map((sourceFile) => ({
+    id: sourceFile,
+    stylesheets: devStylesheetUrls(appRoot, sourceFile),
+    imports: [],
+  }));
+
   if (moduleGraph === undefined) {
-    return collectStylesheetGraph(
-      sourceFiles.map((sourceFile) => ({
-        id: sourceFile,
-        stylesheets: devStylesheetUrls(appRoot, sourceFile),
-        imports: [],
-      })),
-    );
+    return collectStylesheetGraph(baseline);
   }
 
   const nodes = new Map<ModuleNode, StylesheetGraphNode>();
@@ -172,9 +185,11 @@ export function devHandlerStylesheetUrls(
     return node;
   };
 
-  return collectStylesheetGraph(
-    sourceFiles.flatMap((sourceFile) => findDevModules(moduleGraph, sourceFile).map(adapt)),
+  const graphRoots = sourceFiles.flatMap((sourceFile) =>
+    findDevModules(moduleGraph, sourceFile).map(adapt),
   );
+
+  return collectStylesheetGraph([...baseline, ...graphRoots]);
 }
 
 /** Finds Vite's module node despite its normalized-path cache keys. */
