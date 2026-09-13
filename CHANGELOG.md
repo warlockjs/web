@@ -2,6 +2,16 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.9.0 - 2026-09-13
+
+### Added
+
+- Dev diagnostic when a `.client` module is reached from the **server** import graph. The `.client` suffix is a developer marker, not enforced isolation (the import graph decides where code runs); this emits a named, non-fatal warning identifying the offending edge instead of silently over-promising.
+
+### Internal
+
+- Umbrella dev/prod route-table parity differential — a pure test pinning the production route derivation against the shared rule the dev installer uses, so any future re-split of the derivation fails loudly.
+
 ## 5.8.0 - 2026-09-13
 
 ### Fixed
