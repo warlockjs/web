@@ -2,6 +2,13 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.8.0 - 2026-09-13
+
+### Fixed
+
+- Dev SSR now emits the page's stylesheet `<link>` in `<head>`, fixing a cold module-graph flash-of-unstyled-content — the first paint of a page whose CSS is reached only through the module graph is now styled in development, as it already was in production.
+- A dev-mode SSR render error now reaches an unconditional stderr floor with a real diagnostic, instead of a diagnostic-free generic 500.
+
 ## 5.7.0 - 2026-09-11
 
 ### Removed
