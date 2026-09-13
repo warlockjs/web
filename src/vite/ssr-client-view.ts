@@ -1,6 +1,11 @@
 import { parse } from "@babel/parser";
 import type { Plugin } from "vite";
-import { isAppSourcePath, isRecognizedUniversalSurface, isServerFile } from "./gate-a-resolve";
+import {
+  isAppSourcePath,
+  isClientFile,
+  isRecognizedUniversalSurface,
+  isServerFile,
+} from "./gate-a-resolve";
 import { isProjectableFile, projectModule } from "./projection";
 import { moduleKey } from "../shared/module-key";
 
@@ -128,6 +133,45 @@ function isServerEnvironment(context: {
   return context.environment?.config.consumer === "server";
 }
 
+type ServerReachedClientEdge = {
+  /** Whether the IMPORTER is on the client boundary (client-bound). */
+  readonly importerIsClientBound: boolean;
+  /** The resolved id the importer's specifier landed on, or a falsy miss. */
+  readonly resolvedTarget: string | undefined;
+  /** The importer id, used only to name the offending edge in the message. */
+  readonly importer: string;
+};
+
+/**
+ * The PURE decision behind the `.client`-reached-from-the-server diagnostic,
+ * factored out so it is unit-testable without booting Vite.
+ *
+ * Canon c3abc87b: the import graph is authoritative and `.client` is a developer
+ * marker, NOT enforced isolation. So a warning is warranted for exactly one
+ * shape — a SERVER-side importer (`importerIsClientBound === false`) reaching a
+ * `.client` target. An all-client graph (a client-bound importer → `.client`)
+ * is the marker being used as intended and must stay silent, as must any edge
+ * whose target is not a `.client` module. Returns the message to print, or
+ * `undefined` when nothing should warn.
+ */
+export function serverReachedClientDiagnostic({
+  importerIsClientBound,
+  resolvedTarget,
+  importer,
+}: ServerReachedClientEdge): string | undefined {
+  if (importerIsClientBound) return undefined;
+  if (!resolvedTarget) return undefined;
+  if (!isClientFile(resolvedTarget)) return undefined;
+
+  return [
+    `[warlock:web] a server-reachable module imports a .client module.`,
+    ``,
+    `Edge: ${moduleKey(importer)} → ${moduleKey(resolvedTarget)}`,
+    `Cause: "${moduleKey(importer)}" is reachable from the SERVER graph, yet it imports the .client module "${moduleKey(resolvedTarget)}". The import graph is what actually decides where code runs; ".client" is only a developer marker of intent.`,
+    `Fix: ".client" does NOT create the isolation its name suggests — this edge still pulls the target into the server graph. Move the import behind a real client boundary (a component/.page/layout the client graph reaches) if it must not run on the server.`,
+  ].join("\n");
+}
+
 /**
  * Keeps the production/client pipeline byte-identical, while giving Gate A
  * and Gate B a validation-only view in Vite's development SSR environment.
@@ -144,6 +188,10 @@ export function clientEnvironmentOnly(plugin: Plugin, ssrState: SsrBoundaryState
     typeof plugin.resolveId === "function" ? plugin.resolveId : plugin.resolveId?.handler;
   const originalBuildStart =
     typeof plugin.buildStart === "function" ? plugin.buildStart : plugin.buildStart?.handler;
+
+  // Each unique server-importer → .client-target edge warns at most once for the
+  // life of this plugin instance; `resolveId` fires repeatedly for the same edge.
+  const warnedServerReachedClientEdges = new Set<string>();
 
   return {
     ...plugin,
@@ -202,7 +250,46 @@ export function clientEnvironmentOnly(plugin: Plugin, ssrState: SsrBoundaryState
           const isClientBound =
             ssrState.clientBoundModules.has(importerKey) ||
             isStatelessClientSurface(importerKey, ssrState.appRoot);
-          if (!isClientBound) return null;
+          if (!isClientBound) {
+            // A server edge. Resolution is unchanged — this branch STILL returns
+            // null and never surfaces a refusal — but if this server-reachable
+            // importer names a `.client` module, warn (non-fatally) that
+            // `.client` is a marker, not enforced isolation.
+            //
+            // The resolve below is judged under `ssr: false`, so Gate A's own
+            // resolveId can refuse a legitimately server-only import (it throws
+            // `this.error`). That refusal must not escape a diagnostic that only
+            // ADDS a warning, so it is swallowed: a `.client` file is recognized
+            // NOWHERE in Gate A (the very defect this diagnostic exists for), so
+            // a genuine `.client` target resolves cleanly and is still caught —
+            // only non-`.client` server imports throw, and those are not our case.
+            let targetId: string | undefined;
+            try {
+              const serverEdgeTarget = await originalResolveId.call(this, source, importer, {
+                ...options,
+                ssr: false,
+              });
+              targetId =
+                (typeof serverEdgeTarget === "string" ? serverEdgeTarget : serverEdgeTarget?.id) ??
+                undefined;
+            } catch {
+              targetId = undefined;
+            }
+
+            const message = serverReachedClientDiagnostic({
+              importerIsClientBound: false,
+              resolvedTarget: targetId,
+              importer,
+            });
+            if (message && targetId) {
+              const edgeKey = `${importerKey}→${moduleKey(targetId)}`;
+              if (!warnedServerReachedClientEdges.has(edgeKey)) {
+                warnedServerReachedClientEdges.add(edgeKey);
+                console.warn(message);
+              }
+            }
+            return null;
+          }
 
           const survivingImports = ssrState.clientImportsByModule.get(importerKey);
           if (survivingImports && !survivingImports.has(source)) return null;

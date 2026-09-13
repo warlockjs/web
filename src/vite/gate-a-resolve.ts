@@ -279,6 +279,28 @@ export function isServerFile(resolvedPath: string, appRoot: string): boolean {
   return false;
 }
 
+/**
+ * The `.client` mirror of `isServerFile`'s two filename/segment patterns. Unlike
+ * `.server`, `.client` is NOT an enforced isolation boundary — the import graph
+ * is authoritative and this marker only NAMES an intent (canon c3abc87b). So the
+ * plain `client/` directory case `isServerFile` carries for app source has no
+ * counterpart here: this recognizes only the explicit `.client` suffix and the
+ * `.client/` directory segment, and takes no `appRoot` because neither pattern
+ * consults it.
+ *
+ * Normalization matches `isServerFile` exactly: a Vite query suffix (`?raw`,
+ * `?worker`, ...) is split off before judgement so a suffix still attached does
+ * not slide `.client`/`.client.ts` out from under the `$` anchor, and the path
+ * is POSIX-normalized so the directory-segment test sees `/` on every platform.
+ */
+export function isClientFile(resolvedPath: string): boolean {
+  const bare = resolvedPath.split("?")[0];
+  const normalized = toPosix(bare);
+  if (/\.client(\.[jt]sx?)?$/.test(normalized)) return true;
+  if (/(^|\/)\.client(\/|$)/.test(normalized)) return true;
+  return false;
+}
+
 export function isRecognizedUniversalSurface(resolvedPath: string): boolean {
   const normalized = toPosix(resolvedPath);
   const base = path.basename(normalized);

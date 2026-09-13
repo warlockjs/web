@@ -4,7 +4,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build, type Alias, type Plugin, type Rollup } from "vite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { gateAResolve, type EnvironmentClassifierOptions as GateAOptions } from "./gate-a-resolve";
+import {
+  gateAResolve,
+  isClientFile,
+  type EnvironmentClassifierOptions as GateAOptions,
+} from "./gate-a-resolve";
+import { serverReachedClientDiagnostic } from "./ssr-client-view";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1719,5 +1724,67 @@ describe("gateAResolve — SSR self-guard (bare, direct resolveId call)", () => 
     await expect(resolveId("node:fs", undefined, { ssr: false })).rejects.toThrow(
       '"node:fs" is a Node.js builtin module',
     );
+  });
+});
+
+/**
+ * `.client` recognition (d72404bd): the exact `.client` mirror of the `.server`
+ * filename/segment matching `isServerFile` already does. This is the
+ * pattern-level control — it does NOT decide whether to warn (that is the graph
+ * decision below); it only answers "is this id a `.client` module".
+ */
+describe("isClientFile — `.client` suffix and `.client/` segment recognition", () => {
+  it("POSITIVE: recognizes the .client suffix and a .client/ directory segment", () => {
+    expect(isClientFile("foo.client.ts")).toBe(true);
+    expect(isClientFile("foo.client.tsx")).toBe(true);
+    expect(isClientFile("a/.client/b.ts")).toBe(true);
+  });
+
+  it("NEGATIVE: does not fire on .server, plain modules, or a .client-lookalike name", () => {
+    expect(isClientFile("foo.server.ts")).toBe(false);
+    expect(isClientFile("foo.ts")).toBe(false);
+    // Only the `.client` suffix/segment counts — `.client-helpers` is a
+    // different filename, not the marker.
+    expect(isClientFile("foo.client-helpers.ts")).toBe(false);
+  });
+});
+
+/**
+ * The graph decision behind the diagnostic (canon c3abc87b): the import graph is
+ * authoritative and `.client` is only a marker. A SERVER-reachable importer
+ * (importerIsClientBound=false) reaching a `.client` target warns and names the
+ * edge; an all-client edge and a server edge to a non-`.client` target stay
+ * silent.
+ */
+describe("serverReachedClientDiagnostic — warns only on a server → .client edge", () => {
+  it("GUILTY: a server importer resolving to a .client target yields a message naming the edge", () => {
+    const message = serverReachedClientDiagnostic({
+      importerIsClientBound: false,
+      resolvedTarget: "/app/blog/web/widget.client.ts",
+      importer: "/app/blog/web/data.loader.ts",
+    });
+    expect(message).toBeDefined();
+    expect(message).toContain("/app/blog/web/data.loader.ts → /app/blog/web/widget.client.ts");
+    expect(message).toContain("marker");
+  });
+
+  it("INNOCENT (all-client): a client-bound importer → .client target yields no message", () => {
+    expect(
+      serverReachedClientDiagnostic({
+        importerIsClientBound: true,
+        resolvedTarget: "/app/blog/web/widget.client.ts",
+        importer: "/app/blog/web/panel.client.ts",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("INNOCENT (non-.client target): a server importer → plain module yields no message", () => {
+    expect(
+      serverReachedClientDiagnostic({
+        importerIsClientBound: false,
+        resolvedTarget: "/app/blog/web/format.ts",
+        importer: "/app/blog/web/data.loader.ts",
+      }),
+    ).toBeUndefined();
   });
 });
