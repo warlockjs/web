@@ -32,6 +32,7 @@ import { resolveLayoutLevel } from "../routing/layout-level";
 import { resolvePageRouteCache, resolvePageRouteIdentity } from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
 import { type Router } from "@warlock.js/core";
+import { composeLayoutModules } from "./compose-layout-modules";
 import { createPageModuleLoader } from "./create-page-module-loader";
 import type { ErrorPageModule } from "./error-page";
 import {
@@ -39,7 +40,6 @@ import {
   type PageRouteHandler,
   type PageRouteHandlerOptions,
 } from "./create-page-route-handler";
-import { foldLayoutLoaders } from "./fold-layout-loaders";
 import { productionStylesheetUrls } from "./stylesheet-urls";
 import {
   DuplicateNotFoundPageError,
@@ -240,16 +240,10 @@ function composeLayoutLevel(
 ): Record<string, unknown> {
   const hostIndex = page.layouts.indexOf(host);
 
-  return {
-    ...host.module,
-    middleware: page.layouts.flatMap((layout) => [
-      ...((layout.module as LayoutModuleShape).middleware ?? []),
-    ]),
-    loader: foldLayoutLoaders(
-      page.layouts.map((layout) => (layout.module as LayoutModuleShape).loader),
-      hostIndex,
-    ),
-  };
+  return composeLayoutModules(
+    page.layouts.map((layout) => layout.module as LayoutModuleShape),
+    hostIndex,
+  );
 }
 
 /**

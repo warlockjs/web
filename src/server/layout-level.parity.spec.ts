@@ -38,6 +38,8 @@ import { pathToFileURL } from "node:url";
 import { build, createServer } from "vite";
 import { afterEach, describe, expect, it } from "vitest";
 import { type LayoutLevel, resolveLayoutLevel } from "../routing/layout-level";
+import { composeLayoutModules } from "./compose-layout-modules";
+import type { LayoutModuleShape } from "./page-module-shapes";
 
 const temporaryDirectories: string[] = [];
 
@@ -73,13 +75,27 @@ function makeTree(files: Record<string, string>): string {
  * `resolveLayoutLevel` (`NestedLayoutsNotSupportedError`). A fixture that
  * ignored that rule would not be a harder test, it would be an invalid app —
  * the first draft of this file was, and the rule caught it.
+ *
+ * `outer` and `third` (the RENDERING host) each also declare a NAMED
+ * `middleware` export, and the host additionally declares a `loader` — the
+ * layout-level COMPOSITION half of parity (`composeLayoutModules`,
+ * `./compose-layout-modules.ts`) that `renders`/`prefix` alone does not
+ * exercise. Named, not anonymous, functions: a dev module and its built
+ * counterpart are never the SAME function object, so parity here is proven by
+ * comparing declaration order (function name) and observed invocation order,
+ * not by reference equality.
  */
 const FIXTURE = {
-  "src/web/layout.ts": 'export const prefix = "/shop";\n',
+  "src/web/layout.ts":
+    'export const prefix = "/shop";\n' +
+    'export const middleware = [function outerGuard(ctx) { ctx.order.push("outer"); }];\n',
   "src/web/account/layout.ts": "export const unrelated = true;\n",
   "src/web/account/settings/layout.ts": 'export const prefix = "/settings";\n',
   "src/web/account/settings/profile/layout.ts":
-    'export const prefix = "/profile";\nexport default function Inner() {}\n',
+    'export const prefix = "/profile";\n' +
+    "export default function Inner() {}\n" +
+    'export const middleware = [function profileGuard(ctx) { ctx.order.push("profile"); }];\n' +
+    'export const loader = () => ({ label: "profile-loaded" });\n',
   "src/web/account/settings/profile/index.page.ts": "export default function Page() {}\n",
 } as const;
 
@@ -106,9 +122,52 @@ function readLayout(module: Record<string, unknown>): LayoutReading {
   };
 }
 
+/**
+ * The composed layout-LEVEL outcome — what `composeLayoutModules` produces
+ * once the chain's readings are folded into the one slot a page handler gets.
+ * Function references never survive across a dev module and its built
+ * counterpart, so parity is captured by declaration NAME (order/identity) and
+ * by observed INVOCATION order, not by comparing the functions themselves.
+ */
+type ComposedReading = {
+  middlewareNames: string[];
+  middlewareInvocationOrder: string[];
+  loaderDefined: boolean;
+  loaderResult: unknown;
+};
+
+/** Runs the chain's modules through the shared `composeLayoutModules` rule and observes the result. */
+async function composedReadingFor(
+  modules: readonly Record<string, unknown>[],
+  level: LayoutLevel,
+): Promise<ComposedReading> {
+  const hostIndex = CHAIN.indexOf((level.hostId ?? "") as (typeof CHAIN)[number]);
+
+  if (hostIndex === -1) {
+    throw new Error(`Fixture invariant broken: host id "${level.hostId}" not found in chain.`);
+  }
+
+  const composed = composeLayoutModules(modules as LayoutModuleShape[], hostIndex);
+  const invocationOrder: string[] = [];
+
+  for (const middleware of composed.middleware ?? []) {
+    await middleware({ order: invocationOrder } as never);
+  }
+
+  const loaderResult =
+    composed.loader === undefined ? undefined : await composed.loader({} as never);
+
+  return {
+    middlewareNames: (composed.middleware ?? []).map((middleware) => middleware.name),
+    middlewareInvocationOrder: invocationOrder,
+    loaderDefined: composed.loader !== undefined,
+    loaderResult,
+  };
+}
+
 type LayoutLevelParity = {
-  dev: { level: LayoutLevel; readings: LayoutReading[] };
-  production: { level: LayoutLevel; readings: LayoutReading[] };
+  dev: { level: LayoutLevel; readings: LayoutReading[]; composed: ComposedReading };
+  production: { level: LayoutLevel; readings: LayoutReading[]; composed: ComposedReading };
 };
 
 /**
@@ -206,9 +265,21 @@ async function collectFixtureLayoutLevels(
       }),
     );
 
+  const devLevel = level(devReadings);
+  const productionLevel = level(productionReadings);
+
+  const [devComposed, productionComposed] = await Promise.all([
+    composedReadingFor(devModules, devLevel),
+    composedReadingFor(productionModules, productionLevel),
+  ]);
+
   return {
-    dev: { level: level(devReadings), readings: devReadings },
-    production: { level: level(productionReadings), readings: productionReadings },
+    dev: { level: devLevel, readings: devReadings, composed: devComposed },
+    production: {
+      level: productionLevel,
+      readings: productionReadings,
+      composed: productionComposed,
+    },
   };
 }
 
@@ -252,6 +323,35 @@ describe("layout level parity gate — built module vs live module", () => {
   );
 
   it(
+    "composes the same middleware order and folded loader from a built module as from a live one",
+    async () => {
+      const parity = await collectFixtureLayoutLevels();
+
+      // ORDER/IDENTITY: names (a built module and a dev module never share a
+      // function reference) and observed invocation order both agree between
+      // dev and production. This is a PARITY check, not a fixed-shape one —
+      // it must stay green even if the shared `composeLayoutModules` rule
+      // itself changes its own ordering, because both sides call that one
+      // rule; the exact expected order is pinned separately below, by the
+      // "exercises all three layout shapes" case.
+      expect(parity.production.composed.middlewareNames).toEqual(
+        parity.dev.composed.middlewareNames,
+      );
+      expect(parity.production.composed.middlewareInvocationOrder).toEqual(
+        parity.dev.composed.middlewareInvocationOrder,
+      );
+
+      // LOADER: the host layout's loader survives the fold on both sides and
+      // returns the same value.
+      expect(parity.dev.composed.loaderDefined).toBe(true);
+      expect(parity.production.composed.loaderDefined).toBe(true);
+      expect(parity.production.composed.loaderResult).toEqual(parity.dev.composed.loaderResult);
+      expect(parity.dev.composed.loaderResult).toEqual({ label: "profile-loaded" });
+    },
+    REAL_BUILD_TIMEOUT_MS,
+  );
+
+  it(
     "asserts the fixture actually exercises all three layout shapes",
     async () => {
       const parity = await collectFixtureLayoutLevels();
@@ -267,6 +367,12 @@ describe("layout level parity gate — built module vs live module", () => {
       expect(parity.dev.level.prefix).toBe("/shop/settings/profile");
       // The one rendering layout hosts the page — not the nearest one.
       expect(parity.dev.level.hostId).toBe("src/web/account/settings/profile/layout.ts");
+      // Pins the ACTUAL expected shape of the composed middleware/loader too
+      // — without this, the parity check above passes just as happily if
+      // both sides silently dropped every guard and the loader.
+      expect(parity.dev.composed.middlewareNames).toEqual(["outerGuard", "profileGuard"]);
+      expect(parity.dev.composed.middlewareInvocationOrder).toEqual(["outer", "profile"]);
+      expect(parity.dev.composed.loaderResult).toEqual({ label: "profile-loaded" });
     },
     REAL_BUILD_TIMEOUT_MS,
   );

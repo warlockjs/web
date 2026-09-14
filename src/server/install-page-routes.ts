@@ -52,10 +52,10 @@ import {
 } from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
 import { type FastifyInstance, type Router } from "@warlock.js/core";
+import { composeLayoutModules } from "./compose-layout-modules";
 import { createPageRouteHandler } from "./create-page-route-handler";
 import type { ErrorPageModule } from "./error-page";
 import type { PipelineLoader, PipelineMiddleware } from "./execute-page-request";
-import { foldLayoutLoaders } from "./fold-layout-loaders";
 import { devHandlerStylesheetUrls } from "./stylesheet-urls";
 import {
   DuplicateNotFoundPageError,
@@ -333,16 +333,8 @@ async function composeLayoutLevel(
 ): Promise<LayoutModuleShape> {
   const modules = await Promise.all(level.chain.map(loadLayout));
   const hostIndex = level.chain.indexOf(level.layoutFile);
-  const host = modules[hostIndex];
 
-  return {
-    ...host,
-    middleware: modules.flatMap((layoutModule) => [...(layoutModule.middleware ?? [])]),
-    loader: foldLayoutLoaders(
-      modules.map((layoutModule) => layoutModule.loader),
-      hostIndex,
-    ),
-  };
+  return composeLayoutModules(modules, hostIndex);
 }
 
 export type InstallPageRoutesOptions = {
