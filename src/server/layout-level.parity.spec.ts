@@ -38,7 +38,9 @@ import { pathToFileURL } from "node:url";
 import { build, createServer } from "vite";
 import { afterEach, describe, expect, it } from "vitest";
 import { type LayoutLevel, resolveLayoutLevel } from "../routing/layout-level";
+import { toPosix } from "../shared/to-posix";
 import { composeLayoutModules } from "./compose-layout-modules";
+import { layoutPrefixesByDirectory } from "./layout-prefixes";
 import type { LayoutModuleShape } from "./page-module-shapes";
 
 const temporaryDirectories: string[] = [];
@@ -166,9 +168,40 @@ async function composedReadingFor(
 }
 
 type LayoutLevelParity = {
-  dev: { level: LayoutLevel; readings: LayoutReading[]; composed: ComposedReading };
-  production: { level: LayoutLevel; readings: LayoutReading[]; composed: ComposedReading };
+  dev: {
+    level: LayoutLevel;
+    readings: LayoutReading[];
+    composed: ComposedReading;
+    prefixTable: Record<string, string>;
+  };
+  production: {
+    level: LayoutLevel;
+    readings: LayoutReading[];
+    composed: ComposedReading;
+    prefixTable: Record<string, string>;
+  };
 };
+
+/**
+ * Dev's OWN directory derivation — `install-page-routes.ts`'s
+ * `resolveLayoutLevel`: a layout's directory relative to the web root, read
+ * off its absolute filesystem path.
+ */
+function devDirectoryFor(webRoot: string, layoutFile: string): string {
+  return toPosix(path.relative(webRoot, path.dirname(layoutFile)));
+}
+
+/**
+ * Production's OWN directory derivation — `install-page-routes-from-manifest.ts`'s
+ * `layoutPrefixesOf`: a layout's directory relative to the web root, read off
+ * its manifest `sourceFile` string (`src/web/...`, two segments stripped).
+ */
+function productionDirectoryFor(sourceFile: string): string {
+  const relative = sourceFile.split("/").slice(2).join("/");
+  const slashIndex = relative.lastIndexOf("/");
+
+  return slashIndex === -1 ? "" : relative.slice(0, slashIndex);
+}
 
 /**
  * Loads every layout in the chain through BOTH real pipelines and runs each
@@ -273,12 +306,39 @@ async function collectFixtureLayoutLevels(
     composedReadingFor(productionModules, productionLevel),
   ]);
 
+  // The layout-prefix-by-directory table (`./layout-prefixes.ts`'s
+  // `layoutPrefixesByDirectory`) both installers build from these SAME
+  // readings, each via its own directory derivation — dev's off the real
+  // absolute filesystem path, production's off the manifest `sourceFile`
+  // string. Built from `productionReadings`/`devReadings` AFTER the corruption
+  // branch above, so `corruptProductionPrefix` shows up here exactly as it
+  // would in a real build that dropped that export.
+  const webRoot = path.join(appRoot, "src", "web");
+  const devPrefixTable = layoutPrefixesByDirectory(
+    CHAIN.map((relative, index) => ({
+      directory: devDirectoryFor(webRoot, path.join(appRoot, relative)),
+      prefix: devReadings[index]?.prefix,
+    })),
+  );
+  const productionPrefixTable = layoutPrefixesByDirectory(
+    CHAIN.map((relative, index) => ({
+      directory: productionDirectoryFor(relative),
+      prefix: productionReadings[index]?.prefix,
+    })),
+  );
+
   return {
-    dev: { level: devLevel, readings: devReadings, composed: devComposed },
+    dev: {
+      level: devLevel,
+      readings: devReadings,
+      composed: devComposed,
+      prefixTable: devPrefixTable,
+    },
     production: {
       level: productionLevel,
       readings: productionReadings,
       composed: productionComposed,
+      prefixTable: productionPrefixTable,
     },
   };
 }
@@ -318,6 +378,20 @@ describe("layout level parity gate — built module vs live module", () => {
       // WHICH layout drifted, which is the difference between a gate that
       // fails and a gate that explains.
       expect(parity.production.readings).toEqual(parity.dev.readings);
+    },
+    REAL_BUILD_TIMEOUT_MS,
+  );
+
+  it(
+    "builds the same layout-prefix-by-directory table from a built module as from a live one",
+    async () => {
+      // INNOCENT CASE (step 2 of the dedup card): dev's directory derivation
+      // (off the real filesystem path) and production's (off the manifest
+      // `sourceFile` string) still land on the same table today, because both
+      // feed the one shared rule, `layoutPrefixesByDirectory`.
+      const parity = await collectFixtureLayoutLevels();
+
+      expect(parity.production.prefixTable).toEqual(parity.dev.prefixTable);
     },
     REAL_BUILD_TIMEOUT_MS,
   );
@@ -373,6 +447,14 @@ describe("layout level parity gate — built module vs live module", () => {
       expect(parity.dev.composed.middlewareNames).toEqual(["outerGuard", "profileGuard"]);
       expect(parity.dev.composed.middlewareInvocationOrder).toEqual(["outer", "profile"]);
       expect(parity.dev.composed.loaderResult).toEqual({ label: "profile-loaded" });
+      // Pins the prefix table itself, keyed by directory relative to the web
+      // root — root is `""`, and the group-less nested directories compose
+      // exactly the segments `level.prefix` above already asserts.
+      expect(parity.dev.prefixTable).toEqual({
+        "": "/shop",
+        "account/settings": "/settings",
+        "account/settings/profile": "/profile",
+      });
     },
     REAL_BUILD_TIMEOUT_MS,
   );
@@ -389,6 +471,32 @@ describe("layout level parity gate — built module vs live module", () => {
       expect(parity.production.level.prefix).toBe("/settings/profile");
       expect(parity.dev.level.prefix).toBe("/shop/settings/profile");
       expect(parity.production.level).not.toEqual(parity.dev.level);
+    },
+    REAL_BUILD_TIMEOUT_MS,
+  );
+
+  it(
+    "goes red on the prefix table too, and only on the corrupted (production) side",
+    async () => {
+      // TWO-SIDED CONTROL for `layoutPrefixesByDirectory` (step 2 of the dedup
+      // card): damages ONLY the production reading, same as the level control
+      // above — which end you disable IS the control for a parity check, so
+      // dev must stay intact while production loses the outermost entry.
+      const parity = await collectFixtureLayoutLevels({ corruptProductionPrefix: true });
+
+      expect(parity.dev.prefixTable).toEqual({
+        "": "/shop",
+        "account/settings": "/settings",
+        "account/settings/profile": "/profile",
+      });
+      // The outermost layout's directory (`""`) drops out of production's
+      // table entirely — `layoutPrefixesByDirectory` records no entry for a
+      // layout with no `prefix`, exactly as it does for the innocent case.
+      expect(parity.production.prefixTable).toEqual({
+        "account/settings": "/settings",
+        "account/settings/profile": "/profile",
+      });
+      expect(parity.production.prefixTable).not.toEqual(parity.dev.prefixTable);
     },
     REAL_BUILD_TIMEOUT_MS,
   );

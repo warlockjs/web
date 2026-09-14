@@ -56,13 +56,13 @@ import { composeLayoutModules } from "./compose-layout-modules";
 import { createPageRouteHandler } from "./create-page-route-handler";
 import type { ErrorPageModule } from "./error-page";
 import type { PipelineLoader, PipelineMiddleware } from "./execute-page-request";
+import { layoutPrefixesByDirectory } from "./layout-prefixes";
+import { notFoundPageHandlerOptions } from "./not-found-handler-options";
 import { devHandlerStylesheetUrls } from "./stylesheet-urls";
 import {
   DuplicateNotFoundPageError,
   isNotFoundPageFile,
   NotFoundPageDeclaresRouteError,
-  NOT_FOUND_ROUTE_NAME,
-  NOT_FOUND_ROUTE_PATH,
   registerNotFoundPageRoute,
 } from "./not-found-page";
 import type { LayoutModuleShape, PageModuleShape, PageRouteExport } from "./page-module-shapes";
@@ -305,14 +305,11 @@ async function resolveLayoutLevel(
     chain,
     layoutFile: level.hostId,
     prefix: level.prefix,
-    prefixesByDirectory: Object.fromEntries(
-      chain.flatMap((layoutFile, index) => {
-        const prefix = modules[index].prefix;
-
-        return prefix === undefined
-          ? []
-          : [[toPosix(path.relative(webRoot, path.dirname(layoutFile))), prefix]];
-      }),
+    prefixesByDirectory: layoutPrefixesByDirectory(
+      chain.map((layoutFile, index) => ({
+        directory: toPosix(path.relative(webRoot, path.dirname(layoutFile))),
+        prefix: modules[index].prefix,
+      })),
     ),
   };
 }
@@ -620,30 +617,21 @@ export async function installPageRoutes(
           notFoundPageFile === undefined
             ? undefined
             : createPageRouteHandler({
-                path: NOT_FOUND_ROUTE_PATH,
-                name: NOT_FOUND_ROUTE_NAME,
-                appFile,
-                pageFile: notFoundPageFile,
-                // NO LAYOUT, deliberately, and it is the same trade as "no
-                // loader on the 404 page": a layout brings its whole chain's
-                // middleware with it, and a guard that redirects or throws on
-                // the not-found path turns a missing page into an incident. The
-                // page renders inside the application root and nothing else.
-                layoutFile: undefined,
-                loadModule: (moduleId) => vite.ssrLoadModule(moduleId),
-                hydrationClientModuleUrl,
-                loadErrorPage,
-                // NO LAYOUT means no layout CSS either — just root and the
-                // not-found page's own stylesheets, same reasoning as above.
-                stylesheetUrls: devHandlerStylesheetUrls(
-                  stylesheetRoot,
-                  [appFile, notFoundPageFile],
-                  vite.moduleGraph,
-                ),
-                // The URL that missed IS this route's pattern for this request.
-                matchPath: (requestPath) => requestPath,
-                statusForRenderedOk: 404,
-                skipPageLoader: true,
+                ...notFoundPageHandlerOptions({
+                  appFile,
+                  pageFile: notFoundPageFile,
+                  loadModule: (moduleId) => vite.ssrLoadModule(moduleId),
+                  hydrationClientModuleUrl,
+                  loadErrorPage,
+                  // NO LAYOUT means no layout CSS either — just root and the
+                  // not-found page's own stylesheets, same reasoning as the
+                  // shared helper's own header comment.
+                  stylesheetUrls: devHandlerStylesheetUrls(
+                    stylesheetRoot,
+                    [appFile, notFoundPageFile],
+                    vite.moduleGraph,
+                  ),
+                }),
                 ...httpServerOption,
               }),
       });

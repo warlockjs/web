@@ -121,7 +121,10 @@ async function installThroughDev(fixture: Fixture, appRoot: string): Promise<Not
   return outputOf(routes, handlers);
 }
 
-function installThroughProduction(fixture: Fixture): NotFoundOutput {
+function installThroughProduction(
+  fixture: Fixture,
+  options: { corruptStatusForRenderedOk?: boolean } = {},
+): NotFoundOutput {
   const handlers: PageRouteHandlerOptions[] = [];
   const { router, routes } = recordingRouter();
   const manifest: PageManifest = {
@@ -132,8 +135,18 @@ function installThroughProduction(fixture: Fixture): NotFoundOutput {
   installPageRoutesFromManifest({
     router: router as InstallPageRoutesFromManifestOptions["router"],
     manifest,
-    createHandler: (options) => {
-      handlers.push(options);
+    createHandler: (handlerOptions) => {
+      // The red control's injected defect (step 2 of the dedup card): as if
+      // production's not-found registration stopped going through the shared
+      // `notFoundPageHandlerOptions` helper for this ONE invariant field.
+      // Applied only here, never on the dev side, which is what makes this a
+      // one-sided corruption rather than a change to the rule itself.
+      const corrupted =
+        options.corruptStatusForRenderedOk === true && handlerOptions.path === NOT_FOUND_ROUTE_PATH
+          ? { ...handlerOptions, statusForRenderedOk: 599 }
+          : handlerOptions;
+
+      handlers.push(corrupted);
       return async () => undefined;
     },
   });
@@ -190,5 +203,27 @@ describe("not-found route parity gate", () => {
     const production = installThroughProduction(subject);
 
     expect(dev).toEqual(production);
+  });
+
+  it("goes red when only production's statusForRenderedOk drifts from dev's", async () => {
+    // TWO-SIDED CONTROL (step 2 of the dedup card): corrupts ONLY the
+    // production reading, same discipline as the layout-level gate's own red
+    // control — proves this parity check actually observes the shared
+    // `notFoundPageHandlerOptions` fields rather than passing vacuously.
+    const subject = fixture({ page: true, notFound: true });
+    const appRoot = materialize(subject.files);
+
+    for (const relative of Object.keys(subject.files)) {
+      subject.modules[path.join(appRoot, relative)] = relative.endsWith("home.page.tsx")
+        ? { default: () => null, route: "/" }
+        : { default: () => null };
+    }
+
+    const dev = await installThroughDev(subject, appRoot);
+    const production = installThroughProduction(subject, { corruptStatusForRenderedOk: true });
+
+    expect(dev.handler?.statusForRenderedOk).toBe(404);
+    expect(production.handler?.statusForRenderedOk).toBe(599);
+    expect(dev).not.toEqual(production);
   });
 });

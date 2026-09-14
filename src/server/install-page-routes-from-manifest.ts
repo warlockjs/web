@@ -40,13 +40,13 @@ import {
   type PageRouteHandler,
   type PageRouteHandlerOptions,
 } from "./create-page-route-handler";
+import { layoutPrefixesByDirectory } from "./layout-prefixes";
+import { notFoundPageHandlerOptions } from "./not-found-handler-options";
 import { productionStylesheetUrls } from "./stylesheet-urls";
 import {
   DuplicateNotFoundPageError,
   isNotFoundPageFile,
   NotFoundPageDeclaresRouteError,
-  NOT_FOUND_ROUTE_NAME,
-  NOT_FOUND_ROUTE_PATH,
   registerNotFoundPageRoute,
 } from "./not-found-page";
 import type { PageManifest, PageManifestLayoutEntry, PageManifestPageEntry } from "./page-manifest";
@@ -141,17 +141,13 @@ export function resolveRoute(
  * contribute.
  */
 function layoutPrefixesOf(page: PageManifestPageEntry): Record<string, string> {
-  return Object.fromEntries(
-    page.layouts.flatMap((layout) => {
-      const prefix = (layout.module as LayoutModuleShape).prefix;
-
-      if (prefix === undefined) return [];
-
+  return layoutPrefixesByDirectory(
+    page.layouts.map((layout) => {
       const relative = webRelativeSourceFile(layout.sourceFile);
       const slashIndex = relative.lastIndexOf("/");
       const directory = slashIndex === -1 ? "" : relative.slice(0, slashIndex);
 
-      return [[directory, prefix]];
+      return { directory, prefix: (layout.module as LayoutModuleShape).prefix };
     }),
   );
 }
@@ -427,28 +423,22 @@ export function installPageRoutesFromManifest(
     renderPage:
       notFoundPage === undefined
         ? undefined
-        : createHandler({
-            path: NOT_FOUND_ROUTE_PATH,
-            name: NOT_FOUND_ROUTE_NAME,
-            appFile: app.sourceFile,
-            pageFile: notFoundPage.sourceFile,
-            // No layout, and therefore no layout middleware — see the dev
-            // installer for why the not-found path takes nothing that can
-            // redirect or throw.
-            layoutFile: undefined,
-            loadModule,
-            hydrationClientModuleUrl,
-            loadErrorPage,
-            // NO LAYOUT means no layout CSS either — just root and the
-            // not-found page's own stylesheets, same reasoning as above.
-            stylesheetUrls:
-              clientDir === undefined
-                ? []
-                : productionStylesheetUrls(clientDir, [app.sourceFile, notFoundPage.sourceFile]),
-            matchPath: (requestPath) => requestPath,
-            statusForRenderedOk: 404,
-            skipPageLoader: true,
-          }),
+        : createHandler(
+            notFoundPageHandlerOptions({
+              appFile: app.sourceFile,
+              pageFile: notFoundPage.sourceFile,
+              loadModule,
+              hydrationClientModuleUrl,
+              loadErrorPage,
+              // NO LAYOUT means no layout CSS either — just root and the
+              // not-found page's own stylesheets, same reasoning as the
+              // shared helper's own header comment.
+              stylesheetUrls:
+                clientDir === undefined
+                  ? []
+                  : productionStylesheetUrls(clientDir, [app.sourceFile, notFoundPage.sourceFile]),
+            }),
+          ),
   });
   // `isPage` for the same reason the dev installer carries it — the router's
   // duplicate-name error reads the flag to say which claimant is the page.
