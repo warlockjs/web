@@ -7,6 +7,7 @@ import { matchRoute } from "./match-page-route";
 import { resolvePageMetadata } from "./resolve-page-metadata";
 import { resolveValidationData } from "./resolve-validation-data";
 import { resolvePageValidationInput } from "./resolve-route-validation-input";
+import { PageValidationFailedError } from "./page-validation-failed-error";
 import {
   buildErrorRecord,
   commitBuffers,
@@ -207,7 +208,21 @@ export async function executePageRequest<TResult = PageDataBundle>(
         }
 
         if (!result.isValid) {
+          // Two things are recorded for the SAME failure, read by two different
+          // consumers: `shortCircuit` is what the DATA representation's JSON
+          // contract has always carried (unchanged here — see
+          // `page-validation-params-query.spec.ts`); `error` is new — it lets a
+          // FULL-DOCUMENT render (`render-page.ts`'s `finishRender`) go through
+          // the ordinary boundary/`error.page.tsx` pipeline instead of emitting
+          // an empty document, exactly as an ordinary loader throw with its own
+          // `statusCode` already does.
           bundle.shortCircuit = { stage: "validation", status: 400, errors: result.errors };
+          bundle.error = buildErrorRecord(
+            new PageValidationFailedError(result.errors),
+            designateBoundary("page", triple),
+            pathname,
+            400,
+          );
           return finish(bundle);
         }
       }

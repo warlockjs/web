@@ -1,8 +1,10 @@
 import { Response, type Request } from "@warlock.js/core";
+import { v } from "@warlock.js/seal";
 import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PAYLOAD_SCRIPT_ID } from "../components/document-context";
 import { useLocale } from "../localization";
+import type { ServerErrorPageProps } from "../props";
 
 const { resolvePageMetadata } = vi.hoisted(() => ({
   resolvePageMetadata: vi.fn(() => ({ metadata: {} })),
@@ -265,6 +267,108 @@ describe("finishRender — render-error floor (d47f5696)", () => {
     expect(
       calls.some((args) => args.some((arg) => typeof arg === "string" && arg.includes("/boom"))),
     ).toBe(true);
+  });
+});
+
+function createValidationHttp(
+  locale: string,
+  params: Record<string, string>,
+  query: Record<string, string>,
+) {
+  let validatedData: Record<string, unknown> = {};
+  const response = new Response();
+  const request = {
+    nonce: undefined,
+    locale,
+    params,
+    query,
+    setValidatedData(data: Record<string, unknown>) {
+      validatedData = data;
+    },
+    validated() {
+      return validatedData;
+    },
+  } as unknown as Request;
+
+  return { request, response };
+}
+
+function failingValidationEntry(): PageRouteEntry {
+  return {
+    path: "/orders/:id",
+    name: "orders.details",
+    triple: {
+      app: {},
+      layout: {},
+      page: {
+        route: { path: "/orders/:id" },
+        validation: {
+          params: v.object({ id: v.int().coerce() }),
+          query: v.object({ page: v.int().coerce() }),
+        },
+        default: () => createElement("main", {}, "page should not render"),
+        loader: () => {
+          throw new Error("loader must not run when validation fails");
+        },
+      },
+    },
+  };
+}
+
+function errorPageWithValidationDetails(): ErrorPageModule {
+  return {
+    default: (props: ServerErrorPageProps) => {
+      const error = props.error as { errors?: { input: string }[] } | undefined;
+      const paths = (error?.errors ?? []).map((issue) => issue.input).join(",");
+      return createElement("main", {}, `status:${props.status} paths:${paths}`);
+    },
+  };
+}
+
+describe("finishRender — failed page validation on a full-document request (defect fix)", () => {
+  it("renders the app error.page.tsx with status 400 and the validation errors, instead of an empty document", async () => {
+    const { request, response } = createValidationHttp(
+      "en",
+      { id: "42" },
+      { page: "not-a-number" },
+    );
+
+    const rendered = await renderPageRequest("/orders/42?page=not-a-number", {
+      routes: [failingValidationEntry()],
+      createHttp: () => ({ request, response }),
+      loadErrorPage: async () => errorPageWithValidationDetails(),
+    });
+
+    if (rendered instanceof Response) throw new Error("unexpected terminal Response");
+
+    expect(rendered.status).toBe(400);
+    expect(rendered.html).not.toBe("");
+    expect(rendered.html).toContain("status:400");
+    expect(rendered.html).toContain("query.page");
+  });
+
+  it("keeps the DATA request contract unchanged: empty html, 400, and shortCircuit.stage === 'validation' with the errors, on the bundle", async () => {
+    const { request, response } = createValidationHttp(
+      "en",
+      { id: "42" },
+      { page: "not-a-number" },
+    );
+
+    const rendered = await renderPageRequest("/orders/42?page=not-a-number", {
+      routes: [failingValidationEntry()],
+      createHttp: () => ({ request, response }),
+      loadErrorPage: async () => errorPageWithValidationDetails(),
+      dataRequest: true,
+    });
+
+    if (rendered instanceof Response) throw new Error("unexpected terminal Response");
+
+    expect(rendered.status).toBe(400);
+    expect(rendered.html).toBe("");
+    expect(rendered.bundle?.shortCircuit).toMatchObject({ stage: "validation", status: 400 });
+
+    const errors = (rendered.bundle?.shortCircuit as { errors: { input: string }[] }).errors;
+    expect(errors.some((issue) => issue.input.includes("page"))).toBe(true);
   });
 });
 

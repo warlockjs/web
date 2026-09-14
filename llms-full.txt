@@ -251,7 +251,7 @@ export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
 
 `request.validated()` types `params` and `query` from the schema — never a flattened merge of the two. There is exactly ONE validation surface on a page; see [load-page-data](../load-page-data/SKILL.md) for how the validated data reaches the loader.
 
-Rejected input never reaches the loader. It renders the application's `error.page.tsx` boundary at status 400 carrying the failure — a page is a document, not an API endpoint, so invalid input never gets a raw JSON body. The same 400 travels the same way over the `_loader` client-navigation wire.
+Rejected input never reaches the loader. A full page load renders the application's `error.page.tsx` boundary at status 400, and the error it receives carries the validation issues (read them off `(error as { errors?: unknown }).errors` — see [load-page-data](../load-page-data/SKILL.md#validation) for the full shape) — a page is a document, not an API endpoint, so invalid input never gets a raw JSON body. A client navigation to the same URL gets the same 400 status, with no document to render.
 
 ### `middleware` — a page's own guard, run last
 
@@ -620,7 +620,29 @@ export const validation = {
 
 A legacy `{ schema, validating }` shape is still accepted — `schema` a single Seal validator, `validating` any ordered subset of `"body"`, `"query"`, `"params"`, and `"headers"` (defaulting to query + params, with params winning a duplicate key) — but `{ params, query }` is the shape new pages should declare. See [create-a-page](../create-a-page/SKILL.md#validate-the-pages-input--the-validation-export) for the full example.
 
-Either shape builds one schema and runs ONE validation pass before loaders. A failure short-circuits with status **400**, never 422 — a page is a document, not an API endpoint, so rejected input renders the application's `error.page.tsx` boundary rather than a raw JSON body. A data (`_loader`) request instead gets that same 400 serialized as a JSON body carrying the errors.
+Either shape builds one schema and runs ONE validation pass before loaders. A failure short-circuits with status **400**, never 422 — a page is a document, not an API endpoint. A full page load renders the application's `error.page.tsx` with status 400, exactly as an ordinary loader throw with its own `statusCode` already does; the error it receives carries the validation issues:
+
+```tsx title="src/web/error.page.tsx"
+import type { ErrorPageProps } from "@warlock.js/web";
+
+export default function ErrorPage({ error, status }: ErrorPageProps) {
+  const validationErrors = (error as { errors?: { input: string; error: string }[] })?.errors;
+
+  return (
+    <main>
+      <h1>Something went wrong</h1>
+      <p>Status: {status}</p>
+      {validationErrors?.map((issue) => (
+        <p key={issue.input}>
+          {issue.input}: {issue.error}
+        </p>
+      ))}
+    </main>
+  );
+}
+```
+
+A client navigation to the same URL still receives that same 400 status, with no document to render — nothing here changes the data representation's contract.
 
 `request.validated()` uses the schema's output type, so fields with `.default(...)` are present. `request.input("id")` is narrowed from a literal route path when the loader uses `typeof route`.
 

@@ -90,6 +90,19 @@ export type RenderPageRequestOptions = {
   createHttp: ExecutePageRequestOptions["createHttp"];
   /** Loaded only after the ordinary boundary chain has been exhausted. */
   loadErrorPage?: ErrorPageModuleLoader;
+  /**
+   * True for the JSON representation of a page route (`create-page-route-handler.ts`'s
+   * `wantsData` branch) — a client navigation, never a browser address-bar
+   * load. `finishRender` reads this to decide what a failed page `validation`
+   * produces: a full-document request renders the application's
+   * `error.page.tsx`/boundary chain with status 400 (the fix this option
+   * exists for); a data request keeps its untouched, pre-existing contract —
+   * `{ html: "", status: 400 }` with `bundle.shortCircuit` carrying the
+   * errors, exactly as before. Defaults to `false` (a document request) so
+   * every caller that never mentions representation — every test in this
+   * file included — keeps rendering the full document it always has.
+   */
+  dataRequest?: boolean;
 };
 
 export type RenderedPage = {
@@ -382,6 +395,7 @@ async function finishRender(
   documentSlots: DocumentSlots,
   response: Response,
   loadErrorPage: ErrorPageModuleLoader | undefined,
+  dataRequest: boolean,
 ): Promise<RenderedPage> {
   // Read from the stage 7 commit, never live off `response` — this function
   // writes (and now reads) the live response zero times. A bundle with no
@@ -389,9 +403,15 @@ async function finishRender(
   const headers = committedHeaders(bundle);
   const cookies = committedCookies(bundle);
 
-  // Middleware and validation short-circuits emit no document. Loader-returned
-  // Response instances never reach this function.
-  if (bundle.shortCircuit) {
+  // A failed page `validation`, on a FULL-DOCUMENT request, renders the
+  // ordinary boundary/`error.page.tsx` pipeline below instead of returning
+  // here — `bundle.error` was built alongside this same `shortCircuit`
+  // (`execute-page-request.ts`) for exactly that. Every OTHER short circuit
+  // (middleware, and validation on a DATA request) still emits no document:
+  // middleware short-circuits are out of scope for that fix, and the data
+  // representation's `{ html: "", status, bundle.shortCircuit }` contract
+  // must not change.
+  if (bundle.shortCircuit && !(bundle.shortCircuit.stage === "validation" && !dataRequest)) {
     const status =
       bundle.shortCircuit.stage === "validation"
         ? bundle.shortCircuit.status
@@ -696,6 +716,7 @@ export async function renderPageRequest(
         documentSlotsFrom(state.captured),
         state.captured!.response,
         options.loadErrorPage,
+        options.dataRequest ?? false,
       ),
   });
 

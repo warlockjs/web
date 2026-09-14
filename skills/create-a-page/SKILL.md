@@ -135,7 +135,7 @@ export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
 
 `request.validated()` types `params` and `query` from the schema — never a flattened merge of the two. There is exactly ONE validation surface on a page; see [load-page-data](../load-page-data/SKILL.md) for how the validated data reaches the loader.
 
-Rejected input never reaches the loader. It renders the application's `error.page.tsx` boundary at status 400 carrying the failure — a page is a document, not an API endpoint, so invalid input never gets a raw JSON body. The same 400 travels the same way over the `_loader` client-navigation wire.
+Rejected input never reaches the loader. A full page load renders the application's `error.page.tsx` boundary at status 400, and the error it receives carries the validation issues (read them off `(error as { errors?: unknown }).errors` — see [load-page-data](../load-page-data/SKILL.md#validation) for the full shape) — a page is a document, not an API endpoint, so invalid input never gets a raw JSON body. A client navigation to the same URL gets the same 400 status, with no document to render.
 
 ### `middleware` — a page's own guard, run last
 

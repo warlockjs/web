@@ -410,6 +410,7 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         matched: { entry, params },
         createHttp: () => ({ request, response }),
         loadErrorPage,
+        dataRequest: wantsData,
       });
 
       if (rendered instanceof Response) return rendered;

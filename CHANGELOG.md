@@ -2,6 +2,12 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.11.0
+
+### Changed
+
+- **A page load that fails `validation` now renders your `error.page.tsx` with status 400** and the validation errors, instead of a blank 400 response. Client navigations are unchanged. If you relied on the empty body, check your error page handles a 400.
+
 ## 5.10.0 - 2026-09-14
 
 ### Fixed

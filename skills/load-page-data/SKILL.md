@@ -147,7 +147,29 @@ export const validation = {
 
 A legacy `{ schema, validating }` shape is still accepted — `schema` a single Seal validator, `validating` any ordered subset of `"body"`, `"query"`, `"params"`, and `"headers"` (defaulting to query + params, with params winning a duplicate key) — but `{ params, query }` is the shape new pages should declare. See [create-a-page](../create-a-page/SKILL.md#validate-the-pages-input--the-validation-export) for the full example.
 
-Either shape builds one schema and runs ONE validation pass before loaders. A failure short-circuits with status **400**, never 422 — a page is a document, not an API endpoint, so rejected input renders the application's `error.page.tsx` boundary rather than a raw JSON body. A data (`_loader`) request instead gets that same 400 serialized as a JSON body carrying the errors.
+Either shape builds one schema and runs ONE validation pass before loaders. A failure short-circuits with status **400**, never 422 — a page is a document, not an API endpoint. A full page load renders the application's `error.page.tsx` with status 400, exactly as an ordinary loader throw with its own `statusCode` already does; the error it receives carries the validation issues:
+
+```tsx title="src/web/error.page.tsx"
+import type { ErrorPageProps } from "@warlock.js/web";
+
+export default function ErrorPage({ error, status }: ErrorPageProps) {
+  const validationErrors = (error as { errors?: { input: string; error: string }[] })?.errors;
+
+  return (
+    <main>
+      <h1>Something went wrong</h1>
+      <p>Status: {status}</p>
+      {validationErrors?.map((issue) => (
+        <p key={issue.input}>
+          {issue.input}: {issue.error}
+        </p>
+      ))}
+    </main>
+  );
+}
+```
+
+A client navigation to the same URL still receives that same 400 status, with no document to render — nothing here changes the data representation's contract.
 
 `request.validated()` uses the schema's output type, so fields with `.default(...)` are present. `request.input("id")` is narrowed from a literal route path when the loader uses `typeof route`.
 
