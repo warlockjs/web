@@ -136,12 +136,18 @@ All receive one context object with `request`, `response`, and `shared`. Page lo
 
 ## Validation
 
-A page's `validation` export has:
+A page's `validation` export declares a [Seal](https://www.npmjs.com/package/@warlock.js/seal) schema per source, `params` and `query` kept as two separate keys — never merged into one bag:
 
-- `schema`: a Seal validator.
-- `validating`: any ordered subset of `"body"`, `"query"`, `"params"`, and `"headers"`.
+```ts
+export const validation = {
+  params: v.object({ id: v.string().minLength(2) }),
+  query: v.object({ tab: v.string().optional() }),
+};
+```
 
-When `validating` is absent or empty, pages validate query + params, with params winning a duplicate key. Validation runs before loaders and a failure short-circuits with 422.
+A legacy `{ schema, validating }` shape is still accepted — `schema` a single Seal validator, `validating` any ordered subset of `"body"`, `"query"`, `"params"`, and `"headers"` (defaulting to query + params, with params winning a duplicate key) — but `{ params, query }` is the shape new pages should declare. See [create-a-page](../create-a-page/SKILL.md#validate-the-pages-input--the-validation-export) for the full example.
+
+Either shape builds one schema and runs ONE validation pass before loaders. A failure short-circuits with status **400**, never 422 — a page is a document, not an API endpoint, so rejected input renders the application's `error.page.tsx` boundary rather than a raw JSON body. A data (`_loader`) request instead gets that same 400 serialized as a JSON body carrying the errors.
 
 `request.validated()` uses the schema's output type, so fields with `.default(...)` are present. `request.input("id")` is narrowed from a literal route path when the loader uses `typeof route`.
 

@@ -294,9 +294,9 @@ export async function executePageRequest<TResult = PageDataBundle>(
       committedLevels = LEVEL_ORDER.slice(0, signalIndex);
 
       const boundary = designateBoundary(LEVEL_ORDER[signalIndex], triple);
-      // A failure that OWNS its own status (a `RouteValidationError`'s 400)
-      // carries it through here; an ordinary throw carries none and keeps
-      // the pipeline's ordinary answer, 500.
+      // A failure that OWNS its own status (an error thrown with a
+      // `statusCode` property) carries it through here; an ordinary throw
+      // carries none and keeps the pipeline's ordinary answer, 500.
       const ownStatusCode = (signalThrown as { statusCode?: number } | null)?.statusCode;
       bundle.error = buildErrorRecord(signalThrown, boundary, pathname, ownStatusCode);
 

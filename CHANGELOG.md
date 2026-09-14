@@ -2,6 +2,16 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.10.0
+
+### Fixed
+
+- The `load-page-data` skill described the withdrawn `{ schema }`-only validation shape and a 422 status; they now document `validation = { params, query }` and its single 400.
+
+### Removed
+
+- Unused internal `RouteValidationError`.
+
 ## 5.9.0 - 2026-09-13
 
 ### Added
