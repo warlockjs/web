@@ -40,4 +40,16 @@ describe("Scripts", () => {
     expect(html).toBe("");
     expect(html).not.toContain(PAYLOAD_SCRIPT_ID);
   });
+
+  it("carries the request's CSP nonce on the payload script, from the document-context slot", () => {
+    const html = render(documentValue({ nonce: "ctx-nonce-1" }));
+
+    expect(html).toContain('nonce="ctx-nonce-1"');
+  });
+
+  it("omits the nonce attribute entirely when the request has none", () => {
+    const html = render(documentValue({ nonce: undefined }));
+
+    expect(html).not.toContain("nonce=");
+  });
 });

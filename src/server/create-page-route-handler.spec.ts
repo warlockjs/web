@@ -324,6 +324,34 @@ describe("createPageRouteHandler — hydration module injection", () => {
     );
   });
 
+  it("carries the request's CSP nonce on the injected hydration module script tag", async () => {
+    renderPageRequest.mockResolvedValue({
+      html: "<html><body></body></html>",
+      status: 200,
+      headers: {},
+      data: undefined,
+      bundle: { route: { name: "account", path: "/account", params: {}, query: {} } },
+    });
+
+    const requestContext = context();
+    (requestContext.request as { nonce?: string }).nonce = "handler-nonce-1";
+    const handler = createPageRouteHandler(
+      handlerOptions(
+        { "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} },
+        { hydrationClientModuleUrl: "/hydrate.js" },
+      ),
+    );
+
+    await handler(requestContext as never);
+
+    expect(requestContext.response.html).toHaveBeenCalledWith(
+      expect.stringContaining(
+        '<script type="module" nonce="handler-nonce-1" src="/hydrate.js"></script>',
+      ),
+      200,
+    );
+  });
+
   it("does NOT inject the hydration client module on renderPageFailure's pre-triple fallback", async () => {
     renderPageFailure.mockResolvedValue({
       html: "<html><body></body></html>",
