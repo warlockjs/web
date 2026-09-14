@@ -112,6 +112,14 @@ export { useQueryString } from "./client/navigation/use-query-string";
 export { Head } from "./components/head";
 export { Scripts } from "./components/scripts";
 
+// A client-only rendering primitive: `fallback` on the server AND during
+// hydration, `children` after mount, with no hydration mismatch — see
+// `skills/render-client-only/SKILL.md` for the module-loading distinction
+// this pairs with (`React.lazy` inside `<ClientOnly>`).
+export { ClientOnly } from "./components/client-only";
+export type { ClientOnlyProps, ClientOnlyChildren } from "./components/client-only";
+export { useIsClient } from "./components/use-is-client";
+
 // The build→runtime handoff surface (page manifest, build contribution) is
 // NOT re-exported here: this barrel's graph reaches React, and a config file
 // that merely constructs a connector must not. It lives at `@warlock.js/web/connector` — `src/connector/index.ts`.
