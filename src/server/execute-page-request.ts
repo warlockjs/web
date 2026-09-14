@@ -180,6 +180,10 @@ export async function executePageRequest<TResult = PageDataBundle>(
             level,
             value: output,
             statusCode: response.statusCode,
+            // Read AFTER the middleware ran (it already resolved above) — a
+            // middleware that called `response.redirect()`/`.forbidden()`/
+            // `.send()` itself has already written the real reply by now.
+            responseSent: response.sent,
           };
           return finish(bundle);
         }

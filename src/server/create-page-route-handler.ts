@@ -508,6 +508,21 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         return;
       }
 
+      // A page middleware that returned 2xx content without writing the reply
+      // replaces the page: its value is the body, so there is no document to
+      // decorate with stylesheets or the hydration module.
+      const shortCircuit = rendered.bundle?.shortCircuit;
+
+      if (shortCircuit?.stage === "middleware" && !shortCircuit.responseSent && status < 400) {
+        if (typeof shortCircuit.value !== "string") {
+          response.setContentType("application/json; charset=utf-8");
+        }
+
+        await response.send(rendered.html, status);
+
+        return;
+      }
+
       // Stylesheets first: they go in `<head>`, the hydration module goes before
       // `</body>`, and doing the head work on the already-rendered string keeps
       // both splices in one place rather than threading CSS through the React

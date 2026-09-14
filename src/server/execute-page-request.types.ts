@@ -95,6 +95,16 @@ export type PageShortCircuit =
       level: PageLevelName;
       value: unknown;
       statusCode?: number;
+      /**
+       * `Response.sent`, read at the moment the short-circuit was recorded —
+       * true when the middleware already wrote the real HTTP reply itself
+       * (`response.redirect()`, `response.forbidden()`, any call that reaches
+       * `Response.send()`). A full-document render must never re-render a
+       * body when this is true: the wire already carries the real answer, and
+       * a second write would only hit `Response.send()`'s own already-sent
+       * guard. See `render-page.ts`'s `finishRender`.
+       */
+      responseSent?: boolean;
     }
   | { stage: "validation"; status: number; errors: unknown };
 

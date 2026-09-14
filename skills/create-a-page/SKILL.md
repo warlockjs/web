@@ -159,7 +159,13 @@ export const middleware = [
 ];
 ```
 
-Returning anything other than `undefined` from a middleware short-circuits the request with that value, exactly as an app or layout middleware does.
+Returning anything other than `undefined` from a middleware short-circuits the request with that value, exactly as an app or layout middleware does. What that short-circuit actually produces differs by representation and by how the middleware answered:
+
+- **A client navigation** (a data request) always gets `{ status, body: <your returned value> }` as JSON — unchanged, regardless of status code.
+- **A full page load**, when the middleware already wrote the real reply itself — `response.redirect()`, `response.permanentRedirect()`, or a call that reaches `response.send()` (`.forbidden()`, `.unauthorized()`, `.notFound()`, `.send()` directly) — answers with exactly that reply. The pipeline renders nothing further; there is no document to add.
+- **A full page load**, when the middleware returns a value WITHOUT writing the reply itself (the `{ error: "Unauthorized" }` example above, after only `setStatusCode`) — a status `>= 400` renders the application's `error.page.tsx` boundary with that status, the returned value attached to the error; a status `< 200`–`399` (2xx) sends the returned value as the response body unchanged (JSON-stringified if it's an object) — **a page middleware returning 2xx content replaces the page.**
+
+Prefer calling a `response` method (`.forbidden()`, `.redirect()`, `.unauthorized()`, …) over returning a bare object when you want full control over the wire reply; a bare returned object is still safe on a full page load — it now always reaches the visitor, never silently dropped — but it renders through the error boundary for `>= 400`, and as raw content for `2xx`.
 
 ## Page caching
 

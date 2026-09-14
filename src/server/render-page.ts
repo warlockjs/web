@@ -34,6 +34,7 @@ import {
   type PageRouteMatch,
   type PageTripleModule,
 } from "./execute-page-request";
+import { PageMiddlewareShortCircuitError } from "./page-middleware-short-circuit-error";
 
 export { escapePayload, PAYLOAD_SCRIPT_ID };
 export type { BufferedCookie };
@@ -403,15 +404,33 @@ async function finishRender(
   const headers = committedHeaders(bundle);
   const cookies = committedCookies(bundle);
 
+  // A page middleware short-circuit that (a) is a FULL-DOCUMENT request and
+  // (b) never wrote the real HTTP reply itself gets handled below instead of
+  // the empty-body branch — see the two cases right after this block. Every
+  // OTHER middleware short-circuit keeps the untouched, pre-existing empty
+  // body: a DATA request's `{ html: "", status, bundle.shortCircuit }`
+  // contract must stay byte-identical, and a short-circuit whose
+  // `responseSent` is true (a redirect, or a middleware that already called
+  // `response.send()`/`.forbidden()` itself) has already put the real answer
+  // on the wire — re-rendering here would only be discarded by
+  // `Response.send()`'s own already-sent guard, or duplicate a reply the
+  // client already received.
+  const unsentMiddlewareShortCircuit =
+    bundle.shortCircuit?.stage === "middleware" && !dataRequest && !bundle.shortCircuit.responseSent
+      ? bundle.shortCircuit
+      : undefined;
+
   // A failed page `validation`, on a FULL-DOCUMENT request, renders the
   // ordinary boundary/`error.page.tsx` pipeline below instead of returning
   // here — `bundle.error` was built alongside this same `shortCircuit`
-  // (`execute-page-request.ts`) for exactly that. Every OTHER short circuit
-  // (middleware, and validation on a DATA request) still emits no document:
-  // middleware short-circuits are out of scope for that fix, and the data
-  // representation's `{ html: "", status, bundle.shortCircuit }` contract
-  // must not change.
-  if (bundle.shortCircuit && !(bundle.shortCircuit.stage === "validation" && !dataRequest)) {
+  // (`execute-page-request.ts`) for exactly that. Validation on a DATA
+  // request still emits no document: the data representation's
+  // `{ html: "", status, bundle.shortCircuit }` contract must not change.
+  if (
+    bundle.shortCircuit &&
+    !(bundle.shortCircuit.stage === "validation" && !dataRequest) &&
+    unsentMiddlewareShortCircuit === undefined
+  ) {
     const status =
       bundle.shortCircuit.stage === "validation"
         ? bundle.shortCircuit.status
@@ -424,6 +443,34 @@ async function finishRender(
       data: bundle.pageData,
       bundle,
     };
+  }
+
+  // The confirmed-broken case: a page middleware short-circuited a
+  // full-document request without writing the real HTTP reply itself (e.g.
+  // `return { message }`, or `response.setStatusCode(403)` followed by a
+  // plain object) — the pipeline used to drop the returned value entirely
+  // and answer an empty 200 document. Decided behaviour: a
+  // >= 400 status renders the ordinary boundary/`error.page.tsx` pipeline,
+  // exactly as a failed page validation already does; a 2xx status sends
+  // the middleware's own returned value as the body, unchanged — a page
+  // middleware returning 2xx content REPLACES the page.
+  if (unsentMiddlewareShortCircuit !== undefined) {
+    const statusCode = unsentMiddlewareShortCircuit.statusCode ?? 200;
+
+    if (statusCode < 400) {
+      const value = unsentMiddlewareShortCircuit.value;
+      const body = typeof value === "string" ? value : JSON.stringify(value);
+
+      return { html: body, status: statusCode, headers, cookies, data: bundle.pageData, bundle };
+    }
+
+    const boundary = designateBoundary(unsentMiddlewareShortCircuit.level, triple);
+    bundle.error = buildErrorRecord(
+      new PageMiddlewareShortCircuitError(statusCode, unsentMiddlewareShortCircuit.value),
+      boundary,
+      bundle.route.path,
+      statusCode,
+    );
   }
 
   // `Cache-Control` is NOT decided here. The final value — the floor, an
