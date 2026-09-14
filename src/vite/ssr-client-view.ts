@@ -270,8 +270,11 @@ export function clientEnvironmentOnly(plugin: Plugin, ssrState: SsrBoundaryState
                 ssr: false,
               });
               targetId =
-                (typeof serverEdgeTarget === "string" ? serverEdgeTarget : serverEdgeTarget?.id) ??
-                undefined;
+                typeof serverEdgeTarget === "string"
+                  ? serverEdgeTarget
+                  : serverEdgeTarget && typeof serverEdgeTarget === "object"
+                    ? serverEdgeTarget.id
+                    : undefined;
             } catch {
               targetId = undefined;
             }
