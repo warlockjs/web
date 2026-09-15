@@ -1,6 +1,6 @@
 ---
 name: create-a-page
-description: 'Create an SSR React page under `src/web/**`, with either a literal `route` or a filesystem-derived one, an explicit public-cache opt-in, a `validation` schema and `middleware` guards, a default component, an optional typed `loader`, page `metadata`, the `error.page.tsx` boundary, and the universal `register()` hook. Triggers: `*.page.tsx`, `route`, `route.cache`, `maxAge`, `validation`, `middleware`, `route.validate`, `route.middleware`, `PageLoader`, `PageProps`, `PageMetadata`, `error.page.tsx`, `register`, `[...slug]`; "create a page", "cache a public page", "add an SSR route", "make a React page", "type page loader data", "add an error boundary", "catch-all route", "page renders blank 200", "page has no default export", "validate route params and query", "page-level middleware"; typical import `import type { PageLoader, PageProps } from "@warlock.js/web"`. Skip: root document shell — `@warlock.js/web/write-the-root/SKILL.md`; layout wrappers and prefixes — `@warlock.js/web/use-layouts/SKILL.md`; loader lifecycle and `shared` — `@warlock.js/web/load-page-data/SKILL.md`; competing frameworks `next`, `remix`, `react-router` file routes.'
+description: 'Create an SSR React page under `src/web/**`, with either a literal `route` or a filesystem-derived one, an explicit public-cache opt-in, a `validation` schema and `middleware` guards, a default component, an optional typed `loader`, page `metadata`, the `error.page.tsx` boundary, and the universal `register()` hook. Triggers: `*.page.tsx`, `route`, `route.cache`, `maxAge`, `serverCache`, `invalidatePageCache`, `x-warlock-cache`, `validation`, `middleware`, `route.validate`, `route.middleware`, `PageLoader`, `PageProps`, `PageMetadata`, `error.page.tsx`, `register`, `[...slug]`; "create a page", "cache a public page", "server-side page cache", "invalidate a cached page", "add an SSR route", "make a React page", "type page loader data", "add an error boundary", "catch-all route", "page renders blank 200", "page has no default export", "validate route params and query", "page-level middleware"; typical import `import type { PageLoader, PageProps } from "@warlock.js/web"`. Skip: root document shell — `@warlock.js/web/write-the-root/SKILL.md`; layout wrappers and prefixes — `@warlock.js/web/use-layouts/SKILL.md`; loader lifecycle and `shared` — `@warlock.js/web/load-page-data/SKILL.md`; competing frameworks `next`, `remix`, `react-router` file routes.'
 ---
 
 # Warlock — create a page
@@ -194,6 +194,80 @@ the request used authenticated state, it revokes the opt-in and emits
 
 This decision is applied once after loaders finish, to both representations.
 Setting `Cache-Control` manually in a loader cannot bypass the floor.
+
+### Server-side page cache — `serverCache`
+
+`cache.public`/`maxAge` only decide the `Cache-Control` header a downstream
+CDN/proxy should honour. `serverCache` is a second, independent opt-in on the
+SAME object: the framework itself holds the resolved bytes and serves a HIT
+without re-running the pipeline at all.
+
+```tsx
+export const route = {
+  path: "/products",
+  name: "products.index",
+  cache: {
+    public: true,
+    maxAge: 60,
+    serverCache: true,
+    tags: ["products"],
+    // or: tags: (data) => [`product:${data.id}`],
+    ttl: 300, // optional — defaults to maxAge
+  },
+} as const;
+```
+
+- `serverCache` requires `public: true` (like every `cache` opt-in) AND
+  `tags` — a stored entry with no tags could never be invalidated early, so
+  its absence is a boot-time `InvalidPageCacheOptInError`.
+- `tags` is a static list, or a function of the resolved page data, evaluated
+  right before the entry is stored.
+- `ttl` is the server cache's own freshness window in seconds, independent of
+  the CDN-facing `maxAge`; omit it to reuse `maxAge`.
+
+**Cache key**: the normalised pathname (lower-cased, trailing slash
+stripped), the sorted query string, the resolved `locale`, and the
+representation — `html` for a document request, `json` for the
+`x-warlock-data` representation. A request for the NDJSON representation on
+a `serverCache` route never streams: the values are fully resolved and
+stored/served as the `json` variant instead, since there is nothing left to
+defer.
+
+**Bypass**: a request carrying an `Authorization` header or the configured
+auth cookie (`auth.cookie.name`, default `access_token`) never consults the
+cache — this check runs before any loader, so a credentialed visitor is
+never handed a stale guest page. Store-time eligibility (checked once
+per render) requires: `GET`, `status === 200`, no `Set-Cookie`, a provably
+unauthenticated request (the same fail-closed `authDerived` rule as
+`Cache-Control` above), and — for the document representation — not a
+detected crawler request (a crawler may still read a HIT, it just never
+writes the crawler-specific render).
+
+**Response headers**: `x-warlock-cache: hit | miss | bypass`, alongside the
+usual `Cache-Control`.
+
+**Invalidation**:
+
+```ts
+import { invalidatePageCache } from "@warlock.js/web";
+
+await invalidatePageCache(["products"]);
+```
+
+Evicts every stored entry under any of the given tags, through
+`@warlock.js/cache`'s tag index. Cluster reach depends on the configured
+driver: a shared driver (redis/pg) removes the entry for every worker on
+their next read. An in-process driver (memory/LRU/memory-extended) only
+clears the CALLING worker's own heap — every other worker keeps serving its
+stale entry until `ttl`/`maxAge` expires. Enabling `serverCache` with an
+in-process driver in a clustered process logs a one-time startup warning;
+cross-process pub/sub invalidation is out of scope for this release.
+
+**`@warlock.js/cache` is an optional peer.** It is only loaded (via a lazy
+`await import(...)`) the first time some route with `serverCache: true`
+actually needs the store — an application that never opts in is never
+forced to install it. Enabling `serverCache` without the package installed
+fails loudly at boot/request time, naming `@warlock.js/cache`.
 
 ## Filesystem routing
 
