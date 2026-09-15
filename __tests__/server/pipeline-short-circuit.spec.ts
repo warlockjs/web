@@ -85,6 +85,10 @@ describe("executePageRequest — middleware short-circuit", () => {
       level: "layout",
       statusCode: 200,
       value: { denied: true },
+      // The middleware returned a plain value without writing the real HTTP
+      // reply itself (web@22a53d8) — `finishRender` needs this to know a
+      // document short-circuit must still render, not answer empty.
+      responseSent: false,
     });
     // The chain stopped INSIDE stage 3: the page's own middleware never ran.
     expect(laterMiddleware).not.toHaveBeenCalled();
@@ -151,13 +155,19 @@ describe("executePageRequest — middleware short-circuit", () => {
       level: "layout",
       statusCode: 403,
       value: { error: "forbidden" },
+      // The middleware set the status and returned a value but never called
+      // `response.send()`/`.forbidden()` itself — `responseSent` is false, so
+      // the pipeline owns rendering the reply (web@22a53d8).
+      responseSent: false,
     });
 
-    // Hop 3: a short-circuit emits no document — the status IS the answer, and
-    // it is the guard's 403, never the `?? 200` fallback standing in for an
-    // absent field.
+    // Hop 3: a document short-circuit must never silently answer an empty
+    // body (web@22a53d8) — a >= 400 status renders the ordinary
+    // boundary/error.page.tsx pipeline with that status, exactly as a failed
+    // page validation already does.
     expect.soft(rendered.status).toBe(403);
-    expect.soft(rendered.html).toBe("");
+    expect.soft(rendered.html).not.toBe("");
+    expect.soft(rendered.html).toContain("<!DOCTYPE html>");
   });
 });
 
