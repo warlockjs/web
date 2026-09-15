@@ -458,9 +458,10 @@ describe("createPageRouteHandler — middleware 2xx short-circuit stays a plain 
     expect(requestContext.response.streamReact).not.toHaveBeenCalled();
     expect(requestContext.response.html).not.toHaveBeenCalled();
     // The body is untouched — no `<link>`/`<script>` was ever spliced in.
-    expect((requestContext.response.send as ReturnType<typeof vi.fn>).mock.calls[0][0]).not.toMatch(
-      /<link|<script/,
-    );
+    const sendMock = requestContext.response.send as ReturnType<typeof vi.fn>;
+    const [sentBody] = sendMock.mock.calls[0] ?? [];
+
+    expect(sentBody).not.toMatch(/<link|<script/);
   });
 
   it("JSON.stringifies a plain-object middleware short-circuit value and sends application/json, unaffected by stylesheets/hydration", async () => {

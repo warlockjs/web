@@ -312,7 +312,10 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       };
 
       const requestUrl = request.path;
-      const [requestPathname] = requestUrl.split("?");
+      // `String.split` always returns at least one element — the default only
+      // narrows `noUncheckedIndexedAccess`'s `string | undefined` away, it
+      // never actually applies at runtime.
+      const [requestPathname = requestUrl] = requestUrl.split("?");
       const entry: PageRouteEntry = {
         path: matchPath === undefined ? path : matchPath(requestPathname),
         name,
