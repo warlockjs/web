@@ -1,6 +1,12 @@
 import { createElement, type ComponentType, type ReactNode } from "react";
 import type { PipeableStream, RenderToPipeableStreamOptions } from "react-dom/server";
-import { Response, type Request } from "@warlock.js/core";
+import {
+  buildTracingContext,
+  dispatchPhase,
+  isTracingEnabled,
+  Response,
+  type Request,
+} from "@warlock.js/core";
 import DefaultApp from "../components/default-app";
 import {
   DocumentContext,
@@ -524,6 +530,12 @@ async function finishRender(
   bundle: PageDataBundle,
   documentSlots: DocumentSlots,
   response: Response,
+  /**
+   * The same request `documentSlotsFrom`'s `captured` pair carries — needed
+   * here only to build the "render.shell" tracing context (card 71622e4a §2
+   * item 7); `finishRender` otherwise never reads it.
+   */
+  request: Request,
   loadErrorPage: ErrorPageModuleLoader | undefined,
   dataRequest: boolean,
   streamOptions: {
@@ -675,6 +687,13 @@ async function finishRender(
   // document and the data representation. Anything this function's `headers`
   // map put under `cache-control` is overwritten there on purpose: two sites
   // deciding this key is exactly the drift that seam exists to prevent.
+
+  // "render.shell" (card 71622e4a §2 item 7): from here — the start of the
+  // actual render work — until React's shell is ready to pipe, just below.
+  // Resolved once; a disabled app pays one boolean check and never starts a
+  // timer.
+  const tracingEnabled = isTracingEnabled();
+  const renderShellStartedAt = tracingEnabled ? performance.now() : 0;
 
   // ── stage 9 · RENDER ─────────────────────────────────────────────────────
   // Lazy import: react-dom is a peer used only on this path, so merely
@@ -864,6 +883,17 @@ async function finishRender(
     bundle.route,
   );
 
+  // React's shell is ready to pipe the instant `renderElementToPipeableStream`
+  // resolves (`onShellReady`, or `onAllReady` when `waitForAll` is set) — the
+  // phase closes here, before the deferred-emission wrapping below, which is
+  // no longer part of "render", it is streaming.
+  if (tracingEnabled) {
+    dispatchPhase(buildTracingContext(request), {
+      name: "render.shell",
+      durationMs: performance.now() - renderShellStartedAt,
+    });
+  }
+
   // Stage 2: a page with deferred keys gets its stream wrapped so each
   // settlement writes a `__WARLOCK_DEFER__` chunk after the shell has
   // flushed, and the response ends only once every key has settled AND
@@ -1011,6 +1041,7 @@ export async function renderPageRequest(
         bundle,
         documentSlotsFrom(state.captured),
         state.captured!.response,
+        state.captured!.request,
         options.loadErrorPage,
         options.dataRequest ?? false,
         {

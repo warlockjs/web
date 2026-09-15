@@ -1,4 +1,4 @@
-import { Response } from "@warlock.js/core";
+import { buildTracingContext, dispatchPhase, isTracingEnabled, Response } from "@warlock.js/core";
 import { v } from "@warlock.js/seal";
 import { enterSharedScope, sealShared } from "../shared";
 import { connectRequestSearch } from "../routing/query-string";
@@ -267,6 +267,12 @@ export async function executePageRequest<TResult = PageDataBundle>(
         };
     let signal: LoaderSignal | undefined;
 
+    // Card 71622e4a §2 item 6: one "loader" phase per level that actually ran
+    // (a level with no loader export is skipped below and reports nothing).
+    // Resolved ONCE, outside the loop, so a disabled app pays exactly one
+    // boolean check per level rather than a config read per iteration.
+    const tracingEnabled = isTracingEnabled();
+
     for (const [index, level] of LEVEL_ORDER.entries()) {
       // `route.validate` — the PAGE's own declared schema, over `{ params,
       // query }` kept as two separate keys (canon `b79c4f55`, point 1). Runs
@@ -284,6 +290,7 @@ export async function executePageRequest<TResult = PageDataBundle>(
       if (!loader) continue;
 
       let value: unknown;
+      const loaderStartedAt = tracingEnabled ? performance.now() : 0;
 
       try {
         value = await loader({
@@ -294,6 +301,23 @@ export async function executePageRequest<TResult = PageDataBundle>(
       } catch (thrown) {
         signal = { kind: "throw", index, level, thrown };
         break;
+      }
+
+      if (tracingEnabled) {
+        const attrs: Record<string, unknown> = { level };
+
+        // "the layout path when present" — only the layout level ever
+        // carries one, and only when this route actually has a layout file
+        // (`create-page-route-handler.ts` threads it onto the entry).
+        if (level === "layout" && matched.entry.layoutPath !== undefined) {
+          attrs.layoutPath = matched.entry.layoutPath;
+        }
+
+        dispatchPhase(buildTracingContext(request), {
+          name: "loader",
+          durationMs: performance.now() - loaderStartedAt,
+          attrs,
+        });
       }
 
       if (value instanceof Response) return value;

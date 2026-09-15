@@ -20,7 +20,15 @@
  * Scope: this file creates a seam and nothing else. It does not implement
  * `type: "page"` routing, HTML error pages, or any other new capability.
  */
-import { container, Response, type FastifyInstance, type HttpContext } from "@warlock.js/core";
+import {
+  buildTracingContext,
+  container,
+  dispatchPhase,
+  isTracingEnabled,
+  Response,
+  type FastifyInstance,
+  type HttpContext,
+} from "@warlock.js/core";
 
 import {
   DATA_RESPONSE_CONTENT_TYPE,
@@ -329,6 +337,7 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         path: matchPath === undefined ? path : matchPath(requestPathname),
         name,
         triple,
+        layoutPath: layoutFile,
       };
 
       // Core selected this handler before it constructed the HTTP context and
@@ -500,7 +509,25 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       if (rendered.pipeableStream) {
         response.setContentType("text/html");
         response.setStatusCode(status);
+
+        // "stream.end" (card 71622e4a §2 item 8): the whole `streamReact`
+        // await, which resolves only once the raw response has finished
+        // sending — including every deferred settlement's chunk, since
+        // `wrapPipeableStreamForDeferredEmission` (`defer-emission.ts`) does
+        // not end the destination until the last one has settled AND React's
+        // own `onAllReady` has fired. One boolean check, no timer, when
+        // tracing is disabled.
+        const tracingEnabled = isTracingEnabled();
+        const streamEndStartedAt = tracingEnabled ? performance.now() : 0;
+
         await response.streamReact(rendered.pipeableStream);
+
+        if (tracingEnabled) {
+          dispatchPhase(buildTracingContext(request), {
+            name: "stream.end",
+            durationMs: performance.now() - streamEndStartedAt,
+          });
+        }
 
         return;
       }

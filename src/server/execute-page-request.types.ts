@@ -64,6 +64,15 @@ export type PageRouteEntry = {
     layout: PageTripleModule;
     page: PageTripleModule;
   };
+  /**
+   * The page's own-directory `layout.tsx` file, when the route has one —
+   * threaded through from `create-page-route-handler.ts`'s `layoutFile`
+   * purely so the "loader" tracing phase (card 71622e4a) can report which
+   * layout ran, without every test-constructed `PageRouteEntry` having to
+   * know about it (it stays `undefined`, and the attribute is simply
+   * omitted).
+   */
+  layoutPath?: string;
 };
 
 export type PageRouteMatch = {
