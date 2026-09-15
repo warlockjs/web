@@ -11,7 +11,7 @@
  * Real core `Request`/`Response` throughout, same construction as
  * `defer-streaming.spec.ts` in this directory.
  */
-import { createElement } from "react";
+import { createElement, Suspense, use } from "react";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Response, setConfig, type HttpContext } from "@warlock.js/core";
 import { createCoreHttp, requestContext } from "./fixtures/core-http";
@@ -293,5 +293,121 @@ describe("createPageRouteHandler — crawler wiring end to end", () => {
     const wireHtml = Buffer.concat(chunks).toString("utf8");
     expect(wireHtml).toContain("Hello plain");
     expect(http.reply.appliedHeaders["vary"]).toBeUndefined();
+  });
+});
+
+describe("renderPageRequest — crawler mode and a Suspense boundary OUTSIDE defer()", () => {
+  /**
+   * A page whose leaf reads a promise through `use()` inside a raw
+   * `<Suspense>`, never through `defer()` at all — `bundle.deferredKeys` is
+   * empty for this page, so the await-and-inline branch never runs and the
+   * ONLY thing that can make a crawler wait for this content is the forced
+   * `waitForAll` in `render-page.ts`'s `finishRender` (the guard this spec
+   * exists to exercise — a page that streams via ordinary React Suspense
+   * with no `defer()` involved at all is exactly the case a `defer()`-scoped
+   * fix would miss).
+   */
+  function suspendingPage(): {
+    page: Record<string, unknown>;
+    release: (value: string) => void;
+  } {
+    let release!: (value: string) => void;
+    const suspense = new Promise<string>((resolve) => {
+      release = resolve;
+    });
+
+    function SuspendingChild() {
+      const value = use(suspense);
+      return createElement("span", null, value);
+    }
+
+    const page = {
+      loader: async () => ({ greeting: "hi" }),
+      default: () =>
+        createElement(
+          Suspense,
+          { fallback: "LOADING" },
+          createElement(SuspendingChild, {}),
+        ),
+    };
+
+    return { page, release };
+  }
+
+  it("a crawler waits for the boundary to resolve: no byte arrives first, and the resolved content replaces the fallback", async () => {
+    const { page, release } = suspendingPage();
+    const entry = pageEntry("/suspense", page);
+    const http = createCoreHttp({
+      url: "/suspense",
+      headers: { "user-agent": "Googlebot/2.1" },
+    });
+    const chunks: Buffer[] = [];
+    http.reply.raw.on("data", (chunk: Buffer) => chunks.push(chunk));
+
+    let settled = false;
+    const renderedPromise = renderPageRequest("/suspense", {
+      routes: [entry],
+      createHttp: () => ({ request: http.request, response: http.response }),
+      crawler: true,
+    }).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    // Give the boundary every chance to resolve prematurely. Without the
+    // forced `waitForAll`, `onShellReady` would fire immediately (the
+    // fallback alone is enough for a shell) and this would already be
+    // `true` here — the exact regression this spec exists to catch.
+    await flushAsyncWork();
+    expect(settled).toBe(false);
+    expect(chunks).toHaveLength(0);
+
+    release("Resolved content");
+    const rendered = await renderedPromise;
+
+    if (rendered instanceof Response) throw new Error("unexpected terminal Response");
+    expect(rendered.pipeableStream).toBeDefined();
+
+    http.response.setContentType("text/html");
+    http.response.setStatusCode(rendered.status);
+    await http.response.streamReact(rendered.pipeableStream!);
+
+    const wireHtml = Buffer.concat(chunks).toString("utf8");
+    expect(wireHtml).toContain("Resolved content");
+    expect(wireHtml).not.toContain("LOADING");
+  });
+
+  it("an ordinary browser is unaffected: the shell (with the fallback) streams before the boundary resolves", async () => {
+    const { page, release } = suspendingPage();
+    const entry = pageEntry("/suspense", page);
+    const http = createCoreHttp({
+      url: "/suspense",
+      headers: { "user-agent": "Mozilla/5.0 Chrome/120.0.0.0" },
+    });
+    const chunks: Buffer[] = [];
+    http.reply.raw.on("data", (chunk: Buffer) => chunks.push(chunk));
+
+    const rendered = await renderPageRequest("/suspense", {
+      routes: [entry],
+      createHttp: () => ({ request: http.request, response: http.response }),
+      crawler: false,
+    });
+
+    if (rendered instanceof Response) throw new Error("unexpected terminal Response");
+
+    http.response.setContentType("text/html");
+    http.response.setStatusCode(rendered.status);
+    const streamed = http.response.streamReact(rendered.pipeableStream!);
+
+    await flushAsyncWork();
+    const shellHtml = Buffer.concat(chunks).toString("utf8");
+    expect(shellHtml).toContain("LOADING");
+    expect(http.reply.raw.writableEnded).toBe(false);
+
+    release("Resolved content");
+    await streamed;
+
+    const wireHtml = Buffer.concat(chunks).toString("utf8");
+    expect(wireHtml).toContain("Resolved content");
   });
 });
