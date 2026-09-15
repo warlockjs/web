@@ -250,16 +250,17 @@ export async function executePageRequest<TResult = PageDataBundle>(
       page: createLevelBuffer(),
     };
 
-    let signalIndex = -1;
-    let signalKind: "throw" | "shortCircuit" | undefined;
-    let signalThrown: unknown;
-    let signalCircuit:
-      | { kind: "redirect" | "notFound"; statusCode: number; url?: string; body?: unknown }
-      | undefined;
+    type LoaderSignal =
+      | { kind: "throw"; index: number; level: PageLevelName; thrown: unknown }
+      | {
+          kind: "shortCircuit";
+          index: number;
+          level: PageLevelName;
+          circuit: { kind: "redirect" | "notFound"; statusCode: number; url?: string; body?: unknown };
+        };
+    let signal: LoaderSignal | undefined;
 
-    for (let index = 0; index < LEVEL_ORDER.length; index++) {
-      const level = LEVEL_ORDER[index];
-
+    for (const [index, level] of LEVEL_ORDER.entries()) {
       // `route.validate` — the PAGE's own declared schema, over `{ params,
       // query }` kept as two separate keys (canon `b79c4f55`, point 1). Runs
       // HERE, at the front of the page level's own turn: app and layout
@@ -284,18 +285,14 @@ export async function executePageRequest<TResult = PageDataBundle>(
           shared: sealedShared,
         });
       } catch (thrown) {
-        signalIndex = index;
-        signalKind = "throw";
-        signalThrown = thrown;
+        signal = { kind: "throw", index, level, thrown };
         break;
       }
 
       if (value instanceof Response) return value;
 
       if (isLoaderShortCircuit(value)) {
-        signalIndex = index;
-        signalKind = "shortCircuit";
-        signalCircuit = value;
+        signal = { kind: "shortCircuit", index, level, circuit: value };
         break;
       }
 
@@ -306,18 +303,18 @@ export async function executePageRequest<TResult = PageDataBundle>(
     /** Set only when a THROW escalated to the app boundary — forces 500. */
     let forcedStatusCode: number | undefined;
 
-    if (signalIndex === -1) {
+    if (!signal) {
       committedLevels = [...LEVEL_ORDER];
-    } else if (signalKind === "throw") {
+    } else if (signal.kind === "throw") {
       // The throwing level's buffer is discarded; lower levels never ran.
-      committedLevels = LEVEL_ORDER.slice(0, signalIndex);
+      committedLevels = LEVEL_ORDER.slice(0, signal.index);
 
-      const boundary = designateBoundary(LEVEL_ORDER[signalIndex], triple);
+      const boundary = designateBoundary(signal.level, triple);
       // A failure that OWNS its own status (an error thrown with a
       // `statusCode` property) carries it through here; an ordinary throw
       // carries none and keeps the pipeline's ordinary answer, 500.
-      const ownStatusCode = (signalThrown as { statusCode?: number } | null)?.statusCode;
-      bundle.error = buildErrorRecord(signalThrown, boundary, pathname, ownStatusCode);
+      const ownStatusCode = (signal.thrown as { statusCode?: number } | null)?.statusCode;
+      bundle.error = buildErrorRecord(signal.thrown, boundary, pathname, ownStatusCode);
 
       if (boundary.boundaryLevel === "app") {
         const status = ownStatusCode ?? 500;
@@ -327,13 +324,13 @@ export async function executePageRequest<TResult = PageDataBundle>(
     } else {
       // Short-circuit: the signalling level's OWN buffer commits too
       // (inclusive); lower levels never ran.
-      committedLevels = LEVEL_ORDER.slice(0, signalIndex + 1);
+      committedLevels = LEVEL_ORDER.slice(0, signal.index + 1);
 
-      const circuit = signalCircuit!;
+      const circuit = signal.circuit;
 
       bundle.shortCircuit = {
         stage: "loaders",
-        level: LEVEL_ORDER[signalIndex],
+        level: signal.level,
         kind: circuit.kind,
         statusCode: circuit.statusCode,
         url: circuit.url,

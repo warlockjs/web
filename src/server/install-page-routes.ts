@@ -291,13 +291,15 @@ async function resolveLayoutLevel(
   loadLayout: LoadLayout,
 ): Promise<LayoutLevel> {
   const chain = layoutChainFor(pageFile, webRoot);
-  const modules = await Promise.all(chain.map(loadLayout));
+  const pairs = await Promise.all(
+    chain.map(async (layoutFile) => ({ layoutFile, module: await loadLayout(layoutFile) })),
+  );
   const level = resolveComposedLayoutLevel(
     pageFile,
-    chain.map((layoutFile, index) => ({
+    pairs.map(({ layoutFile, module }) => ({
       id: layoutFile,
-      renders: typeof modules[index].default !== "undefined",
-      prefix: modules[index].prefix,
+      renders: typeof module.default !== "undefined",
+      prefix: module.prefix,
     })),
   );
 
@@ -306,9 +308,9 @@ async function resolveLayoutLevel(
     layoutFile: level.hostId,
     prefix: level.prefix,
     prefixesByDirectory: layoutPrefixesByDirectory(
-      chain.map((layoutFile, index) => ({
+      pairs.map(({ layoutFile, module }) => ({
         directory: toPosix(path.relative(webRoot, path.dirname(layoutFile))),
-        prefix: modules[index].prefix,
+        prefix: module.prefix,
       })),
     ),
   };
