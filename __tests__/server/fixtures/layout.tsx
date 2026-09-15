@@ -1,6 +1,13 @@
 import type { LayoutLoader, LayoutProps } from "../../../src/index";
-import { shared } from "../../../src/index";
-import "./types";
+import { shared as sharedBase } from "../../../src/index";
+import type { FixtureSharedContext } from "./types";
+
+/**
+ * Locally typed view of the library's `shared` singleton — see
+ * `./types.ts` for why this is a cast, not a `declare module` augmentation.
+ * Same runtime Proxy, narrower local type only.
+ */
+const shared = sharedBase as unknown as FixtureSharedContext;
 
 /**
  * The fixture layout (v5/app products/web/layout.tsx shape): a guard

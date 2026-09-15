@@ -1,6 +1,5 @@
 import { v } from "@warlock.js/seal";
 import type { PageLoader, PageMetadata, PageProps } from "../../../src/index";
-import "./types";
 
 /**
  * The full-surface fixture page, in the v5/app contract shape

@@ -1,6 +1,13 @@
 import type { AppLoader, AppProps } from "../../../src/index";
-import { Head, Scripts, shared } from "../../../src/index";
-import "./types";
+import { Head, Scripts, shared as sharedBase } from "../../../src/index";
+import type { FixtureSharedContext } from "./types";
+
+/**
+ * Locally typed view of the library's `shared` singleton — see
+ * `./types.ts` for why this is a cast, not a `declare module` augmentation.
+ * Same runtime Proxy, narrower local type only.
+ */
+const shared = sharedBase as unknown as FixtureSharedContext;
 
 /**
  * The fixture application root, in the v5/app contract shape (v5/app
