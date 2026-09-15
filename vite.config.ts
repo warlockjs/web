@@ -8,6 +8,7 @@ const entryFiles = {
 };
 
 const peerPackages = [
+  "@warlock.js/cache",
   "@warlock.js/core",
   "@warlock.js/seal",
   "react",

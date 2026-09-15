@@ -41,6 +41,10 @@ import { registerModules, type RegisterableModuleNamespace } from "../register-m
 import { buildHydrationPayload } from "./build-hydration-payload";
 import { applyResponseCacheFloor } from "./response-cache-floor";
 import type { PageCacheOptIn } from "../routing/route-identity";
+import { resolveAuthCookieName } from "./auth-cookie-name";
+import { looksAuthenticated, isStoreEligible } from "./page-cache-eligibility";
+import { computePageCacheKey, type PageCacheVariant } from "./page-cache-key";
+import { getPageCacheEntry, setPageCacheEntry } from "./page-cache-store";
 import { ensureSetCookieCacheFloorHook, markPageResponse } from "./set-cookie-cache-floor-hook";
 import type { BufferedCookie, PageRouteEntry, PageTripleModule } from "./execute-page-request";
 import { renderPageFailure, renderPageRequest, type RenderedPage } from "./render-page";
@@ -114,6 +118,20 @@ function applyCommit(
   for (const cookie of rendered.cookies ?? []) {
     applyBufferedCookie(response, cookie);
   }
+}
+
+/**
+ * Resolves a route's `cache.tags` (static list or a function of the
+ * resolved page data) into a concrete list at store time. Called with
+ * `rendered.data` — the page's own loader data (`RenderedPage.data`,
+ * `render-page.ts`) — as the most sensible "data" argument for the function
+ * form: it is the same value a page's own component/loader already sees, and
+ * is available at this seam without threading anything new through.
+ */
+function resolveCacheTags(tags: PageCacheOptIn["tags"], data: unknown): string[] {
+  if (tags === undefined) return [];
+
+  return typeof tags === "function" ? tags(data) : tags;
 }
 
 /**
@@ -299,7 +317,80 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     // built-in default) — see `detect-crawler.ts`.
     const crawler = !wantsData && isCrawlerRequest(request);
 
+    // Server-side page cache (`route.cache.serverCache`,
+    // `../routing/route-identity.ts`'s `PageCacheOptIn`). Every check below is
+    // gated on this one flag so a route WITHOUT `serverCache` is completely
+    // untouched: no header, no cache module ever loaded, no behaviour change.
+    const pageCacheVariant: PageCacheVariant = wantsData ? "json" : "html";
+
+    // Decided BEFORE the loader and before any cache lookup (lead decision
+    // 4): a request carrying a credential must never be served a guest page
+    // from the cache, and this check is cheap — a header/cookie read, no JWT
+    // verification, no loader execution — exactly like `looksAuthenticated`'s
+    // own doc comment describes.
+    const credentialedRequest =
+      cache?.serverCache === true && request.method === "GET"
+        ? looksAuthenticated(request, resolveAuthCookieName())
+        : false;
+
+    let cacheHeaderValue: "hit" | "miss" | "bypass" | undefined;
+    let cacheKey: string | undefined;
+    let attemptStorageAfterRender = false;
+
     try {
+      if (cache?.serverCache === true) {
+        if (request.method !== "GET") {
+          // Decision 3 ("GET only"): a non-GET request to a serverCache route
+          // is never looked up and never stored — it flows through the
+          // ordinary pipeline below untouched, just reporting a miss-shaped
+          // header since nothing was ever cached for it either way.
+          cacheHeaderValue = "miss";
+        } else if (credentialedRequest) {
+          cacheHeaderValue = "bypass";
+        } else {
+          cacheKey = computePageCacheKey({
+            path: request.path,
+            query: request.query as Record<string, unknown>,
+            locale: request.locale,
+            variant: pageCacheVariant,
+          });
+
+          const hit = await getPageCacheEntry(cacheKey);
+
+          if (hit !== undefined) {
+            // A HIT is always served buffered, straight from the store, with
+            // no loader and no render — see `render-page.ts`'s
+            // await-and-inline path, reused only on the MISS side below.
+            markPageResponse(request);
+
+            // Replays exactly what a MISS on this same route would emit: the
+            // opt-in already requires `public: true`, so this is the same
+            // `Cache-Control` `applyResponseCacheFloor` would compute for a
+            // store-eligible response (`authDerived === false`, no cookie —
+            // both already proven true of whatever got stored).
+            response.header("Cache-Control", `public, max-age=${cache.maxAge}`);
+            response.header("x-warlock-cache", "hit");
+
+            if (hit.usesDefer) {
+              response.header("Vary", "User-Agent");
+            }
+
+            if (pageCacheVariant === "json") {
+              response.header("Vary", WARLOCK_DATA_REQUEST_HEADER);
+              response.setContentType(hit.contentType);
+              await response.send(hit.body, hit.status);
+            } else {
+              await response.html(hit.body, hit.status);
+            }
+
+            return;
+          }
+
+          cacheHeaderValue = "miss";
+          attemptStorageAfterRender = true;
+        }
+      }
+
       const [appModule, layoutModule, ownPageModule, registrationLayouts] = await Promise.all([
         loadModule(appFile),
         layoutFile ? loadModule(layoutFile) : Promise.resolve({}),
@@ -371,14 +462,25 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         // awaits every deferred settlement and inlines it — the NDJSON
         // request keeps `deferredKeys`/`deferredSettlements` on the bundle
         // for this handler to stream itself, below.
-        awaitDeferredForDataRequest: wantsData && !wantsNdjson,
+        //
+        // `attemptStorageAfterRender` forces the SAME await-and-inline path a
+        // data request already has, even for an NDJSON request
+        // (`wantsNdjson`): a serverCache-eligible route never streams NDJSON
+        // on a miss, it stores (and serves) the fully-resolved JSON variant
+        // instead — see `page-cache-store.ts`.
+        awaitDeferredForDataRequest: attemptStorageAfterRender ? wantsData : wantsData && !wantsNdjson,
         stylesheetUrls,
         hydrationClientModuleUrl,
         // A detected crawler forces `onAllReady` on its own (`render-page.ts`'s
         // `finishRender`) — `waitForAll` here stays `false` for every request
         // this handler serves; nothing else in this framework needs it set.
         waitForAll: false,
-        crawler,
+        // Forcing `crawler: true` for a serverCache miss on the document
+        // representation reuses the exact await-and-inline path a REAL
+        // crawler gets (`render-page.ts`), so the stored/served bytes are
+        // always the fully resolved document — never a shell with deferred
+        // chunks a HIT would have no live stream to append to.
+        crawler: attemptStorageAfterRender && !wantsData ? true : crawler,
       });
 
       if (rendered instanceof Response) return rendered;
@@ -429,10 +531,74 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       // it is `applyResponseCacheFloor` (`response-cache-floor.ts`) that
       // decides what each of the three states does to the opt-in; this seam
       // only reports what it actually knows.
+      const authDerivedState =
+        request.locals === undefined ? undefined : request.locals.authDerived === true;
+
       applyResponseCacheFloor(response, {
-        authDerived: request.locals === undefined ? undefined : request.locals.authDerived === true,
+        authDerived: authDerivedState,
         cache,
       });
+
+      // Emitted at the SAME seam as the floor, right after it, per lead
+      // decision 8/design note §6 — so the two headers can never be computed
+      // from different auth-state reads. Absent entirely for a route without
+      // `serverCache`.
+      if (cacheHeaderValue !== undefined) {
+        response.header("x-warlock-cache", cacheHeaderValue);
+      }
+
+      // Store-time eligibility (lead decision 3), checked once we actually
+      // have a rendered response to store. `precomputedJsonBody` lets the
+      // `wantsData` branch below reuse the exact string just written to the
+      // cache instead of calling `stringify(buildHydrationPayload(...))`
+      // twice.
+      let precomputedJsonBody: string | undefined;
+
+      if (attemptStorageAfterRender && cacheKey !== undefined && cache !== undefined) {
+        const eligible = isStoreEligible({
+          method: request.method,
+          authDerived: authDerivedState,
+          response,
+          status,
+          crawler,
+          hasBufferedCookie:
+            (rendered.cookies?.length ?? 0) > 0 ||
+            Boolean((rendered.headers as Record<string, unknown> | undefined)?.["set-cookie"]),
+        });
+
+        if (eligible) {
+          const ttl = cache.ttl ?? cache.maxAge;
+          const tags = resolveCacheTags(cache.tags, rendered.data);
+
+          if (pageCacheVariant === "html") {
+            await setPageCacheEntry(
+              cacheKey,
+              {
+                body: rendered.html,
+                status: 200,
+                contentType: "text/html",
+                usesDefer: rendered.usesDefer ?? false,
+              },
+              ttl,
+              tags,
+            );
+          } else if (rendered.bundle !== undefined) {
+            precomputedJsonBody = stringify(buildHydrationPayload(rendered.bundle, request.locale));
+
+            await setPageCacheEntry(
+              cacheKey,
+              {
+                body: precomputedJsonBody,
+                status: 200,
+                contentType: DATA_RESPONSE_CONTENT_TYPE,
+                usesDefer: rendered.usesDefer ?? false,
+              },
+              ttl,
+              tags,
+            );
+          }
+        }
+      }
 
       if (wantsData) {
         // `changeLocaleCode()`'s client half asks for a locale
@@ -510,7 +676,10 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         // which is true; the semantic decode is `readHydrationPayload`'s job, not
         // this response's content type.
         response.setContentType(DATA_RESPONSE_CONTENT_TYPE);
-        await response.send(stringify(buildHydrationPayload(rendered.bundle, request.locale)), status);
+        await response.send(
+          precomputedJsonBody ?? stringify(buildHydrationPayload(rendered.bundle, request.locale)),
+          status,
+        );
 
         return;
       }

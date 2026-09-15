@@ -67,6 +67,26 @@ export type PageCacheOptIn = {
   public: true;
   /** Freshness window in seconds, emitted as `Cache-Control: public, max-age=<maxAge>`. */
   maxAge: number;
+  /**
+   * Opt into the server-side page cache (`../server/page-cache-store.ts`): the
+   * framework itself holds the resolved bytes and serves a HIT without
+   * re-running the pipeline. Distinct from `public`/`maxAge`, which only
+   * decide the `Cache-Control` a downstream CDN/proxy should honour. Default
+   * `false` — every existing `{ public, maxAge }` route is unaffected.
+   */
+  serverCache?: boolean;
+  /**
+   * Tags the stored entry is written under, for `invalidatePageCache(tags)`
+   * (`../server/invalidate-page-cache.ts`). Either a static list, or a
+   * function of the resolved page data — called with `rendered.data` (the
+   * page's own loader data) when the entry is about to be stored.
+   */
+  tags?: string[] | ((data: unknown) => string[]);
+  /**
+   * Server-cache freshness window in seconds, independent of `maxAge`. Falls
+   * back to `maxAge` when omitted — see `../server/create-page-route-handler.ts`.
+   */
+  ttl?: number;
 };
 
 /** The shape a page's `route` export may declare — mirrors `PageRouteExport` in `install-page-routes.ts`. */
@@ -88,12 +108,16 @@ export type CanonicalRoute = {
  * release exists to kill.
  */
 export class InvalidPageCacheOptInError extends Error {
-  public constructor(public readonly pageFile: string) {
+  public constructor(
+    public readonly pageFile: string,
+    reason?: string,
+  ) {
     super(
-      `"${pageFile}" declares \`route.cache\` without a valid opt-in. Both keys are required: ` +
-        "write `cache: { public: true, maxAge: <seconds> }` — for example `cache: { public: " +
-        "true, maxAge: 60 }`. Remove `cache` entirely to keep the route `no-store` (the default) " +
-        "instead.",
+      reason ??
+        `"${pageFile}" declares \`route.cache\` without a valid opt-in. Both keys are required: ` +
+          "write `cache: { public: true, maxAge: <seconds> }` — for example `cache: { public: " +
+          "true, maxAge: 60 }`. Remove `cache` entirely to keep the route `no-store` (the default) " +
+          "instead.",
     );
     this.name = "InvalidPageCacheOptInError";
   }
@@ -120,6 +144,20 @@ export function resolvePageRouteCache(
 
   if (cache.public !== true || typeof cache.maxAge !== "number") {
     throw new InvalidPageCacheOptInError(pageFile);
+  }
+
+  // `serverCache: true` already requires `public: true` above — every
+  // opt-in does — so the one thing left to reject here is a server-cache
+  // opt-in that could never be invalidated: no `tags` means the entry would
+  // sit in the store until `ttl`/`maxAge` expires with no way for app code
+  // to evict it early when the underlying data changes.
+  if (cache.serverCache === true && cache.tags === undefined) {
+    throw new InvalidPageCacheOptInError(
+      pageFile,
+      `"${pageFile}" declares \`route.cache.serverCache: true\` without \`tags\`. A stored ` +
+        "entry with no tags could never be invalidated early — write `tags: [...]` or " +
+        "`tags: (data) => [...]`, or drop `serverCache` to keep using the CDN-facing cache only.",
+    );
   }
 
   return cache;

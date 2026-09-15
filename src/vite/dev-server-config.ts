@@ -56,7 +56,7 @@ const CORE_OPTIONAL_PEERS = [
  * loaded it this way — and `@vitejs/plugin-react` is loaded from the same
  * function, for the same dev-only reason, so it belongs in the same set.
  */
-const WEB_OPTIONAL_PEERS = ["vite", "@vitejs/plugin-react"] as const;
+const WEB_OPTIONAL_PEERS = ["vite", "@vitejs/plugin-react", "@warlock.js/cache"] as const;
 
 /**
  * A directory, plus the path the filesystem really stores it at when the two
