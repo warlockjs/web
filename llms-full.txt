@@ -761,6 +761,7 @@ Only put browser-safe data in `shared`: scalars, arrays, plain objects, or value
 - **`404.page.tsx` never runs its own loader.** The not-found page's module is registered and rendered for real — `register()` and its middleware still run — but the page loader is omitted from the request in both dev and production, so a missing URL cannot trigger application data work or fail a second time. Its ancestry contributes nothing either: the 404 page renders with an empty layout chain by construction. **The root `AppLoader` in `root.tsx` still runs** for a 404 request, so keep it cheap and make sure it tolerates a request that matched nothing.
 - **`process.env` is refused in the client/universal graph, with no `PUBLIC_` exception.** Read it in a loader and return it as page data.
 - **Server actions are not supported.** POST to an ordinary Warlock API route and call `refresh()` after success.
+- **Responses now stream via React's streaming renderer.** The response still waits for every loader, middleware short-circuit and validation to settle before the first byte goes out — status codes, headers and cookies are unchanged — so this is not an API change for apps built on the framework.
 
 ## See also
 
@@ -768,6 +769,7 @@ Only put browser-safe data in `shared`: scalars, arrays, plain objects, or value
 - [`write-the-root/SKILL.md`](../write-the-root/SKILL.md) — `AppLoader`, `<Head />`, and `<Scripts />`.
 - [`use-layouts/SKILL.md`](../use-layouts/SKILL.md) — `LayoutLoader` and persistent wrappers.
 - [`navigate-on-the-client/SKILL.md`](../navigate-on-the-client/SKILL.md) — re-fetch loaders with `refresh()`.
+- [`stream-deferred-data/SKILL.md`](../stream-deferred-data/SKILL.md) — stream a slow page-loader key after the shell with `defer()` and `use()`.
 
 ## navigate-on-the-client  `@warlock.js/web/navigate-on-the-client/SKILL.md`
 
@@ -1263,6 +1265,206 @@ The hydration entry is built from the projected client graph. CSS imports are kn
 - [`create-a-page/SKILL.md`](../create-a-page/SKILL.md) — page-local asset imports and projection.
 - [`navigate-on-the-client/SKILL.md`](../navigate-on-the-client/SKILL.md) — client swaps after the initial styled document.
 
+## stream-deferred-data  `@warlock.js/web/stream-deferred-data/SKILL.md`
+
+---
+name: stream-deferred-data
+description: 'Stream slow page-loader data after the shell with `defer()` and React `use()` inside `<Suspense>`, instead of blocking the first byte on it. Covers the wire contract (a deferred value settles as a chunk script after the shell, or as an NDJSON line on client navigation), errors reaching the nearest `<Suspense>` error boundary with status 200 already sent, `web.streaming.deferTimeout`, and the metadata rule (`metadata()` may read only resolved keys). Triggers: `defer()`, `use(data.`, `DeferredValueError`, `DeferTimeoutError`, `DeferredStreamClosedError`, `DeferredKeyInMetadataError`, `web.streaming.deferTimeout`, `__WARLOCK_DEFER__`; "stream part of a page", "slow loader data", "show a skeleton while reviews load", "Suspense in a page component", "defer a promise from a loader". Skip: the rest of the loader contract — `@warlock.js/web/load-page-data/SKILL.md`; re-fetching after a mutation — `@warlock.js/web/navigate-on-the-client/SKILL.md`; competing primitives Remix `defer()`/`Await`, Next.js `loading.tsx`/streaming RSC (this framework has no RSC).'
+---
+
+# Warlock — stream deferred page data
+
+A page loader normally blocks the whole response on everything it returns.
+`defer()` lets a PAGE loader (app and layout loaders cannot use it) mark some
+of its top-level keys as "send the shell now, stream this in after" — the
+first byte still waits for middleware, validation and every non-deferred
+loader value, but a slow key no longer holds up everything else.
+
+## The shape
+
+```tsx title="src/web/products/product-details.page.tsx"
+import { use, Suspense } from "react";
+import { defer } from "@warlock.js/web";
+import type { PageLoader, PageProps } from "@warlock.js/web";
+
+export const loader = (async ({ request }) => {
+  const { id } = request.validated();
+
+  return defer({
+    product: await getProduct(id), // resolved before the shell — unchanged today
+    reviews: getReviews(id), // a Promise — streamed in after the shell
+  });
+}) satisfies PageLoader;
+
+function Reviews({ reviews }: { reviews: Promise<Review[]> }) {
+  const list = use(reviews);
+  return (
+    <ul>
+      {list.map((review) => (
+        <li key={review.id}>{review.text}</li>
+      ))}
+    </ul>
+  );
+}
+
+export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
+  return (
+    <article>
+      <h1>{data.product.name}</h1>
+      <Suspense fallback={<p>Loading reviews…</p>}>
+        <Reviews reviews={data.reviews} />
+      </Suspense>
+    </article>
+  );
+}
+```
+
+- `defer(data)` takes the SAME object shape a loader always returned. Any
+  TOP-LEVEL key whose value is a promise streams in after the shell; every
+  other key goes into `pageData` exactly as before — a loader that never
+  calls `defer()` is completely unaffected.
+- Only TOP-LEVEL keys may be promises. A promise nested inside a resolved
+  key's own value (`defer({ list: { items: fetchItems() } })`) throws
+  `NestedDeferredValueError` naming the path — move it to its own top-level
+  key instead.
+- `data.reviews` types as `Promise<Review[]>` for the component, exactly the
+  type the loader declared — `PageProps`/`LoaderData` only unwrap the
+  loader's own outer promise, never a deferred key's.
+- Read a deferred key with React's own `use()`, inside a `<Suspense>`
+  boundary. `use()` is plain React, not a Warlock export.
+- `defer()` is PAGE-loader-only. An app or layout loader that returns one
+  throws `DeferredInNonPageLoaderError` — those levels compose every page
+  under them, including pages with no `<Suspense>` boundary at all, so their
+  data cannot usefully stream.
+
+## Errors go to the nearest boundary — status 200 already sent
+
+By the time a deferred value settles, the shell has already flushed with
+status 200: headers, cookies and the status code were decided before the
+first byte went out, and nothing about a LATER value can change any of that.
+So a rejected deferred value never produces a different HTTP status — it
+resolves to the nearest **`<Suspense>`**'s enclosing React error boundary,
+the same way a synchronous render throw would, while the response the
+browser already started receiving stays a 200.
+
+What `use()` throws is one of:
+
+- **`DeferredValueError`** — the loader's own promise rejected. Carries the
+  original error's `message` and, if the original error had one,
+  `statusCode`. Never a stack in production; dev may add one.
+- **`DeferTimeoutError`** — the promise did not settle within
+  `web.streaming.deferTimeout` (default 10000ms). The server treats this
+  exactly like a rejection: settle, emit, move on. The response is never
+  held open waiting for a value that times out.
+- **`DeferredStreamClosedError`** — the connection was cut (or the page
+  navigated away) while a key was still pending. The client rejects every
+  still-pending key with this on `DOMContentLoaded`.
+
+None of these trigger a hard navigation or reload — the payload the shell
+sent was already complete, and only a deferred value inside a `<Suspense>`
+boundary failed. Every rejection and every timeout is ALSO reported to the
+server's error sink unconditionally, regardless of whether any component
+ever reads the deferred key.
+
+```tsx title="src/web/products/reviews-boundary.tsx"
+import { Component, type ReactNode } from "react";
+
+export class ReviewsBoundary extends Component<
+  { children: ReactNode },
+  { error?: unknown }
+> {
+  state: { error?: unknown } = {};
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) return <p>Reviews are unavailable right now.</p>;
+    return this.props.children;
+  }
+}
+```
+
+Wrap the `<Suspense>` boundary (or an ancestor of it) in a boundary like this
+one when a deferred failure should degrade gracefully instead of bubbling to
+the page's own `ErrorBoundary` export.
+
+## `web.streaming.deferTimeout`
+
+```ts title="warlock.config.ts"
+export default {
+  web: {
+    streaming: {
+      deferTimeout: 15_000, // milliseconds; default 10000
+    },
+  },
+};
+```
+
+Applies per deferred key, not per request — three deferred keys on one page
+each get their own 10-second (or configured) budget, timed independently.
+
+## The metadata rule
+
+**`metadata()` may read only RESOLVED keys.** It runs before the shell
+flushes; a deferred key resolves only after. Reading one throws
+`DeferredKeyInMetadataError` — naming the key and the page — in dev AND in
+production, unconditionally:
+
+```tsx
+export const loader = (async () =>
+  defer({ product: await getProduct(id), reviews: getReviews(id) })
+) satisfies PageLoader;
+
+// Wrong — "reviews" is a defer()-ed key:
+export const metadata = (({ data }) => ({
+  title: `${data.reviews.length} reviews`, // throws DeferredKeyInMetadataError
+})) satisfies PageMetadata<typeof loader>;
+
+// Right — describe the page from what's already resolved:
+export const metadata = (({ data }) => ({
+  title: data.product.name,
+})) satisfies PageMetadata<typeof loader>;
+```
+
+There is no way to make `metadata()` wait for a deferred value — a page's
+`<head>` is part of the shell, and the shell is exactly the thing `defer()`
+exists to stop waiting on. If the description genuinely needs the deferred
+value, resolve it inside the loader instead of deferring it.
+
+## Client navigation (NDJSON) — handled automatically
+
+A client-side navigation (`<Link>`, `navigateTo()`, `refresh()`) fetches page
+data instead of a full document. When the browser's data request advertises
+NDJSON support, the response streams the same way the document did: line 1
+is the complete payload (including which keys are still pending), then one
+line per resolved deferred key as it settles. `<Suspense>` shows the fallback
+until each key's line arrives — nothing in a page component or loader has to
+know or care that this is happening; the same `use(data.reviews)` call reads
+the wire promise on both the initial document and every later client
+navigation. A client that cannot speak NDJSON gets the older contract
+instead: the server awaits every deferred value and inlines the fully
+resolved data into one JSON response.
+
+## Gotchas
+
+- **Only page loaders may `defer()`.** App/layout loaders throw
+  `DeferredInNonPageLoaderError`.
+- **Only top-level keys may be promises.** A promise nested under a resolved
+  key throws `NestedDeferredValueError`.
+- **`metadata()` reads resolved keys only.** A deferred key throws
+  `DeferredKeyInMetadataError`, naming the key and the page.
+- **A deferred rejection never changes the response's status.** It resolves
+  to the nearest `<Suspense>` error boundary; the document (or NDJSON
+  stream) it arrived on already answered 200.
+- **`use()` is plain React**, not a Warlock export — import it from `"react"`.
+
+## See also
+
+- [`load-page-data/SKILL.md`](../load-page-data/SKILL.md) — the rest of the loader contract `defer()` builds on.
+- [`navigate-on-the-client/SKILL.md`](../navigate-on-the-client/SKILL.md) — the NDJSON data request this streams over.
+
 ## use-layouts  `@warlock.js/web/use-layouts/SKILL.md`
 
 ---
@@ -1460,7 +1662,7 @@ Do not also hard-code a `<title>` for the current page; that produces two titles
 
 ## `<Scripts />`
 
-`<Scripts />` emits the escaped `application/json` payload that hydration and client navigation consume. Put it after `#root`, normally near the end of `<body>`.
+`<Scripts />` emits the escaped `application/json` payload that hydration and client navigation consume, followed by the hydration client entry `<script type="module">` (Stage 1 streaming SSR renders both through React now, in this one component — see below). Put it after `#root`, normally near the end of `<body>`.
 
 For a Content Security Policy nonce:
 
@@ -1489,13 +1691,18 @@ Prefer declaring `nonce` on `SharedContext` so the cast is unnecessary; see [loa
 `@warlock.js/core`'s opt-in `http.csp` (5.12.0 — see its `configure-app` and
 `send-response` skills) builds `script-src 'self' 'nonce-<value>'` from the
 identical per-request `request.nonce`. The framework's own emitted
-`<script>` tags — this payload script, and the hydration module the page
-route handler appends before `</body>` — already carry that nonce
-automatically; nothing in an app's `root.tsx` needs to change to make those
-two work together. The prop above only matters if your root renders its
-OWN inline `<script>` tags that need to pass the same policy.
+`<script>` tags — the payload script and the hydration client entry module,
+both rendered by `<Scripts />` — already carry that nonce automatically;
+nothing in an app's `root.tsx` needs to change to make those two work
+together. The prop above only matters if your root renders its OWN inline
+`<script>` tags that need to pass the same policy.
 
-`<Scripts />` owns the inline data payload. The separate hydration module is appended by the page route handler. Its published `esm/hydration/index.mjs` file is a build input and must never be imported by application code.
+`<Scripts />` owns both the inline data payload and the hydration client
+entry module — Stage 1 streaming SSR moved the entry module off a post-render
+string splice and onto real React output, read from the same document
+context the payload script already reads (`hydrationClientModuleUrl`). Its
+published `esm/hydration/index.mjs` file is a build input and must never be
+imported by application code.
 
 ## Add an application loader
 

@@ -290,3 +290,4 @@ Only put browser-safe data in `shared`: scalars, arrays, plain objects, or value
 - [`write-the-root/SKILL.md`](../write-the-root/SKILL.md) — `AppLoader`, `<Head />`, and `<Scripts />`.
 - [`use-layouts/SKILL.md`](../use-layouts/SKILL.md) — `LayoutLoader` and persistent wrappers.
 - [`navigate-on-the-client/SKILL.md`](../navigate-on-the-client/SKILL.md) — re-fetch loaders with `refresh()`.
+- [`stream-deferred-data/SKILL.md`](../stream-deferred-data/SKILL.md) — stream a slow page-loader key after the shell with `defer()` and `use()`.

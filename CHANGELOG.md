@@ -8,6 +8,7 @@ All notable changes to `@warlock.js/web` are documented here.
 
 - Emitted scripts carry the request's CSP nonce.
 - `<ClientOnly>` and `useIsClient()` — render browser-only UI with a server fallback and no hydration mismatch.
+- `defer()` in page loaders — stream a slow top-level loader key in after the shell instead of blocking the first byte on it, read it with React's `use()` inside `<Suspense>`. A rejection or a `web.streaming.deferTimeout` timeout resolves to the nearest `<Suspense>` error boundary with status 200 already sent, never a different HTTP status. Client navigations stream the same values as NDJSON automatically. `metadata()` may read only resolved keys — reading a deferred one throws `DeferredKeyInMetadataError`, naming the key and the page, in dev and in production. See the `stream-deferred-data` skill.
 
 ### Changed
 
