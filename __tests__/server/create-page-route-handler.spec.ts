@@ -1,3 +1,4 @@
+import { PassThrough } from "node:stream";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HttpContext } from "@warlock.js/core";
 import {
@@ -150,7 +151,8 @@ function recordingContext(
     cookie() {
       return response;
     },
-    setStatusCode() {
+    setStatusCode(status: number) {
+      written.status = status;
       return response;
     },
     headers(map: Record<string, string>) {
@@ -160,6 +162,32 @@ function recordingContext(
     async html(html: string, status?: number) {
       written.html = html;
       written.status = status;
+      return response;
+    },
+    /**
+     * The Stage 1 streaming SSR terminal write, the counterpart of `html()`
+     * above for a genuine document render (`create-page-route-handler.ts`'s
+     * `rendered.pipeableStream` branch). Real core (`Response.streamReact`,
+     * `streamReactResponse`) pipes onto the raw socket byte by byte; this
+     * stand-in collects those SAME bytes onto a `PassThrough` so `written.html`
+     * ends up holding the exact document a real client would have received,
+     * keeping this fixture's assertions (byte content, script position) valid
+     * for the streamed path exactly as they already were for `html()`.
+     */
+    async streamReact(pipeableStream: { pipe<T>(destination: T): T }) {
+      const collector = new PassThrough();
+      const chunks: Buffer[] = [];
+      collector.on("data", (chunk: Buffer) => chunks.push(chunk));
+
+      const done = new Promise<void>((resolve, reject) => {
+        collector.once("finish", resolve);
+        collector.once("error", reject);
+      });
+
+      pipeableStream.pipe(collector);
+      await done;
+
+      written.html = Buffer.concat(chunks).toString("utf8");
       return response;
     },
     /**

@@ -7,6 +7,12 @@ All notable changes to `@warlock.js/web` are documented here.
 ### Added
 
 - Emitted scripts carry the request's CSP nonce.
+- `<ClientOnly>` and `useIsClient()` — render browser-only UI with a server fallback and no hydration mismatch.
+
+### Changed
+
+- The dev and production page installers now share the layout-prefix table and the not-found route's options instead of implementing each twice; parity checks cover both.
+- Pages are rendered with React's streaming renderer. The response still waits for loaders, validation and middleware, so status codes, headers and cookies are unchanged — the document simply starts arriving sooner.
 
 ### Fixed
 

@@ -194,9 +194,16 @@ describe("page route cache opt-in", () => {
   });
 
   // ── 5. Auth-derived floor beats the opt-in ───────────────────────────────
+  // 5.12.0: `request.user` was removed from `@warlock.js/core`; the
+  // authenticated user now lives at `request.locals.user` (written by
+  // `@warlock.js/auth`'s middleware), which does NOT mark `authDerived` — only
+  // `decodedAccessToken` still does (see core's 5.12.0 CHANGELOG and
+  // `auth-derived-cache-headers.spec.ts`). This case is updated to touch
+  // `decodedAccessToken` so it keeps proving the auth floor, rather than a
+  // property that no longer marks it.
   it("an opted-in route on an auth-derived request still emits private, no-store — the auth floor beats the opt-in", async () => {
     touchAuth = (request) => {
-      request.user = { id: 1 } as never;
+      request.decodedAccessToken = { userType: "member" };
     };
 
     const response = await server.inject({ method: "GET", url: "/__cache-opted-in-auth" });

@@ -44,8 +44,20 @@ function context(path = "/account", params: Record<string, string> = {}) {
       // needs it even for tests that never touch cookies or auth.
       header: vi.fn(),
       html: vi.fn(async () => undefined),
+      send: vi.fn(async () => undefined),
+      // The streaming document path (`rendered.pipeableStream` present) goes
+      // through these three instead of `.html()` — see
+      // `createPageRouteHandler`'s non-data, non-short-circuit branch.
+      setContentType: vi.fn(),
+      setStatusCode: vi.fn(),
+      streamReact: vi.fn(async () => undefined),
     },
   };
+}
+
+/** A fake React `PipeableStream` — `pipe`/`abort` are never called by this handler directly; it only hands the object to `response.streamReact`. */
+function fakePipeableStream() {
+  return { pipe: vi.fn(), abort: vi.fn() };
 }
 
 /**
@@ -298,14 +310,16 @@ describe("createPageRouteHandler — universal registration", () => {
   });
 });
 
-describe("createPageRouteHandler — hydration module injection", () => {
-  it("injects the hydration client module on an ordinary render", async () => {
+describe("createPageRouteHandler — streaming document render", () => {
+  it("streams an ordinary render through core's Response.streamReact instead of a buffered send", async () => {
+    const pipeableStream = fakePipeableStream();
     renderPageRequest.mockResolvedValue({
       html: "<html><body></body></html>",
       status: 200,
       headers: {},
       data: undefined,
       bundle: { route: { name: "account", path: "/account", params: {}, query: {} } },
+      pipeableStream,
     });
 
     const requestContext = context();
@@ -318,15 +332,42 @@ describe("createPageRouteHandler — hydration module injection", () => {
 
     await handler(requestContext as never);
 
-    expect(requestContext.response.html).toHaveBeenCalledWith(
-      expect.stringContaining('<script type="module" src="/hydrate.js"></script>'),
-      200,
-    );
+    expect(requestContext.response.setContentType).toHaveBeenCalledWith("text/html");
+    expect(requestContext.response.setStatusCode).toHaveBeenCalledWith(200);
+    expect(requestContext.response.streamReact).toHaveBeenCalledWith(pipeableStream);
+    // The streaming path never falls back to a buffered send — this handler
+    // never touches `response.raw` itself, only `Response.streamReact`.
+    expect(requestContext.response.html).not.toHaveBeenCalled();
   });
 
-  it("carries the request's CSP nonce on the injected hydration module script tag", async () => {
+  it("passes stylesheetUrls, hydrationClientModuleUrl and a false waitForAll through to renderPageRequest, for DocumentContext to render", async () => {
     renderPageRequest.mockResolvedValue({
       html: "<html><body></body></html>",
+      status: 200,
+      headers: {},
+      data: undefined,
+      bundle: { route: { name: "account", path: "/account", params: {}, query: {} } },
+      pipeableStream: fakePipeableStream(),
+    });
+
+    const handler = createPageRouteHandler(
+      handlerOptions(
+        { "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} },
+        { hydrationClientModuleUrl: "/hydrate.js", stylesheetUrls: ["/app.css"] },
+      ),
+    );
+
+    await handler(context() as never);
+
+    const [, options] = renderPageRequest.mock.calls[0] as [string, RenderPageRequestOptions];
+    expect(options.hydrationClientModuleUrl).toBe("/hydrate.js");
+    expect(options.stylesheetUrls).toEqual(["/app.css"]);
+    expect(options.waitForAll).toBe(false);
+  });
+
+  it("falls back to a plain buffered send when the render result carries no pipeableStream", async () => {
+    renderPageRequest.mockResolvedValue({
+      html: "<html><body>fallback</body></html>",
       status: 200,
       headers: {},
       data: undefined,
@@ -334,25 +375,20 @@ describe("createPageRouteHandler — hydration module injection", () => {
     });
 
     const requestContext = context();
-    (requestContext.request as { nonce?: string }).nonce = "handler-nonce-1";
     const handler = createPageRouteHandler(
-      handlerOptions(
-        { "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} },
-        { hydrationClientModuleUrl: "/hydrate.js" },
-      ),
+      handlerOptions({ "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} }),
     );
 
     await handler(requestContext as never);
 
     expect(requestContext.response.html).toHaveBeenCalledWith(
-      expect.stringContaining(
-        '<script type="module" nonce="handler-nonce-1" src="/hydrate.js"></script>',
-      ),
+      "<html><body>fallback</body></html>",
       200,
     );
+    expect(requestContext.response.streamReact).not.toHaveBeenCalled();
   });
 
-  it("does NOT inject the hydration client module on renderPageFailure's pre-triple fallback", async () => {
+  it("sends renderPageFailure's pre-triple fallback html verbatim, with stylesheetUrls/hydrationClientModuleUrl passed through for it to render itself", async () => {
     renderPageFailure.mockResolvedValue({
       html: "<html><body></body></html>",
       status: 500,
@@ -375,17 +411,87 @@ describe("createPageRouteHandler — hydration module injection", () => {
             },
           },
         },
-        { hydrationClientModuleUrl: "/hydrate.js" },
+        { hydrationClientModuleUrl: "/hydrate.js", stylesheetUrls: ["/app.css"] },
       ),
     );
 
     await handler(requestContext as never);
 
     expect(renderPageFailure).toHaveBeenCalled();
-    // Exact match, not just `not.toContain`: proves the fallback's html is
-    // returned byte-for-byte, with no `installHydrationClientModule` splice
-    // at all — not merely one that happened to omit this particular URL.
+    const [failureOptions] = renderPageFailure.mock.calls[0] as [
+      { hydrationClientModuleUrl?: string; stylesheetUrls?: readonly string[] },
+    ];
+    expect(failureOptions.hydrationClientModuleUrl).toBe("/hydrate.js");
+    expect(failureOptions.stylesheetUrls).toEqual(["/app.css"]);
+    // Exact match: `rendered.html` is returned byte-for-byte, with no
+    // post-render splice of any kind — `renderPageFailure` is responsible
+    // for its own document content now.
     expect(requestContext.response.html).toHaveBeenCalledWith("<html><body></body></html>", 500);
+    expect(requestContext.response.streamReact).not.toHaveBeenCalled();
+  });
+});
+
+describe("createPageRouteHandler — middleware 2xx short-circuit stays a plain buffered body", () => {
+  it("sends a string middleware short-circuit value as-is, with no streaming and no stylesheet/hydration injection", async () => {
+    renderPageRequest.mockResolvedValue({
+      html: "plain text body",
+      status: 200,
+      headers: {},
+      data: undefined,
+      bundle: {
+        route: { name: "account", path: "/account", params: {}, query: {} },
+        shortCircuit: { stage: "middleware", statusCode: 200, responseSent: false, value: "plain text body" },
+      },
+    });
+
+    const requestContext = context();
+    const handler = createPageRouteHandler(
+      handlerOptions(
+        { "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} },
+        { hydrationClientModuleUrl: "/hydrate.js", stylesheetUrls: ["/app.css"] },
+      ),
+    );
+
+    await handler(requestContext as never);
+
+    expect(requestContext.response.send).toHaveBeenCalledWith("plain text body", 200);
+    expect(requestContext.response.streamReact).not.toHaveBeenCalled();
+    expect(requestContext.response.html).not.toHaveBeenCalled();
+    // The body is untouched — no `<link>`/`<script>` was ever spliced in.
+    expect((requestContext.response.send as ReturnType<typeof vi.fn>).mock.calls[0][0]).not.toMatch(
+      /<link|<script/,
+    );
+  });
+
+  it("JSON.stringifies a plain-object middleware short-circuit value and sends application/json, unaffected by stylesheets/hydration", async () => {
+    const value = { message: "created" };
+    renderPageRequest.mockResolvedValue({
+      html: JSON.stringify(value),
+      status: 201,
+      headers: {},
+      data: undefined,
+      bundle: {
+        route: { name: "account", path: "/account", params: {}, query: {} },
+        shortCircuit: { stage: "middleware", statusCode: 201, responseSent: false, value },
+      },
+    });
+
+    const requestContext = context();
+    const handler = createPageRouteHandler(
+      handlerOptions(
+        { "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} },
+        { hydrationClientModuleUrl: "/hydrate.js", stylesheetUrls: ["/app.css"] },
+      ),
+    );
+
+    await handler(requestContext as never);
+
+    expect(requestContext.response.setContentType).toHaveBeenCalledWith(
+      "application/json; charset=utf-8",
+    );
+    expect(requestContext.response.send).toHaveBeenCalledWith(JSON.stringify(value), 201);
+    expect(requestContext.response.streamReact).not.toHaveBeenCalled();
+    expect(requestContext.response.html).not.toHaveBeenCalled();
   });
 });
 

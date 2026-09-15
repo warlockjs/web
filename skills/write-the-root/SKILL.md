@@ -60,7 +60,7 @@ Do not also hard-code a `<title>` for the current page; that produces two titles
 
 ## `<Scripts />`
 
-`<Scripts />` emits the escaped `application/json` payload that hydration and client navigation consume. Put it after `#root`, normally near the end of `<body>`.
+`<Scripts />` emits the escaped `application/json` payload that hydration and client navigation consume, followed by the hydration client entry `<script type="module">` (Stage 1 streaming SSR renders both through React now, in this one component — see below). Put it after `#root`, normally near the end of `<body>`.
 
 For a Content Security Policy nonce:
 
@@ -89,13 +89,18 @@ Prefer declaring `nonce` on `SharedContext` so the cast is unnecessary; see [loa
 `@warlock.js/core`'s opt-in `http.csp` (5.12.0 — see its `configure-app` and
 `send-response` skills) builds `script-src 'self' 'nonce-<value>'` from the
 identical per-request `request.nonce`. The framework's own emitted
-`<script>` tags — this payload script, and the hydration module the page
-route handler appends before `</body>` — already carry that nonce
-automatically; nothing in an app's `root.tsx` needs to change to make those
-two work together. The prop above only matters if your root renders its
-OWN inline `<script>` tags that need to pass the same policy.
+`<script>` tags — the payload script and the hydration client entry module,
+both rendered by `<Scripts />` — already carry that nonce automatically;
+nothing in an app's `root.tsx` needs to change to make those two work
+together. The prop above only matters if your root renders its OWN inline
+`<script>` tags that need to pass the same policy.
 
-`<Scripts />` owns the inline data payload. The separate hydration module is appended by the page route handler. Its published `esm/hydration/index.mjs` file is a build input and must never be imported by application code.
+`<Scripts />` owns both the inline data payload and the hydration client
+entry module — Stage 1 streaming SSR moved the entry module off a post-render
+string splice and onto real React output, read from the same document
+context the payload script already reads (`hydrationClientModuleUrl`). Its
+published `esm/hydration/index.mjs` file is a build input and must never be
+imported by application code.
 
 ## Add an application loader
 

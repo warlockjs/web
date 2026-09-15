@@ -9,7 +9,7 @@ import { useDocumentContext } from "./document-context";
  * only that.
  */
 export function Head(): ReactElement {
-  const { metadata } = useDocumentContext("Head");
+  const { metadata, stylesheetUrls } = useDocumentContext("Head");
 
   const keywords =
     metadata?.keywords === undefined
@@ -67,5 +67,12 @@ export function Head(): ReactElement {
     twitter?.image !== undefined
       ? createElement("meta", { name: "twitter:image", content: twitter.image })
       : null,
+    // Rendered last, mirroring where the framework's old post-render splice
+    // inserted them (right before `</head>`, after everything else the
+    // document already put there) — see `stylesheetUrls` on
+    // `DocumentContextValue`.
+    ...(stylesheetUrls ?? []).map((url) =>
+      createElement("link", { key: url, rel: "stylesheet", href: url }),
+    ),
   );
 }

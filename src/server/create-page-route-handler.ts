@@ -33,7 +33,6 @@ import { applyResponseCacheFloor } from "./response-cache-floor";
 import type { PageCacheOptIn } from "../routing/route-identity";
 import { ensureSetCookieCacheFloorHook, markPageResponse } from "./set-cookie-cache-floor-hook";
 import type { BufferedCookie, PageRouteEntry, PageTripleModule } from "./execute-page-request";
-import { isNonHydrating } from "./page-render-bundle";
 import { renderPageFailure, renderPageRequest, type RenderedPage } from "./render-page";
 
 declare module "@warlock.js/core" {
@@ -211,80 +210,6 @@ export type PageRouteHandlerOptions = {
 
 export type PageRouteHandler = (context: HttpContext) => Promise<void | Response>;
 
-function escapeHtmlAttribute(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => {
-    switch (character) {
-      case "&":
-        return "&amp;";
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case '"':
-        return "&quot;";
-      default:
-        return "&#39;";
-    }
-  });
-}
-
-function installHydrationClientModule(
-  html: string,
-  moduleUrl: string | undefined,
-  nonce: string | undefined,
-): string {
-  if (moduleUrl === undefined || html === "") return html;
-
-  const closingBodyIndex = html.lastIndexOf("</body>");
-  if (closingBodyIndex === -1) {
-    throw new Error(
-      "createPageRouteHandler: cannot install the hydration client module because the rendered document has no closing </body> tag.",
-    );
-  }
-
-  const nonceAttribute = nonce === undefined ? "" : ` nonce="${escapeHtmlAttribute(nonce)}"`;
-  const script = `<script type="module"${nonceAttribute} src="${escapeHtmlAttribute(moduleUrl)}"></script>`;
-  return `${html.slice(0, closingBodyIndex)}${script}${html.slice(closingBodyIndex)}`;
-}
-
-/**
- * Put the page's stylesheets in `<head>`, so the first paint is styled.
- *
- * Without this the document carries no CSS at all. The stylesheet reaches the
- * browser only because the CLIENT bundle imports it, which means it is applied
- * by JavaScript after the module graph loads — the page renders unstyled first
- * and restyles a moment later. Correct markup, wrong-looking page, and nothing
- * in the console to explain it.
- *
- * A `<link>` in `<head>` is render-blocking, which is exactly what is wanted
- * here: the browser holds the first paint until the CSS is in, so there is no
- * flash rather than a faster ugly one.
- *
- * Inserted before `</head>` rather than after `<head>` so an application's own
- * `<link>`/`<style>` in the root document still comes FIRST and can be
- * overridden by these — matching how the framework's tags are documented to
- * behave, and keeping cascade order predictable.
- */
-function installStylesheets(html: string, stylesheetUrls: readonly string[]): string {
-  if (stylesheetUrls.length === 0 || html === "") return html;
-
-  const closingHeadIndex = html.lastIndexOf("</head>");
-
-  // No `<head>` is not an error the way a missing `</body>` is: a root that
-  // renders no head is unusual but legal, and losing the stylesheet is a
-  // cosmetic failure where losing hydration is a broken page. Silently
-  // dropping it would be the wrong trade the other way, though — so the
-  // document is left exactly as rendered and the caller's own missing-`</body>`
-  // check remains the loud one.
-  if (closingHeadIndex === -1) return html;
-
-  const links = stylesheetUrls
-    .map((url) => `<link rel="stylesheet" href="${escapeHtmlAttribute(url)}">`)
-    .join("");
-
-  return `${html.slice(0, closingHeadIndex)}${links}${html.slice(closingHeadIndex)}`;
-}
-
 /**
  * Build the handler for ONE page route. Per request it loads the App + layout
  * + page triple (concurrently, in that order), renders the URL through
@@ -411,6 +336,13 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         createHttp: () => ({ request, response }),
         loadErrorPage,
         dataRequest: wantsData,
+        stylesheetUrls,
+        hydrationClientModuleUrl,
+        // Crawler mode (waiting for the whole tree via `onAllReady`) is out
+        // of scope for this card as a FEATURE — no UA detector here — but
+        // the render function itself already accepts the flag, defaulted
+        // to `false` (`onShellReady`) for every request this handler serves.
+        waitForAll: false,
       });
 
       if (rendered instanceof Response) return rendered;
@@ -523,19 +455,27 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         return;
       }
 
-      // Stylesheets first: they go in `<head>`, the hydration module goes before
-      // `</body>`, and doing the head work on the already-rendered string keeps
-      // both splices in one place rather than threading CSS through the React
-      // render just to reach the same bytes.
-      const styled = installStylesheets(rendered.html, stylesheetUrls ?? []);
+      // Stylesheets and the hydration client module both render THROUGH React
+      // now (`<Head/>`/`<Scripts/>`, fed by `DocumentContext` —
+      // `stylesheetUrls`/`hydrationClientModuleUrl` above), so `rendered.html`
+      // and `rendered.pipeableStream` already carry them; there is nothing
+      // left for this seam to splice.
+      //
+      // `pipeableStream` is how every real document render reaches this
+      // point (`finishRender`'s stage 9) — this handler never touches
+      // `response.raw` itself, only `Response.streamReact`, which does. The
+      // buffered fallback below exists for a `renderPageRequest` result that
+      // is not a genuine document render (a non-standard caller, or a test
+      // double) and stays a plain, unspliced send.
+      if (rendered.pipeableStream) {
+        response.setContentType("text/html");
+        response.setStatusCode(status);
+        await response.streamReact(rendered.pipeableStream);
 
-      const html = installHydrationClientModule(
-        styled,
-        hydrationClientModuleUrl,
-        hydrationClientModuleUrl === undefined ? undefined : request.nonce,
-      );
+        return;
+      }
 
-      await response.html(html, status);
+      await response.html(rendered.html, status);
     } catch (thrown) {
       // This is outside the page pipeline: loading/registering a module can
       // fail before a triple exists for its authored boundaries to handle.
@@ -557,6 +497,8 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
           response,
           thrown,
           loadErrorPage,
+          stylesheetUrls,
+          hydrationClientModuleUrl,
         });
 
         applyCommit(response, rendered, applyBufferedCookie);
@@ -571,20 +513,10 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
           return;
         }
 
-        const styled = installStylesheets(rendered.html, stylesheetUrls ?? []);
-
-        // `renderPageFailure` marks its bundle non-hydrating (page-render-bundle.ts):
-        // there is no triple, so there is nothing on the client the hydration
-        // module could attach to. Injecting it anyway would ship a script that
-        // hydrates against a composition the server never trusted.
-        const html = isNonHydrating(rendered.bundle)
-          ? styled
-          : installHydrationClientModule(
-              styled,
-              hydrationClientModuleUrl,
-              hydrationClientModuleUrl === undefined ? undefined : request.nonce,
-            );
-        await response.html(html, 500);
+        // `renderPageFailure` renders stylesheets and (when hydratable, which
+        // this path never is) the hydration module through React already —
+        // see that function. Nothing left to splice here either.
+        await response.html(rendered.html, 500);
       } catch {
         throw thrown;
       }

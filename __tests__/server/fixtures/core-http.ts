@@ -16,7 +16,7 @@
  * core `Route`, and the page triple is matched by the pipeline itself — the
  * page pipeline's stage 1 replaces fastify's matcher here.
  */
-import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { Request, requestContext, Response } from "@warlock.js/core";
 
 export { requestContext, Request, Response };
@@ -47,8 +47,18 @@ export type ReplyShim = {
    * (core/src/http/response.ts:200-205) — the same member core's own unit
    * shim carries (`concurrency-limit.middleware.test.ts:27,41`:
    * `baseResponse: { raw: EventEmitter }`).
+   *
+   * A real `PassThrough`, not a bare `EventEmitter`: Stage 1 streaming SSR
+   * (`Response.streamReact`, core's `stream-react-response.ts`) writes
+   * straight to `raw` — `writeHead`, then `PipeableStream.pipe(raw)`, which
+   * calls real `write()`/`end()`/`cork()`/`uncork()` the way React's server
+   * renderer talks to any Node writable. A plain `EventEmitter` has none of
+   * those; a `PassThrough` does, for free, and still fires the same
+   * `"finish"`/`"close"` events `Response.setResponse` and this fixture's
+   * consumers already rely on. `.resume()` (below) keeps it flowing so a
+   * document nobody reads from never backpressures the pipe closed.
    */
-  raw: EventEmitter;
+  raw: PassThrough & { writeHead(statusCode: number, headers?: Record<string, unknown>): void };
   /** Applied headers, lowercased key → value. */
   appliedHeaders: Record<string, unknown>;
   /** Applied cookies in application order (fastify's setCookie signature). */
@@ -77,8 +87,29 @@ export type ReplyShim = {
 };
 
 export function createReplyShim(): ReplyShim {
+  const raw = new PassThrough() as ReplyShim["raw"];
+  // A document nobody reads from must not backpressure `pipe()` closed —
+  // flow the readable side straight to nowhere, mirroring how a real socket
+  // drains to the client regardless of whether this fixture inspects the
+  // bytes.
+  raw.resume();
+
+  raw.writeHead = (statusCode, headers) => {
+    shim.statusCode = statusCode;
+    if (headers !== undefined) shim.headers(headers as Record<string, unknown>);
+  };
+
+  // Real Fastify derives `reply.sent` from `hijacked || raw.writableEnded`
+  // (fastify's `lib/reply.js`) rather than tracking it independently — the
+  // streaming path never calls this shim's own `send()`/`redirect()`, so
+  // `sent` has to come from the same place a real reply would read it: the
+  // raw stream actually finishing.
+  raw.on("finish", () => {
+    shim.sent = true;
+  });
+
   const shim: ReplyShim = {
-    raw: new EventEmitter(),
+    raw,
     appliedHeaders: {},
     cookies: [],
     sent: false,

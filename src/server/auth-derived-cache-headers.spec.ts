@@ -5,11 +5,13 @@
  * for the same pattern applied to a different header.
  *
  * `renderPageRequest` is mocked (as `create-page-route-handler.spec.ts` does)
- * so the test controls exactly when `request.user` / `request.decodedAccessToken`
- * are assigned, without needing a real page/layout/app module graph. Assigning
- * either is what core's `Request` marks `authDerived` for
- * (`core/src/http/request.ts`) — this suite proves the mark is read where the
- * response headers are actually written, not merely that the mark gets set.
+ * so the test controls exactly when `request.locals.user` / `request.decodedAccessToken`
+ * are assigned, without needing a real page/layout/app module graph. Only
+ * `decodedAccessToken` marks core's `Request.locals.authDerived`
+ * (`core/src/http/request.ts`) since 5.12.0 — `request.locals.user`, written
+ * by `@warlock.js/auth`'s middleware, deliberately does not — this suite
+ * proves the mark is read where the response headers are actually written,
+ * not merely that the mark gets set, and pins that documented loss.
  *
  * No standalone dev/production server is started here: `router.scan(server)`
  * plus `server.inject()` exercises the real route on an in-memory Fastify
@@ -107,20 +109,28 @@ describe("auth-derived Cache-Control headers", () => {
     expect(response.headers["cache-control"]).not.toBe("private, no-store");
   });
 
-  it("marks the document private, no-store when the request touched request.user", async () => {
+  // 5.12.0: `request.user` was removed from `@warlock.js/core` — the
+  // authenticated user now lives at `request.locals.user`, written by
+  // `@warlock.js/auth`'s middleware, which does NOT mark `authDerived` when
+  // it does so (only `decodedAccessToken` still does — see the "touched only
+  // decodedAccessToken" case below and core's 5.12.0 CHANGELOG: the
+  // user-setter cache mark was deliberately not restored under the new
+  // `locals`-based shape). These two cases are updated to prove that
+  // documented loss rather than the old (removed) behavior.
+  it("does NOT mark the document private, no-store merely from request.locals.user (the documented 5.12.0 loss)", async () => {
     touchAuth = (request) => {
-      request.user = { id: 1 } as never;
+      request.locals.user = { id: 1 };
     };
 
     const response = await server.inject({ method: "GET", url: "/__auth-cache-user" });
 
     expect(response.statusCode).toBe(200);
-    expect(response.headers["cache-control"]).toBe("private, no-store");
+    expect(response.headers["cache-control"]).not.toBe("private, no-store");
   });
 
-  it("marks the data representation private, no-store when the request touched request.user", async () => {
+  it("does NOT mark the data representation private, no-store merely from request.locals.user (the documented 5.12.0 loss)", async () => {
     touchAuth = (request) => {
-      request.user = { id: 1 } as never;
+      request.locals.user = { id: 1 };
     };
 
     const response = await server.inject({
@@ -130,7 +140,7 @@ describe("auth-derived Cache-Control headers", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.headers["cache-control"]).toBe("private, no-store");
+    expect(response.headers["cache-control"]).not.toBe("private, no-store");
   });
 
   it("marks the document private, no-store when the request touched only decodedAccessToken", async () => {

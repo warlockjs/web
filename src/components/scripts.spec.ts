@@ -52,4 +52,30 @@ describe("Scripts", () => {
 
     expect(html).not.toContain("nonce=");
   });
+
+  it("renders the hydration client entry module after the payload script, carrying the same nonce", () => {
+    const html = render(
+      documentValue({ nonce: "ctx-nonce-1", hydrationClientModuleUrl: "/hydrate.js" }),
+    );
+
+    expect(html).toContain('<script type="module" nonce="ctx-nonce-1" src="/hydrate.js">');
+    expect(html.indexOf(PAYLOAD_SCRIPT_ID)).toBeLessThan(html.indexOf("/hydrate.js"));
+  });
+
+  it("omits the hydration client entry module when no URL is configured", () => {
+    const html = render(documentValue());
+
+    expect(html).not.toContain("type=\"module\"");
+  });
+
+  it("omits the hydration client entry module on a non-hydrating document, even with a URL configured", () => {
+    const html = render(
+      documentValue({
+        payload: markNonHydrating(documentValue().payload),
+        hydrationClientModuleUrl: "/hydrate.js",
+      }),
+    );
+
+    expect(html).toBe("");
+  });
 });

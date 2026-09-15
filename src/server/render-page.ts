@@ -1,4 +1,5 @@
 import { createElement, type ComponentType, type ReactNode } from "react";
+import type { PipeableStream, RenderToPipeableStreamOptions } from "react-dom/server";
 import { Response, type Request } from "@warlock.js/core";
 import DefaultApp from "../components/default-app";
 import {
@@ -104,10 +105,36 @@ export type RenderPageRequestOptions = {
    * file included — keeps rendering the full document it always has.
    */
   dataRequest?: boolean;
+  /**
+   * This page's resolved stylesheet URLs, in cascade order — carried onto
+   * `DocumentContextValue.stylesheetUrls` so `<Head/>` renders them as real
+   * `<link>` tags (Stage 1 streaming SSR moved this off the old post-render
+   * splice; see `document-context.ts`).
+   */
+  stylesheetUrls?: readonly string[];
+  /** The hydration client entry module URL — carried onto `DocumentContextValue.hydrationClientModuleUrl`, same reasoning. */
+  hydrationClientModuleUrl?: string;
+  /**
+   * Selects `onAllReady` (true) over `onShellReady` (false, the default) as
+   * the point at which `pipeableStream` on {@link RenderedPage} becomes
+   * ready to pipe. Stage 1 renders no Suspense boundaries (`defer()` is
+   * Stage 2), so the two currently settle at the same moment for every page
+   * this framework can render today; the flag exists so a future crawler
+   * path (explicitly out of scope for this card) has somewhere to plug in
+   * without another signature change.
+   */
+  waitForAll?: boolean;
 };
 
 export type RenderedPage = {
-  /** The full document ("" when the pipeline short-circuited before render). */
+  /**
+   * The full document ("" when the pipeline short-circuited before render).
+   * Built by the SAME final element `pipeableStream` (below) streams —
+   * `finishRender` proves that element renders cleanly here, synchronously,
+   * BEFORE ever starting the stream, so this string doubles as `renderPageRequest`'s
+   * long-standing test-helper contract (assert on `.html` with no server, no
+   * browser) and the input the escalation loop verifies is safe to stream.
+   */
   html: string;
   status: number;
   /** Committed response headers, lowercased key → value. */
@@ -125,6 +152,18 @@ export type RenderedPage = {
    * so no pipeline ran and there is no bundle — the 404 answer stands alone.
    */
   bundle: PageDataBundle | undefined;
+  /**
+   * The React server stream for the SAME document `html` describes, ready to
+   * pipe (its shell, or its whole tree when `waitForAll` was set) —
+   * `create-page-route-handler.ts` pipes this through core's
+   * `Response.streamReact` instead of sending `html` as a buffered body.
+   *
+   * Undefined for every RESPONSE that is not a rendered document: a
+   * middleware 2xx short-circuit's own returned value, the empty-body
+   * short-circuit/404 cases, and `renderPageFailure`'s pre-triple fallback
+   * (which has no triple to prove safe to stream — see that function).
+   */
+  pipeableStream?: PipeableStream;
 };
 
 export type RenderPageFailureOptions = {
@@ -134,6 +173,16 @@ export type RenderPageFailureOptions = {
   response: Response;
   thrown: unknown;
   loadErrorPage?: ErrorPageModuleLoader;
+  /** Same as `RenderPageRequestOptions.stylesheetUrls` — stylesheets still render here, unconditionally. */
+  stylesheetUrls?: readonly string[];
+  /**
+   * Same as `RenderPageRequestOptions.hydrationClientModuleUrl`. Threaded
+   * through for type symmetry, but never actually reaches the document:
+   * `Scripts` gates the client module on the same non-hydrating check as the
+   * payload script, and this function's bundle is ALWAYS marked
+   * non-hydrating (see the function doc below).
+   */
+  hydrationClientModuleUrl?: string;
 };
 
 function requireRegistry(options: RenderPageRequestOptions): RouteRegistry {
@@ -390,6 +439,50 @@ function reportRenderError(route: PageDataBundle["route"], thrown: unknown): voi
   console.error(`[warlock:web] SSR render error while rendering ${where}:`, thrown);
 }
 
+/**
+ * Render an already-finalized document element through React's streaming
+ * renderer, resolving once it is ready to pipe.
+ *
+ * `element` is the SAME wrapped element the escalation loop below just
+ * proved renders cleanly via `renderToString` — this call exists to produce
+ * the actual `PipeableStream` bytes go out on, not to re-decide what
+ * renders. `onShellError` firing here would mean React's two renderers
+ * disagree on the exact same tree, which the loop above has already ruled
+ * out; it is still wired, defensively, straight into a rejection so a
+ * caller that awaits this and lets it throw falls onto today's existing
+ * error-page/escalation path with nothing yet written to the client — the
+ * Stage 1 contract for "errors before the shell is ready".
+ */
+async function renderElementToPipeableStream(
+  element: ReactNode,
+  waitForAll: boolean,
+  route: PageDataBundle["route"],
+): Promise<PipeableStream> {
+  const { renderToPipeableStream } = await import("react-dom/server");
+
+  return new Promise<PipeableStream>((resolve, reject) => {
+    let stream: PipeableStream;
+    const options: RenderToPipeableStreamOptions = {
+      onShellError: (error) => reject(error),
+      onError: (error) => {
+        // Stage 1 renders no Suspense boundaries (`defer()` is Stage 2), so
+        // this firing after the shell is ready is unexpected rather than a
+        // normal deferred-content rejection — report it through the same
+        // floor a render-time throw already uses, rather than let it vanish.
+        reportRenderError(route, error);
+      },
+    };
+
+    if (waitForAll) {
+      options.onAllReady = () => resolve(stream);
+    } else {
+      options.onShellReady = () => resolve(stream);
+    }
+
+    stream = renderToPipeableStream(element, options);
+  });
+}
+
 async function finishRender(
   triple: PageRouteEntry["triple"],
   bundle: PageDataBundle,
@@ -397,6 +490,11 @@ async function finishRender(
   response: Response,
   loadErrorPage: ErrorPageModuleLoader | undefined,
   dataRequest: boolean,
+  streamOptions: {
+    stylesheetUrls: readonly string[] | undefined;
+    hydrationClientModuleUrl: string | undefined;
+    waitForAll: boolean;
+  },
 ): Promise<RenderedPage> {
   // Read from the stage 7 commit, never live off `response` — this function
   // writes (and now reads) the live response zero times. A bundle with no
@@ -499,18 +597,31 @@ async function finishRender(
     payload: buildHydrationPayload(bundle, documentSlots.locale),
     nonce: documentSlots.nonce,
     lang: documentSlots.locale,
+    stylesheetUrls: streamOptions.stylesheetUrls,
+    hydrationClientModuleUrl: streamOptions.hydrationClientModuleUrl,
   };
 
-  const renderWithContext = (element: ReactNode): string =>
-    renderToString(
-      createElement(DocumentContext.Provider, {
-        value: documentValue,
-        children: createElement(LocaleProvider, {
-          locale: documentValue.payload.locale,
-          children: element,
-        }),
+  const wrapWithContext = (element: ReactNode): ReactNode =>
+    createElement(DocumentContext.Provider, {
+      value: documentValue,
+      children: createElement(LocaleProvider, {
+        locale: documentValue.payload.locale,
+        children: element,
       }),
-    );
+    });
+
+  // Records the LAST wrapped element every `renderWithContext` call rendered
+  // — read after the escalation loop below settles, to feed the second,
+  // streaming render pass (`renderElementToPipeableStream`). A `let`, read by
+  // closure rather than snapshotted, so it always reflects whichever
+  // `documentValue` was live at the moment it was wrapped (error-page
+  // fallbacks reassign `documentValue` and re-wrap before rendering again).
+  let finalWrappedElement: ReactNode;
+
+  const renderWithContext = (element: ReactNode): string => {
+    finalWrappedElement = wrapWithContext(element);
+    return renderToString(finalWrappedElement);
+  };
 
   // A boundary that throws while rendering escalates to
   // the next enclosing boundary rootward; if none survives, the framework's
@@ -646,7 +757,17 @@ async function finishRender(
 
   const html = emitDocument(body);
 
-  return { html, status, headers, cookies, data: bundle.pageData, bundle };
+  // Stage 9's second pass: the element above just proved safe to render (the
+  // escalation loop ran it to completion, synchronously, with no throw) —
+  // stream THAT SAME element for the bytes that actually reach the client.
+  // See `renderElementToPipeableStream` and `RenderedPage.pipeableStream`.
+  const pipeableStream = await renderElementToPipeableStream(
+    finalWrappedElement,
+    streamOptions.waitForAll,
+    bundle.route,
+  );
+
+  return { html, status, headers, cookies, data: bundle.pageData, bundle, pipeableStream };
 }
 
 /**
@@ -660,6 +781,14 @@ async function finishRender(
  * the document payload, whether or not it managed to render the app's own
  * `error.page.tsx`. A normal app error page reached through `finishRender`
  * renders inside a real triple and stays hydratable; this path never does.
+ *
+ * Deliberately still `renderToString`, not streamed (Stage 1,
+ * `releases/v5.12-streaming-design.md`): this is the ONE terminal attempt at
+ * a module-load/registration failure, already exceptional and rare, and
+ * there is no real triple behind it for a second, streaming render pass to
+ * prove safe the way `finishRender`'s escalation loop does for every other
+ * document. Buffering the one attempt this function ever makes costs nothing
+ * a real page request would notice.
  */
 export async function renderPageFailure(options: RenderPageFailureOptions): Promise<RenderedPage> {
   const { request, response, name, path, thrown, loadErrorPage } = options;
@@ -678,6 +807,8 @@ export async function renderPageFailure(options: RenderPageFailureOptions): Prom
     payload: frameworkPayload,
     nonce: slots.nonce,
     lang: slots.locale,
+    stylesheetUrls: options.stylesheetUrls,
+    hydrationClientModuleUrl: options.hydrationClientModuleUrl,
   };
   const renderWithContext = (element: ReactNode): string =>
     renderToString(
@@ -764,6 +895,11 @@ export async function renderPageRequest(
         state.captured!.response,
         options.loadErrorPage,
         options.dataRequest ?? false,
+        {
+          stylesheetUrls: options.stylesheetUrls,
+          hydrationClientModuleUrl: options.hydrationClientModuleUrl,
+          waitForAll: options.waitForAll ?? false,
+        },
       ),
   });
 

@@ -143,6 +143,29 @@ export type DocumentContextValue = {
   nonce?: string;
   lang?: string;
   dir?: string;
+  /**
+   * This page's resolved stylesheet URLs, in cascade order (root, then
+   * outer-to-inner layouts, then the page). Rendered by `<Head/>` as
+   * render-blocking `<link rel="stylesheet">` tags — Stage 1 streaming SSR
+   * (`releases/v5.12-streaming-design.md`) moved this from a post-render
+   * string splice (`create-page-route-handler.ts`'s old `installStylesheets`)
+   * to real React output, so it now has to travel through this context like
+   * every other document slot. Absent or empty means no stylesheets for this
+   * page, never a failed resolution.
+   */
+  stylesheetUrls?: readonly string[];
+  /**
+   * The browser module appended after the server-rendered document, rendered
+   * by `<Scripts/>` as a `<script type="module">` carrying the same `nonce`
+   * as the hydration payload script. Same Stage 1 move as
+   * {@link stylesheetUrls} — this used to be a post-render splice
+   * (`installHydrationClientModule`); it is now real React output, gated by
+   * the same non-hydrating check the payload script already uses (a
+   * `renderPageFailure` document, which has no trustworthy triple to
+   * hydrate against, never gets one — regardless of whether this URL is
+   * present).
+   */
+  hydrationClientModuleUrl?: string;
 };
 
 export const DocumentContext = createContext<DocumentContextValue | undefined>(undefined);
