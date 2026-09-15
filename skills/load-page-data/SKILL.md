@@ -124,6 +124,50 @@ export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
 
 `LoaderShortCircuit` values from `notFound()` and redirects are excluded from `PageProps["data"]`, so the component sees only the successful loader return.
 
+## What survives the wire
+
+`app`/`layout`/`page` loader data travels the browser wire serialized with
+[`devalue`](https://www.npmjs.com/package/devalue), not plain `JSON`. This is
+the standing serialization ruling: a `resource` or a `toJSON()` method is the
+gate on what a loader is allowed to return, never the wire format itself —
+devalue is simply capable of carrying more of what a plain object graph can
+already express.
+
+Concretely, this now arrives on the client exactly as the loader returned it:
+
+- `Date`, `Map`, `Set`, `BigInt`
+- `undefined` as an object property's value (not just at the top level)
+- a repeated reference to the SAME object (`{ first: shared, second: shared }`
+  hydrates as `result.first === result.second`, not two independent copies)
+- a cyclic structure (an object that (transitively) references itself)
+
+A class instance devalue does not recognize, a function, or a symbol is still
+refused — loudly. The build throws a `PageDataSerializationError` naming the
+loader LEVEL (`app`/`layout`/`page`), the KEY PATH devalue's own error
+reports (e.g. `.items[0].service`), and the page ROUTE, in both dev and
+production:
+
+```
+Cannot serialize page data for route "products.details" (key path: .items[0].service):
+Cannot stringify arbitrary non-POJOs. devalue cannot put a class instance, a function or a
+symbol on the hydration wire — give the offending value a resource or a toJSON() so it
+reaches the browser as a plain value. A resource / toJSON() is the serialization gate for
+page data.
+```
+
+The fix is always the same: give the offending value a `resource` (see
+[`define-resource/SKILL.md`](../../core/define-resource/SKILL.md)) or a
+`toJSON()` method so it reaches the wire as the plain value devalue already
+knows how to serialize — never work around the throw by hand-flattening the
+value in the loader.
+
+This applies to `appData`/`layoutData`/`pageData` and to a `defer()`red value's
+eventual settlement. It does **not** change `shared`, which keeps its own,
+stricter gate (scalars, arrays, plain objects, or `toJSON()` — `Date`, `Map`,
+`Set`, functions, and arbitrary class instances are rejected there
+regardless) — see [Declare the shared payload](#declare-the-shared-payload)
+below.
+
 ## Three loader levels
 
 | Module                  | Contract       | Component props              |
@@ -275,7 +319,7 @@ Only put browser-safe data in `shared`: scalars, arrays, plain objects, or value
 ## Gotchas
 
 - **Use `satisfies`, not a type annotation.** Preserve the return type for component props.
-- **Return client-safe data.** Components render again in the browser; models and server handles do not survive the wire.
+- **Return client-safe data.** Components render again in the browser; models and server handles do not survive the wire. `Date`/`Map`/`Set`/`BigInt` DO survive now (devalue is the wire format — see [What survives the wire](#what-survives-the-wire)); a class instance, function, or symbol still does not, and fails the build loudly instead of silently.
 - **Write `shared` in middleware only.** Loaders run after the seal.
 - **Required shared keys need unconditional writers.** The type is a promise for every request.
 - **Do not use loader return values as cross-level communication.** Levels run in order but are not wired to each other; use `shared`, written in middleware.

@@ -17,6 +17,7 @@ All notable changes to `@warlock.js/web` are documented here.
 
 ### Changed
 
+- **The page-data wire format is now devalue, not plain JSON.** Dates, Maps and Sets (and BigInts, `undefined` inside an object, repeated references, and cyclic structures) now arrive in the browser intact — as real `Date`/`Map`/`Set` instances, not flattened strings or dropped keys — for `appData`, `layoutData`, `pageData`, and a `defer()`red value's settlement, on the initial document, a client navigation's data response, and its NDJSON stream. A loader value devalue cannot serialize (a class instance it does not recognize, a function, a symbol) now fails the build loudly in dev **and** production, naming the loader level (`app`/`layout`/`page`), the key path, and the page route — give it a resource or a `toJSON()` instead. `shared` is unaffected: it keeps its own, stricter gate. See the `load-page-data` skill's "What survives the wire" section.
 - The dev and production page installers now share the layout-prefix table and the not-found route's options instead of implementing each twice; parity checks cover both.
 - Pages are rendered with React's streaming renderer. The response still waits for loaders, validation and middleware, so status codes, headers and cookies are unchanged — the document simply starts arriving sooner.
 

@@ -178,6 +178,23 @@ navigation. A client that cannot speak NDJSON gets the older contract
 instead: the server awaits every deferred value and inlines the fully
 resolved data into one JSON response.
 
+**Wire format:** devalue is the page-data wire format (the same standing
+ruling `load-page-data/SKILL.md`'s ["What survives the
+wire"](../load-page-data/SKILL.md#what-survives-the-wire) section documents),
+including a deferred value's settlement — a `Date`, `Map`, `Set`, or `BigInt`
+returned from inside `defer({ ... })` survives the chunk script and the
+NDJSON line intact, not just the page's other, non-deferred data. The
+document chunk script is `__WARLOCK_DEFER__(key, "<devalue text>")` — the
+second argument is devalue's serialized text carried as a plain JS string,
+HTML-escaped the same way the hydration payload script is, never spliced in
+as executable JS (`uneval` is not used anywhere in this pipeline). Each
+NDJSON line after line 1 is `{"defer":"<key>","settlement":"<devalue
+text>"}` — the outer object is plain JSON so a line-at-a-time reader can find
+the boundary, and `settlement` is decoded separately with devalue's `parse`.
+An unserializable settlement value (a class instance, function, or symbol)
+throws the same named `PageDataSerializationError` a synchronous loader
+return would.
+
 ## Crawlers
 
 A crawler never runs the browser's defer-bootstrap script, so it has no
