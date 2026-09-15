@@ -3,6 +3,7 @@ import { hydrateRoot } from "react-dom/client";
 import { DocumentContext, type DocumentContextValue } from "../components/document-context";
 import { readHydrationPayload, type HydrationDocumentPayloadSource } from "../hydration-payload";
 import { hydrateShared } from "../shared";
+import { installStreamClosedRejection, prepareDeferredPageData } from "./runtime/defer-registry";
 
 /**
  * The hydration MOUNT point — a different id from the payload script's id.
@@ -36,6 +37,29 @@ function isPromise(value: ReactNode | Promise<ReactNode>): value is Promise<Reac
     value !== null &&
     typeof (value as { then?: unknown }).then === "function"
   );
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * When the payload carries a `deferred` key list (Stage 2 implementation
+ * contract, rule 3), replaces each deferred `pageData` entry with a
+ * registry-backed promise BEFORE hydration, and arms the stream-closed
+ * rejection for `DOMContentLoaded`. Absent `deferred` leaves `pageData`
+ * completely untouched and installs nothing on `window` — this is the one
+ * branch point between the deferred and non-deferred hydration paths, so
+ * every other line of `hydratePage` stays byte-for-byte the same either way.
+ */
+function prepareDeferredPayload(payload: HydrationDocumentPayloadSource): void {
+  if (payload.deferred === undefined) return;
+
+  if (isPlainRecord(payload.pageData)) {
+    prepareDeferredPageData(payload.pageData, payload.deferred);
+  }
+
+  installStreamClosedRejection();
 }
 
 /**
@@ -74,6 +98,8 @@ function reportHydrationFailure(error: unknown): void {
  */
 export function hydratePage(buildTree: BuildHydratedTree): void {
   const payload = readHydrationPayload(document);
+
+  prepareDeferredPayload(payload);
 
   hydrateShared(payload.shared);
 

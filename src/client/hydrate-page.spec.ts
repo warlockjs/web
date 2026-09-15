@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hydrateRoot } from "react-dom/client";
 import { PAYLOAD_SCRIPT_ID } from "../components/document-context";
 import { hydratePage } from "./hydrate-page";
+import { installStreamClosedRejection, prepareDeferredPageData } from "./runtime/defer-registry";
 
 /**
  * React's real `hydrateRoot` needs a live DOM; the suite runs in `node`. What
@@ -11,6 +12,20 @@ import { hydratePage } from "./hydrate-page";
  * fails — so the mount itself is stubbed and asserted on as a call.
  */
 vi.mock("react-dom/client", () => ({ hydrateRoot: vi.fn() }));
+
+/**
+ * The defer-registry module reaches for `window`/`document` machinery this
+ * suite's fake `document` does not provide (it is a minimal `getElementById`
+ * stub, not a real DOM). What is under test here is only the WIRING —
+ * whether `hydratePage` calls into the registry at the right time, with the
+ * right arguments, when (and only when) `deferred` is present — so the
+ * registry itself is mocked; its own behavior is covered by
+ * `runtime/defer-registry.spec.ts`.
+ */
+vi.mock("./runtime/defer-registry", () => ({
+  prepareDeferredPageData: vi.fn((pageData: Record<string, unknown>) => pageData),
+  installStreamClosedRejection: vi.fn(),
+}));
 
 const SERVER_MARKUP = "<h1>server rendered</h1>";
 
@@ -69,6 +84,8 @@ function mountedTree(): ReactNode {
 
 beforeEach(() => {
   vi.mocked(hydrateRoot).mockClear();
+  vi.mocked(prepareDeferredPageData).mockClear();
+  vi.mocked(installStreamClosedRejection).mockClear();
 });
 
 afterEach(() => {
@@ -175,5 +192,61 @@ describe("hydratePage", () => {
 
     expect(() => hydratePage(buildTree)).toThrow(/no element with id "root"/);
     expect(buildTree).not.toHaveBeenCalled();
+  });
+});
+
+describe("hydratePage — deferred payload wiring", () => {
+  it("does not touch pageData or install the registry when `deferred` is absent", () => {
+    installFakeDocument();
+    const buildTree = vi.fn(() => "tree");
+
+    hydratePage(buildTree);
+
+    const receivedPayload = buildTree.mock.calls[0]?.[0];
+
+    expect(prepareDeferredPageData).not.toHaveBeenCalled();
+    expect(installStreamClosedRejection).not.toHaveBeenCalled();
+    expect(receivedPayload?.pageData).toEqual({ title: "page" });
+  });
+
+  it("prepares deferred pageData and arms stream-closed rejection when `deferred` is present", () => {
+    installFakeDocument({
+      payloadText: JSON.stringify({ ...validPayload, deferred: ["reviews"] }),
+    });
+
+    hydratePage(() => "tree");
+
+    expect(prepareDeferredPageData).toHaveBeenCalledTimes(1);
+    expect(prepareDeferredPageData).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "page" }),
+      ["reviews"],
+    );
+    expect(installStreamClosedRejection).toHaveBeenCalledTimes(1);
+  });
+
+  it("still passes the completeness / hard-navigate check with `deferred` present (does not throw)", () => {
+    installFakeDocument({
+      payloadText: JSON.stringify({ ...validPayload, deferred: ["reviews"] }),
+    });
+    const buildTree = vi.fn(() => "tree");
+
+    expect(() => hydratePage(buildTree)).not.toThrow();
+    expect(buildTree).toHaveBeenCalledTimes(1);
+    expect(hydrateRoot).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls prepareDeferredPageData before installStreamClosedRejection, both before hydrateRoot", () => {
+    installFakeDocument({
+      payloadText: JSON.stringify({ ...validPayload, deferred: ["reviews"] }),
+    });
+
+    hydratePage(() => "tree");
+
+    const prepareOrder = vi.mocked(prepareDeferredPageData).mock.invocationCallOrder[0];
+    const installOrder = vi.mocked(installStreamClosedRejection).mock.invocationCallOrder[0];
+    const mountOrder = vi.mocked(hydrateRoot).mock.invocationCallOrder[0];
+
+    expect(prepareOrder).toBeLessThan(installOrder as number);
+    expect(installOrder).toBeLessThan(mountOrder as number);
   });
 });

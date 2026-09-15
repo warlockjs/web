@@ -1,3 +1,11 @@
+export {
+  DEFER_BOOTSTRAP_SOURCE,
+  installStreamClosedRejection,
+  prepareDeferredPageData,
+  type DeferredSettlement,
+} from "./defer-registry";
+export { DeferredStreamClosedError } from "./deferred-stream-closed-error";
+export { DeferredValueError } from "./deferred-value-error";
 export { loadClientRouteComposition, validateClientRouteManifest } from "./manifest";
 // @deprecated — see matcher.ts:221 for replacement and deletion condition
 export { matchClientRoute } from "./matcher";

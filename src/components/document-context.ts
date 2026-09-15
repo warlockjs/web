@@ -100,6 +100,14 @@ export type HydrationDocumentPayloadSource = {
    * composition; it does not turn the error page into a second browsable route.
    */
   readonly errorPage?: SerializedErrorPageProps;
+  /**
+   * Top-level `pageData` key names, in declaration order, whose value is a
+   * deferred (`defer()`) promise rather than a resolved value (Stage 2
+   * implementation contract, rule 3). Omitted — not `[]` — when nothing is
+   * deferred, so the hard-navigate completeness check keeps seeing the same
+   * six required keys either way.
+   */
+  readonly deferred?: readonly string[];
 };
 
 export const PAYLOAD_SCRIPT_ID = "__WARLOCK_DATA__";
