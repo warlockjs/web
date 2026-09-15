@@ -425,6 +425,26 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       });
 
       if (wantsData) {
+        // Card 2eb7ea7a: `changeLocaleCode()`'s client half asks for a locale
+        // switch by putting `?locale=<code>` on a navigation DATA request's
+        // FETCH URL only — never on a document load, and never any other way
+        // (`client/navigation/change-locale-code.ts`). Persisting it here,
+        // through the SAME `response.setLocale()` an ordinary controller
+        // would call, writes the SAME cookie `request.locale` already read it
+        // back from (`core/src/http/request.ts:352-360`), so a later full
+        // load agrees without the query param.
+        //
+        // `request.locale`, not the raw query value: `resolveLocale()` has
+        // already run the query value through `cacheLocale()`'s
+        // `app.localeCodes` allow-list by the time this line runs, so a code
+        // outside it is already the configured fallback — and the fallback,
+        // not what the client asked for, is what gets persisted. A full
+        // document load with the same `?locale=` param never reaches this
+        // branch, so it never persists.
+        if (typeof request.query["locale"] === "string" && request.query["locale"].length > 0) {
+          response.setLocale(request.locale);
+        }
+
         // So a shared cache can never serve a document to a client that asked for
         // JSON, or the reverse. See `data-request.ts` on why this stays even
         // while page responses are `no-store`.

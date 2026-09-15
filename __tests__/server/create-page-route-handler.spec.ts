@@ -151,6 +151,17 @@ function recordingContext(
     cookie() {
       return response;
     },
+    /**
+     * Card 2eb7ea7a: the handler calls this when a data request's `?locale=`
+     * persists a navigation-requested locale
+     * (`create-page-route-handler.ts`'s `wantsData` branch). No fixture here
+     * sends that query param, so this is a no-op stand-in for the same reason
+     * `cookie()` above is — present so an unexpected call is observable
+     * rather than a crash.
+     */
+    setLocale() {
+      return response;
+    },
     setStatusCode(status: number) {
       written.status = status;
       return response;
@@ -212,6 +223,14 @@ function recordingContext(
   const request = {
     path: url,
     nonce,
+    /**
+     * Card 2eb7ea7a: `createPageRouteHandler` reads `request.query["locale"]`
+     * to decide whether to persist a navigation-requested locale. Empty here
+     * — no fixture in this file sends `?locale=` — mirroring core's real
+     * `request.query`, which is always an object, never `undefined`
+     * (`core/src/http/request.ts:1128-1130`).
+     */
+    query: {} as Record<string, string>,
     /**
      * The resolved request locale core's real `Request` exposes as
      * `request.locale` (`core/src/http/request.ts:402`) — the same field the

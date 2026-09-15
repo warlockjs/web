@@ -40,11 +40,16 @@ function renderedOk() {
   };
 }
 
-function context(path = "/account", params: Record<string, string> = {}) {
+function context(
+  path = "/account",
+  params: Record<string, string> = {},
+  query: Record<string, string> = {},
+) {
   return {
     request: {
       path,
       params,
+      query,
       locale: "en",
       header: vi.fn(() => undefined),
     },
@@ -63,6 +68,9 @@ function context(path = "/account", params: Record<string, string> = {}) {
       setContentType: vi.fn(),
       setStatusCode: vi.fn(),
       streamReact: vi.fn(async () => undefined),
+      // Card 2eb7ea7a's persistence call — see
+      // "createPageRouteHandler — persisting a navigation-requested locale".
+      setLocale: vi.fn(),
     },
   };
 }
@@ -78,12 +86,18 @@ function fakePipeableStream() {
  * `setContentType` and `send`. `context()`'s `response.html` stays present so
  * a wrongly-taken document path is still visible as a spurious call.
  */
-function dataRequestContext(path = "/account", accept?: string) {
-  const requestContext = context(path);
+function dataRequestContext(
+  path = "/account",
+  accept?: string,
+  query: Record<string, string> = {},
+  locale = "en",
+) {
+  const requestContext = context(path, {}, query);
 
   return {
     request: {
       ...requestContext.request,
+      locale,
       header: vi.fn((name: string) => {
         if (name === WARLOCK_DATA_REQUEST_HEADER) return WARLOCK_DATA_REQUEST_VALUE;
         if (name === "accept") return accept;
@@ -100,6 +114,7 @@ function dataRequestContext(path = "/account", accept?: string) {
       raw: { writeHead: vi.fn(), write: vi.fn(), end: vi.fn() },
       getHeaders: vi.fn(() => ({})),
       statusCode: 200,
+      setLocale: vi.fn(),
     },
   };
 }
@@ -604,6 +619,126 @@ describe("createPageRouteHandler — fallback data requests", () => {
       500,
     );
     expect(requestContext.response.html).not.toHaveBeenCalled();
+  });
+});
+
+describe("createPageRouteHandler — persisting a navigation-requested locale (card 2eb7ea7a)", () => {
+  /**
+   * `changeLocaleCode()`'s client half (`client/navigation/change-locale-code.ts`)
+   * sends the switch as `?locale=<code>` on a navigation DATA request's fetch
+   * URL only, never the visible one. This is the server half: persist that
+   * choice through `response.setLocale()` — the SAME call an ordinary
+   * controller would make, writing the SAME cookie `request.locale` already
+   * read it back from (`core/src/http/request.ts:352-360`) — so a later full
+   * load agrees without the query param travelling with it.
+   *
+   * `response.setLocale()` itself, and the cookie/`request.locale` round
+   * trip it produces, are core's own contract, proven directly against the
+   * REAL `Request`/`Response` pair by `core/src/http/response-set-locale.spec.ts`.
+   * These specs are scoped to what THIS package owns: deciding WHEN to call
+   * it.
+   */
+  it("persists the locale, via response.setLocale, on a data request carrying ?locale=", async () => {
+    const bundle = {
+      route: { name: "account", path: "/account", params: {}, query: { locale: "ar" } },
+    };
+
+    renderPageRequest.mockResolvedValue({
+      html: "",
+      status: 200,
+      headers: {},
+      data: undefined,
+      bundle,
+    });
+
+    const requestContext = dataRequestContext("/account", undefined, { locale: "ar" }, "ar");
+    const handler = createPageRouteHandler(
+      handlerOptions({ "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} }),
+    );
+
+    await handler(requestContext as never);
+
+    expect(requestContext.response.setLocale).toHaveBeenCalledTimes(1);
+    expect(requestContext.response.setLocale).toHaveBeenCalledWith("ar");
+  });
+
+  it("does not persist when the data request carries no ?locale= param", async () => {
+    const bundle = {
+      route: { name: "account", path: "/account", params: {}, query: {} },
+    };
+
+    renderPageRequest.mockResolvedValue({
+      html: "",
+      status: 200,
+      headers: {},
+      data: undefined,
+      bundle,
+    });
+
+    const requestContext = dataRequestContext("/account", undefined, {}, "en");
+    const handler = createPageRouteHandler(
+      handlerOptions({ "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} }),
+    );
+
+    await handler(requestContext as never);
+
+    expect(requestContext.response.setLocale).not.toHaveBeenCalled();
+  });
+
+  it("does not persist on a document request carrying ?locale= — only a data request does", async () => {
+    renderPageRequest.mockResolvedValue(renderedOk());
+
+    const requestContext = context("/account", {}, { locale: "ar" });
+    const handler = createPageRouteHandler(
+      handlerOptions({ "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} }),
+    );
+
+    await handler(requestContext as never);
+
+    expect(requestContext.response.setLocale).not.toHaveBeenCalled();
+    // Confirms the document path actually ran, so a false pass (nothing ran
+    // at all) cannot masquerade as this rule holding.
+    expect(requestContext.response.html).toHaveBeenCalled();
+  });
+
+  /**
+   * `request.locale`, never the raw query value, is what gets persisted:
+   * `resolveLocale()` already ran the query value through `cacheLocale()`'s
+   * `app.localeCodes` allow-list by the time this handler reads
+   * `request.locale`, so a code outside the allow-list has already become the
+   * configured fallback. This suite mocks the request/response pair, so
+   * `request.locale: "en"` here stands in for what `cacheLocale()` would have
+   * resolved an unsupported `?locale=xx` to — the real resolution is core's
+   * own proven contract (`core/src/http/response-set-locale.spec.ts`,
+   * `request.spec.ts`).
+   *
+   * DECISION this spec pins down: the handler persists whatever
+   * `request.locale` resolved to UNCONDITIONALLY, on every locale-bearing
+   * data request — it never reads the incoming cookie back out to compare
+   * against it first. Re-persisting an already-current value is a harmless
+   * cookie rewrite, and comparing would duplicate the READ side's own job.
+   */
+  it("persists the validated fallback, not the raw query value, for an unsupported code", async () => {
+    const bundle = {
+      route: { name: "account", path: "/account", params: {}, query: { locale: "xx" } },
+    };
+
+    renderPageRequest.mockResolvedValue({
+      html: "",
+      status: 200,
+      headers: {},
+      data: undefined,
+      bundle,
+    });
+
+    const requestContext = dataRequestContext("/account", undefined, { locale: "xx" }, "en");
+    const handler = createPageRouteHandler(
+      handlerOptions({ "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} }),
+    );
+
+    await handler(requestContext as never);
+
+    expect(requestContext.response.setLocale).toHaveBeenCalledWith("en");
   });
 });
 
