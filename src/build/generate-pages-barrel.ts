@@ -31,7 +31,18 @@ import type { ConnectorEsbuildPatch } from "@warlock.js/core";
 // module's graph; importing this file directly pulls in 2 (itself and
 // `@mongez/concat-route`). Same pattern as `web-connector-factory.ts`'s
 // `../../../core/src/connectors/types` deep import, for the same reason.
-import { normalizeRoutePath } from "../../../core/src/router/normalize-route-path";
+//
+// Reached BY PACKAGE NAME (`@warlock.js/core/src/...`), not by a bare
+// relative disk path (`../../../core/src/...`): both resolve to the exact
+// same file today (core has no built `dist`/`esm` in this checkout, so its
+// `main` — and this subpath — point straight at `src`), but only the
+// package-name form is resolved through `node_modules`. TypeScript's
+// `rootDir` containment check (`web/tsconfig.json`'s `rootDir: "./src"`)
+// exempts files reached that way; a raw relative path walks out of the
+// package on disk and TS6059s on `core/src/router/normalize-route-path.ts`
+// (surfaced at `core/src/router/index.ts:3`, its re-export site) the moment
+// anything in this module's graph is type-checked.
+import { normalizeRoutePath } from "@warlock.js/core/src/router/normalize-route-path";
 import {
   discoverPages,
   discoverWebRoots,
