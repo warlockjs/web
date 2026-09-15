@@ -14,6 +14,7 @@ import { hydrateShared } from "../../shared";
 import type { ClientPageEntry } from "../runtime";
 import { recordCurrentRoute } from "./current-route";
 import { applyDocumentMetadata } from "./document-metadata";
+import { connectLocaleChanger, createLocaleChanger } from "./change-locale-code";
 import { fetchPageData } from "./fetch-page-data";
 import { createEntryKey, ensureEntryKey, withEntryKey } from "./history-entry-key";
 import { takePrefetchedPageData } from "./prefetch";
@@ -327,14 +328,19 @@ export function NavigationRoot({
       return () => !disposed && ticket === token;
     };
 
-    const previousRefresher = connectRefresher(
-      createRefresher({
-        readCurrent: () => currentRef.current,
-        writeCurrent: setCurrent,
-        buildTree: (payload) => buildTree(pages, payload),
-        claimTicket,
-      }),
-    );
+    // Both the refresher and the locale changer are one seam, built from the
+    // same four callbacks (see `refresh.ts`'s `RefreshRuntime`): a refresh, a
+    // locale change and a navigation can each overtake the others, and only
+    // sharing `claimTicket`'s counter lets any of them notice.
+    const runtime = {
+      readCurrent: () => currentRef.current,
+      writeCurrent: setCurrent,
+      buildTree: (payload: HydrationDocumentPayloadSource) => buildTree(pages, payload),
+      claimTicket,
+    };
+
+    const previousRefresher = connectRefresher(createRefresher(runtime));
+    const previousLocaleChanger = connectLocaleChanger(createLocaleChanger(runtime));
 
     const previousNavigator = connectNavigator((url, options) => {
       const replace = options?.replace === true;
@@ -432,6 +438,7 @@ export function NavigationRoot({
       window.removeEventListener("popstate", onPopState);
       connectNavigator(previousNavigator);
       connectRefresher(previousRefresher);
+      connectLocaleChanger(previousLocaleChanger);
     };
   }, [pages, buildTree]);
 

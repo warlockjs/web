@@ -75,6 +75,15 @@ export type { MatchedRoute } from "./client/navigation/current-route";
 // arrive, a refresh must not because the user is already there.
 export { refresh } from "./client/navigation/refresh";
 
+// `changeLocaleCode()` is card 2eb7ea7a's client-side switch: a data request
+// for the current route with `?locale=<code>` on the FETCH URL only (the
+// server persists the choice into its `locale` cookie on that same request —
+// see `change-locale-code.ts`'s header for why the client never writes one
+// itself), then the same tree-swap `refresh()` uses. No hook is exported: like
+// `refresh()`, it needs no React context, only the module-level runtime
+// `NavigationRoot` connects.
+export { changeLocaleCode } from "./client/navigation/change-locale-code";
+
 // The DECODE half of the query encoder `href()` already uses. Deliberately not a
 // second implementation: both directions stand on one `URLSearchParams` rule, so
 // the writer and the reader cannot drift apart. `resetQueryStringOptions` is ours,
