@@ -3,6 +3,7 @@ import type { SharedContext } from "../index";
 import type { PageMetadata } from "../metadata";
 import type { PipelineLoader } from "./execute-page-request";
 import { ERROR_PAGE_METADATA, resolvePageMetadata } from "./resolve-page-metadata";
+import { DeferredKeyInMetadataError } from "./metadata-deferred-guard";
 
 const shared = Object.freeze({}) as Readonly<SharedContext>;
 
@@ -24,6 +25,7 @@ function resolve(overrides: Partial<Parameters<typeof resolvePageMetadata>[0]> =
     error: undefined,
     failed: false,
     shared,
+    pagePath: "/",
     ...overrides,
   });
 }
@@ -88,6 +90,45 @@ describe("resolvePageMetadata — the error path", () => {
     expect(
       resolve({ metadata: { title: "Sign in" }, failed: true, error: new Error("x") }),
     ).toEqual({ metadata: ERROR_PAGE_METADATA });
+  });
+});
+
+describe("resolvePageMetadata — Stage 2 deferred keys (contract rule 11)", () => {
+  it("reads a resolved key next to a deferred one without incident", () => {
+    const metadata = ((({ data }) => ({
+      title: (data as { product: { name: string } }).product.name,
+    })) as unknown) as PageMetadata<PipelineLoader>;
+    const data = { product: { name: "Chair" }, reviews: Promise.resolve([]) };
+
+    expect(resolve({ metadata, data, deferredKeys: ["reviews"] })).toEqual({
+      metadata: { title: "Chair" },
+    });
+  });
+
+  it("reports DeferredKeyInMetadataError, naming the key and the page, instead of letting it escape", () => {
+    const metadata = ((({ data }) => ({
+      title: (data as { reviews: unknown[] }).reviews.length.toString(),
+    })) as unknown) as PageMetadata<PipelineLoader>;
+    const data = { product: { name: "Chair" }, reviews: Promise.resolve([]) };
+
+    const result = resolve({
+      metadata,
+      data,
+      deferredKeys: ["reviews"],
+      pagePath: "/products/1",
+    });
+
+    expect(result.metadata).toBeUndefined();
+    expect(result.thrown).toBeInstanceOf(DeferredKeyInMetadataError);
+    expect((result.thrown as DeferredKeyInMetadataError).key).toBe("reviews");
+    expect((result.thrown as DeferredKeyInMetadataError).pagePath).toBe("/products/1");
+  });
+
+  it("leaves a page that never called defer() unaffected — no deferredKeys at all", () => {
+    const metadata = vi.fn(() => ({ title: "Home" })) as unknown as PageMetadata<PipelineLoader>;
+    const data = { products: [1, 2, 3] };
+
+    expect(resolve({ metadata, data })).toEqual({ metadata: { title: "Home" } });
   });
 });
 

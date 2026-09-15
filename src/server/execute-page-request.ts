@@ -400,6 +400,8 @@ export async function executePageRequest<TResult = PageDataBundle>(
       error: bundle.error?.error,
       failed: Boolean(bundle.error),
       shared: sealedShared,
+      deferredKeys: bundle.deferredKeys,
+      pagePath: bundle.route.path,
     });
 
     bundle.metadata = resolved.metadata;

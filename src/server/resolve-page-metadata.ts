@@ -53,6 +53,7 @@
 import type { SharedContext } from "../index";
 import type { MetadataOutput, PageMetadata } from "../metadata";
 import type { PipelineLoader } from "./execute-page-request";
+import { guardMetadataAgainstDeferredKeys } from "./metadata-deferred-guard";
 
 /**
  * What `<head>` gets when the page did not render.
@@ -77,6 +78,19 @@ export type ResolvePageMetadataInput = {
   /** Whether an earlier stage recorded an error at all. */
   failed: boolean;
   shared: Readonly<SharedContext>;
+  /**
+   * `bundle.deferredKeys` (Stage 2, contract rule 3) — the page loader's
+   * top-level `defer()`-ed key names, undefined for a page that never called
+   * `defer()`. Used only to build the guarded view `metadata()` reads `data`
+   * through; never read on the `failed` path, where `data` itself is not
+   * read either.
+   */
+  deferredKeys?: readonly string[];
+  /**
+   * The matched page's route path — named in
+   * {@link DeferredKeyInMetadataError} when `metadata()` reads a deferred key.
+   */
+  pagePath: string;
 };
 
 export type ResolvedPageMetadata = {
@@ -108,9 +122,15 @@ export function resolvePageMetadata(input: ResolvePageMetadataInput): ResolvedPa
   }
 
   try {
+    const guardedData = guardMetadataAgainstDeferredKeys(
+      input.data,
+      input.deferredKeys,
+      input.pagePath,
+    );
+
     return {
       metadata: (metadata as PageMetadataFunction)({
-        data: input.data as Parameters<PageMetadataFunction>[0]["data"],
+        data: guardedData as Parameters<PageMetadataFunction>[0]["data"],
         shared: input.shared,
       }),
     };
