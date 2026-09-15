@@ -1633,6 +1633,33 @@ export default function App({ children }: AppProps) {
 
 The root component is synchronous. HTTP work belongs in an `AppLoader`; the component receives its result as `data`.
 
+## `lang` and `dir`
+
+The root owns `<html>`, so it also owns `lang` and `dir` — the framework never injects either. Read the current locale with `useLocale()` and derive the writing direction from it with `useTextDirection()`, both from `@warlock.js/web`:
+
+```tsx title="src/web/root.tsx"
+import { Head, Scripts, useLocale, useTextDirection } from "@warlock.js/web";
+import type { AppProps } from "@warlock.js/web";
+
+export default function App({ children }: AppProps) {
+  const locale = useLocale();
+
+  return (
+    <html lang={locale} dir={useTextDirection()}>
+      <head>
+        <Head />
+      </head>
+      <body>
+        <div id="root">{children}</div>
+        <Scripts />
+      </body>
+    </html>
+  );
+}
+```
+
+`useTextDirection()` derives `"rtl"` or `"ltr"` from the same locale `useLocale()` already exposes — via `localeDirection()`, a pure function safe to call on the server or the client. No hydration payload change is involved: the direction is computed from the locale that already made the trip, not carried separately.
+
 ## `#root` is the hydration boundary
 
 The server renders this document shape:
