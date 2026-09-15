@@ -59,7 +59,7 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
-  // This machine exports NODE_ENV=production globally (A.3 §5 finding).
+  // This machine exports NODE_ENV=production globally.
   vi.stubEnv("NODE_ENV", "development");
 });
 

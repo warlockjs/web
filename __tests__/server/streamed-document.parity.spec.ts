@@ -1,9 +1,8 @@
 /**
- * STREAMED DOCUMENT — Stage 1 streaming SSR gate (card baf3789d, checklist
- * item 1; design record `releases/v5.12-streaming-design.md`; production
- * seams `render-page.ts`'s `finishRender`/`renderElementToPipeableStream`,
+ * STREAMED DOCUMENT — Stage 1 streaming SSR gate over the production seams
+ * `render-page.ts`'s `finishRender`/`renderElementToPipeableStream`,
  * `create-page-route-handler.ts`'s `rendered.pipeableStream` branch, and
- * core's `Response.streamReact`/`streamReactResponse`).
+ * core's `Response.streamReact`/`streamReactResponse`.
  *
  * The contract this file gates: the first byte only goes out after loaders,
  * validation, middleware and error escalation have settled (status, headers

@@ -425,7 +425,7 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       });
 
       if (wantsData) {
-        // Card 2eb7ea7a: `changeLocaleCode()`'s client half asks for a locale
+        // `changeLocaleCode()`'s client half asks for a locale
         // switch by putting `?locale=<code>` on a navigation DATA request's
         // FETCH URL only — never on a document load, and never any other way
         // (`client/navigation/change-locale-code.ts`). Persisting it here,
@@ -530,7 +530,7 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         response.setContentType("text/html");
         response.setStatusCode(status);
 
-        // "stream.end" (card 71622e4a §2 item 8): the whole `streamReact`
+        // "stream.end" tracing phase: the whole `streamReact`
         // await, which resolves only once the raw response has finished
         // sending — including every deferred settlement's chunk, since
         // `wrapPipeableStreamForDeferredEmission` (`defer-emission.ts`) does

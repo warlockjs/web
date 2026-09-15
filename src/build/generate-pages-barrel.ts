@@ -62,7 +62,7 @@ export { NestedLayoutsNotSupportedError } from "../routing/layout-policy";
 const STYLE_EXTENSIONS = [".css", ".scss", ".sass", ".less", ".styl"];
 
 /**
- * The esbuild patch web contributes (spike-settled, contract §3a).
+ * The esbuild patch web contributes.
  *
  * NO `process.env.NODE_ENV` define: warlock assigns to `process.env.NODE_ENV`
  * at runtime (`core/src/utils/environment.ts:14`) and a define would turn that

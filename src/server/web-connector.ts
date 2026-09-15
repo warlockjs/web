@@ -28,7 +28,7 @@
  * `installPageRoutes` (`./install-page-routes.ts:189`), and registered through
  * the ordinary `router.get(…)` API — there is no second server matcher.
  *
- * DELIBERATE EXCEPTION to A.3 §2 ("web has no core dependency"), the same one
+ * DELIBERATE EXCEPTION to the rule that web has no core dependency, the same one
  * `./dev-error-transport.ts` and `./install-page-routes.ts` record in their own headers:
  * this module is not re-exported from any package barrel (`web/src/index.ts`,
  * `web/src/server/index.ts`, `web/src/connector/index.ts`) and is not part of

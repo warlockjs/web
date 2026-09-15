@@ -225,7 +225,7 @@ describe("devHandlerStylesheetUrls — cold module graph (FOUC regression)", () 
   // a route's first SSR sees, right after `warlock dev` starts and before the
   // client has fetched that route once. It must STILL yield the chain's own
   // directly-imported stylesheets, or the first paint carries no
-  // render-blocking <link> and flashes unstyled (card 20bb184d). Before the
+  // render-blocking <link> and flashes unstyled. Before the
   // fix this returned [] whenever a module graph was passed; the source-scan
   // fallback only ran when the graph was `undefined`.
   const coldModuleGraph = {

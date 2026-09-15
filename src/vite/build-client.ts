@@ -11,7 +11,7 @@ export interface BuildHydrationClientOptions {
    *
    * Was hardcoded to `<webRoot>/dist/client`, which wrote the artifacts into
    * the framework package rather than the app's build output. The caller owns
-   * the build layout (`<outdir>/client`, contract §1), so it passes the
+   * the build layout (`<outdir>/client`), so it passes the
    * directory; `manifestPath` is derived from it.
    */
   outDir: string;

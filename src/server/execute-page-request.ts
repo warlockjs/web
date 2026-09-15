@@ -267,7 +267,7 @@ export async function executePageRequest<TResult = PageDataBundle>(
         };
     let signal: LoaderSignal | undefined;
 
-    // Card 71622e4a §2 item 6: one "loader" phase per level that actually ran
+    // One "loader" phase per level that actually ran
     // (a level with no loader export is skipped below and reports nothing).
     // Resolved ONCE, outside the loop, so a disabled app pays exactly one
     // boolean check per level rather than a config read per iteration.

@@ -5,8 +5,7 @@
  * `AsyncLocalStorage.run`; the subclass at
  * core/src/http/context/request-context.ts:21-62 declares only
  * getRequest/getResponse/getUser/buildStore, no `run` override). Web cannot
- * import core here — no core dep, no built esm (see
- * implementation/2026-08-20-A3-shared-proxy.md §2) — so this subclass extends
+ * import core here — no core dep, no built esm — so this subclass extends
  * the SAME base class core extends, over core's store shape
  * (`{ request, response }`, request-context.ts:10-13): the isolation specs
  * execute the very `run` function core executes per request.

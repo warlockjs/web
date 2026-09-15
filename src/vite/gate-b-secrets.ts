@@ -148,7 +148,7 @@ type KeyResolution = { readonly static: true; readonly key: string } | { readonl
  * expression reads off `process.env` or `import.meta.env`. Only a literal
  * dot-property or a static string-literal bracket key counts as static —
  * anything else (a variable, a template literal, a call expression, ...) is
- * a computed key and must fail closed (`c604f0bc` §5 / §3 "never guess").
+ * a computed key and must fail closed rather than guessed at.
  */
 function resolveKey(outer: any): KeyResolution {
   if (!outer.computed) {

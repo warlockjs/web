@@ -17,9 +17,8 @@ import * as App from "./fixtures/root";
  * (`pipeline-loaders.spec.ts:228-277` asserts `bundle.shortCircuit` and the
  * committed cookie). Those assertions passed while the browser was receiving a
  * bare `302` with an empty body and no `Location` — the URL reached
- * `bundle.shortCircuit.url` and was dropped at the emit
- * (design/loader-endpoint-seam-2026-08-23.md §5). A bundle-level assertion
- * cannot see that; only the reply can.
+ * `bundle.shortCircuit.url` and was dropped at the emit. A bundle-level
+ * assertion cannot see that; only the reply can.
  *
  * So this file asserts the RECORDED REPLY: `createPageRouteHandler` driven
  * against real core `Request`/`Response` instances (`createCoreHttp`), reading
@@ -362,8 +361,8 @@ describe("the reply shim records terminal calls instead of swallowing them", () 
   /**
    * `createReplyShim.redirect()` was `() => shim` — a no-op. That is the
    * reason the defect above shipped: the only harness surface that could have
-   * reported "the socket was written to" reported nothing at all
-   * (design/loader-endpoint-seam-2026-08-23.md §7). This spec keeps it honest.
+   * reported "the socket was written to" reported nothing at all.
+   * This spec keeps it honest.
    */
   it("redirect() records the call, the Location, the status and the sent state", () => {
     const reply = createReplyShim();

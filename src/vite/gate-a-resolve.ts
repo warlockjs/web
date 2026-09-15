@@ -1056,8 +1056,8 @@ export function gateAResolve(options: GateAOptions = {}): Plugin {
     // Must run before Vite's own core resolver: Vite silently externalizes
     // Node builtins into a `__vite-browser-external` stub for browser
     // builds, and would resolve `@warlock.js/*` packages via node_modules,
-    // if either ran first. "The cheapest security mechanism wins" (RFC
-    // §1.5) means this fence goes first, not last.
+    // if either ran first. The cheapest security mechanism wins: this fence
+    // goes first, not last.
     enforce: "pre",
     /** Records the alias-table size; see `declaredAliasCount`. Judges nothing. */
     configResolved(config) {
@@ -1139,7 +1139,8 @@ export function gateAResolve(options: GateAOptions = {}): Plugin {
 
       // Compute the path Gate A judges: for relative/absolute specifiers,
       // resolve against the importer's directory ourselves (filename-only
-      // check, zero AST parsing, per `c604f0bc` §4) rather than delegating
+      // check, zero AST parsing — Gate A judges by filename, not by parsing
+      // the module) rather than delegating
       // to Vite's resolver first, then complete the extension the author was
       // free to leave off — `path.resolve` alone yields `.../helper` for
       // `./helper`, which rule 4 does not recognize as code and therefore

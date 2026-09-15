@@ -9,9 +9,8 @@ import { installStreamClosedRejection, prepareDeferredPageData } from "./runtime
  * The hydration MOUNT point — a different id from the payload script's id.
  * Not exported anywhere as a named constant (`default-app.tsx:39` only
  * renders the literal `<div id="root">`), so a local literal is fine here:
- * the contract's no-duplicate-literal rule is specifically about the payload
- * script id, which `readHydrationPayload` already owns exclusively
- * (hydration-payload-contract-2026-08-22.md §4).
+ * the no-duplicate-literal rule is specifically about the payload
+ * script id, which `readHydrationPayload` already owns exclusively.
  */
 const MOUNT_ELEMENT_ID = "root";
 
@@ -80,11 +79,11 @@ function reportHydrationFailure(error: unknown): void {
 
 /**
  * The one hydration entry point. Mounts at `#root` only — the page subtree —
- * never `document`/`html`/`head`/`body` (hydration-payload-contract-2026-08-22.md
- * §2): `metadata`, `dir`, and `nonce` are not used to rebuild the mounted tree;
- * the declared `locale` key is consumed by `NavigationRoot`'s provider.
- * `readHydrationPayload` (web/src/hydration-payload.ts,
- * Vega's slice B) is the one place ABSENT/MALFORMED are decided, so this
+ * never `document`/`html`/`head`/`body`: `metadata`, `dir`, and `nonce` are
+ * not used to rebuild the mounted tree; the declared `locale` key is
+ * consumed by `NavigationRoot`'s provider.
+ * `readHydrationPayload` (web/src/hydration-payload.ts)
+ * is the one place ABSENT/MALFORMED are decided, so this
  * function does not re-implement that check — reusing it is what keeps the
  * two throw messages from drifting apart at a second site. On ABSENT/MALFORMED
  * it throws before touching `#root`, so the server-rendered markup stays

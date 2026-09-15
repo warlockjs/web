@@ -54,7 +54,7 @@ afterAll(() => {
 });
 
 beforeEach(() => {
-  // This machine exports NODE_ENV=production globally (A.3 §5 finding).
+  // This machine exports NODE_ENV=production globally.
   vi.stubEnv("NODE_ENV", "development");
 });
 
@@ -152,7 +152,7 @@ function recordingContext(
       return response;
     },
     /**
-     * Card 2eb7ea7a: the handler calls this when a data request's `?locale=`
+     * The handler calls this when a data request's `?locale=`
      * persists a navigation-requested locale
      * (`create-page-route-handler.ts`'s `wantsData` branch). No fixture here
      * sends that query param, so this is a no-op stand-in for the same reason
@@ -224,7 +224,7 @@ function recordingContext(
     path: url,
     nonce,
     /**
-     * Card 2eb7ea7a: `createPageRouteHandler` reads `request.query["locale"]`
+     * `createPageRouteHandler` reads `request.query["locale"]`
      * to decide whether to persist a navigation-requested locale. Empty here
      * — no fixture in this file sends `?locale=` — mirroring core's real
      * `request.query`, which is always an object, never `undefined`

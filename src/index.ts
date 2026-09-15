@@ -69,13 +69,13 @@ export type { MatchedRoute } from "./client/navigation/current-route";
 
 // `refresh()` carries MRR's name and does strictly more: MRR re-renders the
 // current route, this re-RUNS its loaders and then re-renders. It is canon
-// `ab461f86`'s revalidate primitive — the thing you call after a successful POST.
+// The revalidate primitive — the thing you call after a successful POST.
 // A FAILED refresh deliberately does not degrade to a full page load the way a
 // failed navigation does: a navigation must reload because the user has to
 // arrive, a refresh must not because the user is already there.
 export { refresh } from "./client/navigation/refresh";
 
-// `changeLocaleCode()` is card 2eb7ea7a's client-side switch: a data request
+// `changeLocaleCode()` is the client-side locale switch: a data request
 // for the current route with `?locale=<code>` on the FETCH URL only (the
 // server persists the choice into its `locale` cookie on that same request —
 // see `change-locale-code.ts`'s header for why the client never writes one

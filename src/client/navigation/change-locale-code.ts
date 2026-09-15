@@ -9,7 +9,7 @@ import type { RefreshRuntime } from "./refresh";
  *
  * ## Why this is a data request, not a navigation
  *
- * Card 2eb7ea7a, Step 0: the server resolves a request's locale as the first
+ * The server resolves a request's locale as the first
  * present of a `?locale=` query param, the `locale` cookie, then a `locale`
  * header (`core/src/http/request.ts:352-360`), with the query param
  * outranking everything else. There is no URL-prefix mode. Persisting the

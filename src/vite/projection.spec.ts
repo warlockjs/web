@@ -568,7 +568,7 @@ describe("projection — attributing a module-scope declaration by who reads it"
   /**
    * Unchanged and asserted here because this describe is the one that could
    * erode it: attribution decides LOCAL declarations only. A non-server-named
-   * EXPORT survives whatever it references (`c604f0bc` §9), including when
+   * EXPORT survives whatever it references, including when
    * nothing in the file reads it.
    */
   it("never attributes a non-server-named export — it survives unread", async () => {

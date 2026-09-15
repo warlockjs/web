@@ -32,9 +32,8 @@ export { requestContext, Request, Response };
  * reports "nothing happened" for a call that already flushed the response.
  *
  * `redirect()` in particular used to be `() => shim`. That is why no spec ever
- * noticed that a loader redirect on the document path emits no `Location`
- * (design/loader-endpoint-seam-2026-08-23.md §5, §7) — the only surface that
- * could have told the truth had been silenced.
+ * noticed that a loader redirect on the document path emits no `Location` —
+ * the only surface that could have told the truth had been silenced.
  *
  * NOTE on the field name: the recorded header bag is `appliedHeaders`, not
  * `headers`. Fastify's own reply exposes `headers(object)` as a METHOD
@@ -73,7 +72,7 @@ export type ReplyShim = {
   statusCode: number;
   /** Every payload handed to `send()`, in order. */
   payloads: unknown[];
-  /** Every `redirect()` call, in order — the record §7 says must exist. */
+  /** Every `redirect()` call, in order — must exist so a swallowed redirect is caught. */
   redirects: { url: string; statusCode: number }[];
   header(key: string, value: unknown): ReplyShim;
   headers(headers: Record<string, unknown>): ReplyShim;

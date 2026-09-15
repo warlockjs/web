@@ -68,7 +68,7 @@ function context(
       setContentType: vi.fn(),
       setStatusCode: vi.fn(),
       streamReact: vi.fn(async () => undefined),
-      // Card 2eb7ea7a's persistence call — see
+      // The locale-persistence call — see
       // "createPageRouteHandler — persisting a navigation-requested locale".
       setLocale: vi.fn(),
     },
@@ -622,7 +622,7 @@ describe("createPageRouteHandler — fallback data requests", () => {
   });
 });
 
-describe("createPageRouteHandler — persisting a navigation-requested locale (card 2eb7ea7a)", () => {
+describe("createPageRouteHandler — persisting a navigation-requested locale", () => {
   /**
    * `changeLocaleCode()`'s client half (`client/navigation/change-locale-code.ts`)
    * sends the switch as `?locale=<code>` on a navigation DATA request's fetch

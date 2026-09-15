@@ -77,8 +77,8 @@ function committedCookies(bundle: PageDataBundle): BufferedCookie[] {
  * re-runs any earlier stage — `renderPageRequest` calls `executePageRequest`
  * and everything here consumes its bundle as-is.
  *
- * `renderPageRequest` is deliberately double-duty (dx-differentiators.md §3):
- * it is the production orchestrator AND the test helper. Because a loader IS
+ * `renderPageRequest` is deliberately double-duty: it is the production
+ * orchestrator AND the test helper. Because a loader IS
  * a controller, `renderPageRequest("/products/42")` returns
  * `{ html, status, headers, data }` in one call — asserting a page's data and
  * its response headers is a unit test, no browser, no server boot.
@@ -224,9 +224,9 @@ function requireRegistry(options: RenderPageRequestOptions): RouteRegistry {
 // ---------------------------------------------------------------------------
 
 /**
- * The framework-owned terminal boundary (P1 §4: designation falls back to
- * `app` even when no level exports one — "the framework owns a root
- * boundary"). Deliberately generic: the error itself is server knowledge and
+ * The framework-owned terminal boundary: designation falls back to
+ * `app` even when no level exports one, because the framework owns a root
+ * boundary. Deliberately generic: the error itself is server knowledge and
  * never serialized into the document.
  */
 function FrameworkRootBoundary(): ReactNode {
@@ -281,8 +281,8 @@ function buildPageElement(
 /**
  * The error path renders the DESIGNATED boundary in place of the level it
  * covers, still wrapped by every level rootward of it — a page-level throw
- * keeps its App and Layout chrome, whose data survived the settle rules
- * (P1 §4: fulfilled sibling data stays in the bundle).
+ * keeps its App and Layout chrome, whose data survived the settle rules:
+ * fulfilled sibling data stays in the bundle.
  *
  * `record` is explicit rather than read from `bundle.error` — a render-time
  * throw (`finishRender`'s stage 9 escalation loop) designates a NEW boundary on the fly that the stage 1-8 bundle never saw.
@@ -444,11 +444,10 @@ function documentSlotsFrom(captured: CapturedHttp | undefined): DocumentSlots {
  * never serialized into the document (server knowledge, `FrameworkRootBoundary`
  * above), and nothing in stages 1-9 logs it. In development that left a blank
  * 500 with no message in the response, no dev overlay, and no line in the dev
- * server's own log — the developer had nothing to debug with (finding
- * `d47f5696`).
+ * server's own log — the developer had nothing to debug with.
  *
  * This writes the error, with its stack, to stderr. It runs on BOTH dev and
- * production on purpose: canon `8d3c13a8` — a fatal reported only through a
+ * production on purpose: a fatal reported only through a
  * configurable sink can vanish, so every fatal needs a floor that cannot be
  * silenced. stderr never reaches the client, so this leaks nothing that the
  * generic boundary was protecting; it only gives the terminal the one line
@@ -532,8 +531,8 @@ async function finishRender(
   response: Response,
   /**
    * The same request `documentSlotsFrom`'s `captured` pair carries — needed
-   * here only to build the "render.shell" tracing context (card 71622e4a §2
-   * item 7); `finishRender` otherwise never reads it.
+   * here only to build the "render.shell" tracing context;
+   * `finishRender` otherwise never reads it.
    */
   request: Request,
   loadErrorPage: ErrorPageModuleLoader | undefined,
@@ -688,7 +687,7 @@ async function finishRender(
   // map put under `cache-control` is overwritten there on purpose: two sites
   // deciding this key is exactly the drift that seam exists to prevent.
 
-  // "render.shell" (card 71622e4a §2 item 7): from here — the start of the
+  // "render.shell" tracing phase: from here — the start of the
   // actual render work — until React's shell is ready to pipe, just below.
   // Resolved once; a disabled app pays one boolean check and never starts a
   // timer.
@@ -824,8 +823,8 @@ async function finishRender(
 
       if (currentError?.boundary.boundaryLevel === "app") {
         // The floor: the app-level boundary's own render just threw, so
-        // there is nothing rootward of `app` to escalate to (§2's "none
-        // survives"). Render the framework's trivial boundary directly —
+        // there is nothing rootward of `app` to escalate to. Render the
+        // framework's trivial boundary directly —
         // bypassing the app's ErrorBoundary/App component, since that is
         // what just failed — wrapped in DefaultApp so the response is still
         // a complete `<html>` document (default-app.tsx:22-46) rather than

@@ -11,7 +11,7 @@
  * page component) and every other non-server-named export — including the
  * synchronous, no-argument `register()` lifecycle hook — survive
  * unconditionally, regardless of what they reference — classification is by
- * FILE, not by what an export does with data (`c604f0bc` §9).
+ * FILE, not by what an export does with data.
  *
  * ATTRIBUTION APPLIES TO LOCAL DECLARATIONS, NOT JUST IMPORTS. A page or
  * layout hoists things to module scope for two ordinary reasons, and the
@@ -59,10 +59,11 @@ export const SERVER_EXPORT_NAMES = new Set([
 /**
  * Recognized client-safe assets that always survive projection untouched,
  * whether imported bare (`import "./x.css"`) or with specifiers
- * (`import styles from "./x.module.css"`) — `c604f0bc` §3 names CSS
- * explicitly; the rest of this list is the same "never guess, but a known
- * asset extension is not ambiguous" reasoning extended to the other static
- * asset kinds Vite treats as URL/asset imports, not executable code.
+ * (`import styles from "./x.module.css"`) — CSS is explicitly recognized
+ * here as a client-safe asset; the rest of this list is the same "never
+ * guess, but a known asset extension is not ambiguous" reasoning extended to
+ * the other static asset kinds Vite treats as URL/asset imports, not
+ * executable code.
  */
 const ASSET_EXTENSION_RE =
   /\.(css|scss|sass|less|styl|stylus|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|eot|otf)(\?.*)?$/i;
@@ -71,8 +72,8 @@ const ASSET_EXTENSION_RE =
  * Top-level statement types that need no ambiguity check and are never
  * touched by removal: import declarations are handled by their own
  * survives/orphaned logic below, and every export (other than the 6 server
- * names) plus type-only declarations survive unconditionally per
- * `c604f0bc` §9 ("classify FILES, not the data they touch").
+ * names) plus type-only declarations survive unconditionally — projection
+ * classifies by FILE, not by the data an export touches.
  *
  * `ExportAllDeclaration` (`export * from "./x"` / `export * as ns from
  * "./x"`) is deliberately NOT in this set — it can forward ANY name from its
@@ -89,7 +90,7 @@ const ALWAYS_SAFE_STATEMENT_TYPES = new Set([
 
 /**
  * Thrown when projection encounters an attribution-ambiguous top-level
- * statement (`c604f0bc` §3: "the compiler must not guess"). Carries the
+ * statement — the compiler must not guess. Carries the
  * file/statement/fix fields the plugin's `transform` hook formats into the
  * build-failure message — never silently kept or silently dropped.
  */
@@ -254,7 +255,7 @@ function declaredNames(stmt: any): Set<string> {
  * only drop a binding nothing reads. A call, a `new`, an `await`, a member
  * access (a getter) — those can do work, and "was that work for the server or
  * for the client?" is precisely the question projection must not answer by
- * guessing (`c604f0bc` §3). `const _ = installPolyfill()` with no reader at all
+ * guessing. `const _ = installPolyfill()` with no reader at all
  * is the shape this predicate exists to refuse rather than silently delete.
  *
  * Conservative by construction: an unrecognized node type is NOT
@@ -340,8 +341,8 @@ function statementSnippet(code: string, node: any): string {
 /**
  * The transform itself: parse, remove the 6 server exports and every import
  * orphaned only by that removal, fail closed on anything attribution-
- * ambiguous. `filePath` is only used for error messages (`c604f0bc` §7 —
- * fence errors must name the file).
+ * ambiguous. `filePath` is only used for error messages — a fence error
+ * must name the file.
  */
 export function projectModule(code: string, filePath: string): ProjectionResult {
   const ast = parse(code, {
@@ -374,7 +375,7 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
       // `ExportNamespaceSpecifier` rather than as `ExportAllDeclaration` —
       // hence the second check above) re-exports every name the source
       // module exports, sight unseen.
-      // Projection classifies by file (`c604f0bc` §9) and never opens a
+      // Projection classifies by file and never opens a
       // second file to resolve what a re-export actually forwards — doing so
       // would mean parsing and walking the source module too, i.e. a second
       // parser. Whether the source exports one of the 6 server names is
@@ -409,7 +410,7 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
     // Attribution-IMPOSSIBLE: not an import, not one of the 6 known server
     // exports, not another export, not a type-only declaration, and it binds
     // no name for a reader to point at. Fail closed rather than guess which
-    // side of the fence it belongs on (`c604f0bc` §3).
+    // side of the fence it belongs on.
     throw new ProjectionAmbiguityError(
       filePath,
       statementSnippet(code, stmt),
@@ -469,7 +470,7 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
     // being removed — but its initializer can RUN, and a side effect is not
     // attributable by the reference graph. Keeping it ships server work to the
     // browser; dropping it deletes a side effect the client may depend on.
-    // Refuse rather than pick one (`c604f0bc` §3).
+    // Refuse rather than pick one.
     throw new ProjectionAmbiguityError(
       filePath,
       statementSnippet(code, local.stmt),

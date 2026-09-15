@@ -12,7 +12,7 @@ import type { RefreshRuntime, RefreshablePage } from "./refresh";
 /**
  * `changeLocaleCode()` — switch the active locale without a full page reload.
  *
- * Card 2eb7ea7a. The server resolves a request's locale as the first present
+ * The server resolves a request's locale as the first present
  * of a `?locale=` query param, the `locale` cookie, then a `locale` header
  * (`core/src/http/request.ts:352-360`), the query param outranking the rest —
  * and there is no URL-prefix mode. So this sends `?locale=<code>` on the FETCH

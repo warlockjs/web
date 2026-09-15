@@ -1,7 +1,6 @@
 /**
- * PAGE TRACING — card 71622e4a, web half (`releases/v5.12-tracing-design-note.md`,
- * "Lead decisions" §2: web reports through core's `onPhase` hook, it never
- * gets its own hook surface).
+ * PAGE TRACING — web half: web reports its phases through core's `onPhase`
+ * hook; it never gets its own hook surface.
  *
  * Phases under test:
  *   - "loader"       — one per level that actually ran (`execute-page-request.ts`)
