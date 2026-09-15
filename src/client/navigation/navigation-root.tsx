@@ -15,9 +15,42 @@ import type { ClientPageEntry } from "../runtime";
 import { recordCurrentRoute } from "./current-route";
 import { applyDocumentMetadata } from "./document-metadata";
 import { fetchPageData } from "./fetch-page-data";
+import { createEntryKey, ensureEntryKey, withEntryKey } from "./history-entry-key";
 import { takePrefetchedPageData } from "./prefetch";
 import { connectRefresher, createRefresher, type RefreshablePage } from "./refresh";
+import {
+  applyScrollPosition,
+  captureScrollPosition,
+  decideNewNavigationScroll,
+  decidePopStateScroll,
+  installManualScrollRestoration,
+  scrollToTop,
+  type ScrollDecision,
+} from "./scroll-restoration";
+import { hydrateScrollPositions } from "./scroll-positions";
 import { scrollToFragment } from "./scroll-to-fragment";
+
+/**
+ * Carry out a scroll decision (`scroll-restoration.ts`) once the target
+ * content is actually on screen — a fragment lookup, a restored position, or
+ * a plain scroll-to-top, and nothing here decides WHICH.
+ */
+function applyScrollDecision(decision: ScrollDecision): void {
+  switch (decision.type) {
+    case "restore":
+      applyScrollPosition(decision.position);
+
+      return;
+    case "top":
+      scrollToTop();
+
+      return;
+    case "fragment":
+      scrollToFragment(document, decision.fragment);
+
+      return;
+  }
+}
 
 /**
  * The component that makes a page REPLACEABLE.
@@ -90,18 +123,31 @@ export function NavigationRoot({
   /*
     THE ORDERING PROBLEM, and this ref is half of the answer to it.
 
-    The element a fragment names lives in the tree that has not been built yet:
-    at the moment `apply` finishes fetching, the DOM still holds the page the
-    user is LEAVING. Scrolling there finds nothing, and finding nothing is
-    silent — indistinguishable from the fragment bug itself.
+    Whatever the scroll bar should do next — jump to a fragment's element,
+    restore a saved position, or go to the top — names a target that lives in
+    the tree that has not been built yet: at the moment `apply` finishes
+    fetching, the DOM still holds the page the user is LEAVING. Acting there
+    finds nothing, or scrolls the wrong document's layout, and either failure
+    is silent.
 
-    So the fragment is not scrolled to; it is HANDED OVER. `apply` parks it here
+    So the decision is not carried out; it is HANDED OVER. `apply` (and
+    `onPopState`, for a hash-only move that swaps no tree) parks it here
     immediately before the `setCurrent` that swaps the tree, and the layout
     effect below — which React runs after it has committed that tree to the DOM
     and before the browser paints — spends it. Read the two together; neither
     half means anything alone.
   */
-  const pendingFragment = useRef<string | undefined>(undefined);
+  const pendingScroll = useRef<ScrollDecision | undefined>(undefined);
+
+  /**
+   * The key of the history entry currently on screen — set once at boot from
+   * whatever is already on `history.state` (minting one if this is the first
+   * time this document has seen this entry), and kept current on every swap.
+   * Read by the navigator and `onPopState` to know WHICH entry's scroll
+   * position they are about to capture, immediately before it stops being the
+   * one on screen.
+   */
+  const activeEntryKey = useRef<string>("");
 
   useEffect(() => {
     /*
@@ -125,18 +171,32 @@ export function NavigationRoot({
     */
     let committedUrl = window.location.href;
 
+    /*
+      Scroll restoration boots ONCE, here, alongside `committedUrl` — both are
+      "what does this runtime already know about the entry it started on".
+      `history.scrollRestoration = "manual"` from this point forward means the
+      browser will not move the scroll bar on Back/Forward by itself, which is
+      what makes this runtime's own restoration (below) the only thing doing
+      it — and able to do it AFTER the swapped page has rendered rather than
+      before, which native restoration cannot promise against a page whose
+      content is still loading in.
+    */
+    installManualScrollRestoration(window.history);
+    hydrateScrollPositions();
+    activeEntryKey.current = ensureEntryKey(window.history);
+
     /**
-     * @param honourFragment whether the URL's fragment should be SCROLLED to
-     * once the new page is on screen. True for a navigation the app asked for
-     * — a `<Link>` click, `navigateTo` — and false for Back/Forward, where the
-     * browser has already restored the scroll position of the entry being
-     * returned to and moving the page again would overwrite the user's own
-     * position with the anchor they had scrolled away from. (Restoration is
-     * the browser's, deliberately: canon `0342c0d4`.)
+     * @param kind `"navigate"` for a navigation the app asked for — a
+     * `<Link>` click, `navigateTo` — which always mints a NEW entry key and
+     * scrolls to the top unless the URL names a fragment. `"popstate"` for
+     * Back/Forward, which reads back the entry's own key and restores its
+     * saved scroll position, falling back to its fragment and then to the top
+     * — see `scroll-restoration.ts`'s `decidePopStateScroll`.
      *
-     * The fragment is still PRESERVED in the URL in both cases — see below.
+     * The fragment is PRESERVED in the URL for both cases — see below —
+     * whether or not this navigation's decision ends up being `"fragment"`.
      */
-    const apply = async (url: string, replace: boolean, honourFragment: boolean): Promise<void> => {
+    const apply = async (url: string, replace: boolean, kind: "navigate" | "popstate"): Promise<void> => {
       const ticket = ++token;
       /*
         `"replace"` covers a Back/Forward press as well as an explicit
@@ -218,22 +278,35 @@ export function NavigationRoot({
       */
       const finalUrl = withFragmentFrom(result.url, url);
 
-      // History AFTER the fetch succeeded, never before. Pushing optimistically
-      // would leave the address bar pointing at a page that then failed to
-      // load, and a Back press would return to a URL the user never saw.
+      /*
+        History AFTER the fetch succeeded, never before. Pushing optimistically
+        would leave the address bar pointing at a page that then failed to
+        load, and a Back press would return to a URL the user never saw.
+
+        The entry's key travels WITH the write: a `"navigate"` mints a fresh
+        one — this is always a new logical page, even when it replaces the
+        current entry — and a `"popstate"` keeps the one already on
+        `history.state`, since this call is fixing the fragment back onto a URL
+        the browser already navigated to, not creating a new entry.
+      */
+      const entryKey = kind === "navigate" ? createEntryKey() : ensureEntryKey(window.history);
+      const state = kind === "navigate" ? withEntryKey(null, entryKey) : window.history.state;
+
       if (replace) {
-        window.history.replaceState(null, "", finalUrl);
+        window.history.replaceState(state, "", finalUrl);
       } else {
-        window.history.pushState(null, "", finalUrl);
+        window.history.pushState(state, "", finalUrl);
       }
 
       committedUrl = finalUrl;
+      activeEntryKey.current = entryKey;
 
       // Handed to the layout effect, which runs once React has committed the
-      // tree below to the DOM — the first moment the target can exist. Set
-      // unconditionally so a navigation with no fragment CLEARS a fragment left
-      // pending by one that was superseded.
-      pendingFragment.current = honourFragment ? fragmentOf(finalUrl) : undefined;
+      // tree below to the DOM — the first moment the target can exist.
+      pendingScroll.current =
+        kind === "navigate"
+          ? decideNewNavigationScroll(fragmentOf(finalUrl))
+          : decidePopStateScroll(entryKey, fragmentOf(finalUrl));
 
       // A navigation IS the route moving, so the fetched payload is both the
       // page and the route's identity.
@@ -276,13 +349,16 @@ export function NavigationRoot({
       const fragment = samePageFragment(url, window.location.href);
 
       if (fragment !== undefined) {
+        const entryKey = createEntryKey();
+
         if (replace) {
-          window.history.replaceState(null, "", url);
+          window.history.replaceState(withEntryKey(null, entryKey), "", url);
         } else {
-          window.history.pushState(null, "", url);
+          window.history.pushState(withEntryKey(null, entryKey), "", url);
         }
 
         committedUrl = window.location.href;
+        activeEntryKey.current = entryKey;
 
         // The target is in the DOM already, so there is nothing to wait for —
         // and nothing to hand to the layout effect, which no swap would fire.
@@ -291,7 +367,12 @@ export function NavigationRoot({
         return true;
       }
 
-      void apply(url, replace, true);
+      // The entry being LEFT, captured before anything below moves the page —
+      // `apply` mints the entry being arrived at, so this is the last point at
+      // which `activeEntryKey` still names the outgoing one.
+      captureScrollPosition(activeEntryKey.current);
+
+      void apply(url, replace, "navigate");
 
       // Accepted: the caller suppresses the browser's default. Returning `true`
       // before the fetch resolves is deliberate — the decision to handle a link
@@ -308,22 +389,40 @@ export function NavigationRoot({
     */
     const onPopState = (): void => {
       const target = window.location.href;
+
+      /*
+        The entry being LEFT. The browser has already moved
+        `window.location`/`history.state` onto the TARGET entry by the time
+        `popstate` fires, so `activeEntryKey` — not anything read from the DOM
+        or history right now — is the only remaining record of which entry
+        that was, and this is the last instant it still names it.
+      */
+      captureScrollPosition(activeEntryKey.current);
+
       /*
         A hash-only move within one page — Back off a `#section` click, or
         Forward onto one. The document is the same document and the tree on
         screen is already the right tree, so there is nothing to fetch: the
-        browser has changed the URL and restored the position for that entry
-        itself, and re-fetching would throw away a live page to rebuild the one
-        already showing. Scroll restoration stays the browser's (canon
-        `0342c0d4`), which is exactly what leaving this alone means.
+        browser has changed the URL, but scroll restoration is manual now (see
+        the mount effect above), so restoring the position — or falling back to
+        the fragment — is still this runtime's job, and it is done immediately
+        rather than handed to the layout effect, since no tree swap is coming
+        to trigger one.
       */
       const hashOnlyMove = withoutFragment(target) === withoutFragment(committedUrl);
 
       committedUrl = target;
 
-      if (hashOnlyMove) return;
+      if (hashOnlyMove) {
+        const entryKey = ensureEntryKey(window.history);
 
-      void apply(target, true, false);
+        activeEntryKey.current = entryKey;
+        applyScrollDecision(decidePopStateScroll(entryKey, fragmentOf(target)));
+
+        return;
+      }
+
+      void apply(target, true, "popstate");
     };
 
     window.addEventListener("popstate", onPopState);
@@ -337,15 +436,23 @@ export function NavigationRoot({
   }, [pages, buildTree]);
 
   /*
-    THE OTHER HALF OF THE ORDERING PROBLEM (see `pendingFragment` above).
+    THE OTHER HALF OF THE ORDERING PROBLEM (see `pendingScroll` above).
 
     `useLayoutEffect`, not `useEffect`, and the difference is the whole point:
     React runs a layout effect after it has COMMITTED this render to the DOM and
     BEFORE the browser paints. That is the earliest instant the new page's
-    elements exist — a scroll any sooner finds nothing — and the last instant
-    before the user sees anything, so the page is never painted at the top and
-    then jumped. `useEffect` would satisfy the first requirement and not the
+    elements exist — a scroll any sooner finds nothing, or restores a position
+    against the OLD page's layout — and the last instant before the user sees
+    anything, so the page is never painted at the wrong position and then
+    jumped. `useEffect` would satisfy the first requirement and not the
     second: it runs after paint, which is a visible flash of the wrong position.
+
+    This is also why a page with a deferred value is restored after its FIRST
+    commit rather than after the deferred value settles: a deferred key resolves
+    a Suspense boundary already inside the committed tree (`defer-registry.ts`),
+    which is a LATER commit this effect does not re-run for (it is keyed on
+    `current`, which does not change when a deferred value arrives) — so there
+    is nothing here that could wait for one even accidentally.
 
     Keyed on `current` rather than reaching for a fresh render: the effect fires
     on the swap that put the target in the DOM, so no polling, no rAF, no
@@ -354,18 +461,18 @@ export function NavigationRoot({
     moves the target after we have scrolled to where it was. That is the known
     limit of this mechanism and it is the same one a browser has.
 
-    Consumed once: the fragment is cleared as it is read, so a later re-render
-    (a refresh, a parent's state change) does not yank the page back to an
-    anchor the user has since scrolled away from.
+    Consumed once: the decision is cleared as it is read, so a later re-render
+    (a refresh, a parent's state change) does not yank the page back to a
+    position or an anchor the user has since scrolled away from.
   */
   useLayoutEffect(() => {
-    const fragment = pendingFragment.current;
+    const decision = pendingScroll.current;
 
-    if (fragment === undefined) return;
+    if (decision === undefined) return;
 
-    pendingFragment.current = undefined;
+    pendingScroll.current = undefined;
 
-    scrollToFragment(document, fragment);
+    applyScrollDecision(decision);
   }, [current]);
 
   /*
