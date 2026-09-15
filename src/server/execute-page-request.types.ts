@@ -4,6 +4,7 @@ import type { SharedContext } from "../index";
 import type { MetadataOutput, PageMetadata } from "../metadata";
 import type { SerializedErrorPageProps } from "../components/document-context";
 import type { SharedStore } from "../shared";
+import type { DeferSettlement } from "./defer-settlement";
 import type { BufferedResponse } from "./settle-page-response";
 
 export type PipelineStore = SharedStore & {
@@ -146,4 +147,21 @@ export type PageDataBundle = {
    * (`build-hydration-payload.ts`), never a component prop.
    */
   errorPage?: SerializedErrorPageProps;
+  /**
+   * Top-level PAGE loader keys returned as promises via `defer()`, in
+   * declaration order (Stage 2, `releases/v5.12-streaming-design.md`,
+   * contract rule 3). Undefined for a page that never called `defer()` —
+   * `build-hydration-payload.ts` reads this to know which `pageData` keys to
+   * omit from the wire and to add the payload's own `deferred` list.
+   */
+  deferredKeys?: string[];
+  /**
+   * INTERNAL ONLY — one settlement promise per deferred key, keyed by name.
+   * Never read by `build-hydration-payload.ts` (it is not JSON-safe: it is a
+   * live `Promise`, not wire data) — `render-page.ts`'s `finishRender` reads
+   * it to know when each key settles, to emit its chunk script in settlement
+   * order and to gate the response end on every key having settled (contract
+   * rules 5 and 9).
+   */
+  deferredSettlements?: Record<string, Promise<DeferSettlement>>;
 };

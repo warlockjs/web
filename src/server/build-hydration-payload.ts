@@ -33,6 +33,27 @@ function serializableData(data: unknown): unknown {
   return data === undefined ? {} : data;
 }
 
+/**
+ * The WIRE view of `pageData` for a page that called `defer()` (Stage 2
+ * implementation contract, rule 3): every resolved key untouched, every
+ * DEFERRED key removed — a live `Promise` is not JSON-safe, and its
+ * settlement streams separately as a `__WARLOCK_DEFER__` chunk
+ * (`server/defer-emission.ts`), never inlined here. A page with no deferred
+ * keys returns `pageData` completely unchanged.
+ */
+function wirePageData(pageData: unknown, deferredKeys: string[] | undefined): unknown {
+  const resolved = serializableData(pageData);
+
+  if (deferredKeys === undefined || deferredKeys.length === 0) return resolved;
+  if (typeof resolved !== "object" || resolved === null) return resolved;
+
+  const wire: Record<string, unknown> = { ...(resolved as Record<string, unknown>) };
+
+  for (const key of deferredKeys) delete wire[key];
+
+  return wire;
+}
+
 export function buildHydrationPayload(
   bundle: PageDataBundle,
   locale: string,
@@ -40,7 +61,7 @@ export function buildHydrationPayload(
   return {
     appData: serializableData(bundle.appData),
     layoutData: serializableData(bundle.layoutData),
-    pageData: serializableData(bundle.pageData),
+    pageData: wirePageData(bundle.pageData, bundle.deferredKeys),
     shared: serializableData(bundle.shared),
     // The server's own match, carried for the same reason `name` is: the params
     // are an ANSWER the router already gave, and re-deriving them in the
@@ -64,5 +85,10 @@ export function buildHydrationPayload(
     // would be disagreeing about a request the server already answered.
     name: bundle.route.name,
     locale,
+    // Same optional/never-empty rule as `metadata`/`errorPage` above — see
+    // `HydrationDocumentPayloadSource.deferred`'s own doc comment.
+    ...(bundle.deferredKeys === undefined || bundle.deferredKeys.length === 0
+      ? {}
+      : { deferred: bundle.deferredKeys }),
   };
 }

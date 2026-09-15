@@ -9,6 +9,13 @@ import { resolveValidationData } from "./resolve-validation-data";
 import { resolvePageValidationInput } from "./resolve-route-validation-input";
 import { PageValidationFailedError } from "./page-validation-failed-error";
 import {
+  DeferredInNonPageLoaderError,
+  isDeferred,
+  splitDeferredPageData,
+} from "../loaders/defer";
+import { createDeferredSettlement, type DeferSettlement } from "./defer-settlement";
+import { resolveDeferTimeoutMs } from "./streaming-config";
+import {
   buildErrorRecord,
   commitBuffers,
   createBufferedResponse,
@@ -294,6 +301,41 @@ export async function executePageRequest<TResult = PageDataBundle>(
       if (isLoaderShortCircuit(value)) {
         signal = { kind: "shortCircuit", index, level, circuit: value };
         break;
+      }
+
+      // Stage 2 streaming (`releases/v5.12-streaming-design.md`, "Stage 2
+      // implementation contract" rules 1-2): `defer()` is a PAGE-loader-only
+      // marker. An app/layout loader returning one is a dev mistake, named
+      // loudly — see `DeferredInNonPageLoaderError`.
+      if (isDeferred(value)) {
+        if (level !== "page") {
+          throw new DeferredInNonPageLoaderError(level);
+        }
+
+        const split = splitDeferredPageData(value.data);
+
+        if (split.deferredKeys.length > 0) {
+          const deferTimeoutMs = resolveDeferTimeoutMs();
+          const settlements: Record<string, Promise<DeferSettlement>> = {};
+
+          for (const key of split.deferredKeys) {
+            const rawPromise = split.pageData[key] as Promise<unknown>;
+            const pair = createDeferredSettlement(key, rawPromise, deferTimeoutMs);
+
+            // The component receives the wrapped (timeout-bound) promise —
+            // contract rule 4 — never the loader's raw promise, so a
+            // deferred value that never settles cannot leave the response
+            // waiting forever (contract rule 9).
+            split.pageData[key] = pair.componentPromise;
+            settlements[key] = pair.settlement;
+          }
+
+          bundle.deferredKeys = split.deferredKeys;
+          bundle.deferredSettlements = settlements;
+        }
+
+        bundle[dataKeys[level]] = split.pageData;
+        continue;
       }
 
       bundle[dataKeys[level]] = value;

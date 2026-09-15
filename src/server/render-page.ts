@@ -36,6 +36,8 @@ import {
   type PageTripleModule,
 } from "./execute-page-request";
 import { PageMiddlewareShortCircuitError } from "./page-middleware-short-circuit-error";
+import { wrapPipeableStreamForDeferredEmission } from "./defer-emission";
+import type { DeferSettlement } from "./defer-settlement";
 
 export { escapePayload, PAYLOAD_SCRIPT_ID };
 export type { BufferedCookie };
@@ -452,35 +454,57 @@ function reportRenderError(route: PageDataBundle["route"], thrown: unknown): voi
  * caller that awaits this and lets it throw falls onto today's existing
  * error-page/escalation path with nothing yet written to the client — the
  * Stage 1 contract for "errors before the shell is ready".
+ *
+ * `allReady` (the returned `Promise<void>`) resolves whenever React's own
+ * `onAllReady` fires, REGARDLESS of `waitForAll` — Stage 1 requests
+ * (`waitForAll: false`) still start piping at `onShellReady`, but Stage 2's
+ * `defer()` (contract rule 9: "end the response only after every deferred
+ * key has settled AND `onAllReady` has fired") needs that later signal too,
+ * so it is always requested from React, never gated on the same flag that
+ * decides when piping may START.
  */
 async function renderElementToPipeableStream(
   element: ReactNode,
   waitForAll: boolean,
   route: PageDataBundle["route"],
-): Promise<PipeableStream> {
+): Promise<{ pipeableStream: PipeableStream; allReady: Promise<void> }> {
   const { renderToPipeableStream } = await import("react-dom/server");
 
-  return new Promise<PipeableStream>((resolve, reject) => {
+  let resolveAllReady!: () => void;
+  const allReady = new Promise<void>((resolve) => {
+    resolveAllReady = resolve;
+  });
+
+  const pipeableStream = await new Promise<PipeableStream>((resolve, reject) => {
     let stream: PipeableStream;
     const options: RenderToPipeableStreamOptions = {
       onShellError: (error) => reject(error),
       onError: (error) => {
-        // Stage 1 renders no Suspense boundaries (`defer()` is Stage 2), so
-        // this firing after the shell is ready is unexpected rather than a
-        // normal deferred-content rejection — report it through the same
-        // floor a render-time throw already uses, rather than let it vanish.
+        // Stage 1 renders no Suspense boundaries of its own, so this firing
+        // after the shell is ready is unexpected rather than a normal
+        // deferred-content rejection (Stage 2's `defer()` settlements are
+        // reported through their own floor — `defer-settlement.ts`'s
+        // `reportServerError` — never through here) — report it through the
+        // same floor a render-time throw already uses, rather than let it
+        // vanish.
         reportRenderError(route, error);
       },
     };
 
     if (waitForAll) {
-      options.onAllReady = () => resolve(stream);
+      options.onAllReady = () => {
+        resolveAllReady();
+        resolve(stream);
+      };
     } else {
       options.onShellReady = () => resolve(stream);
+      options.onAllReady = () => resolveAllReady();
     }
 
     stream = renderToPipeableStream(element, options);
   });
+
+  return { pipeableStream, allReady };
 }
 
 async function finishRender(
@@ -761,11 +785,32 @@ async function finishRender(
   // escalation loop ran it to completion, synchronously, with no throw) —
   // stream THAT SAME element for the bytes that actually reach the client.
   // See `renderElementToPipeableStream` and `RenderedPage.pipeableStream`.
-  const pipeableStream = await renderElementToPipeableStream(
+  const { pipeableStream: renderedStream, allReady } = await renderElementToPipeableStream(
     finalWrappedElement,
     streamOptions.waitForAll,
     bundle.route,
   );
+
+  // Stage 2: a page with deferred keys gets its stream wrapped so each
+  // settlement writes a `__WARLOCK_DEFER__` chunk after the shell has
+  // flushed, and the response ends only once every key has settled AND
+  // `onAllReady` has fired (contract rules 5, 6, 9). A page with none gets
+  // `renderedStream` back completely untouched — see `defer-emission.ts`.
+  const deferredKeys = bundle.deferredKeys ?? [];
+  const pipeableStream =
+    deferredKeys.length === 0
+      ? renderedStream
+      : wrapPipeableStreamForDeferredEmission({
+          pipeableStream: renderedStream,
+          deferred: deferredKeys.map((key) => ({
+            key,
+            settlement:
+              bundle.deferredSettlements?.[key] ??
+              Promise.resolve<DeferSettlement>({ ok: true, value: undefined }),
+          })),
+          nonce: documentSlots.nonce,
+          allReady,
+        });
 
   return { html, status, headers, cookies, data: bundle.pageData, bundle, pipeableStream };
 }

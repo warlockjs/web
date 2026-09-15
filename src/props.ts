@@ -1,16 +1,28 @@
 import type { ReactNode } from "react";
 import type { Response } from "@warlock.js/core";
 import type { SharedContext } from "./index";
+import type { DeferredResult } from "./loaders/defer";
 
 /** Any loader authored with `satisfies` — the concrete function type. */
 export type LoaderFunction = (...args: any[]) => unknown;
+
+/**
+ * Unwraps a PAGE loader's `defer()` marker (Stage 2 implementation contract,
+ * rule 1) down to its plain `data` shape. A deferred TOP-LEVEL key keeps
+ * whatever promise type the loader declared for it — `Awaited` only unwraps
+ * the OUTER promise a loader function returns, never a promise nested inside
+ * one of that value's own properties — so `data.reviews` types as
+ * `Promise<Review[]>` for the page component exactly as the loader authored
+ * it. A loader that never called `defer()` passes through unchanged.
+ */
+type UnwrapDeferred<T> = T extends DeferredResult<infer TData> ? TData : T;
 
 /**
  * The loader's literal return shape minus core Response. Returning that exact
  * class is terminal; every other value is data.
  */
 export type LoaderData<TLoader> = TLoader extends LoaderFunction
-  ? Exclude<Awaited<ReturnType<TLoader>>, Response>
+  ? UnwrapDeferred<Exclude<Awaited<ReturnType<TLoader>>, Response>>
   : undefined;
 
 /**
