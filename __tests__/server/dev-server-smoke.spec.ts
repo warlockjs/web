@@ -1,4 +1,5 @@
 import { createServer, type Server } from "node:http";
+import { parse } from "devalue";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   connectPageContext,
@@ -133,7 +134,7 @@ describe("dev-server smoke — a real GET yields the real document", () => {
     // contact-us has no loader — but the KEY still ships: `readHydrationPayload`
     // rejects a payload missing any of its four required keys, so "no data" is
     // an explicit empty object over the wire, never an absent key.
-    expect(JSON.parse(extractPayload(body)).pageData).toEqual({});
+    expect((parse(extractPayload(body)) as { pageData: unknown }).pageData).toEqual({});
   });
 
   it("answers a url matching nothing with 404 over the socket", async () => {
@@ -149,10 +150,14 @@ describe("dev-server smoke — a real GET yields the real document", () => {
     ]);
 
     expect(amber).toContain("<h1>Product 42</h1>");
-    expect(amber).toContain('"user":{"name":"amber"}');
+    expect((parse(extractPayload(amber)) as { shared: { user: { name: string } } }).shared.user).toEqual({
+      name: "amber",
+    });
     expect(amber).not.toContain("noor");
     expect(noor).toContain("<h1>Product 77</h1>");
-    expect(noor).toContain('"user":{"name":"noor"}');
+    expect((parse(extractPayload(noor)) as { shared: { user: { name: string } } }).shared.user).toEqual({
+      name: "noor",
+    });
     expect(noor).not.toContain("amber");
   });
 });

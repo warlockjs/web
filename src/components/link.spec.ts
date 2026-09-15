@@ -1,4 +1,5 @@
 import type { FocusEvent, MouseEvent } from "react";
+import { stringify } from "devalue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetPrefetchCache, takePrefetchedPageData } from "../client/navigation/prefetch";
 import { connectNavigator, type Navigator } from "../routing/navigator";
@@ -357,7 +358,9 @@ describe("Link — prefetch", () => {
       status: 200,
       headers: new Headers({ "content-type": "application/json" }),
       url: "",
-      json: async () => PAYLOAD,
+      // devalue is the page-data wire format: `fetchPageData` reads `.text()`
+      // and decodes it with devalue's `parse`, never `.json()`.
+      text: async () => stringify(PAYLOAD),
     }));
 
     vi.stubGlobal("fetch", fetchMock);

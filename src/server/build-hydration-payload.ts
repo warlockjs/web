@@ -20,6 +20,7 @@
  */
 import type { HydrationDocumentPayloadSource } from "../components/document-context";
 import type { PageDataBundle } from "./execute-page-request";
+import { assertPageDataSerializable } from "./page-data-serialization-error";
 
 /**
  * Levels without a loader resolve to `undefined`, but the hydration contract
@@ -58,10 +59,24 @@ export function buildHydrationPayload(
   bundle: PageDataBundle,
   locale: string,
 ): HydrationDocumentPayloadSource {
+  const appData = serializableData(bundle.appData);
+  const layoutData = serializableData(bundle.layoutData);
+  const pageData = wirePageData(bundle.pageData, bundle.deferredKeys);
+
+  // devalue is the wire format for every one of these (the ruling this file's
+  // header already enforces for SHAPE now also covers SERIALIZABILITY): a
+  // class instance, function or symbol a loader returned is caught HERE, with
+  // the level and route attached, rather than surfacing later as an opaque
+  // devalue throw from whichever wire path happens to serialize the combined
+  // payload first.
+  assertPageDataSerializable(appData, "app", bundle.route.name);
+  assertPageDataSerializable(layoutData, "layout", bundle.route.name);
+  assertPageDataSerializable(pageData, "page", bundle.route.name);
+
   return {
-    appData: serializableData(bundle.appData),
-    layoutData: serializableData(bundle.layoutData),
-    pageData: wirePageData(bundle.pageData, bundle.deferredKeys),
+    appData,
+    layoutData,
+    pageData,
     shared: serializableData(bundle.shared),
     // The server's own match, carried for the same reason `name` is: the params
     // are an ANSWER the router already gave, and re-deriving them in the

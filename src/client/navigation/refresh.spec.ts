@@ -1,3 +1,4 @@
+import { stringify } from "devalue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HydrationDocumentPayloadSource } from "../../hydration-payload";
 import { routerEvents } from "../../routing/router-events";
@@ -49,7 +50,9 @@ function payloadResponse(payload: HydrationDocumentPayloadSource, url = HREF) {
     status: 200,
     headers,
     url,
-    json: async () => payload,
+    // devalue is the page-data wire format: `fetchPageData` reads `.text()`
+    // and decodes it with devalue's `parse`, never `.json()`.
+    text: async () => stringify(payload),
   };
 }
 

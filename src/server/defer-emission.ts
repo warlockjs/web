@@ -37,9 +37,11 @@
  */
 import { PassThrough } from "node:stream";
 import type { PipeableStream } from "react-dom/server";
+import { stringify } from "devalue";
 import { escapePayload } from "../components/document-context";
 import { DEFER_BOOTSTRAP_SOURCE } from "../client/runtime/defer-registry";
 import type { DeferSettlement } from "./defer-settlement";
+import { assertPageDataSerializable } from "./page-data-serialization-error";
 
 /** One deferred key paired with its (never-rejecting) wire-shape settlement. */
 export type DeferredEmissionEntry = {
@@ -54,6 +56,8 @@ export type WrapPipeableStreamOptions = {
   nonce: string | undefined;
   /** Resolves once React's own `onAllReady` has fired — contract rule 9. */
   allReady: Promise<void>;
+  /** The matched route's name — carried only for a named `PageDataSerializationError`. */
+  routeName: string;
 };
 
 function escapeAttribute(value: string): string {
@@ -65,10 +69,24 @@ function scriptTag(nonce: string | undefined, innerScript: string): string {
   return `<script${nonceAttribute}>${innerScript}</script>`;
 }
 
-/** `__WARLOCK_DEFER__(<json key>, <serialized settlement>)` — contract rule 5. */
-function deferCallScript(key: string, settlement: DeferSettlement): string {
+/**
+ * `__WARLOCK_DEFER__(<json key>, <devalue-serialized settlement, as a JSON
+ * string literal>)` — contract rule 5, updated for devalue as the page-data
+ * wire format.
+ *
+ * The settlement is devalue's `stringify` output, itself wrapped as a JSON
+ * STRING (via `JSON.stringify`) rather than spliced in as raw source: the
+ * inline bootstrap (`defer-registry.ts`'s `DEFER_BOOTSTRAP_SOURCE`) cannot
+ * import devalue, so it receives a plain string argument and only stores it —
+ * `uneval` (executable JS from data) is never used here. The whole argument is
+ * then HTML-escaped exactly like the hydration payload script, so a hostile
+ * value's `</script>` cannot break out of this chunk either.
+ */
+function deferCallScript(key: string, settlement: DeferSettlement, routeName: string): string {
   const serializedKey = escapePayload(JSON.stringify(key));
-  const serializedSettlement = escapePayload(JSON.stringify(settlement));
+
+  assertPageDataSerializable(settlement, "page", routeName);
+  const serializedSettlement = escapePayload(JSON.stringify(stringify(settlement)));
 
   return `__WARLOCK_DEFER__(${serializedKey}, ${serializedSettlement})`;
 }
@@ -86,7 +104,7 @@ function deferCallScript(key: string, settlement: DeferSettlement): string {
 export function wrapPipeableStreamForDeferredEmission(
   options: WrapPipeableStreamOptions,
 ): PipeableStream {
-  const { pipeableStream, deferred, nonce, allReady } = options;
+  const { pipeableStream, deferred, nonce, allReady, routeName } = options;
 
   if (deferred.length === 0) return pipeableStream;
 
@@ -114,7 +132,7 @@ export function wrapPipeableStreamForDeferredEmission(
         await Promise.all(
           deferred.map(({ key, settlement }) =>
             settlement.then((value) => {
-              destination.write(scriptTag(nonce, deferCallScript(key, value)));
+              destination.write(scriptTag(nonce, deferCallScript(key, value, routeName)));
             }),
           ),
         );

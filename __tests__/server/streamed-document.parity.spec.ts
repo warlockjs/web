@@ -193,6 +193,15 @@ describe("streamed document parity — streamed bytes equal the buffered renderT
 
       const wireHtml = Buffer.concat(chunks).toString("utf8");
 
+      // WHAT CHANGED (devalue is now the page-data wire format): the
+      // `#__WARLOCK_DATA__` script's content used to be `JSON.stringify`, is
+      // now devalue's `stringify` (`components/scripts.ts`). Byte parity still
+      // holds with NO extra normalisation here, because both `wireHtml` and
+      // `rendered.html` render the SAME `<Scripts/>` element — one serializer
+      // call, shared by both React APIs — so whatever `stringify` produces is
+      // identical on both sides by construction, exactly as `JSON.stringify`
+      // was before it.
+      //
       // NORMALISATION: none, and none is legitimate here — not "none was
       // needed by luck". `finishRender` (render-page.ts, `RenderedPage.html`'s
       // own doc comment) builds `.html` via `renderToString` of the EXACT

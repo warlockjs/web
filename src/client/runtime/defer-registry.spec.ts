@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, createElement, use, Suspense, Component, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { stringify } from "devalue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DeferredStreamClosedError } from "./deferred-stream-closed-error";
 import { DeferredValueError } from "./deferred-value-error";
@@ -17,7 +18,7 @@ import {
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 type WarlockWindow = typeof globalThis & {
-  __WARLOCK_DEFER__?: (key: string, settlement: DeferredSettlement) => void;
+  __WARLOCK_DEFER__?: (key: string, raw: string) => void;
   __WARLOCK_DEFERRED__?: Record<string, unknown>;
 };
 
@@ -31,12 +32,18 @@ function warlockWindow(): WarlockWindow {
   return window as WarlockWindow;
 }
 
+/**
+ * Calls `window.__WARLOCK_DEFER__` exactly the way a real chunk script does:
+ * the settlement devalue-serialized to a string first — never the live
+ * object — because that argument is what the wire actually carries
+ * (`defer-emission.ts`'s `deferCallScript`).
+ */
 function callDefer(key: string, settlement: DeferredSettlement): void {
   const fn = warlockWindow().__WARLOCK_DEFER__;
 
   if (fn === undefined) throw new Error("__WARLOCK_DEFER__ was not installed by the bootstrap.");
 
-  fn(key, settlement);
+  fn(key, stringify(settlement));
 }
 
 beforeEach(() => {

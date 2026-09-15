@@ -1,9 +1,19 @@
 import { createElement } from "react";
+import { parse } from "devalue";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DocumentContext, PAYLOAD_SCRIPT_ID, type DocumentContextValue } from "./document-context";
 import { markNonHydrating } from "../server/page-render-bundle";
 import { Scripts } from "./scripts";
+
+/** Pulls the devalue-serialized payload back out of the rendered `<script>` tag. */
+function readPayloadFromHtml(html: string): unknown {
+  const match = /<script id="__WARLOCK_DATA__"[^>]*>(.*?)<\/script>/.exec(html);
+
+  if (match === null) throw new Error("payload script not found in rendered HTML");
+
+  return parse(match[1]!);
+}
 
 function documentValue(overrides: Partial<DocumentContextValue> = {}): DocumentContextValue {
   return {
@@ -31,7 +41,7 @@ describe("Scripts", () => {
     const html = render(documentValue());
 
     expect(html).toContain(PAYLOAD_SCRIPT_ID);
-    expect(html).toContain('"name":"account"');
+    expect(readPayloadFromHtml(html)).toMatchObject({ name: "account" });
   });
 
   it("omits the __WARLOCK_DATA__ payload when the payload is marked non-hydrating (renderPageFailure's pre-triple fallback)", () => {

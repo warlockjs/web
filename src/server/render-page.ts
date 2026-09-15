@@ -713,6 +713,19 @@ async function finishRender(
         failure.error.statusCode,
       );
       bundle.deferredKeys = undefined;
+
+      // The rejected key never got a wire-safe value — leaving its live
+      // (rejected) promise sitting in `pageData` would hand
+      // `buildHydrationPayload` something devalue rightly refuses to
+      // serialize (a class instance is the named case; a stray Promise is
+      // exactly as un-serializable). The page is escalating to the error
+      // boundary regardless, so `pageData` only needs to stay a valid wire
+      // object, not carry a value nothing downstream will read.
+      const pageDataRecord = (bundle.pageData ?? {}) as Record<string, unknown>;
+
+      for (const key of deferredKeys) delete pageDataRecord[key];
+
+      bundle.pageData = pageDataRecord;
     }
   }
 
@@ -956,6 +969,7 @@ async function finishRender(
           })),
           nonce: documentSlots.nonce,
           allReady,
+          routeName: bundle.route.name,
         });
 
   return { html, status, headers, cookies, data: bundle.pageData, bundle, pipeableStream, usesDefer };

@@ -1,5 +1,6 @@
 import { Response, type Request } from "@warlock.js/core";
 import { v } from "@warlock.js/seal";
+import { parse } from "devalue";
 import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PAYLOAD_SCRIPT_ID } from "../components/document-context";
@@ -100,11 +101,20 @@ describe("request-bound locale provider", () => {
     const [english, arabic] = await Promise.all([englishRender, arabicRender]);
 
     expect(english).toContain('<main lang="en">en</main>');
-    expect(english).toContain('"locale":"en"');
+    expect(payloadLocale(english)).toBe("en");
     expect(arabic).toContain('<main lang="ar">ar</main>');
-    expect(arabic).toContain('"locale":"ar"');
+    expect(payloadLocale(arabic)).toBe("ar");
   });
 });
+
+/** devalue-decodes the embedded `#__WARLOCK_DATA__` payload and reads its `locale`. */
+function payloadLocale(html: string): unknown {
+  const match = new RegExp(`<script id="${PAYLOAD_SCRIPT_ID}"[^>]*>(.*?)<\\/script>`).exec(html);
+
+  if (match === null) throw new Error("payload script not found in rendered HTML");
+
+  return (parse(match[1]!) as { locale: unknown }).locale;
+}
 
 describe("useQueryString — package entry, SSR answer matches the request URL", () => {
   it("resolves the query key the request's own URL carries, from the pipeline's per-request store", async () => {

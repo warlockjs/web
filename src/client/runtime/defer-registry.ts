@@ -1,3 +1,4 @@
+import { parse as devalueParse } from "devalue";
 import { DeferredStreamClosedError } from "./deferred-stream-closed-error";
 import { DeferredValueError } from "./deferred-value-error";
 
@@ -20,15 +21,22 @@ export type DeferredSettlement =
  *
  * This raw promise is deliberately never handed out directly —
  * {@link prepareDeferredPageData} wraps it so a raw settlement error (a plain
- * `{ name, message, statusCode? }`, produced by the inline bootstrap, which
+ * `{ name, message, statusCode? }`, produced once decoded, which
  * cannot import {@link DeferredValueError}) is normalized into a real error
  * class before `use()` ever sees it.
+ *
+ * `raw` is set only by the inline bootstrap ({@link DEFER_BOOTSTRAP_SOURCE}),
+ * which cannot import devalue and so cannot decode the devalue-serialized
+ * settlement string it is handed — it can only store it. `raw` is cleared the
+ * instant this module (which CAN import devalue) decodes and applies it; see
+ * `ensureRuntimeDeferHandlerInstalled`.
  */
 type DeferredRegistryEntry = {
   promise: Promise<unknown>;
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
   settled: boolean;
+  raw?: string;
 };
 
 type DeferredRegistryMap = Record<string, DeferredRegistryEntry>;
@@ -41,30 +49,27 @@ type DeferredRegistryMap = Record<string, DeferredRegistryEntry>;
  */
 type WarlockDeferredWindow = typeof globalThis & {
   __WARLOCK_DEFERRED__?: DeferredRegistryMap;
-  __WARLOCK_DEFER__?: (key: string, settlement: DeferredSettlement) => void;
+  __WARLOCK_DEFER__?: (key: string, raw: string) => void;
 };
 
 /**
  * Self-contained inline JS, safe inside a `<script nonce>` with no `<script
  * type="module">` and no imports. It defines `window.__WARLOCK_DEFER__(key,
- * settlement)` and the `window.__WARLOCK_DEFERRED__` key → entry map (Stage 2
+ * raw)` and the `window.__WARLOCK_DEFERRED__` key → entry map (Stage 2
  * implementation contract, rule 6).
  *
- * DEVALUE NOTE (see also the module-level comment below): this bootstrap does
- * zero decoding. The contract's wire format calls
- * `__WARLOCK_DEFER__(<json-string key>, <serialized settlement>)` as an
- * inlined script — the settlement is embedded as JS source, not as a string
- * to parse, so by the time this function runs the JS engine has already
- * turned it into a real value. There is nothing left to deserialize.
- *
- * A call for a key with no existing entry (an early chunk, arriving before
- * {@link prepareDeferredPageData} has run) creates an ALREADY-SETTLED entry
- * directly from the settlement, with no-op resolve/reject — nothing will
- * call them again. A call for an existing (pending) entry resolves or
- * rejects it with the settlement's raw `value`/`error`; normalizing a raw
- * `error` into a {@link DeferredValueError} happens later, in
- * `prepareDeferredPageData`, which is the first point in this pipeline that
- * can import that class.
+ * DEVALUE NOTE: devalue is the page-data wire format, including for a
+ * deferred settlement (`defer-emission.ts`'s `deferCallScript`) — but the
+ * settlement now arrives as a devalue-serialized STRING argument, not as
+ * already-live JS values, and this bootstrap has no import statement to reach
+ * for. So it does ZERO decoding: it only stores the raw string on a registry
+ * entry (creating a pending one if this key has no entry yet). Decoding with
+ * devalue's `parse`, and only then resolving or rejecting, is entirely this
+ * module's job — see `ensureRuntimeDeferHandlerInstalled`, which drains any
+ * raw string this bootstrap already stored the moment the runtime module
+ * (this file) is actually exercised. That is what makes an EARLY chunk — one
+ * whose `<script>` runs before this module has loaded — still work: nothing
+ * is lost, it just waits as text until something here can decode it.
  */
 export const DEFER_BOOTSTRAP_SOURCE = `(function () {
   var deferred = window.__WARLOCK_DEFERRED__;
@@ -75,29 +80,23 @@ export const DEFER_BOOTSTRAP_SOURCE = `(function () {
 
   function noop() {}
 
-  window.__WARLOCK_DEFER__ = function (key, settlement) {
+  window.__WARLOCK_DEFER__ = function (key, raw) {
     var entry = deferred[key];
 
     if (!entry) {
-      var promise;
-      if (settlement && settlement.ok) {
-        promise = Promise.resolve(settlement.value);
-      } else {
-        promise = Promise.reject(settlement && settlement.error);
-      }
-      // Consumed later by prepareDeferredPageData's own handler; this only
-      // stops a transient unhandled-rejection warning before that happens.
+      var resolve, reject;
+      var promise = new Promise(function (res, rej) {
+        resolve = res;
+        reject = rej;
+      });
+      // Consumed later by this module's own handler; this only stops a
+      // transient unhandled-rejection warning before that happens.
       promise.catch(noop);
-      deferred[key] = { promise: promise, resolve: noop, reject: noop, settled: true };
-      return;
+      entry = { promise: promise, resolve: resolve, reject: reject, settled: false };
+      deferred[key] = entry;
     }
 
-    entry.settled = true;
-    if (settlement && settlement.ok) {
-      entry.resolve(settlement.value);
-    } else {
-      entry.reject(settlement && settlement.error);
-    }
+    entry.raw = raw;
   };
 })();`;
 
@@ -135,6 +134,63 @@ function createPendingEntry(): DeferredRegistryEntry {
   return { promise, resolve, reject, settled: false };
 }
 
+/** Decode one devalue-serialized settlement string — the runtime's only decode point. */
+function decodeSettlement(raw: string): DeferredSettlement {
+  return devalueParse(raw) as DeferredSettlement;
+}
+
+/** Apply an already-decoded settlement to a registry entry — shared by every settle path. */
+function applyDecodedSettlement(entry: DeferredRegistryEntry, settlement: DeferredSettlement): void {
+  entry.settled = true;
+  entry.raw = undefined;
+
+  if (settlement.ok) {
+    entry.resolve(settlement.value);
+  } else {
+    entry.reject(settlement.error);
+  }
+}
+
+/**
+ * (Re)installs the DECODING `window.__WARLOCK_DEFER__`, and immediately
+ * drains any raw settlement string the inline bootstrap has already stored
+ * (an early chunk, or several) for a key this module has not touched yet.
+ *
+ * Called at the start of every runtime entry point below
+ * (`prepareDeferredPageData`, `settleDeferredValue`, the stream-closed
+ * rejection paths) so this module is always the authority on
+ * `window.__WARLOCK_DEFER__` from the moment any of them runs, regardless of
+ * whether the inline bootstrap ran first (the ordinary page-load case — a
+ * `type="module"` script only executes once the document has finished
+ * parsing, by which point every bootstrap chunk has already run) or not at
+ * all yet.
+ */
+function ensureRuntimeDeferHandlerInstalled(): void {
+  const target = getWarlockWindow();
+  const registry = getOrCreateRegistry();
+
+  for (const key of Object.keys(registry)) {
+    const entry = registry[key];
+
+    if (entry !== undefined && entry.raw !== undefined && !entry.settled) {
+      const raw = entry.raw;
+
+      applyDecodedSettlement(entry, decodeSettlement(raw));
+    }
+  }
+
+  target.__WARLOCK_DEFER__ = (key: string, raw: string) => {
+    let entry = registry[key];
+
+    if (entry === undefined) {
+      entry = createPendingEntry();
+      registry[key] = entry;
+    }
+
+    applyDecodedSettlement(entry, decodeSettlement(raw));
+  };
+}
+
 function isErrorLike(
   value: unknown,
 ): value is { name: string; message: string; statusCode?: number } {
@@ -147,9 +203,9 @@ function isErrorLike(
  * Turns a raw rejection reason into a real error instance for `use()`. A
  * reason that is already an `Error` (e.g. a {@link DeferredStreamClosedError}
  * installed directly by this module) passes through unchanged; a raw
- * `{ name, message, statusCode? }` settlement error (produced by the inline
- * bootstrap, which cannot construct {@link DeferredValueError} itself) is
- * wrapped into one.
+ * `{ name, message, statusCode? }` settlement error (decoded from devalue
+ * text, which carries plain data, never a live `Error` instance) is wrapped
+ * into one.
  */
 function normalizeRejection(reason: unknown): unknown {
   if (reason instanceof Error) return reason;
@@ -173,6 +229,8 @@ export function prepareDeferredPageData(
   pageData: Record<string, unknown>,
   deferredKeys: readonly string[],
 ): Record<string, unknown> {
+  ensureRuntimeDeferHandlerInstalled();
+
   const registry = getOrCreateRegistry();
 
   for (const key of deferredKeys) {
@@ -199,40 +257,27 @@ export function prepareDeferredPageData(
  * of `window.__WARLOCK_DEFER__`, for a consumer that receives settlements
  * from something other than an inline `<script>` (Stage 2 slice S3: the
  * NDJSON client-navigation reader, `web/src/client/navigation/fetch-page-data.ts`,
- * which already has a parsed JS object off `JSON.parse` and has nothing left
- * to evaluate).
+ * which devalue-decodes the settlement itself off the wire and has nothing
+ * left to decode here).
  *
- * Mirrors {@link DEFER_BOOTSTRAP_SOURCE}'s own behaviour exactly, so a key
+ * Mirrors the bootstrap/decode pipeline's own behaviour exactly, so a key
  * settled through either entry point behaves identically: a key with no
  * existing entry (a settlement that arrives before {@link prepareDeferredPageData}
- * has run for it) gets an ALREADY-SETTLED entry created directly from
- * `settlement`; an existing pending entry is resolved or rejected.
+ * has run for it) gets a pending entry created and settled immediately; an
+ * existing pending entry is resolved or rejected in place.
  */
 export function settleDeferredValue(key: string, settlement: DeferredSettlement): void {
+  ensureRuntimeDeferHandlerInstalled();
+
   const registry = getOrCreateRegistry();
-  const entry = registry[key];
+  let entry = registry[key];
 
   if (entry === undefined) {
-    const promise = settlement.ok
-      ? Promise.resolve(settlement.value)
-      : Promise.reject(settlement.error);
-
-    // Same reasoning as the inline bootstrap's own no-op branch: this is
-    // consumed later by `prepareDeferredPageData`'s own handler, and this
-    // only stops a transient unhandled-rejection warning before that happens.
-    promise.catch(() => undefined);
-    registry[key] = { promise, resolve: () => undefined, reject: () => undefined, settled: true };
-
-    return;
+    entry = createPendingEntry();
+    registry[key] = entry;
   }
 
-  entry.settled = true;
-
-  if (settlement.ok) {
-    entry.resolve(settlement.value);
-  } else {
-    entry.reject(settlement.error);
-  }
+  applyDecodedSettlement(entry, settlement);
 }
 
 /**
@@ -247,6 +292,8 @@ export function settleDeferredValue(key: string, settlement: DeferredSettlement)
  * still pending right now".
  */
 export function rejectPendingDeferredKeys(keys: readonly string[]): void {
+  ensureRuntimeDeferHandlerInstalled();
+
   const registry = getOrCreateRegistry();
 
   for (const key of keys) {
@@ -276,6 +323,8 @@ export function installStreamClosedRejection(): void {
   streamClosedRejectionInstalled = true;
 
   const rejectStillPending = (): void => {
+    ensureRuntimeDeferHandlerInstalled();
+
     const registry = getOrCreateRegistry();
 
     for (const key of Object.keys(registry)) {

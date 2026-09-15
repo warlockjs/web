@@ -8,6 +8,7 @@
  * file exists to gate.
  */
 import { createElement } from "react";
+import { parse } from "devalue";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Response, setConfig } from "@warlock.js/core";
 import { createCoreHttp, requestContext } from "./fixtures/core-http";
@@ -53,6 +54,21 @@ async function flushAsyncWork(rounds = 5): Promise<void> {
 function deferredKeyChunks(wireHtml: string): { key: string; index: number }[] {
   const matches = [...wireHtml.matchAll(/__WARLOCK_DEFER__\((".*?")/g)];
   return matches.map((match) => ({ key: JSON.parse(match[1]!), index: match.index! }));
+}
+
+/**
+ * Decodes one `__WARLOCK_DEFER__(key, "<devalue text>")` chunk's settlement
+ * back to the real value it carries — the chunk's second argument is a JSON
+ * string literal wrapping devalue's own serialized text (`defer-emission.ts`'s
+ * `deferCallScript`), so this undoes both layers: `JSON.parse` for the string
+ * literal, then devalue's `parse` for what it actually encodes.
+ */
+function decodedDeferSettlement(wireHtml: string, key: string): unknown {
+  const match = new RegExp(`__WARLOCK_DEFER__\\(${JSON.stringify(key)}, (".*?")\\)`).exec(wireHtml);
+
+  if (match === null) throw new Error(`no __WARLOCK_DEFER__ chunk found for key "${key}"`);
+
+  return parse(JSON.parse(match[1]!));
 }
 
 describe("streamed defer() — a resolved deferred value", () => {
@@ -113,7 +129,10 @@ describe("streamed defer() — a resolved deferred value", () => {
       expect(chunkMatches[0]!.key).toBe("reviews");
       expect(chunkMatches[0]!.index).toBeGreaterThan(shellIndex);
       expect(wireHtml).toContain(`nonce="${http.request.nonce}"`);
-      expect(wireHtml).toContain('{"ok":true,"value":[{"id":1,"rating":5}]}');
+      expect(decodedDeferSettlement(wireHtml, "reviews")).toEqual({
+        ok: true,
+        value: [{ id: 1, rating: 5 }],
+      });
       expect(http.reply.raw.writableEnded).toBe(true);
     },
     20_000,
@@ -208,10 +227,14 @@ describe("streamed defer() — a rejected deferred value", () => {
       await http.response.streamReact(rendered.pipeableStream!);
 
       const wireHtml = Buffer.concat(chunks).toString("utf8");
-      expect(wireHtml).toContain('"ok":false');
-      expect(wireHtml).toContain('"name":"Error"');
-      expect(wireHtml).toContain("reviews service is down");
-      expect(wireHtml).not.toContain('"stack"');
+      const settlement = decodedDeferSettlement(wireHtml, "reviews") as {
+        ok: boolean;
+        error: { name: string; message: string; stack?: string };
+      };
+      expect(settlement.ok).toBe(false);
+      expect(settlement.error.name).toBe("Error");
+      expect(settlement.error.message).toBe("reviews service is down");
+      expect(settlement.error.stack).toBeUndefined();
 
       expect(errorSink).toHaveBeenCalledTimes(1);
       expect(errorSink.mock.calls[0]?.[0]).toContain('deferred value "reviews" rejected');
@@ -260,7 +283,10 @@ describe("streamed defer() — a deferred value that never settles", () => {
       await http.response.streamReact(rendered.pipeableStream!);
 
       const wireHtml = Buffer.concat(chunks).toString("utf8");
-      expect(wireHtml).toContain('"name":"DeferTimeoutError"');
+      const settlement = decodedDeferSettlement(wireHtml, "reviews") as {
+        error: { name: string };
+      };
+      expect(settlement.error.name).toBe("DeferTimeoutError");
       expect(http.reply.raw.writableEnded).toBe(true);
       expect(errorSink).toHaveBeenCalled();
       expect(
@@ -369,13 +395,31 @@ describe("streamed defer() — chunk escaping", () => {
 
       const wireHtml = Buffer.concat(chunks).toString("utf8");
 
-      // The literal, un-escaped attack string must never appear on the wire —
-      // every `<`/`>` inside the serialized settlement is escaped to
-      // `\u003c`/`\u003e`, the SAME escaping `escapePayload` already applies
-      // to the hydration payload script.
+      // The literal, un-escaped attack string must never appear on the wire.
+      // Every `<` is escaped by devalue's own `stringify` (its `<`,
+      // uppercase, doubled to `\\u003C` once `JSON.stringify` escapes that
+      // literal backslash for the string-literal argument) and every
+      // remaining `>` by `escapePayload` (`>`) — two escaping layers,
+      // with different backslash counts, agreeing on the SAME invariant this
+      // spec gates: no literal `<` or `>` survives into the chunk script, so
+      // the hostile value can never break out of it.
       expect(wireHtml).not.toContain(hostile);
       expect(wireHtml).not.toContain("<script>alert(1)</script>");
-      expect(wireHtml).toContain("\\u003c/script\\u003e\\u003cscript\\u003e");
+
+      const chunkArgumentMatch = /__WARLOCK_DEFER__\("reviews", (".*?")\)/.exec(wireHtml);
+      expect(chunkArgumentMatch, "expected a reviews chunk on the wire").not.toBeNull();
+      const chunkArgument = chunkArgumentMatch![1]!;
+
+      // No RAW `<` or `>` survives inside the chunk's own argument text —
+      // only their escaped `<`/`<` / `>` forms do.
+      expect(chunkArgument).not.toMatch(/[<>]/);
+
+      // And decoding the chunk back proves the ESCAPING never corrupted the
+      // actual value — the hostile string round-trips byte-for-byte.
+      expect(decodedDeferSettlement(wireHtml, "reviews")).toEqual({
+        ok: true,
+        value: { comment: hostile },
+      });
     },
     20_000,
   );

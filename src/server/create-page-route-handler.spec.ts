@@ -1,3 +1,4 @@
+import { stringify } from "devalue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Response } from "@warlock.js/core";
 
@@ -565,7 +566,7 @@ describe("createPageRouteHandler — fallback data requests", () => {
     // production code documents at its call site — a JSON.stringify of an
     // object body here would silently change the wire format.
     expect(requestContext.response.send).toHaveBeenCalledWith(
-      JSON.stringify(buildHydrationPayload(bundle as never, "en")),
+      stringify(buildHydrationPayload(bundle as never, "en")),
       200,
     );
     expect(requestContext.response.html).not.toHaveBeenCalled();
@@ -615,7 +616,7 @@ describe("createPageRouteHandler — fallback data requests", () => {
     // payload regardless of the bundle's hydration flag. Suppressing it too
     // would be a second, undocumented meaning smuggled onto the same flag.
     expect(requestContext.response.send).toHaveBeenCalledWith(
-      JSON.stringify(buildHydrationPayload(bundle as never, "en")),
+      stringify(buildHydrationPayload(bundle as never, "en")),
       500,
     );
     expect(requestContext.response.html).not.toHaveBeenCalled();
@@ -816,7 +817,7 @@ describe("createPageRouteHandler — Stage 2 slice S3 (NDJSON client navigation)
 
     expect(writeDeferredNdjsonResponse).not.toHaveBeenCalled();
     expect(requestContext.response.send).toHaveBeenCalledWith(
-      JSON.stringify(buildHydrationPayload(bundle as never, "en")),
+      stringify(buildHydrationPayload(bundle as never, "en")),
       200,
     );
   });

@@ -1,3 +1,4 @@
+import { stringify } from "devalue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   PREFETCH_CACHE_LIMIT,
@@ -52,7 +53,9 @@ function respondWith(
     status,
     headers: new Headers({ "content-type": init.contentType ?? "application/json" }),
     url: "",
-    json: async () => init.body ?? PAYLOAD,
+    // devalue is the page-data wire format: `fetchPageData` reads `.text()`
+    // and decodes it with devalue's `parse`, never `.json()`.
+    text: async () => stringify(init.body ?? PAYLOAD),
   }));
 
   vi.stubGlobal("fetch", fetchMock);

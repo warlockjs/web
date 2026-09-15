@@ -1,3 +1,4 @@
+import { stringify } from "devalue";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as hydrationPayload from "../../hydration-payload";
 import { fetchPageData } from "./fetch-page-data";
@@ -36,11 +37,12 @@ function respondWith(
     status: init.status ?? 200,
     headers,
     url: init.url ?? "",
-    json: async () => {
-      if (typeof body === "string") throw new SyntaxError("Unexpected token");
-
-      return body;
-    },
+    // devalue is the page-data wire format: the body is devalue-serialized
+    // TEXT, read with `.text()` and decoded with devalue's `parse` — never
+    // `.json()`. A raw string `body` (used to simulate a malformed/non-devalue
+    // response) is sent back verbatim, so `parse` fails on it exactly like it
+    // would on real garbage.
+    text: async () => (typeof body === "string" ? body : stringify(body)),
   };
 
   vi.stubGlobal(

@@ -1,4 +1,5 @@
 import { PassThrough } from "node:stream";
+import { parse } from "devalue";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HttpContext } from "@warlock.js/core";
 import {
@@ -206,8 +207,8 @@ function recordingContext(
      *
      * The body arrives ALREADY SERIALIZED — the handler stringifies it rather
      * than handing core an object, so that this path and the document path use
-     * the same `JSON.stringify` and cannot produce different JSON. Recorded raw
-     * here; the tests parse it, which is also what asserts it is valid JSON.
+     * the same devalue `stringify` and cannot produce different wire text.
+     * Recorded raw here; the tests decode it with devalue's `parse`.
      */
     async send(data: unknown, status?: number) {
       written.sent = data;
@@ -443,7 +444,9 @@ describe("createPageRouteHandler — data requests", () => {
     expect(recorded.written.html).toBeUndefined();
     expect(recorded.written.sentStatus).toBe(200);
 
-    const payload = JSON.parse(recorded.written.sent as string) as Record<string, unknown>;
+    // devalue is the page-data wire format: the body is devalue-serialized
+    // text, syntactically valid JSON but decoded with devalue's own `parse`.
+    const payload = parse(recorded.written.sent as string) as Record<string, unknown>;
 
     // Every key the hydration contract requires, and the route NAME the
     // browser uses to pick the page instead of re-matching the pathname.
@@ -483,7 +486,7 @@ describe("createPageRouteHandler — data requests", () => {
     );
 
     expect(embedded, "the document must embed a payload to compare against").not.toBeNull();
-    expect(JSON.parse(asData.written.sent as string)).toEqual(JSON.parse(embedded![1] as string));
+    expect(parse(asData.written.sent as string)).toEqual(parse(embedded![1] as string));
   });
 
   it("declares Vary so a cache cannot serve a document to a data request", async () => {

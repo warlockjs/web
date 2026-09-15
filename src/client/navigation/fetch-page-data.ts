@@ -20,6 +20,7 @@
  * external IdP, a maintenance page, a proxy that strips the header, a deploy
  * that changed the payload shape mid-session — into a dead end.
  */
+import { parse } from "devalue";
 import {
   DATA_RESPONSE_CONTENT_TYPE,
   WARLOCK_DATA_REQUEST_HEADER,
@@ -88,17 +89,12 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * One `{ defer, settlement }` line, after line 1 — server-written by
- * `write-deferred-ndjson-response.ts`, read back here.
+ * `write-deferred-ndjson-response.ts`, read back here. `settlement` is
+ * devalue-serialized TEXT (a string), decoded separately — see
+ * {@link readNdjsonPageData}'s per-line loop.
  */
-function isDeferredNdjsonLine(
-  value: unknown,
-): value is { defer: string; settlement: DeferredSettlement } {
-  return (
-    isPlainRecord(value) &&
-    typeof value.defer === "string" &&
-    isPlainRecord(value.settlement) &&
-    typeof (value.settlement as { ok?: unknown }).ok === "boolean"
-  );
+function isDeferredNdjsonLine(value: unknown): value is { defer: string; settlement: string } {
+  return isPlainRecord(value) && typeof value.defer === "string" && typeof value.settlement === "string";
 }
 
 /**
@@ -171,7 +167,9 @@ async function readNdjsonPageData(response: Response, url: string): Promise<Page
   let parsed: unknown;
 
   try {
-    parsed = JSON.parse(firstLine);
+    // devalue is the page-data wire format: line 1 is devalue-serialized
+    // text, not plain JSON — see `write-deferred-ndjson-response.ts`.
+    parsed = parse(firstLine);
   } catch (error) {
     return { type: "hard-navigate", url, reason: `malformed NDJSON payload line: ${String(error)}` };
   }
@@ -207,7 +205,16 @@ async function readNdjsonPageData(response: Response, url: string): Promise<Page
 
         if (isDeferredNdjsonLine(record)) {
           pending.delete(record.defer);
-          settleDeferredValue(record.defer, record.settlement);
+
+          let settlement: DeferredSettlement;
+
+          try {
+            settlement = parse(record.settlement) as DeferredSettlement;
+          } catch {
+            continue;
+          }
+
+          settleDeferredValue(record.defer, settlement);
         }
       }
     } finally {
@@ -272,7 +279,11 @@ export async function fetchPageData(url: string): Promise<PageDataResult> {
   let parsed: unknown;
 
   try {
-    parsed = await response.json();
+    // `response.json()` is deliberately NOT used: the body is devalue text,
+    // syntactically valid JSON for a payload with no special types but not
+    // semantically JSON in general (Date/Map/Set/BigInt/undefined/cyclic
+    // references need devalue's own `parse`, never a plain `JSON.parse`).
+    parsed = parse(await response.text());
   } catch (error) {
     return { type: "hard-navigate", url, reason: `malformed JSON: ${String(error)}` };
   }

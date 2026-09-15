@@ -1,4 +1,5 @@
 import { createElement, Fragment, type ReactElement } from "react";
+import { stringify } from "devalue";
 import { escapePayload, PAYLOAD_SCRIPT_ID, useDocumentContext } from "./document-context";
 import { isNonHydrating } from "../server/page-render-bundle";
 
@@ -41,9 +42,14 @@ export function Scripts(props: ScriptsProps): ReactElement {
     // JSON (spike P7's escaping contract).
     createElement("script", {
       id: PAYLOAD_SCRIPT_ID,
+      // devalue is the page-data wire format (standing ruling): its output is
+      // JSON-compatible text (no executable JS — `uneval` is never used here),
+      // so this stays a valid `application/json` script even though it now
+      // carries Date/Map/Set/BigInt/undefined/cyclic references JSON alone
+      // cannot represent.
       type: "application/json",
       nonce: resolvedNonce,
-      dangerouslySetInnerHTML: { __html: escapePayload(JSON.stringify(payload)) },
+      dangerouslySetInnerHTML: { __html: escapePayload(stringify(payload)) },
     }),
     hydrationClientModuleUrl !== undefined
       ? createElement("script", {

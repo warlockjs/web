@@ -1,4 +1,5 @@
 import { isValidElement, type ReactElement, type ReactNode } from "react";
+import { stringify } from "devalue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hydrateRoot } from "react-dom/client";
 import { PAYLOAD_SCRIPT_ID } from "../components/document-context";
@@ -48,7 +49,7 @@ type FakeDocumentOptions = {
 let root: FakeRoot;
 
 function installFakeDocument(options: FakeDocumentOptions = {}): void {
-  const { payloadText = JSON.stringify(validPayload), withRoot = true } = options;
+  const { payloadText = stringify(validPayload), withRoot = true } = options;
 
   root = { id: "root", innerHTML: SERVER_MARKUP };
 
@@ -173,7 +174,7 @@ describe("hydratePage", () => {
   });
 
   it("throws the MALFORMED message when a required payload key is missing", () => {
-    installFakeDocument({ payloadText: JSON.stringify({ ...validPayload, name: undefined }) });
+    installFakeDocument({ payloadText: stringify({ ...validPayload, name: undefined }) });
 
     expect(() => hydratePage(() => "tree")).toThrow(/could not be read/);
     expect(hydrateRoot).not.toHaveBeenCalled();
@@ -211,7 +212,7 @@ describe("hydratePage — deferred payload wiring", () => {
 
   it("prepares deferred pageData and arms stream-closed rejection when `deferred` is present", () => {
     installFakeDocument({
-      payloadText: JSON.stringify({ ...validPayload, deferred: ["reviews"] }),
+      payloadText: stringify({ ...validPayload, deferred: ["reviews"] }),
     });
 
     hydratePage(() => "tree");
@@ -226,7 +227,7 @@ describe("hydratePage — deferred payload wiring", () => {
 
   it("still passes the completeness / hard-navigate check with `deferred` present (does not throw)", () => {
     installFakeDocument({
-      payloadText: JSON.stringify({ ...validPayload, deferred: ["reviews"] }),
+      payloadText: stringify({ ...validPayload, deferred: ["reviews"] }),
     });
     const buildTree = vi.fn(() => "tree");
 
@@ -237,7 +238,7 @@ describe("hydratePage — deferred payload wiring", () => {
 
   it("calls prepareDeferredPageData before installStreamClosedRejection, both before hydrateRoot", () => {
     installFakeDocument({
-      payloadText: JSON.stringify({ ...validPayload, deferred: ["reviews"] }),
+      payloadText: stringify({ ...validPayload, deferred: ["reviews"] }),
     });
 
     hydratePage(() => "tree");

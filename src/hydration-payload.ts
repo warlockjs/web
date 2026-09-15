@@ -1,3 +1,4 @@
+import { parse } from "devalue";
 import {
   PAYLOAD_SCRIPT_ID,
   type HydrationDocumentPayloadSource,
@@ -151,7 +152,10 @@ export function readHydrationPayload(documentNode: Document): HydrationDocumentP
   let parsed: unknown;
 
   try {
-    parsed = JSON.parse(element.textContent ?? "");
+    // devalue is the page-data wire format (standing ruling): this is what
+    // lets Date/Map/Set/BigInt/undefined and repeated or cyclic references
+    // survive the trip a plain `JSON.parse` would have flattened or thrown on.
+    parsed = parse(element.textContent ?? "");
   } catch {
     malformedPayload();
   }

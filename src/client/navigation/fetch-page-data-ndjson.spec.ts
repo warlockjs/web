@@ -6,6 +6,7 @@
  * exists to gate.
  */
 import { act, createElement, use, Suspense, Component, type ReactNode } from "react";
+import { stringify } from "devalue";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fetchPageData } from "./fetch-page-data";
@@ -15,8 +16,9 @@ import { DeferredStreamClosedError } from "../runtime/deferred-stream-closed-err
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
+/** devalue is the page-data wire format — line 1 is devalue-serialized text. */
 function payloadLine(deferred?: string[]): string {
-  return JSON.stringify({
+  return stringify({
     appData: {},
     layoutData: {},
     pageData: { greeting: "hi" },
@@ -128,7 +130,10 @@ describe("fetchPageData — NDJSON streaming (Stage 2 slice S3)", () => {
 
     await act(async () => {
       stream.push(
-        `${JSON.stringify({ defer: "reviews", settlement: { ok: true, value: { rating: 5 } } })}\n`,
+        `${JSON.stringify({
+          defer: "reviews",
+          settlement: stringify({ ok: true, value: { rating: 5 } }),
+        })}\n`,
       );
       stream.close();
       await flushAsyncWork();
@@ -181,7 +186,7 @@ describe("fetchPageData — NDJSON streaming (Stage 2 slice S3)", () => {
         status: 200,
         headers: new Headers({ "content-type": "application/json; charset=utf-8" }),
         url: "/dashboard",
-        json: async () => payload,
+        text: async () => stringify(payload),
       })),
     );
 

@@ -29,6 +29,7 @@ import {
   type FastifyInstance,
   type HttpContext,
 } from "@warlock.js/core";
+import { stringify } from "devalue";
 
 import {
   DATA_RESPONSE_CONTENT_TYPE,
@@ -491,7 +492,7 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         // (assigning `request` onto it as it goes) and rebuilds arrays. That is
         // the right behaviour for a controller returning Resources; it is the
         // wrong behaviour here, because the DOCUMENT path serializes this exact
-        // object with a plain `JSON.stringify` into `#__WARLOCK_DATA__`. Routing
+        // object with devalue's `stringify` into `#__WARLOCK_DATA__`. Routing
         // one path through a transformer and not the other is precisely the
         // drift `build-hydration-payload.ts` exists to prevent — the browser
         // would build one tree on a page load and a different one on a
@@ -499,11 +500,17 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         //
         // A string body also bypasses `parseBody()` entirely, so the content type
         // has to be declared rather than inferred from an object body.
+        //
+        // CONTENT TYPE: kept as `DATA_RESPONSE_CONTENT_TYPE` (`application/json`)
+        // deliberately. devalue's `stringify` output is syntactically valid JSON
+        // text — it only recurses `["Date", ...]`/`["Map", ...]`-shaped arrays and
+        // reference indices instead of the literal object graph, so `JSON.parse`
+        // never throws on it, it just does not reconstruct the same value devalue
+        // does. `application/json` here documents "the bytes are valid JSON",
+        // which is true; the semantic decode is `readHydrationPayload`'s job, not
+        // this response's content type.
         response.setContentType(DATA_RESPONSE_CONTENT_TYPE);
-        await response.send(
-          JSON.stringify(buildHydrationPayload(rendered.bundle, request.locale)),
-          status,
-        );
+        await response.send(stringify(buildHydrationPayload(rendered.bundle, request.locale)), status);
 
         return;
       }
@@ -602,10 +609,7 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         if (wantsData) {
           response.header("Vary", WARLOCK_DATA_REQUEST_HEADER);
           response.setContentType(DATA_RESPONSE_CONTENT_TYPE);
-          await response.send(
-            JSON.stringify(buildHydrationPayload(rendered.bundle!, request.locale)),
-            500,
-          );
+          await response.send(stringify(buildHydrationPayload(rendered.bundle!, request.locale)), 500);
           return;
         }
 

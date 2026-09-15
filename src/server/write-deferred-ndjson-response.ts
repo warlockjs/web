@@ -23,15 +23,27 @@
  * anything, and never again.
  */
 import type { Response } from "@warlock.js/core";
+import { stringify } from "devalue";
 import { buildHydrationPayload } from "./build-hydration-payload";
 import type { DeferSettlement } from "./defer-settlement";
 import type { PageDataBundle } from "./execute-page-request";
+import { assertPageDataSerializable } from "./page-data-serialization-error";
 
 /** The wire content type for a Stage 2 slice S3 streaming data response. */
 export const NDJSON_CONTENT_TYPE = "application/x-ndjson";
 
-/** One line of the NDJSON body after line 1 — contract rule 10. */
-export type DeferredNdjsonLine = { defer: string; settlement: DeferSettlement };
+/**
+ * One line of the NDJSON body after line 1 — contract rule 10. `settlement`
+ * is devalue's `stringify` output for the {@link DeferSettlement} value, kept
+ * as a STRING field rather than spliced in as raw devalue text: devalue's
+ * output is JSON-compatible but not itself valid JSON *inside* an outer JSON
+ * object without being treated as a nested value, and wrapping it as a string
+ * keeps the outer `{"defer":...,"settlement":...}` shape parseable with a
+ * plain `JSON.parse` before the inner devalue text is decoded separately —
+ * the same two-step read `fetch-page-data.ts` already does for a document's
+ * deferred chunk script argument.
+ */
+export type DeferredNdjsonLine = { defer: string; settlement: string };
 
 /**
  * Write the full NDJSON response for `bundle` onto `response`'s raw Node
@@ -58,7 +70,10 @@ export async function writeDeferredNdjsonResponse(
   const raw = response.raw;
 
   raw.writeHead(response.statusCode, response.getHeaders() as never);
-  raw.write(`${JSON.stringify(buildHydrationPayload(bundle, locale))}\n`);
+
+  // devalue's output is JSON-compatible text with no raw newlines, so this
+  // stays a well-formed NDJSON line 1 unchanged.
+  raw.write(`${stringify(buildHydrationPayload(bundle, locale))}\n`);
 
   // Each entry writes independently, the instant ITS OWN settlement
   // resolves — never chained one after another — so the line order on the
@@ -70,7 +85,14 @@ export async function writeDeferredNdjsonResponse(
         settlements[key] ?? Promise.resolve<DeferSettlement>({ ok: true, value: undefined });
 
       return settlement.then((value) => {
-        const line: DeferredNdjsonLine = { defer: key, settlement: value };
+        assertPageDataSerializable(value, "page", bundle.route.name);
+
+        const line: DeferredNdjsonLine = { defer: key, settlement: stringify(value) };
+
+        // The outer object is plain JSON (`JSON.stringify`), the inner
+        // `settlement` string is devalue text — see the type doc above.
+        // `JSON.stringify` never introduces a raw newline, so this line
+        // stays single-line NDJSON framing.
         raw.write(`${JSON.stringify(line)}\n`);
       });
     }),

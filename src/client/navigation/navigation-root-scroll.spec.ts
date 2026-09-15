@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, createElement } from "react";
+import { stringify } from "devalue";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HydrationDocumentPayloadSource } from "../../hydration-payload";
@@ -48,7 +49,9 @@ function stubFetchFor(pages: Record<string, HydrationDocumentPayloadSource>): vo
         status: 200,
         headers,
         url: url.href,
-        json: async () => payload,
+        // devalue is the page-data wire format: `fetchPageData` reads
+        // `.text()` and decodes it with devalue's `parse`, never `.json()`.
+        text: async () => stringify(payload),
       };
     }),
   );

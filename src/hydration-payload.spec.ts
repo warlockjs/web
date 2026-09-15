@@ -1,5 +1,6 @@
+import { stringify } from "devalue";
 import { describe, expect, it } from "vitest";
-import { PAYLOAD_SCRIPT_ID } from "./components/document-context";
+import { escapePayload, PAYLOAD_SCRIPT_ID } from "./components/document-context";
 import { REQUIRED_PAYLOAD_KEYS, readHydrationPayload } from "./hydration-payload";
 import { buildHydrationPayload } from "./server/build-hydration-payload";
 import type { PageDataBundle } from "./server/execute-page-request";
@@ -34,7 +35,7 @@ const serializedErrorPage = {
 
 describe("readHydrationPayload", () => {
   it("parses and returns a payload object with all six keys", () => {
-    const documentNode = makeDocument(JSON.stringify(fullPayload));
+    const documentNode = makeDocument(stringify(fullPayload));
 
     expect(readHydrationPayload(documentNode)).toEqual(fullPayload);
   });
@@ -54,7 +55,7 @@ describe("readHydrationPayload", () => {
       const withoutKey = { ...fullPayload };
       delete (withoutKey as Record<string, unknown>)[key];
 
-      const documentNode = makeDocument(JSON.stringify(withoutKey));
+      const documentNode = makeDocument(stringify(withoutKey));
 
       expect(() => readHydrationPayload(documentNode)).toThrow(
         /Warlock hydration payload was found at #.* but could not be read\./,
@@ -65,7 +66,7 @@ describe("readHydrationPayload", () => {
   it("throws the malformed message when name is missing", () => {
     const { name, ...withoutName } = fullPayload;
 
-    const documentNode = makeDocument(JSON.stringify(withoutName));
+    const documentNode = makeDocument(stringify(withoutName));
 
     expect(() => readHydrationPayload(documentNode)).toThrow(
       /Warlock hydration payload was found at #.* but could not be read\./,
@@ -77,7 +78,7 @@ describe("readHydrationPayload", () => {
 
     if (locale === undefined) delete (payload as { locale?: unknown }).locale;
 
-    expect(() => readHydrationPayload(makeDocument(JSON.stringify(payload)))).toThrow(
+    expect(() => readHydrationPayload(makeDocument(stringify(payload)))).toThrow(
       /Warlock hydration payload was found at #.* but could not be read\./,
     );
   });
@@ -101,7 +102,7 @@ describe("readHydrationPayload", () => {
   it("throws the malformed message when another required key is missing", () => {
     const { shared, ...withoutShared } = fullPayload;
 
-    const documentNode = makeDocument(JSON.stringify(withoutShared));
+    const documentNode = makeDocument(stringify(withoutShared));
 
     expect(() => readHydrationPayload(documentNode)).toThrow(
       /Warlock hydration payload was found at #.* but could not be read\./,
@@ -120,7 +121,7 @@ describe("readHydrationPayload", () => {
    * gate throw on a payload the server is right to have produced.
    */
   it("accepts an ordinary payload without metadata, params or errorPage", () => {
-    const documentNode = makeDocument(JSON.stringify(fullPayload));
+    const documentNode = makeDocument(stringify(fullPayload));
 
     expect(() => readHydrationPayload(documentNode)).not.toThrow();
   });
@@ -132,23 +133,32 @@ describe("readHydrationPayload", () => {
       params: { id: "42" },
     };
 
-    const documentNode = makeDocument(JSON.stringify(withBoth));
+    const documentNode = makeDocument(stringify(withBoth));
 
     expect(readHydrationPayload(documentNode)).toEqual(withBoth);
   });
 
   it("returns a JSON-round-tripped serialized error-page selection", () => {
     const withErrorPage = { ...fullPayload, errorPage: serializedErrorPage };
-    const documentNode = makeDocument(JSON.stringify(withErrorPage));
+    const documentNode = makeDocument(stringify(withErrorPage));
 
     expect(readHydrationPayload(documentNode)).toEqual(withErrorPage);
   });
 
-  it("rejects a raw Error that serialized without its non-enumerable fields", () => {
+  /**
+   * devalue refuses a raw `Error` outright (`DevalueError: Cannot stringify
+   * arbitrary non-POJOs`) — the standing serialization ruling catches this
+   * case even earlier than the reader does, at `buildHydrationPayload`'s own
+   * validation (`build-hydration-payload.spec.ts`). This spec keeps the
+   * READER'S half of the same contract: an `error` value present but missing
+   * its required `name`/`message` fields — the shape a lossy serializer would
+   * have produced — is still rejected here regardless of what produced it.
+   */
+  it("rejects an error-page selection whose error is missing its required fields", () => {
     const documentNode = makeDocument(
-      JSON.stringify({
+      stringify({
         ...fullPayload,
-        errorPage: { error: new Error("boom"), status: 500 },
+        errorPage: { error: {}, status: 500 },
       }),
     );
 
@@ -171,7 +181,7 @@ describe("readHydrationPayload", () => {
     ["a non-5xx status", { error: serializedErrorPage.error, status: 404 }],
     ["a non-integer status", { error: serializedErrorPage.error, status: 500.5 }],
   ])("rejects errorPage with %s", (_caseName, errorPage) => {
-    const documentNode = makeDocument(JSON.stringify({ ...fullPayload, errorPage }));
+    const documentNode = makeDocument(stringify({ ...fullPayload, errorPage }));
 
     expect(() => readHydrationPayload(documentNode)).toThrow(
       /Warlock hydration payload was found at #.* but could not be read\./,
@@ -179,7 +189,7 @@ describe("readHydrationPayload", () => {
   });
 
   it("throws the malformed message when params is present but is not an object", () => {
-    const documentNode = makeDocument(JSON.stringify({ ...fullPayload, params: "id=42" }));
+    const documentNode = makeDocument(stringify({ ...fullPayload, params: "id=42" }));
 
     expect(() => readHydrationPayload(documentNode)).toThrow(
       /Warlock hydration payload was found at #.* but could not be read\./,
@@ -188,7 +198,7 @@ describe("readHydrationPayload", () => {
 
   /** `typeof [] === "object"`, so the array case needs its own rejection. */
   it("throws the malformed message when params is an array", () => {
-    const documentNode = makeDocument(JSON.stringify({ ...fullPayload, params: ["42"] }));
+    const documentNode = makeDocument(stringify({ ...fullPayload, params: ["42"] }));
 
     expect(() => readHydrationPayload(documentNode)).toThrow(
       /Warlock hydration payload was found at #.* but could not be read\./,
@@ -196,7 +206,7 @@ describe("readHydrationPayload", () => {
   });
 
   it("throws the malformed message when metadata is present but is not an object", () => {
-    const documentNode = makeDocument(JSON.stringify({ ...fullPayload, metadata: "Contact us" }));
+    const documentNode = makeDocument(stringify({ ...fullPayload, metadata: "Contact us" }));
 
     expect(() => readHydrationPayload(documentNode)).toThrow(
       /Warlock hydration payload was found at #.* but could not be read\./,
@@ -271,5 +281,80 @@ describe("buildHydrationPayload", () => {
       name: "users.details",
       locale: "ar",
     });
+  });
+});
+
+/**
+ * devalue is the page-data wire format (standing ruling). This is the
+ * DOCUMENT-hydration half of the round-trip guarantee that plain JSON never
+ * gave: a `Date`, `Map`, `Set`, `BigInt`, an `undefined` inside an object, a
+ * repeated reference to the SAME object, and a cyclic structure all have to
+ * survive `stringify` → (the same escaping `scripts.ts` applies) → `parse`
+ * with their real identity and type, not a flattened JSON approximation.
+ */
+describe("document hydration payload — devalue round trip", () => {
+  function bundleOf(pageData: unknown): PageDataBundle {
+    return {
+      route: { name: "round-trip", path: "/round-trip", params: {}, query: {} },
+      appData: {},
+      layoutData: {},
+      pageData,
+      shared: {} as PageDataBundle["shared"],
+    };
+  }
+
+  /** Mirrors `scripts.ts`: devalue `stringify`, then the same HTML escaping, then read back. */
+  function roundTrip(pageData: unknown): unknown {
+    const payload = buildHydrationPayload(bundleOf(pageData), "en");
+    const scriptTextContent = escapePayload(stringify(payload));
+
+    return readHydrationPayload(makeDocument(scriptTextContent)).pageData;
+  }
+
+  it("round-trips a Date", () => {
+    const date = new Date("2026-01-01T00:00:00.000Z");
+
+    expect(roundTrip({ date })).toEqual({ date });
+    expect((roundTrip({ date }) as { date: unknown }).date).toBeInstanceOf(Date);
+  });
+
+  it("round-trips a Map", () => {
+    const map = new Map([["a", 1], ["b", 2]]);
+
+    expect(roundTrip({ map })).toEqual({ map });
+  });
+
+  it("round-trips a Set", () => {
+    const set = new Set([1, 2, 3]);
+
+    expect(roundTrip({ set })).toEqual({ set });
+  });
+
+  it("round-trips a BigInt", () => {
+    expect(roundTrip({ big: 42n })).toEqual({ big: 42n });
+  });
+
+  it("round-trips undefined inside an object", () => {
+    const result = roundTrip({ missing: undefined, present: 1 }) as Record<string, unknown>;
+
+    expect("missing" in result).toBe(true);
+    expect(result.missing).toBeUndefined();
+    expect(result.present).toBe(1);
+  });
+
+  it("round-trips a repeated reference as the SAME object", () => {
+    const shared = { id: 1 };
+    const result = roundTrip({ first: shared, second: shared }) as { first: unknown; second: unknown };
+
+    expect(result.first).toBe(result.second);
+  });
+
+  it("round-trips a cyclic structure", () => {
+    const node: { self?: unknown } = {};
+    node.self = node;
+
+    const result = roundTrip({ node }) as { node: { self: unknown } };
+
+    expect(result.node.self).toBe(result.node);
   });
 });
