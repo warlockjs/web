@@ -34,6 +34,7 @@ import type { PageCacheOptIn } from "../routing/route-identity";
 import { ensureSetCookieCacheFloorHook, markPageResponse } from "./set-cookie-cache-floor-hook";
 import type { BufferedCookie, PageRouteEntry, PageTripleModule } from "./execute-page-request";
 import { renderPageFailure, renderPageRequest, type RenderedPage } from "./render-page";
+import { NDJSON_CONTENT_TYPE, writeDeferredNdjsonResponse } from "./write-deferred-ndjson-response";
 
 declare module "@warlock.js/core" {
   interface RequestLocals {
@@ -272,6 +273,14 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
   return async ({ request, response }: HttpContext) => {
     const wantsData = isDataRequest(request.header(WARLOCK_DATA_REQUEST_HEADER, undefined));
 
+    // Stage 2 slice S3 (contract rule 10): a client navigation that can read
+    // the streaming representation says so via `Accept`. Presence-checked
+    // exactly like `isDataRequest` above — a proxy or an older client that
+    // never mentions it gets the fully-awaited JSON, never a body it did not
+    // ask to read incrementally.
+    const acceptHeader = String(request.header("accept", "") ?? "");
+    const wantsNdjson = wantsData && acceptHeader.includes(NDJSON_CONTENT_TYPE);
+
     try {
       const [appModule, layoutModule, ownPageModule, registrationLayouts] = await Promise.all([
         loadModule(appFile),
@@ -339,6 +348,11 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         createHttp: () => ({ request, response }),
         loadErrorPage,
         dataRequest: wantsData,
+        // Stage 2 slice S3: a plain data request (no `x-ndjson` in `Accept`)
+        // awaits every deferred settlement and inlines it — the NDJSON
+        // request keeps `deferredKeys`/`deferredSettlements` on the bundle
+        // for this handler to stream itself, below.
+        awaitDeferredForDataRequest: wantsData && !wantsNdjson,
         stylesheetUrls,
         hydrationClientModuleUrl,
         // Crawler mode (waiting for the whole tree via `onAllReady`) is out
@@ -415,6 +429,19 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         if (rendered.bundle === undefined) {
           response.setContentType(DATA_RESPONSE_CONTENT_TYPE);
           await response.send(JSON.stringify({ error: "not_found" }), status);
+
+          return;
+        }
+
+        // Stage 2 slice S3 (contract rule 10): a page that deferred at least
+        // one key, asked for over `Accept: application/x-ndjson`, streams
+        // instead of answering one buffered JSON body. A page with no
+        // deferred keys is UNCHANGED under either `Accept` value — it never
+        // reaches this branch, `deferredKeys` is undefined/empty for it.
+        const deferredKeys = rendered.bundle.deferredKeys;
+
+        if (wantsNdjson && deferredKeys !== undefined && deferredKeys.length > 0) {
+          await writeDeferredNdjsonResponse(response, rendered.bundle, request.locale, status);
 
           return;
         }

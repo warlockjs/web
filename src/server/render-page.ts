@@ -126,6 +126,18 @@ export type RenderPageRequestOptions = {
    * without another signature change.
    */
   waitForAll?: boolean;
+  /**
+   * Stage 2 slice S3 (`releases/v5.12-streaming-design.md`, contract rule 10):
+   * true when a DATA request should AWAIT every deferred settlement and
+   * inline the resolved values into `pageData` instead of leaving
+   * `deferredKeys`/`deferredSettlements` on the bundle for the caller to
+   * stream as NDJSON. Ignored when `dataRequest` is false or the page has no
+   * deferred keys. Defaults to `false` so the NDJSON representation (and
+   * every existing caller of this option-less surface) keeps the bundle
+   * untouched for itself to consume — see `finishRender`'s own doc comment
+   * at the point this is read.
+   */
+  awaitDeferredForDataRequest?: boolean;
 };
 
 export type RenderedPage = {
@@ -518,6 +530,7 @@ async function finishRender(
     stylesheetUrls: readonly string[] | undefined;
     hydrationClientModuleUrl: string | undefined;
     waitForAll: boolean;
+    awaitDeferredForDataRequest?: boolean;
   },
 ): Promise<RenderedPage> {
   // Read from the stage 7 commit, never live off `response` — this function
@@ -593,6 +606,66 @@ async function finishRender(
       bundle.route.path,
       statusCode,
     );
+  }
+
+  // Stage 2 slice S3 (contract rule 10, the "without `Accept:
+  // application/x-ndjson`" branch): a DATA request that asked to await
+  // deferred values does so HERE, before anything below decides how to
+  // render — so a rejection is folded into `bundle.error` and falls straight
+  // into the SAME escalation loop an ordinary synchronous loader throw
+  // already goes through (boundary designation, `loadErrorPage`, status),
+  // rather than a second, parallel error shape only this path knows about.
+  // The NDJSON representation (`awaitDeferredForDataRequest` false) skips
+  // this entirely and leaves `deferredKeys`/`deferredSettlements` on the
+  // bundle for `create-page-route-handler.ts` to stream itself; so does the
+  // full-document path, which needs the promises left in `pageData` for its
+  // own post-shell chunk emission (`defer-emission.ts`).
+  if (
+    dataRequest &&
+    streamOptions.awaitDeferredForDataRequest &&
+    bundle.deferredKeys !== undefined &&
+    bundle.deferredKeys.length > 0
+  ) {
+    const deferredKeys = bundle.deferredKeys;
+    const settlements = bundle.deferredSettlements ?? {};
+    const settled = await Promise.all(
+      deferredKeys.map(
+        (key) =>
+          settlements[key] ?? Promise.resolve<DeferSettlement>({ ok: true, value: undefined }),
+      ),
+    );
+
+    const rejectedIndex = settled.findIndex((entry) => !entry.ok);
+
+    if (rejectedIndex === -1) {
+      const pageDataRecord = (bundle.pageData ?? {}) as Record<string, unknown>;
+
+      deferredKeys.forEach((key, index) => {
+        pageDataRecord[key] = (settled[index] as { ok: true; value: unknown }).value;
+      });
+
+      bundle.pageData = pageDataRecord;
+      bundle.deferredKeys = undefined;
+    } else {
+      // Reconstruct a throwable from the wire-shape settlement error so this
+      // reaches `buildErrorRecord` exactly the way an ordinary page-loader
+      // throw would — same shape, same designation, same rendering below.
+      const failure = settled[rejectedIndex] as DeferSettlement & { ok: false };
+      const reconstructed = new Error(failure.error.message) as Error & { statusCode?: number };
+
+      reconstructed.name = failure.error.name;
+      if (failure.error.statusCode !== undefined) {
+        reconstructed.statusCode = failure.error.statusCode;
+      }
+
+      bundle.error = buildErrorRecord(
+        reconstructed,
+        designateBoundary("page", triple),
+        bundle.route.path,
+        failure.error.statusCode,
+      );
+      bundle.deferredKeys = undefined;
+    }
   }
 
   // `Cache-Control` is NOT decided here. The final value — the floor, an
@@ -944,6 +1017,7 @@ export async function renderPageRequest(
           stylesheetUrls: options.stylesheetUrls,
           hydrationClientModuleUrl: options.hydrationClientModuleUrl,
           waitForAll: options.waitForAll ?? false,
+          awaitDeferredForDataRequest: options.awaitDeferredForDataRequest,
         },
       ),
   });

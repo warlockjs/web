@@ -2,6 +2,8 @@ export {
   DEFER_BOOTSTRAP_SOURCE,
   installStreamClosedRejection,
   prepareDeferredPageData,
+  rejectPendingDeferredKeys,
+  settleDeferredValue,
   type DeferredSettlement,
 } from "./defer-registry";
 export { DeferredStreamClosedError } from "./deferred-stream-closed-error";

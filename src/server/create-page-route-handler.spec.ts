@@ -8,6 +8,18 @@ const { renderPageRequest, renderPageFailure } = vi.hoisted(() => ({
 
 vi.mock("./render-page", () => ({ renderPageRequest, renderPageFailure }));
 
+const { writeDeferredNdjsonResponse } = vi.hoisted(() => ({
+  writeDeferredNdjsonResponse: vi.fn(async () => undefined),
+}));
+
+vi.mock("./write-deferred-ndjson-response", async () => {
+  const actual = await vi.importActual<typeof import("./write-deferred-ndjson-response")>(
+    "./write-deferred-ndjson-response",
+  );
+
+  return { ...actual, writeDeferredNdjsonResponse };
+});
+
 import { buildHydrationPayload } from "./build-hydration-payload";
 import { createPageRouteHandler, type PageRouteHandlerOptions } from "./create-page-route-handler";
 import { markNonHydrating } from "./page-render-bundle";
@@ -66,21 +78,28 @@ function fakePipeableStream() {
  * `setContentType` and `send`. `context()`'s `response.html` stays present so
  * a wrongly-taken document path is still visible as a spurious call.
  */
-function dataRequestContext(path = "/account") {
+function dataRequestContext(path = "/account", accept?: string) {
   const requestContext = context(path);
 
   return {
     request: {
       ...requestContext.request,
-      header: vi.fn((name: string) =>
-        name === WARLOCK_DATA_REQUEST_HEADER ? WARLOCK_DATA_REQUEST_VALUE : undefined,
-      ),
+      header: vi.fn((name: string) => {
+        if (name === WARLOCK_DATA_REQUEST_HEADER) return WARLOCK_DATA_REQUEST_VALUE;
+        if (name === "accept") return accept;
+
+        return undefined;
+      }),
     },
     response: {
       ...requestContext.response,
       header: vi.fn(),
       setContentType: vi.fn(),
+      setStatusCode: vi.fn(),
       send: vi.fn(async () => undefined),
+      raw: { writeHead: vi.fn(), write: vi.fn(), end: vi.fn() },
+      getHeaders: vi.fn(() => ({})),
+      statusCode: 200,
     },
   };
 }
@@ -105,6 +124,8 @@ beforeEach(() => {
   renderPageRequest.mockReset();
   renderPageRequest.mockResolvedValue(renderedOk());
   renderPageFailure.mockReset();
+  writeDeferredNdjsonResponse.mockReset();
+  writeDeferredNdjsonResponse.mockResolvedValue(undefined);
 });
 
 describe("createPageRouteHandler — universal registration", () => {
@@ -583,5 +604,85 @@ describe("createPageRouteHandler — fallback data requests", () => {
       500,
     );
     expect(requestContext.response.html).not.toHaveBeenCalled();
+  });
+});
+
+describe("createPageRouteHandler — Stage 2 slice S3 (NDJSON client navigation)", () => {
+  it("awaits and inlines deferred values (never streams) when Accept has no x-ndjson", async () => {
+    renderPageRequest.mockResolvedValue({
+      html: "",
+      status: 200,
+      headers: {},
+      data: undefined,
+      bundle: { route: { name: "dashboard", path: "/dashboard", params: {}, query: {} } },
+    });
+
+    const requestContext = dataRequestContext("/dashboard");
+    const handler = createPageRouteHandler(
+      handlerOptions({ "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} }),
+    );
+
+    await handler(requestContext as never);
+
+    const [, options] = renderPageRequest.mock.calls[0] as [string, RenderPageRequestOptions];
+    expect(options.awaitDeferredForDataRequest).toBe(true);
+    expect(writeDeferredNdjsonResponse).not.toHaveBeenCalled();
+    expect(requestContext.response.send).toHaveBeenCalled();
+  });
+
+  it("streams NDJSON when Accept includes x-ndjson and the page has deferred keys", async () => {
+    const bundle = {
+      route: { name: "dashboard", path: "/dashboard", params: {}, query: {} },
+      deferredKeys: ["reviews"],
+      deferredSettlements: { reviews: Promise.resolve({ ok: true, value: 1 }) },
+    };
+    renderPageRequest.mockResolvedValue({
+      html: "",
+      status: 200,
+      headers: {},
+      data: undefined,
+      bundle,
+    });
+
+    const requestContext = dataRequestContext("/dashboard", "application/x-ndjson, application/json");
+    const handler = createPageRouteHandler(
+      handlerOptions({ "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} }),
+    );
+
+    await handler(requestContext as never);
+
+    const [, options] = renderPageRequest.mock.calls[0] as [string, RenderPageRequestOptions];
+    expect(options.awaitDeferredForDataRequest).toBe(false);
+    expect(writeDeferredNdjsonResponse).toHaveBeenCalledWith(
+      requestContext.response,
+      bundle,
+      "en",
+      200,
+    );
+    expect(requestContext.response.send).not.toHaveBeenCalled();
+  });
+
+  it("a page with no defer() is unchanged even when Accept includes x-ndjson", async () => {
+    const bundle = { route: { name: "plain", path: "/plain", params: {}, query: {} } };
+    renderPageRequest.mockResolvedValue({
+      html: "",
+      status: 200,
+      headers: {},
+      data: undefined,
+      bundle,
+    });
+
+    const requestContext = dataRequestContext("/plain", "application/x-ndjson, application/json");
+    const handler = createPageRouteHandler(
+      handlerOptions({ "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} }),
+    );
+
+    await handler(requestContext as never);
+
+    expect(writeDeferredNdjsonResponse).not.toHaveBeenCalled();
+    expect(requestContext.response.send).toHaveBeenCalledWith(
+      JSON.stringify(buildHydrationPayload(bundle as never, "en")),
+      200,
+    );
   });
 });

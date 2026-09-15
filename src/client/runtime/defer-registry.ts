@@ -194,6 +194,71 @@ export function prepareDeferredPageData(
   return pageData;
 }
 
+/**
+ * Settle one key from an ALREADY-DECODED settlement — the non-DOM equivalent
+ * of `window.__WARLOCK_DEFER__`, for a consumer that receives settlements
+ * from something other than an inline `<script>` (Stage 2 slice S3: the
+ * NDJSON client-navigation reader, `web/src/client/navigation/fetch-page-data.ts`,
+ * which already has a parsed JS object off `JSON.parse` and has nothing left
+ * to evaluate).
+ *
+ * Mirrors {@link DEFER_BOOTSTRAP_SOURCE}'s own behaviour exactly, so a key
+ * settled through either entry point behaves identically: a key with no
+ * existing entry (a settlement that arrives before {@link prepareDeferredPageData}
+ * has run for it) gets an ALREADY-SETTLED entry created directly from
+ * `settlement`; an existing pending entry is resolved or rejected.
+ */
+export function settleDeferredValue(key: string, settlement: DeferredSettlement): void {
+  const registry = getOrCreateRegistry();
+  const entry = registry[key];
+
+  if (entry === undefined) {
+    const promise = settlement.ok
+      ? Promise.resolve(settlement.value)
+      : Promise.reject(settlement.error);
+
+    // Same reasoning as the inline bootstrap's own no-op branch: this is
+    // consumed later by `prepareDeferredPageData`'s own handler, and this
+    // only stops a transient unhandled-rejection warning before that happens.
+    promise.catch(() => undefined);
+    registry[key] = { promise, resolve: () => undefined, reject: () => undefined, settled: true };
+
+    return;
+  }
+
+  entry.settled = true;
+
+  if (settlement.ok) {
+    entry.resolve(settlement.value);
+  } else {
+    entry.reject(settlement.error);
+  }
+}
+
+/**
+ * Reject specific still-pending keys IMMEDIATELY, rather than waiting for
+ * `DOMContentLoaded` (Stage 2 slice S3's own "stream closed" case: an NDJSON
+ * client-navigation response that ends with keys still outstanding, contract
+ * rule 8 applied to a navigation instead of the hydration document).
+ *
+ * A key already settled, or with no entry at all, is left untouched — this is
+ * the same idempotence {@link installStreamClosedRejection} gives the
+ * hydration path, applied to an explicit key list instead of "everything
+ * still pending right now".
+ */
+export function rejectPendingDeferredKeys(keys: readonly string[]): void {
+  const registry = getOrCreateRegistry();
+
+  for (const key of keys) {
+    const entry = registry[key];
+
+    if (entry !== undefined && !entry.settled) {
+      entry.settled = true;
+      entry.reject(new DeferredStreamClosedError(key));
+    }
+  }
+}
+
 let streamClosedRejectionInstalled = false;
 
 /**
