@@ -44,10 +44,12 @@
     "@babel/parser": "^7.29.7",
     "@babel/types": "^7.29.7",
     "@mongez/localization": "^3.4.7",
+    "devalue": "^5.9.2",
     "magic-string": "^0.30.21"
   },
   "peerDependencies": {
     "@vitejs/plugin-react": "^5.2.0",
+    "@warlock.js/cache": "5.11.0",
     "@warlock.js/core": "5.11.0",
     "@warlock.js/seal": "5.11.0",
     "react": "*",
@@ -59,6 +61,9 @@
       "optional": true
     },
     "@vitejs/plugin-react": {
+      "optional": true
+    },
+    "@warlock.js/cache": {
       "optional": true
     }
   },
@@ -77,6 +82,7 @@
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "@vitejs/plugin-react": "^5.2.0",
+    "@warlock.js/cache": "workspace:^",
     "@warlock.js/context": "workspace:^",
     "@warlock.js/core": "workspace:^",
     "@warlock.js/seal": "workspace:^",
