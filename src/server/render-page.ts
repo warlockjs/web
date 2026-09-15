@@ -144,6 +144,24 @@ export type RenderPageRequestOptions = {
    * at the point this is read.
    */
   awaitDeferredForDataRequest?: boolean;
+  /**
+   * Crawler mode (Stage 1 point 6, `releases/v5.12-streaming-design.md`): a
+   * FULL-DOCUMENT request from a detected crawler (`detect-crawler.ts`) must
+   * receive the fully resolved document, never the streamed shell plus
+   * deferred chunks — a crawler has no chance to observe a later chunk the
+   * way a browser does. When true on a document request (`dataRequest`
+   * false) with deferred keys, `finishRender` reuses the SAME
+   * await-and-inline path `awaitDeferredForDataRequest` drives for a data
+   * request — every deferred value settles and is inlined into `pageData`
+   * before render, a rejection escalates through the ordinary boundary chain
+   * with its real status, and the render additionally waits for
+   * `onAllReady` (see `waitForAll`, forced on below) before the first byte,
+   * since nothing has flushed yet. Ignored for a data request — that
+   * representation is governed by `awaitDeferredForDataRequest` alone.
+   * Defaults to `false`, so every existing document caller streams exactly
+   * as before.
+   */
+  crawler?: boolean;
 };
 
 export type RenderedPage = {
@@ -184,6 +202,18 @@ export type RenderedPage = {
    * (which has no triple to prove safe to stream — see that function).
    */
   pipeableStream?: PipeableStream;
+  /**
+   * True when this page called `defer()` at all — set once, before crawler
+   * mode may have already awaited and inlined every deferred value and
+   * cleared `bundle.deferredKeys`. `create-page-route-handler.ts` reads this
+   * to decide the `Vary: User-Agent` header (rule 4): a page with no
+   * `defer()` renders identically for every user agent and must never carry
+   * it, while a page that defers renders differently for a detected crawler
+   * — the ONLY thing that varies by `User-Agent` this framework produces.
+   * Undefined (falsy) on every short-circuit/failure return that never
+   * reached the point this is decided.
+   */
+  usesDefer?: boolean;
 };
 
 export type RenderPageFailureOptions = {
@@ -542,6 +572,8 @@ async function finishRender(
     hydrationClientModuleUrl: string | undefined;
     waitForAll: boolean;
     awaitDeferredForDataRequest?: boolean;
+    /** See `RenderPageRequestOptions.crawler`. */
+    crawler?: boolean;
   },
 ): Promise<RenderedPage> {
   // Read from the stage 7 commit, never live off `response` — this function
@@ -549,6 +581,10 @@ async function finishRender(
   // commit (no loader ran at all) simply has no headers/cookies to report.
   const headers = committedHeaders(bundle);
   const cookies = committedCookies(bundle);
+
+  // Captured before anything below may await-and-inline and clear
+  // `bundle.deferredKeys` for crawler mode — see `RenderedPage.usesDefer`.
+  const usesDefer = (bundle.deferredKeys?.length ?? 0) > 0;
 
   // A page middleware short-circuit that (a) is a FULL-DOCUMENT request and
   // (b) never wrote the real HTTP reply itself gets handled below instead of
@@ -620,23 +656,24 @@ async function finishRender(
   }
 
   // Stage 2 slice S3 (contract rule 10, the "without `Accept:
-  // application/x-ndjson`" branch): a DATA request that asked to await
-  // deferred values does so HERE, before anything below decides how to
-  // render — so a rejection is folded into `bundle.error` and falls straight
-  // into the SAME escalation loop an ordinary synchronous loader throw
-  // already goes through (boundary designation, `loadErrorPage`, status),
-  // rather than a second, parallel error shape only this path knows about.
-  // The NDJSON representation (`awaitDeferredForDataRequest` false) skips
-  // this entirely and leaves `deferredKeys`/`deferredSettlements` on the
-  // bundle for `create-page-route-handler.ts` to stream itself; so does the
-  // full-document path, which needs the promises left in `pageData` for its
-  // own post-shell chunk emission (`defer-emission.ts`).
-  if (
-    dataRequest &&
-    streamOptions.awaitDeferredForDataRequest &&
-    bundle.deferredKeys !== undefined &&
-    bundle.deferredKeys.length > 0
-  ) {
+  // application/x-ndjson`" branch) AND crawler mode (Stage 1 point 6): a DATA
+  // request that asked to await deferred values, OR a FULL-DOCUMENT request
+  // from a detected crawler, does so HERE, before anything below decides how
+  // to render — so a rejection is folded into `bundle.error` and falls
+  // straight into the SAME escalation loop an ordinary synchronous loader
+  // throw already goes through (boundary designation, `loadErrorPage`,
+  // status), rather than a second, parallel error shape only this path
+  // knows about. Every OTHER document request — the ordinary streaming
+  // path — skips this entirely and leaves `deferredKeys`/`deferredSettlements`
+  // on the bundle for its own post-shell chunk emission
+  // (`defer-emission.ts`); so does the NDJSON data representation
+  // (`awaitDeferredForDataRequest` false), which streams the same way itself
+  // (`write-deferred-ndjson-response.ts`).
+  const awaitAndInlineDeferred =
+    (dataRequest && streamOptions.awaitDeferredForDataRequest === true) ||
+    (!dataRequest && streamOptions.crawler === true);
+
+  if (awaitAndInlineDeferred && bundle.deferredKeys !== undefined && bundle.deferredKeys.length > 0) {
     const deferredKeys = bundle.deferredKeys;
     const settlements = bundle.deferredSettlements ?? {};
     const settled = await Promise.all(
@@ -872,13 +909,20 @@ async function finishRender(
 
   const html = emitDocument(body);
 
+  // Crawler mode forces `onAllReady` regardless of the caller's own
+  // `waitForAll` — decision 2's "wait for React's onAllReady before the
+  // first byte", since nothing has flushed yet and a crawler must receive
+  // the fully resolved document, never a shell it cannot observe the rest
+  // of.
+  const waitForAll = streamOptions.waitForAll || streamOptions.crawler === true;
+
   // Stage 9's second pass: the element above just proved safe to render (the
   // escalation loop ran it to completion, synchronously, with no throw) —
   // stream THAT SAME element for the bytes that actually reach the client.
   // See `renderElementToPipeableStream` and `RenderedPage.pipeableStream`.
   const { pipeableStream: renderedStream, allReady } = await renderElementToPipeableStream(
     finalWrappedElement,
-    streamOptions.waitForAll,
+    waitForAll,
     bundle.route,
   );
 
@@ -914,7 +958,7 @@ async function finishRender(
           allReady,
         });
 
-  return { html, status, headers, cookies, data: bundle.pageData, bundle, pipeableStream };
+  return { html, status, headers, cookies, data: bundle.pageData, bundle, pipeableStream, usesDefer };
 }
 
 /**
@@ -1048,6 +1092,7 @@ export async function renderPageRequest(
           hydrationClientModuleUrl: options.hydrationClientModuleUrl,
           waitForAll: options.waitForAll ?? false,
           awaitDeferredForDataRequest: options.awaitDeferredForDataRequest,
+          crawler: options.crawler,
         },
       ),
   });

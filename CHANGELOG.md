@@ -13,6 +13,7 @@ All notable changes to `@warlock.js/web` are documented here.
 - `localeDirection(locale)` and `useTextDirection()`: one locale-to-direction resolver shared by server and client. Root templates set `<html lang={locale} dir={useTextDirection()}>`.
 - `changeLocaleCode(code)` switches the active locale without a full reload. The server persists the choice in its `locale` cookie when a navigation data request carries `?locale=`.
 - Page requests report `loader` (per level), `render.shell` and `stream.end` phases through core's `http.tracing` hooks when tracing is enabled (off by default).
+- `web.streaming.crawlers` — a detected crawler's full-document request now receives the fully resolved document instead of the streamed shell plus deferred chunks: every `defer()`-ed value is awaited and inlined before the first byte, and a rejection renders the ordinary error boundary with its real status. Detection is case-insensitive against a documented built-in user-agent list (googlebot, bingbot, yandex, duckduckbot, baiduspider, slurp, applebot, facebookexternalhit, twitterbot, linkedinbot, discordbot, slackbot, telegrambot, whatsapp, embedly, pinterest); set `crawlers: false` to disable detection, or `crawlers: { userAgents, detect }` to customise it — `detect` wins outright when given. A page that uses `defer()` now sends `Vary: User-Agent` on its document response; a page that never defers is unaffected. See the `stream-deferred-data` skill's "Crawlers" section.
 
 ### Changed
 

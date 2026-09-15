@@ -8,16 +8,28 @@
  * and reads it, so the shape and the reader can never drift onto two
  * different keys.
  */
-import { config } from "@warlock.js/core";
+import { config, type Request } from "@warlock.js/core";
+
+/**
+ * Customises crawler detection (`detect-crawler.ts`). `userAgents` REPLACES
+ * the built-in list rather than extending it — an app that wants the
+ * built-ins plus one more pattern spreads `DEFAULT_CRAWLER_USER_AGENTS`
+ * itself. `detect`, when given, wins outright: `userAgents` is never
+ * consulted alongside it.
+ */
+export type CrawlerDetectionOptions = {
+  userAgents?: readonly RegExp[];
+  detect?: (request: Request) => boolean;
+};
 
 export type WebStreamingConfigurations = {
   /**
-   * User-agent matchers that make a request wait for `onAllReady` instead of
-   * streaming from `onShellReady` (Stage 1 point 6) — out of scope for this
-   * card as a FEATURE (no reader wires this into `create-page-route-handler.ts`
-   * yet); declared here only so the namespace's shape is settled once.
+   * Crawler detection for the fully-resolved-document mode
+   * (`detect-crawler.ts`, Stage 1 point 6): `false` disables detection
+   * entirely (every request streams); an options object customises it;
+   * `undefined` (the default) uses the built-in user-agent list.
    */
-  crawlers?: readonly (string | RegExp)[];
+  crawlers?: false | CrawlerDetectionOptions;
   /**
    * Milliseconds a single `defer()`-ed value may take to settle before the
    * server treats it as failed with `DeferTimeoutError` (Stage 2 rule 7).
@@ -43,4 +55,16 @@ export function resolveDeferTimeoutMs(): number {
   const web = config.get("web", {});
 
   return web.streaming?.deferTimeout ?? DEFAULT_DEFER_TIMEOUT_MS;
+}
+
+/**
+ * Read `web.streaming.crawlers` as-is — `false`, an options object, or
+ * `undefined` (no override configured). `detect-crawler.ts` is the sole
+ * reader; kept here, not there, so this file stays the one place the config
+ * shape is read off `config.get`.
+ */
+export function resolveCrawlersConfig(): false | CrawlerDetectionOptions | undefined {
+  const web = config.get("web", {});
+
+  return web.streaming?.crawlers;
 }

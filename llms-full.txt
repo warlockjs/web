@@ -1447,6 +1447,47 @@ navigation. A client that cannot speak NDJSON gets the older contract
 instead: the server awaits every deferred value and inlines the fully
 resolved data into one JSON response.
 
+## Crawlers
+
+A crawler never runs the browser's defer-bootstrap script, so it has no
+chance to observe a chunk that arrives after the shell — streamed to one, a
+`defer()`-ed section would stay missing from whatever it indexes forever.
+Every FULL-DOCUMENT request from a detected crawler therefore skips streaming
+entirely: every deferred value is awaited and inlined into the page data
+before the first byte goes out (the same await-and-inline path a plain data
+request without NDJSON support already gets), and the response waits for
+React's `onAllReady` before anything flushes. A rejection takes the ordinary
+boundary/status escalation path, exactly as an ordinary synchronous loader
+throw would — nothing has flushed yet, so there is no 200 already on the
+wire to contradict.
+
+Detection is case-insensitive and, by default, matches this built-in list:
+`googlebot`, `bingbot`, `yandex`, `duckduckbot`, `baiduspider`, `slurp`,
+`applebot`, `facebookexternalhit`, `twitterbot`, `linkedinbot`, `discordbot`,
+`slackbot`, `telegrambot`, `whatsapp`, `embedly`, `pinterest`.
+
+```ts title="warlock.config.ts"
+export default {
+  web: {
+    streaming: {
+      crawlers: false, // disable detection entirely — every request streams
+      // OR customise it:
+      crawlers: {
+        userAgents: [/mybot/i], // REPLACES the built-in list, not merges with it
+        detect: (request) => request.header("x-render-mode") === "crawler", // wins outright when given
+      },
+    },
+  },
+};
+```
+
+A page that never calls `defer()` renders identically for every user agent
+and never carries a `Vary` header. A page that DOES `defer()` renders
+differently depending on the request's `User-Agent` — streamed for a
+browser, fully resolved for a detected crawler — so the document response
+carries `Vary: User-Agent` whenever the page uses `defer()`, so a shared
+cache never serves one representation to a client that asked for the other.
+
 ## Gotchas
 
 - **Only page loaders may `defer()`.** App/layout loaders throw

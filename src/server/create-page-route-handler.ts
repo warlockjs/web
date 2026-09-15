@@ -35,6 +35,7 @@ import {
   isDataRequest,
   WARLOCK_DATA_REQUEST_HEADER,
 } from "../routing/data-request";
+import { isCrawlerRequest } from "./detect-crawler";
 import { registerModules, type RegisterableModuleNamespace } from "../register-modules";
 import { buildHydrationPayload } from "./build-hydration-payload";
 import { applyResponseCacheFloor } from "./response-cache-floor";
@@ -289,6 +290,14 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     const acceptHeader = String(request.header("accept", "") ?? "");
     const wantsNdjson = wantsData && acceptHeader.includes(NDJSON_CONTENT_TYPE);
 
+    // Crawler mode (Stage 1 point 6): only meaningful for a FULL-DOCUMENT
+    // request — a data request already fully awaits and inlines deferred
+    // values by default (`awaitDeferredForDataRequest` above), so detection
+    // never runs for one. `isCrawlerRequest` itself is the single source of
+    // truth for `web.streaming.crawlers`'s three shapes (off, custom,
+    // built-in default) — see `detect-crawler.ts`.
+    const crawler = !wantsData && isCrawlerRequest(request);
+
     try {
       const [appModule, layoutModule, ownPageModule, registrationLayouts] = await Promise.all([
         loadModule(appFile),
@@ -364,11 +373,11 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         awaitDeferredForDataRequest: wantsData && !wantsNdjson,
         stylesheetUrls,
         hydrationClientModuleUrl,
-        // Crawler mode (waiting for the whole tree via `onAllReady`) is out
-        // of scope for this card as a FEATURE — no UA detector here — but
-        // the render function itself already accepts the flag, defaulted
-        // to `false` (`onShellReady`) for every request this handler serves.
+        // A detected crawler forces `onAllReady` on its own (`render-page.ts`'s
+        // `finishRender`) — `waitForAll` here stays `false` for every request
+        // this handler serves; nothing else in this framework needs it set.
         waitForAll: false,
+        crawler,
       });
 
       if (rendered instanceof Response) return rendered;
@@ -497,6 +506,16 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         );
 
         return;
+      }
+
+      // Rule 4: a page that never calls `defer()` renders identically for
+      // every user agent, so its headers stay untouched. A page that DOES
+      // defer renders differently for a detected crawler (the fully
+      // resolved document) than for anything else (the streamed shell) —
+      // the one axis this framework varies a document response on by
+      // `User-Agent` — so a shared cache must be told.
+      if (rendered.usesDefer) {
+        response.header("Vary", "User-Agent");
       }
 
       // A page middleware that returned 2xx content without writing the reply
