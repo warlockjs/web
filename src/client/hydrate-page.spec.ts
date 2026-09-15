@@ -3,7 +3,7 @@ import { stringify } from "devalue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hydrateRoot } from "react-dom/client";
 import { PAYLOAD_SCRIPT_ID } from "../components/document-context";
-import { hydratePage } from "./hydrate-page";
+import { hydratePage, type BuildHydratedTree } from "./hydrate-page";
 import { installStreamClosedRejection, prepareDeferredPageData } from "./runtime/defer-registry";
 
 /**
@@ -199,7 +199,7 @@ describe("hydratePage", () => {
 describe("hydratePage — deferred payload wiring", () => {
   it("does not touch pageData or install the registry when `deferred` is absent", () => {
     installFakeDocument();
-    const buildTree = vi.fn(() => "tree");
+    const buildTree = vi.fn<BuildHydratedTree>(() => "tree");
 
     hydratePage(buildTree);
 

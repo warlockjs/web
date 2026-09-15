@@ -7,7 +7,7 @@ import {
 import type { BufferedCookie } from "../../src/server/execute-page-request";
 import { connectPageContext, type PageContextRunner } from "../../src/server/index";
 import { connectSharedStore, type SharedStoreResolver } from "../../src/shared";
-import { createCoreHttp, createReplyShim, requestContext } from "./fixtures/core-http";
+import { createCoreHttp, createReplyShim, requestContext } from "../../src/server/__fixtures__/core-http";
 import * as App from "./fixtures/root";
 
 /**

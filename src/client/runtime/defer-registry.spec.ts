@@ -135,15 +135,16 @@ describe("defer-registry — Suspense + error boundary rendering", () => {
     await act(async () => {
       root = createRoot(container);
       root.render(
-        createElement(
-          TestErrorBoundary,
-          { onError: (error) => caught.push(error) },
-          createElement(
+        createElement(TestErrorBoundary, {
+          onError: (error) => {
+            caught.push(error);
+          },
+          children: createElement(
             Suspense,
             { fallback: createElement("p", null, "loading") },
             createElement(Reader, { promise: pageData.reviews as Promise<unknown> }),
           ),
-        ),
+        }),
       );
     });
 

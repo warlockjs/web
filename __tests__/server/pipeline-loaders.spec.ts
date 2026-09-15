@@ -6,7 +6,7 @@ import {
   type PageRouteEntry,
 } from "../../src/server/index";
 import { connectSharedStore, type SharedStoreResolver } from "../../src/shared";
-import { createCoreHttp, requestContext } from "./fixtures/core-http";
+import { createCoreHttp, requestContext } from "../../src/server/__fixtures__/core-http";
 import { routes } from "./fixtures/routes";
 
 /**

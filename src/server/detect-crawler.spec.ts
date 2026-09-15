@@ -6,7 +6,7 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { setConfig } from "@warlock.js/core";
-import { createCoreHttp } from "../../__tests__/server/fixtures/core-http";
+import { createCoreHttp } from "./__fixtures__/core-http";
 import { DEFAULT_CRAWLER_USER_AGENTS, isCrawlerRequest } from "./detect-crawler";
 
 afterEach(() => {

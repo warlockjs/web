@@ -109,7 +109,7 @@ export async function executePageRequest<TResult = PageDataBundle>(
   const runner = requireRunner();
 
   wireRequestSearch();
-  const [pathname, queryString] = options.url.split("?");
+  const [pathname = "", queryString] = options.url.split("?");
   // HTTP page handlers arrive here after core's router selected their route.
   // Keep its entry and decoded params authoritative; standalone rendering has
   // no such request, so it still resolves against the supplied route table.

@@ -6,12 +6,12 @@ import {
   type PageRouteMatch,
 } from "../../src/server/index";
 import { connectSharedStore, type SharedStoreResolver } from "../../src/shared";
-import { createCoreHttp, requestContext } from "./fixtures/core-http";
+import { createCoreHttp, requestContext } from "../../src/server/__fixtures__/core-http";
 import { routes } from "./fixtures/routes";
 
 /**
  * Stages 1–8 end to end over the hand-authored fixture, against REAL core
- * Request/Response instances (fixtures/core-http.ts mirrors router.ts:924-932)
+ * Request/Response instances (src/server/__fixtures__/core-http.ts mirrors router.ts:924-932)
  * and core's REAL requestContext — `connectPageContext(requestContext)` below
  * is the exact boot wiring the production bootstrap will perform, executing
  * core's own `Context.run` (context/src/base-context.ts:83-85) per request.

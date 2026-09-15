@@ -17,7 +17,7 @@
  *   3. Disconnect — a client going away mid-stream aborts the React render.
  *
  * Real core `Request`/`Response` throughout (`createCoreHttp`,
- * `fixtures/core-http.ts`), the same construction `page-redirect-wire.spec.ts`
+ * `src/server/__fixtures__/core-http.ts`), the same construction `page-redirect-wire.spec.ts`
  * and `create-page-route-handler.spec.ts` (this directory) use — a hand mock
  * of `response.streamReact` would prove nothing about the real wire seam this
  * file exists to gate.
@@ -33,7 +33,7 @@ import type { PipeableStream } from "react-dom/server";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Response, type HttpContext } from "@warlock.js/core";
 import { PAYLOAD_SCRIPT_ID } from "../../src/components/document-context";
-import { createCoreHttp, requestContext } from "./fixtures/core-http";
+import { createCoreHttp, requestContext } from "../../src/server/__fixtures__/core-http";
 import * as App from "./fixtures/root";
 import * as layout from "./fixtures/layout";
 import { createPageRouteHandler, type PageModuleLoader } from "../../src/server/create-page-route-handler";

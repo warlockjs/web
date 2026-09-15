@@ -11,7 +11,7 @@ import { createElement } from "react";
 import { parse } from "devalue";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Response, setConfig } from "@warlock.js/core";
-import { createCoreHttp, requestContext } from "./fixtures/core-http";
+import { createCoreHttp, requestContext } from "../../src/server/__fixtures__/core-http";
 import * as App from "./fixtures/root";
 import * as layout from "./fixtures/layout";
 import { defer } from "../../src/loaders/defer";

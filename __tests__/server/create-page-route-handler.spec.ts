@@ -13,7 +13,7 @@ import {
 } from "../../src/server/index";
 import { connectSharedStore, type SharedStoreResolver } from "../../src/shared";
 import { expectHydrationPayloadKeys } from "../shared/expect-payload-keys";
-import { requestContext } from "./fixtures/core-http";
+import { requestContext } from "../../src/server/__fixtures__/core-http";
 import * as App from "./fixtures/root";
 import * as contactPage from "./fixtures/contact.page";
 import * as layout from "./fixtures/layout";
@@ -237,7 +237,7 @@ function recordingContext(
      * `request.locale` (`core/src/http/request.ts:402`) — the same field the
      * 404 page and every pipeline fixture read. Fixed to the framework's own
      * default (`config.key("app.localeCode")`, which resolves to `"en"`
-     * absent an app override — see `__tests__/server/fixtures/core-http.ts`'s
+     * absent an app override — see `src/server/__fixtures__/core-http.ts`'s
      * real-`Request` fixture, whose default locale is likewise `"en"`) so this
      * stand-in stays faithful to core without duplicating its resolution
      * logic.

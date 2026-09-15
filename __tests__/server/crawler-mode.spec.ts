@@ -14,7 +14,7 @@
 import { createElement, Suspense, use } from "react";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Response, setConfig, type HttpContext } from "@warlock.js/core";
-import { createCoreHttp, requestContext } from "./fixtures/core-http";
+import { createCoreHttp, requestContext } from "../../src/server/__fixtures__/core-http";
 import * as App from "./fixtures/root";
 import * as layout from "./fixtures/layout";
 import { defer } from "../../src/loaders/defer";

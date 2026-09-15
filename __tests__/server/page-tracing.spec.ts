@@ -9,7 +9,7 @@
  *                      every deferred settlement (`create-page-route-handler.ts`)
  *
  * Real core `Request`/`Response` throughout (`createCoreHttp`,
- * `fixtures/core-http.ts`) and the real `createPageRouteHandler`, the same
+ * `src/server/__fixtures__/core-http.ts`) and the real `createPageRouteHandler`, the same
  * construction `streamed-document.parity.spec.ts` and `defer-streaming.spec.ts`
  * in this directory use — a hand mock of `response.streamReact` would prove
  * nothing about the real wire seam "stream.end" times.
@@ -31,7 +31,7 @@ import {
 } from "../../src/server/create-page-route-handler";
 import { connectPageContext, type PageContextRunner } from "../../src/server/index";
 import { connectSharedStore, type SharedStoreResolver } from "../../src/shared";
-import { createCoreHttp, requestContext } from "./fixtures/core-http";
+import { createCoreHttp, requestContext } from "../../src/server/__fixtures__/core-http";
 import * as App from "./fixtures/root";
 import * as layout from "./fixtures/layout";
 

@@ -239,8 +239,11 @@ describe("changeLocaleCode — the happy path", () => {
 
     await createLocaleChanger(scenario.runtime)("ar");
 
-    expect(scenario.writes[0].routeSource).toBe(onScreenBefore.routeSource);
-    expect(scenario.writes[0].payload).not.toBe(onScreenBefore.payload);
+    const [write] = scenario.writes;
+    if (!write) throw new Error("expected changeLocaleCode to have written a page");
+
+    expect(write.routeSource).toBe(onScreenBefore.routeSource);
+    expect(write.payload).not.toBe(onScreenBefore.payload);
   });
 });
 

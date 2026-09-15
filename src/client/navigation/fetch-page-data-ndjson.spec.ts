@@ -86,6 +86,7 @@ describe("fetchPageData — NDJSON streaming (Stage 2 slice S3)", () => {
 
     const result = await fetchPromise;
     if (result.type !== "payload") throw new Error("expected a payload result");
+    const { payload } = result;
 
     class Boundary extends Component<{ children: ReactNode }, { failed: boolean }> {
       state = { failed: false };
@@ -98,7 +99,7 @@ describe("fetchPageData — NDJSON streaming (Stage 2 slice S3)", () => {
     }
 
     function Reviews() {
-      const value = use((result.payload.pageData as { reviews: Promise<{ rating: number }> }).reviews);
+      const value = use((payload.pageData as { reviews: Promise<{ rating: number }> }).reviews);
       return createElement("div", null, JSON.stringify(value));
     }
 

@@ -13,7 +13,7 @@
 import { createElement } from "react";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Response } from "@warlock.js/core";
-import { createCoreHttp, requestContext } from "./fixtures/core-http";
+import { createCoreHttp, requestContext } from "../../src/server/__fixtures__/core-http";
 import * as App from "./fixtures/root";
 import { defer } from "../../src/loaders/defer";
 import {

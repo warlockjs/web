@@ -1,6 +1,6 @@
 import { parse } from "devalue";
 import { describe, expect, it } from "vitest";
-import { createCoreHttp } from "../../__tests__/server/fixtures/core-http";
+import { createCoreHttp } from "./__fixtures__/core-http";
 import type { PageDataBundle } from "./execute-page-request";
 import { NDJSON_CONTENT_TYPE, writeDeferredNdjsonResponse } from "./write-deferred-ndjson-response";
 
