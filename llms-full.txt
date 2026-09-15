@@ -1660,6 +1660,8 @@ export default function App({ children }: AppProps) {
 
 `useTextDirection()` derives `"rtl"` or `"ltr"` from the same locale `useLocale()` already exposes — via `localeDirection()`, a pure function safe to call on the server or the client. No hydration payload change is involved: the direction is computed from the locale that already made the trip, not carried separately.
 
+To switch the active locale without a full reload, call `changeLocaleCode(code)`. The server persists the choice in its `locale` cookie when the resulting navigation data request carries `?locale=`, so `lang` and `dir` on the next render (and every render after) reflect the new locale.
+
 ## `#root` is the hydration boundary
 
 The server renders this document shape:

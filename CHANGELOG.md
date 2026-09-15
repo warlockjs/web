@@ -9,6 +9,10 @@ All notable changes to `@warlock.js/web` are documented here.
 - Emitted scripts carry the request's CSP nonce.
 - `<ClientOnly>` and `useIsClient()` — render browser-only UI with a server fallback and no hydration mismatch.
 - `defer()` in page loaders — stream a slow top-level loader key in after the shell instead of blocking the first byte on it, read it with React's `use()` inside `<Suspense>`. A rejection or a `web.streaming.deferTimeout` timeout resolves to the nearest `<Suspense>` error boundary with status 200 already sent, never a different HTTP status. Client navigations stream the same values as NDJSON automatically. `metadata()` may read only resolved keys — reading a deferred one throws `DeferredKeyInMetadataError`, naming the key and the page, in dev and in production. See the `stream-deferred-data` skill.
+- Scroll position is restored on back/forward client navigation, keyed per history entry and persisted to `sessionStorage`. New navigations scroll to the top, or to the hash fragment when there is one.
+- `localeDirection(locale)` and `useTextDirection()`: one locale-to-direction resolver shared by server and client. Root templates set `<html lang={locale} dir={useTextDirection()}>`.
+- `changeLocaleCode(code)` switches the active locale without a full reload. The server persists the choice in its `locale` cookie when a navigation data request carries `?locale=`.
+- Page requests report `loader` (per level), `render.shell` and `stream.end` phases through core's `http.tracing` hooks when tracing is enabled (off by default).
 
 ### Changed
 
