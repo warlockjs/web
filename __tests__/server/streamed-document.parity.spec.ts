@@ -18,29 +18,34 @@
  *   3. Disconnect — a client going away mid-stream aborts the React render.
  *
  * Real core `Request`/`Response` throughout (`createCoreHttp`,
- * `__tests__/server/fixtures/core-http.ts`), the same construction
- * `__tests__/server/page-redirect-wire.spec.ts` and
- * `__tests__/server/create-page-route-handler.spec.ts` use — a hand mock of
- * `response.streamReact` would prove nothing about the real wire seam this
+ * `fixtures/core-http.ts`), the same construction `page-redirect-wire.spec.ts`
+ * and `create-page-route-handler.spec.ts` (this directory) use — a hand mock
+ * of `response.streamReact` would prove nothing about the real wire seam this
  * file exists to gate.
+ *
+ * Lives under `__tests__/server/`, not co-located in `src/server/`, because it
+ * imports the real-Request/Response fixtures under `./fixtures/`, which sit
+ * outside `web/tsconfig.json`'s `rootDir` (`./src`) — the same placement
+ * `page-redirect-wire.spec.ts` and this directory's own
+ * `create-page-route-handler.spec.ts` already use for exactly that reason.
  */
 import { createElement } from "react";
 import type { PipeableStream } from "react-dom/server";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Response, type HttpContext } from "@warlock.js/core";
-import { PAYLOAD_SCRIPT_ID } from "../components/document-context";
-import { createCoreHttp, requestContext } from "../../__tests__/server/fixtures/core-http";
-import * as App from "../../__tests__/server/fixtures/root";
-import * as layout from "../../__tests__/server/fixtures/layout";
-import { createPageRouteHandler, type PageModuleLoader } from "./create-page-route-handler";
+import { PAYLOAD_SCRIPT_ID } from "../../src/components/document-context";
+import { createCoreHttp, requestContext } from "./fixtures/core-http";
+import * as App from "./fixtures/root";
+import * as layout from "./fixtures/layout";
+import { createPageRouteHandler, type PageModuleLoader } from "../../src/server/create-page-route-handler";
 import {
   connectPageContext,
   renderPageRequest,
   type PageContextRunner,
   type PageRouteEntry,
   type PageTripleModule,
-} from "./index";
-import { connectSharedStore, type SharedStoreResolver } from "../shared";
+} from "../../src/server/index";
+import { connectSharedStore, type SharedStoreResolver } from "../../src/shared";
 
 /**
  * Every `PipeableStream` the REAL `renderToPipeableStream` ever produced in
@@ -71,7 +76,7 @@ vi.mock("react-dom/server", async (importOriginal) => {
       const realAbort = stream.abort.bind(stream);
       const abortSpy = vitest.fn((reason?: unknown) => realAbort(reason));
 
-      (stream as { abort: typeof abortSpy }).abort = abortSpy;
+      stream.abort = abortSpy;
       capturedStreams.push(stream as never);
 
       return stream;
@@ -89,8 +94,8 @@ let previousResolver: SharedStoreResolver | undefined;
 beforeAll(() => {
   // The same two boot-time seams every other real-Request/Response server
   // spec wires up (`page-redirect-wire.spec.ts`,
-  // `__tests__/server/create-page-route-handler.spec.ts`) — the fixture
-  // App/layout write to `shared` and expect a live page context.
+  // `create-page-route-handler.spec.ts`) — the fixture App/layout write to
+  // `shared` and expect a live page context.
   previousRunner = connectPageContext(requestContext as unknown as PageContextRunner);
   previousResolver = connectSharedStore(() => requestContext.getStore() as never);
 });
@@ -132,9 +137,9 @@ async function flushAsyncWork(rounds = 3): Promise<void> {
 describe("streamed document parity — streamed bytes equal the buffered renderToString bytes", () => {
   /**
    * A representative page: App + Layout (both with their own loader data,
-   * `../../__tests__/server/fixtures/root.tsx` / `layout.tsx`) + a page with
-   * its OWN loader data, a stylesheet, the hydration payload script, and the
-   * hydration client entry script carrying the request's CSP nonce.
+   * `./fixtures/root.tsx` / `layout.tsx`) + a page with its OWN loader data,
+   * a stylesheet, the hydration payload script, and the hydration client
+   * entry script carrying the request's CSP nonce.
    */
   it(
     "puts byte-identical bytes on the wire to what render-page.ts's own buffered .html describes for the SAME render",
@@ -336,6 +341,12 @@ describe("a client disconnect mid-stream aborts the React render", () => {
       expect(rendered.pipeableStream).toBeDefined();
       expect(capturedStreams).toHaveLength(1);
       const captured = capturedStreams[0];
+
+      if (!captured) {
+        throw new Error(
+          "expected the mocked renderToPipeableStream to have captured exactly one stream",
+        );
+      }
 
       // Exactly the production seam (`create-page-route-handler.ts`): hand
       // the stream to core's real `Response.streamReact`. Not awaited here on
