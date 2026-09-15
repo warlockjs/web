@@ -28,6 +28,7 @@ import {
   Response,
   type FastifyInstance,
   type HttpContext,
+  type Request,
 } from "@warlock.js/core";
 import { stringify } from "devalue";
 
@@ -117,6 +118,38 @@ function applyCommit(
 
   for (const cookie of rendered.cookies ?? []) {
     applyBufferedCookie(response, cookie);
+  }
+}
+
+/**
+ * `changeLocaleCode()`'s client half asks for a locale switch by putting
+ * `?locale=<code>` on a navigation DATA request's FETCH URL only — never on a
+ * document load, and never any other way (`client/navigation/change-locale-code.ts`).
+ * Persisting it here, through the SAME `response.setLocale()` an ordinary
+ * controller would call, writes the SAME cookie `request.locale` already read
+ * it back from (`core/src/http/request.ts:352-360`), so a later full load
+ * agrees without the query param.
+ *
+ * `request.locale`, not the raw query value: `resolveLocale()` has already run
+ * the query value through `cacheLocale()`'s `app.localeCodes` allow-list by
+ * the time this runs, so a code outside it is already the configured
+ * fallback — and the fallback, not what the client asked for, is what gets
+ * persisted.
+ *
+ * Called from TWO seams that must never disagree: the MISS/full-render path
+ * below (`if (wantsData)`), and the cache HIT path above it. A HIT never runs
+ * the loader/render pipeline at all — that is the entire point of caching —
+ * but it must still run this ONE side effect, or a locale switch served from
+ * a warm cache entry returns the right body while silently never persisting
+ * the cookie, and the next full load reverts to the old locale
+ * (`page-server-cache.spec.ts` — "a HIT still persists a requested locale
+ * switch"). A full document load with the same `?locale=` param never calls
+ * this — it is gated on `wantsData` by both call sites — so it never
+ * persists.
+ */
+function persistRequestedLocale(request: Request, response: Response): void {
+  if (typeof request.query["locale"] === "string" && request.query["locale"].length > 0) {
+    response.setLocale(request.locale);
   }
 }
 
@@ -363,6 +396,18 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
             // await-and-inline path, reused only on the MISS side below.
             markPageResponse(request);
 
+            // BEFORE the early return, and before the `Cache-Control` below:
+            // a navigation data request's `?locale=` switch must persist even
+            // when served from the cache — see `persistRequestedLocale`. When
+            // it does write a cookie, the `Set-Cookie` cache-floor `onSend`
+            // hook (`set-cookie-cache-floor-hook.ts`, registered above) then
+            // downgrades the `Cache-Control` this seam is about to set to
+            // `private, no-store` at send time — the same floor a MISS gets
+            // from `applyResponseCacheFloor`, just applied one hook later.
+            if (wantsData) {
+              persistRequestedLocale(request, response);
+            }
+
             // Replays exactly what a MISS on this same route would emit: the
             // opt-in already requires `public: true`, so this is the same
             // `Cache-Control` `applyResponseCacheFloor` would compute for a
@@ -601,25 +646,9 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       }
 
       if (wantsData) {
-        // `changeLocaleCode()`'s client half asks for a locale
-        // switch by putting `?locale=<code>` on a navigation DATA request's
-        // FETCH URL only — never on a document load, and never any other way
-        // (`client/navigation/change-locale-code.ts`). Persisting it here,
-        // through the SAME `response.setLocale()` an ordinary controller
-        // would call, writes the SAME cookie `request.locale` already read it
-        // back from (`core/src/http/request.ts:352-360`), so a later full
-        // load agrees without the query param.
-        //
-        // `request.locale`, not the raw query value: `resolveLocale()` has
-        // already run the query value through `cacheLocale()`'s
-        // `app.localeCodes` allow-list by the time this line runs, so a code
-        // outside it is already the configured fallback — and the fallback,
-        // not what the client asked for, is what gets persisted. A full
-        // document load with the same `?locale=` param never reaches this
-        // branch, so it never persists.
-        if (typeof request.query["locale"] === "string" && request.query["locale"].length > 0) {
-          response.setLocale(request.locale);
-        }
+        // See `persistRequestedLocale` — the cache HIT branch above calls the
+        // same function, for the same reason.
+        persistRequestedLocale(request, response);
 
         // So a shared cache can never serve a document to a client that asked for
         // JSON, or the reverse. See `data-request.ts` on why this stays even

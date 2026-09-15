@@ -487,6 +487,50 @@ describe("server-side page cache (route.cache.serverCache)", () => {
     expect(renderPageRequest).toHaveBeenCalledTimes(1);
   });
 
+  // ── Locale switch persists even when served from the cache ─────────────
+  it("a HIT still persists a requested locale switch: Set-Cookie and Cache-Control both reflect it", async () => {
+    renderPageRequest.mockImplementation(async () => renderedJson());
+
+    const first = await server.inject({
+      method: "GET",
+      url: "/__scache-locale?locale=ar",
+      headers: { [WARLOCK_DATA_REQUEST_HEADER]: WARLOCK_DATA_REQUEST_VALUE },
+    });
+    expect(first.headers["x-warlock-cache"]).toBe("miss");
+    expect(first.headers["set-cookie"]).toBeDefined();
+    expect(String(first.headers["set-cookie"])).toContain("ar");
+
+    const second = await server.inject({
+      method: "GET",
+      url: "/__scache-locale?locale=ar",
+      headers: { [WARLOCK_DATA_REQUEST_HEADER]: WARLOCK_DATA_REQUEST_VALUE },
+    });
+    expect(second.headers["x-warlock-cache"]).toBe("hit");
+    expect(renderPageRequest).toHaveBeenCalledTimes(1);
+
+    // The bug: a HIT returned the right (cached) body while never calling
+    // `response.setLocale()`, so no `Set-Cookie` was ever emitted and the
+    // next full load would silently revert to the old locale.
+    expect(second.headers["set-cookie"]).toBeDefined();
+    expect(String(second.headers["set-cookie"])).toContain("ar");
+
+    // A per-visitor locale cookie must never be replayed from a shared
+    // cache as publicly cacheable — the same floor a MISS gets from
+    // `applyResponseCacheFloor` (`response-cache-floor.ts`), applied here by
+    // `set-cookie-cache-floor-hook.ts`'s `onSend` hook.
+    expect(second.headers["cache-control"]).toBe("private, no-store");
+  });
+
+  it("a plain HIT with no `?locale=` on the request never persists anything: no Set-Cookie, public Cache-Control kept", async () => {
+    const first = await server.inject({ method: "GET", url: "/__scache-basic" });
+    expect(first.headers["x-warlock-cache"]).toBe("miss");
+
+    const second = await server.inject({ method: "GET", url: "/__scache-basic" });
+    expect(second.headers["x-warlock-cache"]).toBe("hit");
+    expect(second.headers["set-cookie"]).toBeUndefined();
+    expect(second.headers["cache-control"]).toBe("public, max-age=60");
+  });
+
   // ── Missing @warlock.js/cache dependency ─────────────────────────────────
   it("fails loudly, naming @warlock.js/cache, when the module cannot be loaded", async () => {
     vi.doMock("@warlock.js/cache", () => {
