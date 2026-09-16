@@ -133,8 +133,7 @@ export type RenderPageRequestOptions = {
    */
   waitForAll?: boolean;
   /**
-   * Stage 2 slice S3 (`releases/v5.12-streaming-design.md`, contract rule 10):
-   * true when a DATA request should AWAIT every deferred settlement and
+   * True when a DATA request should AWAIT every deferred settlement and
    * inline the resolved values into `pageData` instead of leaving
    * `deferredKeys`/`deferredSettlements` on the bundle for the caller to
    * stream as NDJSON. Ignored when `dataRequest` is false or the page has no
@@ -145,8 +144,8 @@ export type RenderPageRequestOptions = {
    */
   awaitDeferredForDataRequest?: boolean;
   /**
-   * Crawler mode (Stage 1 point 6, `releases/v5.12-streaming-design.md`): a
-   * FULL-DOCUMENT request from a detected crawler (`detect-crawler.ts`) must
+   * Crawler mode: a FULL-DOCUMENT request from a detected crawler
+   * (`detect-crawler.ts`) must
    * receive the fully resolved document, never the streamed shell plus
    * deferred chunks — a crawler has no chance to observe a later chunk the
    * way a browser does. When true on a document request (`dataRequest`
@@ -987,9 +986,9 @@ async function finishRender(
  * `error.page.tsx`. A normal app error page reached through `finishRender`
  * renders inside a real triple and stays hydratable; this path never does.
  *
- * Deliberately still `renderToString`, not streamed (Stage 1,
- * `releases/v5.12-streaming-design.md`): this is the ONE terminal attempt at
- * a module-load/registration failure, already exceptional and rare, and
+ * Deliberately still `renderToString`, not streamed: this is the ONE
+ * terminal attempt at a module-load/registration failure, already
+ * exceptional and rare, and
  * there is no real triple behind it for a second, streaming render pass to
  * prove safe the way `finishRender`'s escalation loop does for every other
  * document. Buffering the one attempt this function ever makes costs nothing

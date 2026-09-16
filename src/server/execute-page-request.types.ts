@@ -158,8 +158,7 @@ export type PageDataBundle = {
   errorPage?: SerializedErrorPageProps;
   /**
    * Top-level PAGE loader keys returned as promises via `defer()`, in
-   * declaration order (Stage 2, `releases/v5.12-streaming-design.md`,
-   * contract rule 3). Undefined for a page that never called `defer()` —
+   * declaration order. Undefined for a page that never called `defer()` —
    * `build-hydration-payload.ts` reads this to know which `pageData` keys to
    * omit from the wire and to add the payload's own `deferred` list.
    */

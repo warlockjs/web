@@ -327,10 +327,11 @@ export async function executePageRequest<TResult = PageDataBundle>(
         break;
       }
 
-      // Stage 2 streaming (`releases/v5.12-streaming-design.md`, "Stage 2
-      // implementation contract" rules 1-2): `defer()` is a PAGE-loader-only
-      // marker. An app/layout loader returning one is a dev mistake, named
-      // loudly — see `DeferredInNonPageLoaderError`.
+      // `defer()` is a PAGE-loader-only marker. An app/layout loader's data
+      // composes every page under it, including pages that never read the
+      // deferred value, so deferring it would either block anyway or leave
+      // the document composing around a promise nothing unwraps — treated as
+      // a dev mistake, named loudly. See `DeferredInNonPageLoaderError`.
       if (isDeferred(value)) {
         if (level !== "page") {
           throw new DeferredInNonPageLoaderError(level);

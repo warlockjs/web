@@ -35,10 +35,9 @@ import {
 } from "../runtime/defer-registry";
 
 /**
- * Stage 2 slice S3 (`releases/v5.12-streaming-design.md`, contract rule 10):
- * the wire content type of the streaming representation. Kept local to this
- * file (never re-exported) — the server's own copy lives in
- * `web/src/server/write-deferred-ndjson-response.ts`, and the two sides
+ * The wire content type of the streaming (deferred-values) representation.
+ * Kept local to this file (never re-exported) — the server's own copy lives
+ * in `web/src/server/write-deferred-ndjson-response.ts`, and the two sides
  * agreeing on the STRING is the whole contract; nothing here needs the
  * server's module.
  */

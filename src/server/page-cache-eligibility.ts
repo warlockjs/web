@@ -21,9 +21,10 @@ export type CredentialReadableRequest = {
  * Whether the INCOMING request carries a credential — an `Authorization`
  * header or the configured auth cookie. This is a cheap, pre-render signal,
  * not a verification: it exists only to decide whether the page cache is
- * even consulted (decision 4, `releases/v5.12-page-cache-design-note.md`),
- * mirroring how `@warlock.js/auth`'s own middleware reads the raw candidate
- * before ever calling `jwt.verify`.
+ * even consulted, because a guest-cached page must never be handed to a
+ * request that looks authenticated before request-scoped personalization has
+ * had a chance to run — mirroring how `@warlock.js/auth`'s own middleware
+ * reads the raw candidate before ever calling `jwt.verify`.
  *
  * Read BEFORE the loader/module-load Promise.all and before any cache
  * lookup — see `create-page-route-handler.ts`.
@@ -70,8 +71,10 @@ export type StoreEligibilityInput = {
  * - No `Set-Cookie`, buffered or already flushed onto the live response.
  * - `status === 200`.
  * - Not a real crawler request — a crawler's fully-resolved render is safe to
- *   READ from the cache, but is never itself stored (see the design note's
- *   "never store a crawler render" choice).
+ *   READ from the cache, but is never itself stored: a browser must still
+ *   get the streamed shell on a MISS, which a crawler-detected render never
+ *   produces, so storing it under the same key would serve the wrong shape
+ *   to the next ordinary visitor.
  */
 export function isStoreEligible(input: StoreEligibilityInput): boolean {
   return (

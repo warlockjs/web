@@ -18,10 +18,10 @@ export interface SharedContext {}
 
 export type { HttpContext, PageContext } from "./context";
 export type { PageLoader, LayoutLoader, AppLoader } from "./loaders";
-// Server-safe by construction (no React/react-dom import) — Stage 2
-// streaming's `defer()` marker (`releases/v5.12-streaming-design.md`, "Stage
-// 2 implementation contract" rule 1). Client bundle weight is unaffected:
-// nothing in `./loaders/defer` imports anything client-only.
+// Server-safe by construction (no React/react-dom import) — the `defer()`
+// marker a page loader returns to stream data after the shell. Client
+// bundle weight is unaffected: nothing in `./loaders/defer` imports
+// anything client-only.
 export { defer, isDeferred, DEFERRED_BRAND } from "./loaders/defer";
 export type { DeferredResult } from "./loaders/defer";
 export type { PageProps, LayoutProps, AppProps } from "./props";

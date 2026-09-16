@@ -10,9 +10,10 @@ export type ScriptsProps = {
 
 /**
  * Renders the serialized loader data/`shared` payload, followed by the
- * hydration client entry module — both through React (Stage 1 streaming SSR,
- * `releases/v5.12-streaming-design.md`). The client module used to be spliced
- * into the rendered HTML string after the fact
+ * hydration client entry module — both through React, so streaming SSR can
+ * flush them as part of the normal render instead of needing a finished HTML
+ * string to splice into. The client module used to be spliced into the
+ * rendered HTML string after the fact
  * (`create-page-route-handler.ts`'s old `installHydrationClientModule`); it
  * is now real output from this component, in the same document-context slot
  * the payload script already reads, so both carry the request's CSP nonce

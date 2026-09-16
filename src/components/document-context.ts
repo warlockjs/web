@@ -154,12 +154,12 @@ export type DocumentContextValue = {
   /**
    * This page's resolved stylesheet URLs, in cascade order (root, then
    * outer-to-inner layouts, then the page). Rendered by `<Head/>` as
-   * render-blocking `<link rel="stylesheet">` tags — Stage 1 streaming SSR
-   * (`releases/v5.12-streaming-design.md`) moved this from a post-render
-   * string splice (`create-page-route-handler.ts`'s old `installStylesheets`)
-   * to real React output, so it now has to travel through this context like
-   * every other document slot. Absent or empty means no stylesheets for this
-   * page, never a failed resolution.
+   * render-blocking `<link rel="stylesheet">` tags — streaming SSR renders
+   * the document through React instead of splicing strings into it after the
+   * fact (`create-page-route-handler.ts`'s old `installStylesheets`), so it
+   * now has to travel through this context like every other document slot.
+   * Absent or empty means no stylesheets for this page, never a failed
+   * resolution.
    */
   stylesheetUrls?: readonly string[];
   /**

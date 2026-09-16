@@ -1,8 +1,7 @@
 /**
- * Crawler detection (Stage 1 point 6, `releases/v5.12-streaming-design.md`)
- * — the three configured shapes of `web.streaming.crawlers`, tested against
- * a real core `Request` so `request.header()`'s lowercasing is exercised for
- * real, not assumed.
+ * Crawler detection — the three configured shapes of
+ * `web.streaming.crawlers`, tested against a real core `Request` so
+ * `request.header()`'s lowercasing is exercised for real, not assumed.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { setConfig } from "@warlock.js/core";

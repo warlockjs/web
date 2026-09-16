@@ -1,9 +1,7 @@
 /**
- * Streaming SSR, Stage 2 slice S3 (`releases/v5.12-streaming-design.md`,
- * "Stage 2 implementation contract" rule 10, the "`Accept` includes
- * `application/x-ndjson`" branch) — write the NDJSON representation of a
- * client-navigation DATA request for a page that deferred one or more loader
- * keys.
+ * Write the NDJSON representation of a client-navigation DATA request, for a
+ * page that deferred one or more loader keys, to a client that sent `Accept:
+ * application/x-ndjson`.
  *
  * Line 1 is the ordinary hydration payload — `deferred` included, deferred
  * `pageData` keys omitted — the SAME object `buildHydrationPayload` already

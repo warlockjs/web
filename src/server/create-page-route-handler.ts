@@ -584,10 +584,9 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         cache,
       });
 
-      // Emitted at the SAME seam as the floor, right after it, per lead
-      // decision 8/design note §6 — so the two headers can never be computed
-      // from different auth-state reads. Absent entirely for a route without
-      // `serverCache`.
+      // Emitted at the SAME seam as the floor, right after it, so the two
+      // headers can never be computed from different auth-state reads.
+      // Absent entirely for a route without `serverCache`.
       if (cacheHeaderValue !== undefined) {
         response.header("x-warlock-cache", cacheHeaderValue);
       }

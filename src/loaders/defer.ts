@@ -1,8 +1,6 @@
 /**
- * Streaming SSR, Stage 2 (`releases/v5.12-streaming-design.md`, "Stage 2
- * implementation contract" rules 1-2): the `defer()` marker a PAGE loader
- * returns to stream some of its data after the shell instead of blocking the
- * first byte on it.
+ * The `defer()` marker a PAGE loader returns to stream some of its data
+ * after the shell instead of blocking the first byte on it.
  *
  * Server-safe by construction: this file imports nothing from React, nothing
  * from `react-dom/server`, and nothing that ships client bundle weight — a
@@ -68,7 +66,7 @@ export class DeferredInNonPageLoaderError extends Error {
   public constructor(level: "app" | "layout") {
     super(
       `defer() was returned by the ${level} loader, but streaming is supported only in PAGE ` +
-        "loaders (Stage 2 of releases/v5.12-streaming-design.md). Move the deferred value into " +
+        "loaders. Move the deferred value into " +
         "the page's own loader, or resolve it before returning it from the " +
         `${level} loader.`,
     );

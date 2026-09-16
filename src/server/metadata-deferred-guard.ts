@@ -1,20 +1,18 @@
 /**
- * Streaming SSR, Stage 2 (`releases/v5.12-streaming-design.md`, "Stage 2
- * implementation contract" rule 11 / design section D5): a page's `metadata`
- * may read only RESOLVED loader keys. `defer()`-ed keys resolve after the
- * shell has already flushed — `<head>` (and a client navigation's rewritten
- * head) is decided before any of them settle, so a metadata function that
- * reads one is not "a little early", it is reading something that, by
- * construction, this render can never produce.
+ * A page's `metadata` may read only RESOLVED loader keys. `defer()`-ed keys
+ * resolve after the shell has already flushed — `<head>` (and a client
+ * navigation's rewritten head) is decided before any of them settle, so a
+ * metadata function that reads one is not "a little early", it is reading
+ * something that, by construction, this render can never produce.
  *
  * The guard is a `Proxy` over `bundle.pageData` that traps `get` for exactly
  * the deferred key names and throws {@link DeferredKeyInMetadataError} —
  * naming the key and the page — the instant `metadata()` reads one, in dev
- * AND in production (contract rule 11 makes no dev-only exception). Every
- * OTHER key reads straight through `Reflect.get`, so a page's ordinary,
- * resolved data is exactly as cheap to read as it always was, and a page that
- * never called `defer()` gets its original `data` object back untouched — no
- * `Proxy`, no wrapping cost, nothing to trap.
+ * AND in production, with no dev-only exception. Every OTHER key reads
+ * straight through `Reflect.get`, so a page's ordinary, resolved data is
+ * exactly as cheap to read as it always was, and a page that never called
+ * `defer()` gets its original `data` object back untouched — no `Proxy`, no
+ * wrapping cost, nothing to trap.
  */
 
 /** Raised when `metadata()` reads a `defer()`-ed key — see the module doc above. */
@@ -27,7 +25,7 @@ export class DeferredKeyInMetadataError extends Error {
       `Page "${pagePath}": metadata() read "${key}", a defer()-ed key. metadata() runs before ` +
         "the shell flushes, but a deferred value resolves only after it — read only resolved " +
         "loader keys in metadata(); read the deferred value from inside the page component's " +
-        "own `use()` call instead (Stage 2, releases/v5.12-streaming-design.md, contract rule 11).",
+        "own `use()` call instead.",
     );
     this.name = "DeferredKeyInMetadataError";
   }

@@ -1,6 +1,7 @@
 /**
- * The `web.streaming` config namespace (design doc
- * `releases/v5.12-streaming-design.md`, Stage 1 point 6 and Stage 2 rule 7).
+ * The `web.streaming` config namespace: crawler detection overrides and the
+ * deferred-value timeout, the two runtime knobs streaming SSR exposes to an
+ * app.
  *
  * No `@warlock.js/web` config namespace existed before this card — this file
  * both declares its shape (via `ConfigRegistry` module augmentation, the same

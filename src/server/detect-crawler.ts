@@ -1,8 +1,7 @@
 /**
- * Crawler detection for the fully-resolved-document mode (Stage 1 point 6,
- * `releases/v5.12-streaming-design.md`) — the ONLY reader of
- * `web.streaming.crawlers` (`streaming-config.ts` merely declares the shape
- * and reads it off `config.get`).
+ * Crawler detection for the fully-resolved-document mode — the ONLY reader
+ * of `web.streaming.crawlers` (`streaming-config.ts` merely declares the
+ * shape and reads it off `config.get`).
  *
  * A search/social crawler that never executes the defer-bootstrap script
  * would index the shell forever with the deferred sections missing — it has
