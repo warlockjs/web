@@ -6,10 +6,14 @@ All notable changes to `@warlock.js/web` are documented here.
 
 ### Added
 
+- `linkStylesheetsFor(request, sourceFile)`: middleware or a loader declares a lazily imported module (e.g. a per-tenant theme from a static `import()` map), and the module's CSS is added to that response's render-blocking `<head>` links. Dev resolves it through the module graph, production through the Vite manifest. Before this, a lazy theme painted unstyled until client JS loaded its CSS. An unknown id throws `UnknownStylesheetSourceError` and a malformed id throws `InvalidStylesheetSourceError`. See the new `multi-theme` skill.
+- `route.cache.varyBy?: (request) => string` adds a request-derived component to the server page cache key, and a function-form `route.cache.tags` now receives `{ shared }` as its second argument, e.g. for tagging entries by theme.
 - `useTrans()` now accepts generated, literal translation keys. `warlock dev` augments web's `TranslationKeyRegistry` from registered `groupedTranslations` dictionaries; before generation it safely accepts `string`.
 
 ### Fixed
 
+- The server page cache key now includes the request `Host`. Before, two hosts (tenants) serving the same URL shared one entry, so tenant B could be served tenant A's document and `shared` payload. This also closed a Host-header cache-poisoning path.
+- The server page cache now stores the streamed document the MISS visitor received, not the synchronous `renderToString` pass. That pass rendered a not-yet-resolved `React.lazy` boundary as its Suspense fallback, so every later HIT replayed the fallback.
 - `peerDependencies.react` and `react-dom` tightened from `"*"` to `^19.0.0` — `web` is only built and tested against React 19 (see `devDependencies`), so the peer range now says so instead of accepting any major.
 
 ## 5.12.0 - 2026-09-16

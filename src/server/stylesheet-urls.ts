@@ -25,10 +25,11 @@
  *  - DEV has no manifest — Vite serves modules on demand — so the URLs are
  *    derived from each source file's own import statements.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { ModuleGraph, ModuleNode } from "vite";
 import { CLIENT_ASSET_URL_PREFIX } from "./client-asset-url-prefix";
+import { UnknownStylesheetSourceError } from "./unknown-stylesheet-source-error";
 
 /** Stylesheet extensions Vite can serve directly. Mirrors the build's list. */
 const STYLE_EXTENSIONS = [".css", ".scss", ".sass", ".less", ".styl"];
@@ -333,20 +334,9 @@ export function productionStylesheetUrls(
   clientDir: string,
   sourceFiles: readonly string[],
 ): string[] {
-  const manifestPath = path.join(clientDir, ".vite", "manifest.json");
+  const manifest = readClientManifest(clientDir);
 
-  let manifest: Record<string, ManifestEntry | undefined>;
-
-  try {
-    manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as Record<
-      string,
-      ManifestEntry | undefined
-    >;
-  } catch {
-    return [];
-  }
-
-  if (typeof manifest !== "object" || manifest === null) return [];
+  if (manifest === undefined) return [];
 
   const nodes = new Map<string, StylesheetGraphNode>();
   const roots: StylesheetGraphNode[] = [];
@@ -358,6 +348,28 @@ export function productionStylesheetUrls(
     roots.push(manifestStylesheetGraph(manifest, key, nodes));
   }
 
+  return servableStylesheetUrls(roots);
+}
+
+type ClientManifest = Record<string, ManifestEntry | undefined>;
+
+/** Reads the client build's Vite manifest; `undefined` when missing or malformed. */
+function readClientManifest(clientDir: string): ClientManifest | undefined {
+  const manifestPath = path.join(clientDir, ".vite", "manifest.json");
+
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as unknown;
+
+    return typeof manifest === "object" && manifest !== null
+      ? (manifest as ClientManifest)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Flattens stylesheet graphs into deduped URLs under the one served client asset prefix. */
+function servableStylesheetUrls(roots: readonly StylesheetGraphNode[]): string[] {
   const urls: string[] = [];
 
   for (const url of collectStylesheetGraph(roots)) {
@@ -375,4 +387,60 @@ export function productionStylesheetUrls(
   }
 
   return urls;
+}
+
+/**
+ * PRODUCTION CSS for the source modules ONE request declared through
+ * `linkStylesheetsFor()` — typically the lazily imported theme component
+ * this request renders.
+ *
+ * Same walk as a handler chain member: the module's own `css` plus its
+ * statically imported chunks, never `dynamicImports`. Unlike the chain, an
+ * id with no manifest entry THROWS: it was named explicitly for this request,
+ * so a miss is a typo or a stale build, never "this module has no CSS".
+ */
+export function productionDeclaredStylesheetUrls(
+  clientDir: string,
+  sourceFiles: readonly string[],
+): string[] {
+  const manifest = readClientManifest(clientDir) ?? {};
+  const nodes = new Map<string, StylesheetGraphNode>();
+  const roots: StylesheetGraphNode[] = [];
+
+  for (const sourceFile of sourceFiles) {
+    const key = findManifestKey(manifest, sourceFile);
+
+    if (key === undefined) {
+      throw new UnknownStylesheetSourceError(sourceFile, "production");
+    }
+
+    roots.push(manifestStylesheetGraph(manifest, key, nodes));
+  }
+
+  return servableStylesheetUrls(roots);
+}
+
+/**
+ * DEVELOPMENT CSS for the source modules ONE request declared through
+ * `linkStylesheetsFor()`. Resolved per request, so a warm `moduleGraph`
+ * contributes transitive CSS; the file's own direct imports are always read,
+ * so a cold graph still yields render-blocking links. A declared file that
+ * does not exist throws, for the same reason as production.
+ */
+export function devDeclaredStylesheetUrls(
+  appRoot: string,
+  sourceFiles: readonly string[],
+  moduleGraph?: ModuleGraph,
+): string[] {
+  const absoluteFiles = sourceFiles.map((sourceFile) => {
+    const absolute = path.resolve(appRoot, sourceFile);
+
+    if (!existsSync(absolute)) {
+      throw new UnknownStylesheetSourceError(sourceFile, "development");
+    }
+
+    return absolute;
+  });
+
+  return devHandlerStylesheetUrls(appRoot, absoluteFiles, moduleGraph);
 }

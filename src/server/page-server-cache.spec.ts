@@ -199,6 +199,31 @@ describe("server-side page cache (route.cache.serverCache)", () => {
       tags: (data: unknown) => [`fn:${(data as { id: number }).id}`],
     });
     registerRoute("/__scache-plain", server, { public: true, maxAge: 60 });
+    registerRoute("/__scache-tenant", server, {
+      public: true,
+      maxAge: 60,
+      serverCache: true,
+      tags: ["tenant"],
+    });
+    registerRoute("/__scache-vary", server, {
+      public: true,
+      maxAge: 60,
+      serverCache: true,
+      tags: ["vary"],
+      varyBy: (request) => String(request.header("x-preview-theme", "")),
+    });
+    registerRoute("/__scache-shared-tags", server, {
+      public: true,
+      maxAge: 60,
+      serverCache: true,
+      tags: (_data, { shared }) => [`theme:${(shared as { theme?: string }).theme}`],
+    });
+    registerRoute("/__scache-streamed", server, {
+      public: true,
+      maxAge: 60,
+      serverCache: true,
+      tags: ["streamed"],
+    });
 
     router.scan(server);
   });
@@ -529,6 +554,89 @@ describe("server-side page cache (route.cache.serverCache)", () => {
     expect(second.headers["x-warlock-cache"]).toBe("hit");
     expect(second.headers["set-cookie"]).toBeUndefined();
     expect(second.headers["cache-control"]).toBe("public, max-age=60");
+  });
+
+
+  // ── Tenants and themes never share an entry ─────────────────────────────
+  it("two tenants on different hosts never share an entry for the same URL", async () => {
+    renderPageRequest.mockImplementation(
+      async (_url: string, options: { createHttp: () => { request: Request } }) => {
+        const { request } = options.createHttp();
+        return renderedHtml({ html: `<html><body>${String(request.header("host"))}</body></html>` });
+      },
+    );
+
+    const alpha = await server.inject({ method: "GET", url: "/__scache-tenant", headers: { host: "alpha.test" } });
+    expect(alpha.headers["x-warlock-cache"]).toBe("miss");
+
+    const beta = await server.inject({ method: "GET", url: "/__scache-tenant", headers: { host: "beta.test" } });
+    expect(beta.headers["x-warlock-cache"]).toBe("miss");
+    expect(beta.body).toContain("beta.test");
+    expect(beta.body).not.toContain("alpha.test");
+    expect(renderPageRequest).toHaveBeenCalledTimes(2);
+
+    const alphaAgain = await server.inject({
+      method: "GET",
+      url: "/__scache-tenant",
+      headers: { host: "alpha.test" },
+    });
+    expect(alphaAgain.headers["x-warlock-cache"]).toBe("hit");
+    expect(alphaAgain.body).toContain("alpha.test");
+  });
+
+  it("route.cache.varyBy splits entries on the same host (e.g. a preview-theme header)", async () => {
+    const a = await server.inject({ method: "GET", url: "/__scache-vary", headers: { "x-preview-theme": "a" } });
+    const b = await server.inject({ method: "GET", url: "/__scache-vary", headers: { "x-preview-theme": "b" } });
+    const aAgain = await server.inject({
+      method: "GET",
+      url: "/__scache-vary",
+      headers: { "x-preview-theme": "a" },
+    });
+
+    expect(a.headers["x-warlock-cache"]).toBe("miss");
+    expect(b.headers["x-warlock-cache"]).toBe("miss");
+    expect(aAgain.headers["x-warlock-cache"]).toBe("hit");
+    expect(renderPageRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("a function-form tags receives the request's shared payload, so entries can be tagged by theme", async () => {
+    renderPageRequest.mockImplementation(async () => ({
+      ...renderedHtml(),
+      bundle: { shared: { theme: "alpha" } },
+    }));
+
+    await server.inject({ method: "GET", url: "/__scache-shared-tags" });
+    const hit = await server.inject({ method: "GET", url: "/__scache-shared-tags" });
+    expect(hit.headers["x-warlock-cache"]).toBe("hit");
+
+    await invalidatePageCache(["theme:alpha"]);
+
+    const missAgain = await server.inject({ method: "GET", url: "/__scache-shared-tags" });
+    expect(missAgain.headers["x-warlock-cache"]).toBe("miss");
+  });
+
+  // ── The stored document is the one the visitor received ──────────────────
+  it("stores the streamed document, not the synchronous escalation pass (which renders Suspense fallbacks)", async () => {
+    renderPageRequest.mockImplementation(async () => ({
+      ...renderedHtml({ html: "<html><body><p>loading theme</p></body></html>" }),
+      pipeableStream: {
+        pipe<T extends NodeJS.WritableStream>(destination: T): T {
+          destination.write("<html><body><section>alpha theme</section></body></html>");
+          destination.end();
+          return destination;
+        },
+        abort() {},
+      },
+    }));
+
+    const miss = await server.inject({ method: "GET", url: "/__scache-streamed" });
+    expect(miss.headers["x-warlock-cache"]).toBe("miss");
+    expect(miss.body).toContain("alpha theme");
+
+    const hit = await server.inject({ method: "GET", url: "/__scache-streamed" });
+    expect(hit.headers["x-warlock-cache"]).toBe("hit");
+    expect(hit.body).toBe(miss.body);
+    expect(hit.body).not.toContain("loading theme");
   });
 
   // ── Missing @warlock.js/cache dependency ─────────────────────────────────

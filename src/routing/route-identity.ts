@@ -42,6 +42,8 @@
  * environments along.
  */
 
+import type { Request } from "@warlock.js/core";
+import type { SharedContext } from "../index";
 import { deriveFilesystemRoutePath, deriveFilesystemRouteName } from "./filesystem-route";
 import { classifyPageRoutePath, PageRoutePathNotSupportedError } from "./page-route-grammar";
 
@@ -81,12 +83,28 @@ export type PageCacheOptIn = {
    * function of the resolved page data — called with `rendered.data` (the
    * page's own loader data) when the entry is about to be stored.
    */
-  tags?: string[] | ((data: unknown) => string[]);
+  tags?: string[] | ((data: unknown, context: PageCacheTagContext) => string[]);
+  /**
+   * An extra cache-key component derived from the REQUEST, for pages whose
+   * bytes vary on something other than host, path, query, locale and
+   * representation — e.g. a preview theme chosen by a cookie or header.
+   *
+   * Runs before the cache lookup and therefore before any middleware or
+   * loader, so it must read the request directly; a value middleware computes
+   * later cannot reach it. The request host is always part of the key already.
+   */
+  varyBy?: (request: Request) => string;
   /**
    * Server-cache freshness window in seconds, independent of `maxAge`. Falls
    * back to `maxAge` when omitted — see `../server/create-page-route-handler.ts`.
    */
   ttl?: number;
+};
+
+/** What a function-form `route.cache.tags` receives besides the page data. */
+export type PageCacheTagContext = {
+  /** The request's sealed `shared` payload — e.g. the tenant or theme middleware resolved. */
+  shared: Readonly<SharedContext>;
 };
 
 /** The shape a page's `route` export may declare — mirrors `PageRouteExport` in `install-page-routes.ts`. */
@@ -144,6 +162,15 @@ export function resolvePageRouteCache(
 
   if (cache.public !== true || typeof cache.maxAge !== "number") {
     throw new InvalidPageCacheOptInError(pageFile);
+  }
+
+  if (cache.varyBy !== undefined && typeof cache.varyBy !== "function") {
+    throw new InvalidPageCacheOptInError(
+      pageFile,
+      `"${pageFile}" declares \`route.cache.varyBy\` as ${typeof cache.varyBy}. It must be a ` +
+        "function of the request returning a string, e.g. " +
+        '`varyBy: (request) => String(request.cookie("preview_theme") ?? "")`.',
+    );
   }
 
   // `serverCache: true` already requires `public: true` above — every

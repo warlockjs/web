@@ -220,15 +220,23 @@ export const route = {
 - `serverCache` requires `public: true` (like every `cache` opt-in) AND
   `tags` — a stored entry with no tags could never be invalidated early, so
   its absence is a boot-time `InvalidPageCacheOptInError`.
-- `tags` is a static list, or a function of the resolved page data, evaluated
-  right before the entry is stored.
+- `tags` is a static list, or a function `(data, { shared }) => string[]` of the
+  resolved page data and the request's sealed `shared` payload, evaluated right
+  before the entry is stored — e.g. `` [`theme:${shared.theme}`] ``.
 - `ttl` is the server cache's own freshness window in seconds, independent of
   the CDN-facing `maxAge`; omit it to reuse `maxAge`.
+- `varyBy?: (request) => string` adds a request-derived component to the key,
+  for bytes that vary on something besides the host (a preview-theme cookie).
+  It runs before the lookup — before any middleware — so read the request
+  directly. A non-function is a boot-time `InvalidPageCacheOptInError`.
 
-**Cache key**: the normalised pathname (lower-cased, trailing slash
-stripped), the sorted query string, the resolved `locale`, and the
-representation — `html` for a document request, `json` for the
-`x-warlock-data` representation. A request for the NDJSON representation on
+**Cache key**: the request `Host` (lower-cased, port kept), the normalised
+pathname (lower-cased, trailing slash stripped), the sorted query string, the
+resolved `locale`, the representation — `html` for a document request, `json`
+for the `x-warlock-data` representation — and `varyBy`'s result. Two hosts
+(tenants) never share an entry. The stored document is the streamed one the
+MISS visitor received, so a lazily imported component is cached rendered, not
+as its Suspense fallback. A request for the NDJSON representation on
 a `serverCache` route never streams: the values are fully resolved and
 stored/served as the `json` variant instead, since there is nothing left to
 defer.

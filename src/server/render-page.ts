@@ -43,6 +43,11 @@ import {
 } from "./execute-page-request";
 import { PageMiddlewareShortCircuitError } from "./page-middleware-short-circuit-error";
 import { wrapPipeableStreamForDeferredEmission } from "./defer-emission";
+import { requestStylesheetSources } from "../request-stylesheets";
+import {
+  documentStylesheetUrls,
+  type RequestStylesheetUrlResolver,
+} from "./document-stylesheet-urls";
 import type { DeferSettlement } from "./defer-settlement";
 
 export { escapePayload, PAYLOAD_SCRIPT_ID };
@@ -122,6 +127,13 @@ export type RenderPageRequestOptions = {
   stylesheetUrls?: readonly string[];
   /** The hydration client entry module URL — carried onto `DocumentContextValue.hydrationClientModuleUrl`, same reasoning. */
   hydrationClientModuleUrl?: string;
+  /**
+   * Turns the source ids THIS request declared through `linkStylesheetsFor()`
+   * into stylesheet URLs (manifest in production, module graph in dev). Called
+   * at stage 9, after middleware and loaders ran, only when something was
+   * declared; its URLs are appended after {@link stylesheetUrls}.
+   */
+  resolveRequestStylesheetUrls?: RequestStylesheetUrlResolver;
   /**
    * Selects `onAllReady` (true) over `onShellReady` (false, the default) as
    * the point at which `pipeableStream` on {@link RenderedPage} becomes
@@ -569,6 +581,7 @@ async function finishRender(
   streamOptions: {
     stylesheetUrls: readonly string[] | undefined;
     hydrationClientModuleUrl: string | undefined;
+    resolveRequestStylesheetUrls?: RequestStylesheetUrlResolver;
     waitForAll: boolean;
     awaitDeferredForDataRequest?: boolean;
     /** See `RenderPageRequestOptions.crawler`. */
@@ -761,7 +774,11 @@ async function finishRender(
     payload: buildHydrationPayload(bundle, documentSlots.locale),
     nonce: documentSlots.nonce,
     lang: documentSlots.locale,
-    stylesheetUrls: streamOptions.stylesheetUrls,
+    stylesheetUrls: documentStylesheetUrls(
+      streamOptions.stylesheetUrls,
+      requestStylesheetSources(request),
+      streamOptions.resolveRequestStylesheetUrls,
+    ),
     hydrationClientModuleUrl: streamOptions.hydrationClientModuleUrl,
   };
 
@@ -1103,6 +1120,7 @@ export async function renderPageRequest(
         {
           stylesheetUrls: options.stylesheetUrls,
           hydrationClientModuleUrl: options.hydrationClientModuleUrl,
+          resolveRequestStylesheetUrls: options.resolveRequestStylesheetUrls,
           waitForAll: options.waitForAll ?? false,
           awaitDeferredForDataRequest: options.awaitDeferredForDataRequest,
           crawler: options.crawler,

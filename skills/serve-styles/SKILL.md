@@ -109,6 +109,16 @@ That means root-, matched-layout-, and page-imported CSS are linked in the initi
 
 Only manifest URLs under the one client asset prefix are emitted; a stylesheet outside the mounted asset directory is dropped instead of producing a dead link.
 
+## Per-request stylesheets (lazily imported modules)
+
+A module imported with `import()` — a theme picked per tenant — is not in the handler chain, and production never follows `dynamicImports`. Its CSS would only arrive from client JavaScript, after an unstyled first paint. Declare it for the request instead, from middleware or a loader:
+
+```ts
+linkStylesheetsFor(request, "src/web/themes/alpha/alpha-theme.tsx");
+```
+
+The id is the module's app-root-relative source path. Its CSS (plus its static imports' CSS) is linked after the chain's links, for this response only: module graph in dev, manifest in production. An id the build does not know throws `UnknownStylesheetSourceError`; a malformed id throws `InvalidStylesheetSourceError`. See [`multi-theme/SKILL.md`](../multi-theme/SKILL.md).
+
 ## Where links land
 
 Stylesheet links are inserted into the rendered HTML immediately before the final `</head>`. They are not rendered by the `<Head />` component itself.

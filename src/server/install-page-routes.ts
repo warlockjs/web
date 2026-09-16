@@ -58,7 +58,8 @@ import type { ErrorPageModule } from "./error-page";
 import type { PipelineLoader, PipelineMiddleware } from "./execute-page-request";
 import { layoutPrefixesByDirectory } from "./layout-prefixes";
 import { notFoundPageHandlerOptions } from "./not-found-handler-options";
-import { devHandlerStylesheetUrls } from "./stylesheet-urls";
+import { devDeclaredStylesheetUrls, devHandlerStylesheetUrls } from "./stylesheet-urls";
+import type { RequestStylesheetUrlResolver } from "./document-stylesheet-urls";
 import {
   DuplicateNotFoundPageError,
   isNotFoundPageFile,
@@ -415,6 +416,11 @@ export async function installPageRoutes(
   // See `InstallPageRoutesOptions.appRoot` for why this default, not
   // `appSrcRoot` itself, is the root every handler's CSS is resolved against.
   const stylesheetRoot = options.appRoot ?? path.dirname(appSrcRoot);
+  // Per-request `linkStylesheetsFor()` declarations. Resolved at request time
+  // against the live module graph, so transitive CSS appears once warm; the
+  // declared file's own imports are read directly, so a cold graph still links.
+  const resolveRequestStylesheetUrls: RequestStylesheetUrlResolver = (sourceFiles) =>
+    devDeclaredStylesheetUrls(stylesheetRoot, sourceFiles, vite.moduleGraph);
   const discovered = [...discoverPageFiles(appSrcRoot)].sort((left, right) =>
     left.pageFile < right.pageFile ? -1 : left.pageFile > right.pageFile ? 1 : 0,
   );
@@ -568,6 +574,7 @@ export async function installPageRoutes(
           hydrationClientModuleUrl,
           loadErrorPage,
           stylesheetUrls,
+          resolveRequestStylesheetUrls,
           cache,
           ...httpServerOption,
         }),
@@ -633,6 +640,7 @@ export async function installPageRoutes(
                     [appFile, notFoundPageFile],
                     vite.moduleGraph,
                   ),
+                  resolveRequestStylesheetUrls,
                 }),
                 ...httpServerOption,
               }),

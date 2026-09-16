@@ -42,6 +42,9 @@ import { registerModules, type RegisterableModuleNamespace } from "../register-m
 import { buildHydrationPayload } from "./build-hydration-payload";
 import { applyResponseCacheFloor } from "./response-cache-floor";
 import type { PageCacheOptIn } from "../routing/route-identity";
+import type { SharedContext } from "../index";
+import type { RequestStylesheetUrlResolver } from "./document-stylesheet-urls";
+import { collectPipeableStream } from "./collect-pipeable-stream";
 import { resolveAuthCookieName } from "./auth-cookie-name";
 import { looksAuthenticated, isStoreEligible } from "./page-cache-eligibility";
 import { computePageCacheKey, type PageCacheVariant } from "./page-cache-key";
@@ -161,10 +164,14 @@ function persistRequestedLocale(request: Request, response: Response): void {
  * form: it is the same value a page's own component/loader already sees, and
  * is available at this seam without threading anything new through.
  */
-function resolveCacheTags(tags: PageCacheOptIn["tags"], data: unknown): string[] {
+function resolveCacheTags(
+  tags: PageCacheOptIn["tags"],
+  data: unknown,
+  shared: Readonly<SharedContext> | undefined,
+): string[] {
   if (tags === undefined) return [];
 
-  return typeof tags === "function" ? tags(data) : tags;
+  return typeof tags === "function" ? tags(data, { shared: shared ?? {} }) : tags;
 }
 
 /**
@@ -205,6 +212,12 @@ export type PageRouteHandlerOptions = {
    * a stylesheet failed to resolve, which is the build's job to report.
    */
   stylesheetUrls?: readonly string[];
+  /**
+   * Resolves the source modules a request declared through
+   * `linkStylesheetsFor()` into stylesheet URLs — the installer's dev
+   * (module graph) or production (Vite manifest) answer.
+   */
+  resolveRequestStylesheetUrls?: RequestStylesheetUrlResolver;
   /** Same helper `dev-error-transport.ts` exports — passed in, never imported. */
   /**
    * The pattern stage 1 matches `request.path` against, when it differs from
@@ -296,6 +309,7 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     loadRegistrationLayouts,
     hydrationClientModuleUrl,
     stylesheetUrls,
+    resolveRequestStylesheetUrls,
     matchPath,
     statusForRenderedOk,
     skipPageLoader = false,
@@ -382,6 +396,8 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
           cacheHeaderValue = "bypass";
         } else {
           cacheKey = computePageCacheKey({
+            host: String(request.header("host", "") ?? ""),
+            vary: cache.varyBy?.(request),
             path: request.path,
             query: request.query as Record<string, unknown>,
             locale: request.locale,
@@ -515,6 +531,7 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         // instead — see `page-cache-store.ts`.
         awaitDeferredForDataRequest: attemptStorageAfterRender ? wantsData : wantsData && !wantsNdjson,
         stylesheetUrls,
+        resolveRequestStylesheetUrls,
         hydrationClientModuleUrl,
         // A detected crawler forces `onAllReady` on its own (`render-page.ts`'s
         // `finishRender`) — `waitForAll` here stays `false` for every request
@@ -597,6 +614,9 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       // cache instead of calling `stringify(buildHydrationPayload(...))`
       // twice.
       let precomputedJsonBody: string | undefined;
+      // The drained document stream, when this MISS was stored — sent
+      // buffered below, since the stream itself has been consumed.
+      let storedDocumentBody: string | undefined;
 
       if (attemptStorageAfterRender && cacheKey !== undefined && cache !== undefined) {
         const eligible = isStoreEligible({
@@ -612,13 +632,27 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
 
         if (eligible) {
           const ttl = cache.ttl ?? cache.maxAge;
-          const tags = resolveCacheTags(cache.tags, rendered.data);
+          const tags = resolveCacheTags(cache.tags, rendered.data, rendered.bundle?.shared);
 
           if (pageCacheVariant === "html") {
+            // Store the STREAMED document (already forced to `onAllReady` by
+            // `crawler: true` above), never `rendered.html`: that is the
+            // synchronous escalation pass, where a `React.lazy` boundary that
+            // has not resolved yet in this process renders its Suspense
+            // fallback. The visitor on this MISS got the streamed bytes, so
+            // the stored entry — and every HIT — must be those same bytes.
+            const isMiddlewareBody =
+              rendered.bundle?.shortCircuit?.stage === "middleware" &&
+              !rendered.bundle.shortCircuit.responseSent;
+
+            if (rendered.pipeableStream !== undefined && !isMiddlewareBody) {
+              storedDocumentBody = await collectPipeableStream(rendered.pipeableStream);
+            }
+
             await setPageCacheEntry(
               cacheKey,
               {
-                body: rendered.html,
+                body: storedDocumentBody ?? rendered.html,
                 status: 200,
                 contentType: "text/html",
                 usesDefer: rendered.usesDefer ?? false,
@@ -749,6 +783,12 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       // buffered fallback below exists for a `renderPageRequest` result that
       // is not a genuine document render (a non-standard caller, or a test
       // double) and stays a plain, unspliced send.
+      if (storedDocumentBody !== undefined) {
+        await response.html(storedDocumentBody, status);
+
+        return;
+      }
+
       if (rendered.pipeableStream) {
         response.setContentType("text/html");
         response.setStatusCode(status);

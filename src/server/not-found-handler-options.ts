@@ -31,6 +31,7 @@
  */
 import type { PageModuleLoader, PageRouteHandlerOptions } from "./create-page-route-handler";
 import type { ErrorPageModuleLoader } from "./error-page";
+import type { RequestStylesheetUrlResolver } from "./document-stylesheet-urls";
 import { NOT_FOUND_ROUTE_NAME, NOT_FOUND_ROUTE_PATH } from "./not-found-page";
 
 export type NotFoundPageHandlerInput = {
@@ -43,6 +44,8 @@ export type NotFoundPageHandlerInput = {
   loadErrorPage?: ErrorPageModuleLoader;
   /** Already resolved by the caller — see this module's header for why. */
   stylesheetUrls: readonly string[];
+  /** Resolves per-request `linkStylesheetsFor()` declarations; see `PageRouteHandlerOptions`. */
+  resolveRequestStylesheetUrls?: RequestStylesheetUrlResolver;
 };
 
 /**
@@ -67,6 +70,7 @@ export function notFoundPageHandlerOptions(
     // NO LAYOUT means no layout CSS either — just root and the not-found
     // page's own stylesheets.
     stylesheetUrls: input.stylesheetUrls,
+    resolveRequestStylesheetUrls: input.resolveRequestStylesheetUrls,
     // The URL that missed IS this route's pattern for this request.
     matchPath: (requestPath) => requestPath,
     statusForRenderedOk: 404,

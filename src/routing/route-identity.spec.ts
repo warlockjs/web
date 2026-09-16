@@ -92,6 +92,24 @@ describe("canonicalizeRouteExport", () => {
 });
 
 describe("resolvePageRouteCache", () => {
+  it("rejects a cache.varyBy that is not a function, naming the page file", () => {
+    expect(() =>
+      resolvePageRouteCache(
+        {
+          path: "/store",
+          cache: {
+            public: true,
+            maxAge: 60,
+            serverCache: true,
+            tags: ["store"],
+            varyBy: "theme" as never,
+          },
+        },
+        "src/web/store.page.tsx",
+      ),
+    ).toThrowError(/src\/web\/store\.page\.tsx.*varyBy/);
+  });
+
   it("returns undefined when the route export is undefined", () => {
     expect(resolvePageRouteCache(undefined, "src/web/home.page.tsx")).toBeUndefined();
   });

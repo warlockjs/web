@@ -1,7 +1,8 @@
 /**
  * Pure cache-key composition for the server-side page cache
- * (`page-cache-store.ts`). Mirrors the four axes the page pipeline already
- * varies a response on — path, query, locale and representation — so a
+ * (`page-cache-store.ts`). Mirrors the axes the page pipeline varies a
+ * response on — host, path, query, locale, representation, and a route's
+ * optional `cache.varyBy` — so a
  * request that would get different bytes never shares an entry with one that
  * wouldn't, and a request that would get the SAME bytes always does.
  *
@@ -14,12 +15,20 @@
 export type PageCacheVariant = "html" | "json";
 
 export type PageCacheKeyInput = {
+  /**
+   * The request `Host` header, port included. Two hosts serving the same URL
+   * are two tenants until proven otherwise, and a key without the host lets a
+   * render that reflects the host poison every other host's visitors.
+   */
+  host: string;
   /** The raw request path, query string included — `request.path`. */
   path: string;
   /** The raw request query object — `request.query`. */
   query: Record<string, unknown>;
   locale: string;
   variant: PageCacheVariant;
+  /** The route's own `cache.varyBy(request)` result, when it declares one. */
+  vary?: string;
 };
 
 /**
@@ -63,7 +72,8 @@ function normaliseQuery(query: Record<string, unknown>): string {
 
 /**
  * Composes the server-side page cache key:
- * `(normalised path) + "?" + (sorted query) + "|" + locale + "|" + variant`.
+ * `host + (normalised path) + "?" + (sorted query) + "|" + locale + "|" + variant`,
+ * plus `"|vary=" + varyBy` when the route declares one.
  *
  * The `variant` is decided by the CALLER from `wantsData` alone — a request
  * that asks for NDJSON on a cache-eligible route still resolves to the
@@ -74,5 +84,10 @@ export function computePageCacheKey(input: PageCacheKeyInput): string {
   const pathname = normalisePathname(input.path);
   const query = normaliseQuery(input.query);
 
-  return `${pathname}?${query}|${input.locale}|${input.variant}`;
+  const host = input.host.toLowerCase();
+  const vary = input.vary === undefined ? "" : `|vary=${encodeURIComponent(input.vary)}`;
+
+  // The host is URI-component encoded so no host value can forge the path
+  // part of another entry's key.
+  return `${encodeURIComponent(host)}${pathname}?${query}|${input.locale}|${input.variant}${vary}`;
 }

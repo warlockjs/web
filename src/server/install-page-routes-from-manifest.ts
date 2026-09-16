@@ -42,7 +42,8 @@ import {
 } from "./create-page-route-handler";
 import { layoutPrefixesByDirectory } from "./layout-prefixes";
 import { notFoundPageHandlerOptions } from "./not-found-handler-options";
-import { productionStylesheetUrls } from "./stylesheet-urls";
+import { productionDeclaredStylesheetUrls, productionStylesheetUrls } from "./stylesheet-urls";
+import type { RequestStylesheetUrlResolver } from "./document-stylesheet-urls";
 import {
   DuplicateNotFoundPageError,
   isNotFoundPageFile,
@@ -269,6 +270,23 @@ export function installPageRoutesFromManifest(
 
   if (manifest.pages.length === 0) return [];
 
+  // Per-request `linkStylesheetsFor()` declarations, resolved against the same
+  // client manifest the chains above read. Memoised per declared set: the
+  // manifest is immutable for the life of a production process.
+  const declaredStylesheetUrls = new Map<string, readonly string[]>();
+  const resolveRequestStylesheetUrls: RequestStylesheetUrlResolver = (sourceFiles) => {
+    const key = sourceFiles.join("\n");
+    const cached = declaredStylesheetUrls.get(key);
+
+    if (cached !== undefined) return cached;
+
+    const urls = productionDeclaredStylesheetUrls(clientDir ?? "", sourceFiles);
+
+    declaredStylesheetUrls.set(key, urls);
+
+    return urls;
+  };
+
   const app = manifest.app;
 
   if (app === undefined) {
@@ -395,6 +413,7 @@ export function installPageRoutesFromManifest(
         hydrationClientModuleUrl,
         loadErrorPage,
         stylesheetUrls,
+        resolveRequestStylesheetUrls,
         cache,
       }),
       // `isPage` marks this route as SSR-served. Pages and API routes share one
@@ -437,6 +456,7 @@ export function installPageRoutesFromManifest(
                 clientDir === undefined
                   ? []
                   : productionStylesheetUrls(clientDir, [app.sourceFile, notFoundPage.sourceFile]),
+              resolveRequestStylesheetUrls,
             }),
           ),
   });

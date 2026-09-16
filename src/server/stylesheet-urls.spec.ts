@@ -4,11 +4,14 @@ import path from "node:path";
 import { build, createServer } from "vite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  devDeclaredStylesheetUrls,
   devHandlerStylesheetUrls,
   devStylesheetUrls,
+  productionDeclaredStylesheetUrls,
   productionStylesheetUrls,
   VITE_DIRECT_CSS_QUERY,
 } from "./stylesheet-urls";
+import { UnknownStylesheetSourceError } from "./unknown-stylesheet-source-error";
 
 const temporaryDirectories: string[] = [];
 
@@ -440,4 +443,68 @@ describe("stylesheet collection parity gate", () => {
     },
     REAL_BUILD_TIMEOUT_MS,
   );
+});
+
+describe("declared per-request stylesheet sources (themes)", () => {
+  const themedManifest = {
+    "../app/src/web/home.page.tsx": {
+      file: "assets/home.js",
+      dynamicImports: [
+        "../app/src/web/themes/alpha/alpha-theme.tsx",
+        "../app/src/web/themes/beta/beta-theme.tsx",
+      ],
+    },
+    "../app/src/web/themes/alpha/alpha-theme.tsx": {
+      file: "assets/alpha-theme.js",
+      isDynamicEntry: true,
+      imports: ["src/entry/index.ts"],
+      css: ["assets/alpha-theme.css"],
+    },
+    "../app/src/web/themes/beta/beta-theme.tsx": {
+      file: "assets/beta-theme.js",
+      isDynamicEntry: true,
+      imports: ["src/entry/index.ts"],
+      css: ["assets/beta-theme.css"],
+    },
+    "src/entry/index.ts": { file: "assets/hydration.js", isEntry: true },
+  };
+
+  it("production: resolves ONLY the declared lazily-imported module's css", () => {
+    const clientDir = makeClientDir(themedManifest);
+
+    expect(
+      productionDeclaredStylesheetUrls(clientDir, ["src/web/themes/alpha/alpha-theme.tsx"]),
+    ).toEqual(["/assets/alpha-theme.css"]);
+  });
+
+  it("production: an undeclared-in-manifest source fails loudly, naming it", () => {
+    const clientDir = makeClientDir(themedManifest);
+
+    expect(() =>
+      productionDeclaredStylesheetUrls(clientDir, ["src/web/themes/gamma/gamma-theme.tsx"]),
+    ).toThrow(UnknownStylesheetSourceError);
+    expect(() =>
+      productionDeclaredStylesheetUrls(clientDir, ["src/web/themes/gamma/gamma-theme.tsx"]),
+    ).toThrow("src/web/themes/gamma/gamma-theme.tsx");
+  });
+
+  it("dev: resolves the declared module's own direct css imports from a cold graph", () => {
+    const appRoot = makeTree({
+      "src/web/themes/alpha/alpha-theme.tsx":
+        'import "./alpha.css";\nexport default function A() { return null; }\n',
+      "src/web/themes/alpha/alpha.css": ".theme-alpha { color: red; }\n",
+    });
+
+    expect(devDeclaredStylesheetUrls(appRoot, ["src/web/themes/alpha/alpha-theme.tsx"])).toEqual([
+      `/src/web/themes/alpha/alpha.css${VITE_DIRECT_CSS_QUERY}`,
+    ]);
+  });
+
+  it("dev: a source file that does not exist fails loudly, naming it", () => {
+    const appRoot = makeTree({ "src/web/root.tsx": "export {};\n" });
+
+    expect(() => devDeclaredStylesheetUrls(appRoot, ["src/web/themes/missing.tsx"])).toThrow(
+      UnknownStylesheetSourceError,
+    );
+  });
 });

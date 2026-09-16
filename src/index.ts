@@ -41,6 +41,9 @@ export type {
 } from "./components/document-context";
 export type { PageMetadata } from "./metadata";
 export { shared, useShared } from "./shared";
+// Per-request stylesheets: a lazily imported module picked per request (a
+// tenant theme) declares its source so its CSS is render-blocking in <head>.
+export { InvalidStylesheetSourceError, linkStylesheetsFor } from "./request-stylesheets";
 export { LocaleProvider, useLocale, useTrans } from "./localization";
 export type { LocaleProviderProps, Translate } from "./localization";
 export { localeDirection } from "./text-direction";
