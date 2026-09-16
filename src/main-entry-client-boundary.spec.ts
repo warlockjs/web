@@ -8,7 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /**
  * Regression guard for the Gate A blocker this file's header comment
  * documents in `../index.ts` (`invalidatePageCache` moved to the
- * server-only subpath `@warlock.js/web/server`): the MAIN entry's import
+ * server-only subpath `@warlock.js/web/page-cache`): the MAIN entry's import
  * graph must never be able to reach `@warlock.js/cache` (a server-only
  * `@warlock.js/*` package — `warlock: { environment: "server" }`), because
  * this entry is imported by client code (e.g. `root.tsx`).

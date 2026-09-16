@@ -25,10 +25,10 @@
       "import": "./src/connector/index.ts",
       "default": "./src/connector/index.ts"
     },
-    "./server": {
-      "types": "./src/server/page-cache.ts",
-      "import": "./src/server/page-cache.ts",
-      "default": "./src/server/page-cache.ts"
+    "./page-cache": {
+      "types": "./src/page-cache.ts",
+      "import": "./src/page-cache.ts",
+      "default": "./src/page-cache.ts"
     },
     "./vite": {
       "types": "./src/vite/index.ts",

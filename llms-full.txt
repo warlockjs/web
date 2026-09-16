@@ -365,12 +365,12 @@ usual `Cache-Control`.
 **Invalidation**:
 
 ```ts
-import { invalidatePageCache } from "@warlock.js/web/server";
+import { invalidatePageCache } from "@warlock.js/web/page-cache";
 
 await invalidatePageCache(["products"]);
 ```
 
-Imported from `@warlock.js/web/server`, not the root package: it is
+Imported from `@warlock.js/web/page-cache`, not the root package: it is
 server-only (it reaches `@warlock.js/cache`), and keeping it off the root
 barrel keeps `@warlock.js/cache` out of the client bundle.
 
