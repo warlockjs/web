@@ -30,6 +30,7 @@ import {
 } from "./scroll-restoration";
 import { hydrateScrollPositions } from "./scroll-positions";
 import { scrollToFragment } from "./scroll-to-fragment";
+import { syncDocumentLocale } from "./sync-document-locale";
 
 /**
  * Carry out a scroll decision (`scroll-restoration.ts`) once the target
@@ -197,7 +198,11 @@ export function NavigationRoot({
      * The fragment is PRESERVED in the URL for both cases — see below —
      * whether or not this navigation's decision ends up being `"fragment"`.
      */
-    const apply = async (url: string, replace: boolean, kind: "navigate" | "popstate"): Promise<void> => {
+    const apply = async (
+      url: string,
+      replace: boolean,
+      kind: "navigate" | "popstate",
+    ): Promise<void> => {
       const ticket = ++token;
       /*
         `"replace"` covers a Back/Forward press as well as an explicit
@@ -507,6 +512,27 @@ export function NavigationRoot({
     */
     applyDocumentMetadata(document, current.payload.metadata);
   }, [current.payload]);
+
+  /*
+    The locale `documentElement.lang`/`dir` currently reflect. Seeded with the
+    HYDRATION payload's locale, which is the point: on the initial mount the
+    document is the server's own render for that locale
+    (`components/default-app.tsx:25`), so there is nothing to correct — only a
+    SWAP (a navigation, a refresh, or `changeLocaleCode`) can leave it stale,
+    because `root.tsx` sits outside the hydrated subtree and no client render
+    reaches it (`skills/write-the-root/SKILL.md`). Keyed on the locale value
+    itself, not the payload, so a refresh that produces a new payload object
+    for the SAME locale does not re-write attributes that are already correct.
+  */
+  const appliedLocale = useRef(current.payload.locale);
+
+  useEffect(() => {
+    if (appliedLocale.current === current.payload.locale) return;
+
+    appliedLocale.current = current.payload.locale;
+
+    syncDocumentLocale(document, current.payload.locale);
+  }, [current.payload.locale]);
 
   /*
     DURING RENDER, not in an effect, and that placement is the requirement

@@ -24,6 +24,7 @@ All notable changes to `@warlock.js/web` are documented here.
 
 ### Fixed
 
+- `document.documentElement`'s `lang`/`dir` now follow a client-side locale switch — `changeLocaleCode()`, and any navigation or refresh whose payload carries a different `locale`. Previously `useLocale()`/`useTextDirection()` updated in-page immediately, but `documentElement` kept the last full load's `lang`/`dir` until a reload, because `root.tsx` sits outside the hydrated subtree.
 - **A page middleware that short-circuits a full page load now always answers with something, never a silently empty document.** Previously, a middleware that returned a value WITHOUT writing the reply itself (e.g. `response.setStatusCode(403); return { error }`, or a plain `return { message }`) produced a blank document at that status — the returned value was recorded but never used. A middleware that already wrote its own reply (`response.redirect()`, `.forbidden()`, any call reaching `.send()`) was and is unaffected: the wire already carried the real answer. Now: a `>= 400` short-circuit renders your `error.page.tsx` boundary with that status and the returned value attached to the error; a `2xx` short-circuit sends the returned value as the body, unchanged (JSON-stringified if it's an object) — a page middleware returning 2xx content replaces the page. Client navigations (data requests) are byte-identical to before.
 
 ## 5.11.0 - 2026-09-14

@@ -185,10 +185,15 @@ export function connectLocaleChanger(next: LocaleChanger | undefined): LocaleCha
  * Switch the active locale without a full page reload.
  *
  * Re-fetches the current route's data with `?locale=code` on the request URL
- * only, then swaps the rendered page in — `useLocale()`, `useTextDirection()`
- * and the root `<html lang dir>` all follow from the new payload's `locale` in
- * the same render. The server persists the choice (the framework's `locale`
- * cookie) on that same request, so the next full load agrees.
+ * only, then swaps the rendered page in — `useLocale()` and `useTextDirection()`
+ * follow from the new payload's `locale` in the same render. `root.tsx` sits
+ * outside the hydrated subtree (`skills/write-the-root/SKILL.md`), so no
+ * client render can reach it directly; `NavigationRoot` corrects
+ * `document.documentElement`'s `lang`/`dir` imperatively instead, in an effect
+ * keyed on the payload's `locale` (`navigation-root.tsx`, via
+ * `sync-document-locale.ts`) — the same shape it already uses to correct
+ * `<head>` after a swap. The server persists the choice (the framework's
+ * `locale` cookie) on that same request, so the next full load agrees.
  *
  * Calling it with the locale already active is a no-op: no request is made.
  *
