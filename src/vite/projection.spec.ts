@@ -634,3 +634,137 @@ describe("projection — strips the `prefix` server export", () => {
     expect(code).toContain('from "./helper"');
   });
 });
+
+/**
+ * A type-only import/export is erased at build — TypeScript deletes it before
+ * the runtime ever sees it — so it can never smuggle a server module into the
+ * client bundle, no matter what it names. Projection must never trip its
+ * ambiguity refusal (or the orphan-import removal path) on one of these
+ * forms, in `root.tsx` or in any other projectable file.
+ *
+ * The defect this pins: `import type {} from "./types"` in `root.tsx` fell
+ * into the "bare side-effect import" branch (`decl.specifiers.length === 0`)
+ * and was REFUSED as attribution-ambiguous, even though a type-only import
+ * carries no runtime specifier to be ambiguous about at all.
+ *
+ * Canon reminder for this file: every boundary defect here so far is one rule
+ * inspecting a single FORM while a second form reaches the same place
+ * unexamined. `import { type A, B } from "./server-only"` (a value specifier
+ * riding alongside a type one) and a plain value import are pinned alongside
+ * the type-only forms so the fix can't accidentally widen into "never check
+ * imports again."
+ */
+describe("projection — type-only imports/exports never trip the client boundary", () => {
+  it('allows `import type {} from "./types"` — no specifiers, whole-declaration type-only', async () => {
+    const code = await transformSource(
+      [
+        `import type {} from "./types";`,
+        ``,
+        `export default function App() {`,
+        `  return <html />;`,
+        `}`,
+      ].join("\n"),
+      "root.tsx",
+    );
+
+    expect(code).toContain('import type {} from "./types"');
+    expect(code).toContain("export default function App");
+  });
+
+  it('allows `import type { X } from "./server-module"` — named, whole-declaration type-only', async () => {
+    const code = await transformSource(
+      [
+        `import type { X } from "./server-module";`,
+        ``,
+        `export const loader = async (): Promise<X> => ({}) as X;`,
+        ``,
+        `export default function BlogPage() {`,
+        `  return <h1>Blog</h1>;`,
+        `}`,
+      ].join("\n"),
+      "blog.page.tsx",
+    );
+
+    expect(code).toContain('import type { X } from "./server-module"');
+    expect(code).not.toMatch(/export const loader/);
+    expect(code).toContain("export default function BlogPage");
+  });
+
+  it('allows `import { type X } from "./server-module"` — every specifier individually type-only', async () => {
+    const code = await transformSource(
+      [
+        `import { type X } from "./server-module";`,
+        ``,
+        `export const loader = async (): Promise<X> => ({}) as X;`,
+        ``,
+        `export default function BlogPage() {`,
+        `  return <h1>Blog</h1>;`,
+        `}`,
+      ].join("\n"),
+      "blog.page.tsx",
+    );
+
+    expect(code).toContain('import { type X } from "./server-module"');
+    expect(code).not.toMatch(/export const loader/);
+    expect(code).toContain("export default function BlogPage");
+  });
+
+  it('allows `export type { X } from "./server-module"` — re-export, type-only', async () => {
+    const code = await transformSource(
+      [
+        `export type { X } from "./server-module";`,
+        ``,
+        `export default function BlogPage() {`,
+        `  return <h1>Blog</h1>;`,
+        `}`,
+      ].join("\n"),
+      "blog.page.tsx",
+    );
+
+    expect(code).toContain('export type { X } from "./server-module"');
+    expect(code).toContain("export default function BlogPage");
+  });
+
+  it('still checks the VALUE half of a mixed `import { type A, B } from "./server-only"` and removes it when unused', async () => {
+    const code = await transformSource(
+      [
+        `import { type A, B } from "./server-only";`,
+        ``,
+        `export default function BlogPage() {`,
+        `  return <h1>Blog</h1>;`,
+        `}`,
+      ].join("\n"),
+      "blog.page.tsx",
+    );
+
+    expect(code).not.toMatch(/from ["']\.\/server-only["']/);
+    expect(code).toContain("export default function BlogPage");
+  });
+
+  it("still refuses a plain, fully-unused value import the same as before — the fix does not widen into never checking imports", async () => {
+    const message = await refusalMessage(
+      [`import "./server-only-side-effect";`, ``, `export default function BlogPage() {`, `  return <h1>Blog</h1>;`, `}`].join(
+        "\n",
+      ),
+      "blog.page.tsx",
+    );
+
+    expect(message).toContain('import "./server-only-side-effect"');
+    expect(message).toContain("bare side-effect import");
+  });
+
+  it("still removes an ordinary unused VALUE import (no type involved at all)", async () => {
+    const code = await transformSource(
+      [
+        `import { readSession } from "./server-only-helper";`,
+        ``,
+        `export default function BlogPage() {`,
+        `  return <h1>Blog</h1>;`,
+        `}`,
+      ].join("\n"),
+      "blog.page.tsx",
+    );
+
+    expect(code).not.toMatch(/from ["']\.\/server-only-helper["']/);
+  });
+});

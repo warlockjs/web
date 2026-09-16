@@ -484,6 +484,25 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
     const source = decl.source.value as string;
     if (isKnownSafeAsset(source)) continue; // always survives, no orphan check
 
+    // A type-only import — `import type {} from "./x"` / `import type { X }
+    // from "./x"` (whole-declaration `importKind: "type"`), or `import {
+    // type X } from "./x"` where EVERY specifier is individually marked type
+    // — is erased at build; it never emits a runtime binding, so it cannot
+    // smuggle a server module into the client bundle no matter what it
+    // names or whether anything downstream reads the name. It is therefore
+    // always safe, the same way a known asset extension is: skip both the
+    // bare-side-effect refusal and the orphan-import removal below.
+    //
+    // A MIXED import (`import { type A, B } from "./x"`) still has a real
+    // value specifier and is not covered by this check — it falls through
+    // to the ordinary orphan-import logic beneath, which decides A/B's
+    // survival by whether anything still reads their local names.
+    const isFullyTypeOnlyImport =
+      decl.importKind === "type" ||
+      (decl.specifiers.length > 0 &&
+        (decl.specifiers as any[]).every((spec) => spec.importKind === "type"));
+    if (isFullyTypeOnlyImport) continue;
+
     if (decl.specifiers.length === 0) {
       // A bare side-effect import that isn't a recognized asset extension is
       // just as attribution-ambiguous as an executable statement — could be

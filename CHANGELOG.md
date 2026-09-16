@@ -15,6 +15,7 @@ All notable changes to `@warlock.js/web` are documented here.
 - The server page cache key now includes the request `Host`. Before, two hosts (tenants) serving the same URL shared one entry, so tenant B could be served tenant A's document and `shared` payload. This also closed a Host-header cache-poisoning path.
 - The server page cache now stores the streamed document the MISS visitor received, not the synchronous `renderToString` pass. That pass rendered a not-yet-resolved `React.lazy` boundary as its Suspense fallback, so every later HIT replayed the fallback.
 - `peerDependencies.react` and `react-dom` tightened from `"*"` to `^19.0.0` — `web` is only built and tested against React 19 (see `devDependencies`), so the peer range now says so instead of accepting any major.
+- Projection no longer refuses a type-only import (`import type {} from "./x"`, `import type { X } from "./x"`, `import { type X } from "./x"`) as an attribution-ambiguous statement. A type-only import is erased at build and carries no runtime binding, so it can never reach the client — it was wrongly falling into the "bare side-effect import" refusal. A mixed import (`import { type A, B } from "./x"`) still has its value specifier checked exactly as before.
 
 ## 5.12.0 - 2026-09-16
 
