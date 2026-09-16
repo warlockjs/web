@@ -84,13 +84,13 @@ export { refresh } from "./client/navigation/refresh";
 // `NavigationRoot` connects.
 export { changeLocaleCode } from "./client/navigation/change-locale-code";
 
-// The server-side page cache's invalidation half — the app-code counterpart
-// to `route.cache.serverCache`/`tags` (`./routing/route-identity.ts`'s
-// `PageCacheOptIn`). Server-only despite living in this universal barrel:
-// nothing about it touches React or the client bundle, and every other
-// server-facing export in this file (`Response`-adjacent ones aside) already
-// lives beside the client verbs the same way.
-export { invalidatePageCache } from "./server/invalidate-page-cache";
+// The server-side page cache's invalidation half moved to the server-only
+// subpath `@warlock.js/web/server` (`./server/page-cache.ts`). Its import
+// graph reaches `@warlock.js/cache` (`./server/page-cache-driver.ts`'s
+// `await import(...)`), a server-only `@warlock.js/*` package, and this
+// barrel is reachable from client code (e.g. `root.tsx`) — Gate A refuses
+// that chain, correctly. Import `invalidatePageCache` from
+// `"@warlock.js/web/server"` instead.
 
 // The DECODE half of the query encoder `href()` already uses. Deliberately not a
 // second implementation: both directions stand on one `URLSearchParams` rule, so

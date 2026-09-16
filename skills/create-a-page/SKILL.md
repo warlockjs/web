@@ -249,10 +249,14 @@ usual `Cache-Control`.
 **Invalidation**:
 
 ```ts
-import { invalidatePageCache } from "@warlock.js/web";
+import { invalidatePageCache } from "@warlock.js/web/server";
 
 await invalidatePageCache(["products"]);
 ```
+
+Imported from `@warlock.js/web/server`, not the root package: it is
+server-only (it reaches `@warlock.js/cache`), and keeping it off the root
+barrel keeps `@warlock.js/cache` out of the client bundle.
 
 Evicts every stored entry under any of the given tags, through
 `@warlock.js/cache`'s tag index. Cluster reach depends on the configured
