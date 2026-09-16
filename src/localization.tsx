@@ -1,5 +1,6 @@
 import { transFrom, type Converter, type Translatable } from "@mongez/localization";
 import { createContext, useCallback, useContext, type ReactNode } from "react";
+import type { TranslationKey } from "./index";
 
 export type LocaleProviderProps = {
   readonly locale: string;
@@ -7,7 +8,7 @@ export type LocaleProviderProps = {
 };
 
 export type Translate = (
-  keyword: Translatable,
+  keyword: TranslationKey | Exclude<Translatable, string>,
   placeholders?: unknown,
   converter?: Converter,
 ) => ReturnType<typeof transFrom>;

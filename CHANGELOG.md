@@ -4,6 +4,10 @@ All notable changes to `@warlock.js/web` are documented here.
 
 ## 5.13.0
 
+### Added
+
+- `useTrans()` now accepts generated, literal translation keys. `warlock dev` augments web's `TranslationKeyRegistry` from registered `groupedTranslations` dictionaries; before generation it safely accepts `string`.
+
 ### Fixed
 
 - `peerDependencies.react` and `react-dom` tightened from `"*"` to `^19.0.0` — `web` is only built and tested against React 19 (see `devDependencies`), so the peer range now says so instead of accepting any major.

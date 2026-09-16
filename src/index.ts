@@ -16,6 +16,15 @@
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface SharedContext {}
 
+/** App-generated translation entries augment this registry during development. */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface TranslationKeyRegistry {}
+
+/** A generated key, or any string before an app has generated key typings. */
+export type TranslationKey = keyof TranslationKeyRegistry extends never
+  ? string
+  : Extract<keyof TranslationKeyRegistry, string>;
+
 export type { HttpContext, PageContext } from "./context";
 export type { PageLoader, LayoutLoader, AppLoader } from "./loaders";
 // Server-safe by construction (no React/react-dom import) — the `defer()`
