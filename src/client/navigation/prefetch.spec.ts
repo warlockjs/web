@@ -41,6 +41,7 @@ const PAYLOAD = {
   shared: {},
   name: "products.list",
   locale: "en",
+  translations: {},
 };
 
 function respondWith(

@@ -18,6 +18,7 @@
  * assembled inline inside the renderer, where the loader route could not reach
  * it without copying five lines that would then be free to diverge.
  */
+import { getKeywordsListOf } from "@mongez/localization";
 import type { HydrationDocumentPayloadSource } from "../components/document-context";
 import type { PageDataBundle } from "./execute-page-request";
 import { assertPageDataSerializable } from "./page-data-serialization-error";
@@ -100,6 +101,13 @@ export function buildHydrationPayload(
     // would be disagreeing about a request the server already answered.
     name: bundle.route.name,
     locale,
+    // ONLY `locale`'s own keywords — never `getTranslationsList()`'s full
+    // table, which is every OTHER locale core globbed at boot too. `??  {}`
+    // rather than propagating `null`: a locale with no registered keywords is
+    // a valid, empty table for the browser, not a malformed payload
+    // (`hydration-payload.ts`'s gate requires `translations` to be an
+    // object).
+    translations: getKeywordsListOf(locale) ?? {},
     // Same optional/never-empty rule as `metadata`/`errorPage` above — see
     // `HydrationDocumentPayloadSource.deferred`'s own doc comment.
     ...(bundle.deferredKeys === undefined || bundle.deferredKeys.length === 0

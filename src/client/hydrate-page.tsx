@@ -1,3 +1,4 @@
+import { extend } from "@mongez/localization";
 import type { ReactNode } from "react";
 import { hydrateRoot } from "react-dom/client";
 import {
@@ -92,6 +93,14 @@ function reportHydrationFailure(error: unknown): void {
  */
 export function hydratePage(buildTree: BuildHydratedTree): void {
   const payload = readHydrationPayload(document);
+
+  // BEFORE `buildTree`/`hydrateRoot`, not after: `useTrans()`
+  // (`../localization.tsx`) reads `@mongez/localization`'s process-global
+  // table, and nothing else on the client ever fills it. Registering after
+  // the first client render would be too late — React has already
+  // reconciled the DOM to whatever that render returned, which is the raw
+  // key, by the time a later call could fix the table.
+  extend(payload.locale, payload.translations);
 
   prepareDeferredPayload(payload);
 

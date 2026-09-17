@@ -2,6 +2,16 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.15.0
+
+### Fixed
+
+- `useTrans()` no longer silently returns the raw key after hydration. The active locale's translations now ride in the hydration payload and register on the client before `hydrateRoot`, so a translated string survives hydration instead of being reconciled away. Server-rendered HTML was always correct, which is what made this invisible.
+
+### Changed
+
+- The hydration payload carries a seventh required key, `translations`, holding **only the active locale's** entries — never every locale.
+
 ## 5.14.0 - 2026-09-17
 
 ### Changed

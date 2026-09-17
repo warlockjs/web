@@ -25,6 +25,7 @@ function payloadLine(deferred?: string[]): string {
     shared: {},
     name: "dashboard",
     locale: "en",
+    translations: {},
     ...(deferred ? { deferred } : {}),
   });
 }
@@ -178,6 +179,7 @@ describe("fetchPageData — NDJSON streaming (Stage 2 slice S3)", () => {
       shared: {},
       name: "dashboard",
       locale: "en",
+      translations: {},
     };
 
     vi.stubGlobal(

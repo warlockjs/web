@@ -25,6 +25,7 @@ function documentValue(overrides: Partial<DocumentContextValue> = {}): DocumentC
       shared: {},
       name: "account",
       locale: "en",
+      translations: {},
     },
     ...overrides,
   };

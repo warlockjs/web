@@ -37,6 +37,7 @@ const validPayload = {
   shared: { locale: "en" },
   name: "main.home",
   locale: "en",
+  translations: {},
 };
 
 type FakeRoot = { id: string; innerHTML: string };

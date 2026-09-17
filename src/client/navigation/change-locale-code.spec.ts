@@ -28,7 +28,7 @@ function payloadOf(
   locale: string,
   pageData: object = {},
 ): HydrationDocumentPayloadSource {
-  return { appData: {}, layoutData: {}, pageData, shared: {}, name, locale };
+  return { appData: {}, layoutData: {}, pageData, shared: {}, name, locale, translations: {} };
 }
 
 function payloadResponse(payload: HydrationDocumentPayloadSource, url: string) {

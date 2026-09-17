@@ -28,7 +28,7 @@ import { resetManualScrollRestorationInstalled } from "./scroll-restoration";
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 function payloadOf(name: string, locale: string): HydrationDocumentPayloadSource {
-  return { appData: {}, layoutData: {}, pageData: {}, shared: {}, name, locale };
+  return { appData: {}, layoutData: {}, pageData: {}, shared: {}, name, locale, translations: {} };
 }
 
 /** Answer every `fetch` with the payload for whichever locale the request asked for. */

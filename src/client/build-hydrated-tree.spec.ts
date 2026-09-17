@@ -34,6 +34,7 @@ function payloadFor(
   return {
     name,
     locale: "en",
+    translations: {},
     appData: { level: "app" },
     layoutData: { level: "layout" },
     pageData: { level: "page" },

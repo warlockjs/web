@@ -36,7 +36,7 @@ import {
 const HREF = "https://app.test/products";
 
 function payloadOf(name: string, pageData: object = {}): HydrationDocumentPayloadSource {
-  return { appData: {}, layoutData: {}, pageData, shared: {}, name, locale: "en" };
+  return { appData: {}, layoutData: {}, pageData, shared: {}, name, locale: "en", translations: {} };
 }
 
 /** A response-like object shaped as `fetchPageData` reads it. */

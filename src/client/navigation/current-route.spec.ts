@@ -60,6 +60,7 @@ function payloadOf(
     shared: {},
     name,
     locale,
+    translations: {},
     // Spread, never `params: undefined`: a payload without params has no such
     // key, and the reader's fallback is only proven against real absence.
     ...(params === undefined ? {} : { params }),

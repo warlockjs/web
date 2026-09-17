@@ -338,7 +338,7 @@ describe("Link — literal URLs and paths", () => {
 });
 
 describe("Link — prefetch", () => {
-  // This fixture carries all six REQUIRED_PAYLOAD_KEYS on purpose. Navigation
+  // This fixture carries all seven REQUIRED_PAYLOAD_KEYS on purpose. Navigation
   // validates through the one shared `isHydrationPayload` gate, and a payload
   // missing any required key is classified `hard-navigate` and never cached —
   // at which point every assertion below that a prefetch landed fails for a
@@ -350,6 +350,7 @@ describe("Link — prefetch", () => {
     layoutData: {},
     pageData: {},
     shared: {},
+    translations: {},
   };
 
   function respondWithPayload(): ReturnType<typeof vi.fn> {

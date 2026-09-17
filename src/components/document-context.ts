@@ -1,3 +1,4 @@
+import type { Keywords } from "@mongez/localization";
 import { createContext, useContext } from "react";
 import type { MetadataOutput } from "../metadata";
 
@@ -58,6 +59,22 @@ export type HydrationDocumentPayloadSource = {
   readonly name: string;
   /** The request locale selected by core for this exact render. */
   readonly locale: string;
+  /**
+   * The ACTIVE locale's keyword table only — never every locale core has
+   * globbed from `utils/locales.ts`.
+   *
+   * The server's `@mongez/localization` table is filled eagerly at boot for
+   * every registered locale, but nothing ever filled the browser's copy of
+   * that same process-global table, so `useTrans()` (`../localization.tsx`)
+   * silently returned the raw key after hydration even though the server
+   * markup was correct. Shipping the WHOLE table would work too, but every
+   * locale's strings would cross the wire on every request regardless of
+   * which one the visitor is using; shipping only {@link locale}'s entries
+   * keeps the wire payload proportional to one language instead of every
+   * language the app supports. Per-page or per-group scoping is a later
+   * card, not this one.
+   */
+  readonly translations: Keywords;
   /**
    * The params the SERVER matched for this request — `bundle.route.params`
    * (`server/execute-page-request.ts:288`), carried untransformed. Same reason

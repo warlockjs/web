@@ -22,6 +22,7 @@ const fullPayload = {
   shared: { s: 1 },
   name: "home",
   locale: "en",
+  translations: {},
 };
 
 const serializedErrorPage = {

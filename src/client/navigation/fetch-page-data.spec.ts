@@ -20,6 +20,7 @@ const PAYLOAD = {
   shared: { locale: "en" },
   name: "products.list",
   locale: "en",
+  translations: {},
 };
 
 function respondWith(
