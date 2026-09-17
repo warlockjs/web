@@ -2,7 +2,11 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
-## 5.13.0
+## 5.13.0 - 2026-09-17
+
+### Upgrading
+
+- The server page cache key now includes the request `Host`. If you run `serverCache` in a multi-tenant/multi-host deployment, invalidate or let expire any entries stored before upgrading, since a pre-upgrade entry was keyed without `Host` and could otherwise be conflated with the wrong tenant on a cache HIT.
 
 ### Added
 
@@ -12,7 +16,7 @@ All notable changes to `@warlock.js/web` are documented here.
 
 ### Fixed
 
-- The server page cache key now includes the request `Host`. Before, two hosts (tenants) serving the same URL shared one entry, so tenant B could be served tenant A's document and `shared` payload. This also closed a Host-header cache-poisoning path.
+- **BREAKING:** The server page cache key now includes the request `Host`. Before, two hosts (tenants) serving the same URL shared one entry, so tenant B could be served tenant A's document and `shared` payload. This also closed a Host-header cache-poisoning path.
 - The server page cache now stores the streamed document the MISS visitor received, not the synchronous `renderToString` pass. That pass rendered a not-yet-resolved `React.lazy` boundary as its Suspense fallback, so every later HIT replayed the fallback.
 - `warlock dev`: a `serverCache: true` page no longer answers 500 `CacheDriverNotInitializedError`. An app `resolveAlias` entry for a framework package made Vite ignore `ssr.external` and load a second, never-booted copy. Dev SSR now always imports `@warlock.js/core`, `cache`, `logger`, `context` and `cascade` from the instance the app booted, as production does, and drops app aliases that would re-inline an SSR-external package.
 - A page request that fails outside the page pipeline (a cache failure, a module that fails to load) is now logged to stderr as `[warlock:web] page request <METHOD> <path> failed: <error>`. Before, the error reached only the app's `error.page.tsx` and the server log stayed empty.
