@@ -105,7 +105,13 @@ async function clientRegistryNames(appRoot: string): Promise<Record<string, stri
   // two arrays by index recovers which entry belongs to which fixture page
   // without re-deriving anything the generator already decided.
   routablePages.forEach((discovered, index) => {
-    byPageFile[discovered.pageFile] = entries[index].name;
+    const entry = entries[index];
+
+    if (entry === undefined) {
+      throw new Error(`Client registry has no entry for ${discovered.pageFile}.`);
+    }
+
+    byPageFile[discovered.pageFile] = entry.name;
   });
 
   return byPageFile;
