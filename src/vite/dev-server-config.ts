@@ -13,8 +13,8 @@ import { resolveReactFastRefreshPlugins } from "./react-refresh-preamble";
  * timed out` on whatever unrelated module happened to be in flight. Derived in
  * one pass from `peerDependenciesMeta.optional` across every workspace package
  * reachable from `core/src/index.ts`, and carried over verbatim from
- * `dev-error-transport.ts`'s own list. Only THIRD-PARTY peers belong here — every
- * `@warlock.js/*` sibling must stay in Vite's graph.
+ * `dev-error-transport.ts`'s own list. Only THIRD-PARTY peers belong here; the
+ * framework's own stateful packages are {@link SERVER_SINGLETON_PACKAGES}.
  *
  * This list is core's peer list, not web's; publishing it from core instead
  * of duplicating it here is still outstanding.
@@ -57,6 +57,57 @@ const CORE_OPTIONAL_PEERS = [
  * function, for the same dev-only reason, so it belongs in the same set.
  */
 const WEB_OPTIONAL_PEERS = ["vite", "@vitejs/plugin-react", "@warlock.js/cache"] as const;
+
+/**
+ * Framework packages that hold PROCESS state the Node side initialises at boot:
+ * core's config and router, the cache manager's driver, the logger's channels,
+ * the context stores, cascade's data-source registry.
+ *
+ * Dev SSR must use the SAME module instance core booted, as production does
+ * (the server bundle and an installed app both load them from `node_modules`,
+ * outside any Vite graph). An inlined copy is a fresh instance with none of
+ * that state: a `serverCache: true` route then answers 500
+ * `CacheDriverNotInitializedError` although the cache connector ran.
+ *
+ * Listed explicitly because a workspace checkout resolves them to TypeScript
+ * source outside `node_modules`, which Vite never externalises on its own.
+ */
+const SERVER_SINGLETON_PACKAGES = [
+  "@warlock.js/core",
+  "@warlock.js/cache",
+  "@warlock.js/logger",
+  "@warlock.js/context",
+  "@warlock.js/cascade",
+] as const;
+
+/**
+ * Drops every application alias whose `find` matches a package this config
+ * externalises in SSR.
+ *
+ * Vite skips SSR externalisation for ANY specifier that matches
+ * `resolve.alias` (its import analysis checks `ssr && !matchAlias(specifier)`
+ * before it consults `ssr.external`), so an alias such as
+ * `^@warlock\.js/cache$ -> cache/src/index.ts` silently pulls the package back
+ * into the runner as a second instance, and nothing reports it. An external
+ * package is resolved by Node's rules from its importer instead.
+ *
+ * Canon: an optional peer loaded via `await import()` must be external to every
+ * bundler and SSR pipeline; an alias must not be able to undo that.
+ */
+function withoutExternalizedAliases(aliases: Alias[], external: readonly string[]): Alias[] {
+  return aliases.filter((alias) => !external.some((specifier) => aliasMatches(alias, specifier)));
+}
+
+/** Whether Vite's alias matcher would rewrite `specifier` with this entry. */
+function aliasMatches(alias: Alias, specifier: string): boolean {
+  if (alias.find instanceof RegExp) {
+    alias.find.lastIndex = 0;
+
+    return alias.find.test(specifier);
+  }
+
+  return specifier === alias.find || specifier.startsWith(`${alias.find}/`);
+}
 
 /**
  * A directory, plus the path the filesystem really stores it at when the two
@@ -108,6 +159,15 @@ export type WebConnectorViteConfigOptions = {
 export async function createWebConnectorViteConfig(
   options: WebConnectorViteConfigOptions,
 ): Promise<InlineConfig> {
+  const ssrExternal = [
+    ...new Set<string>([
+      ...CORE_OPTIONAL_PEERS,
+      ...WEB_OPTIONAL_PEERS,
+      ...SERVER_SINGLETON_PACKAGES,
+      ...(options.ssrExternal ?? []),
+    ]),
+  ];
+
   return {
     root: options.appRoot,
     appType: "custom",
@@ -267,7 +327,7 @@ export async function createWebConnectorViteConfig(
       exclude: ["@warlock.js/web"],
     },
     ssr: {
-      external: [...CORE_OPTIONAL_PEERS, ...WEB_OPTIONAL_PEERS, ...(options.ssrExternal ?? [])],
+      external: ssrExternal,
       /**
        * ONE `@warlock.js/web`, for the same reason `resolve.dedupe` below
        * insists on one React — and it is invisible from inside this repo.
@@ -311,7 +371,9 @@ export async function createWebConnectorViteConfig(
       // "module is not defined" before it renders anything at all.
       dedupe: ["react", "react-dom"],
       alias: [
-        ...(options.resolveAlias ?? []),
+        // Minus any entry that would re-inline an SSR-external package; see
+        // `withoutExternalizedAliases`.
+        ...withoutExternalizedAliases(options.resolveAlias ?? [], ssrExternal),
         // The app-tree convention `v5/app/tsconfig.json`'s own `paths` declare.
         // Vite does not read tsconfig paths on its own and no
         // `vite-tsconfig-paths` plugin is installed in this workspace.

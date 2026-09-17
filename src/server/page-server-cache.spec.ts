@@ -69,7 +69,7 @@ vi.mock("@warlock.js/cache", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   const realCache = actual.cache as Record<string, unknown>;
 
-  realCache.get = fakeCache.get;
+  realCache.get = (key: string) => fakeCache.get(key);
   realCache.tags = fakeCache.tags;
   realCache.currentDriver = fakeCache.currentDriver;
 
@@ -217,6 +217,12 @@ describe("server-side page cache (route.cache.serverCache)", () => {
       maxAge: 60,
       serverCache: true,
       tags: (_data, { shared }) => [`theme:${(shared as { theme?: string }).theme}`],
+    });
+    registerRoute("/__scache-driver-down", server, {
+      public: true,
+      maxAge: 60,
+      serverCache: true,
+      tags: ["driver-down"],
     });
     registerRoute("/__scache-streamed", server, {
       public: true,
@@ -637,6 +643,41 @@ describe("server-side page cache (route.cache.serverCache)", () => {
     expect(hit.headers["x-warlock-cache"]).toBe("hit");
     expect(hit.body).toBe(miss.body);
     expect(hit.body).not.toContain("loading theme");
+  });
+
+  // ── A cache failure must never be silent ──────────────────────────────────
+  it("logs a cache failure server-side, with the error name and message, before the 500 renders", async () => {
+    class CacheDriverNotInitializedError extends Error {
+      public constructor() {
+        super("Cache driver is not initialized");
+        this.name = "CacheDriverNotInitializedError";
+      }
+    }
+
+    const originalGet = fakeCache.get;
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    fakeCache.get = async () => {
+      throw new CacheDriverNotInitializedError();
+    };
+
+    try {
+      const response = await server.inject({ method: "GET", url: "/__scache-driver-down" });
+
+      expect(response.statusCode).toBe(500);
+      expect(renderPageRequest).not.toHaveBeenCalled();
+
+      const report = logged.mock.calls.find(
+        (args) => typeof args[0] === "string" && args[0].startsWith("[warlock:web]"),
+      );
+
+      expect(report).toBeDefined();
+      expect(String(report![0])).toContain("/__scache-driver-down");
+      expect(report!.some((arg) => arg instanceof CacheDriverNotInitializedError)).toBe(true);
+    } finally {
+      fakeCache.get = originalGet;
+      logged.mockRestore();
+    }
   });
 
   // ── Missing @warlock.js/cache dependency ─────────────────────────────────

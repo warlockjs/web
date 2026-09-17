@@ -49,6 +49,7 @@ import { resolveAuthCookieName } from "./auth-cookie-name";
 import { looksAuthenticated, isStoreEligible } from "./page-cache-eligibility";
 import { computePageCacheKey, type PageCacheVariant } from "./page-cache-key";
 import { getPageCacheEntry, setPageCacheEntry } from "./page-cache-store";
+import { reportServerError } from "./report-server-error";
 import { ensureSetCookieCacheFloorHook, markPageResponse } from "./set-cookie-cache-floor-hook";
 import type { BufferedCookie, PageRouteEntry, PageTripleModule } from "./execute-page-request";
 import { renderPageFailure, renderPageRequest, type RenderedPage } from "./render-page";
@@ -817,6 +818,13 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
 
       await response.html(rendered.html, status);
     } catch (thrown) {
+      // Floor first, before any error page renders: this path runs outside the
+      // pipeline, so `buildErrorRecord` never saw `thrown`. Without this line a
+      // framework failure here (a module that fails to load, a cache driver
+      // that was never initialised) reaches the visitor only through the app's
+      // `error.page.tsx`, and the server log stays empty.
+      reportServerError(`page request ${request.method} ${request.path} failed`, thrown);
+
       // This is outside the page pipeline: loading/registering a module can
       // fail before a triple exists for its authored boundaries to handle.
       // Reuse this request/response pair so headers, nonce and response
