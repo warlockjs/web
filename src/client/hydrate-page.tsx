@@ -1,18 +1,13 @@
 import type { ReactNode } from "react";
 import { hydrateRoot } from "react-dom/client";
-import { DocumentContext, type DocumentContextValue } from "../components/document-context";
+import {
+  DocumentContext,
+  HYDRATION_ROOT_ID,
+  type DocumentContextValue,
+} from "../components/document-context";
 import { readHydrationPayload, type HydrationDocumentPayloadSource } from "../hydration-payload";
 import { hydrateShared } from "../shared";
 import { installStreamClosedRejection, prepareDeferredPageData } from "./runtime/defer-registry";
-
-/**
- * The hydration MOUNT point — a different id from the payload script's id.
- * Not exported anywhere as a named constant (`default-app.tsx:39` only
- * renders the literal `<div id="root">`), so a local literal is fine here:
- * the no-duplicate-literal rule is specifically about the payload
- * script id, which `readHydrationPayload` already owns exclusively.
- */
-const MOUNT_ELEMENT_ID = "root";
 
 /**
  * Receives the VALIDATED payload and returns the ReactNode to hydrate. A
@@ -66,19 +61,19 @@ function prepareDeferredPayload(payload: HydrationDocumentPayloadSource): void {
  * the synchronous stack is gone, so there is no caller left to throw at — and
  * an un-attached rejection is a blank console, which is the silent-failure
  * class this pipeline keeps regressing into. Reported loudly, and deliberately
- * WITHOUT touching `#root`: the server's markup is correct and visible, it is
+ * WITHOUT touching `#vessel`: the server's markup is correct and visible, it is
  * only un-hydrated, so clearing it would turn a degraded page into a blank one.
  */
 function reportHydrationFailure(error: unknown): void {
   console.error(
     "Warlock hydration failed after the page tree was requested. The server-rendered " +
-      "markup is left on screen un-hydrated; #root was not cleared.",
+      "markup is left on screen un-hydrated; #vessel was not cleared.",
     error,
   );
 }
 
 /**
- * The one hydration entry point. Mounts at `#root` only — the page subtree —
+ * The one hydration entry point. Mounts at `#vessel` only — the page subtree —
  * never `document`/`html`/`head`/`body`: `metadata`, `dir`, and `nonce` are
  * not used to rebuild the mounted tree; the declared `locale` key is
  * consumed by `NavigationRoot`'s provider.
@@ -86,11 +81,11 @@ function reportHydrationFailure(error: unknown): void {
  * is the one place ABSENT/MALFORMED are decided, so this
  * function does not re-implement that check — reusing it is what keeps the
  * two throw messages from drifting apart at a second site. On ABSENT/MALFORMED
- * it throws before touching `#root`, so the server-rendered markup stays
+ * it throws before touching `#vessel`, so the server-rendered markup stays
  * visible; nothing is cleared or re-rendered.
  *
  * Order is load-bearing and unchanged by the async tree: payload validated,
- * shared snapshot installed, `#root` resolved and its absence thrown on — all
+ * shared snapshot installed, `#vessel` resolved and its absence thrown on — all
  * SYNCHRONOUSLY, so those three failures still reject the call itself — and
  * only then is the tree built and, if it is a promise, awaited. Nothing is
  * cleared on any failure path.
@@ -102,13 +97,14 @@ export function hydratePage(buildTree: BuildHydratedTree): void {
 
   hydrateShared(payload.shared);
 
-  const mountElement = document.getElementById(MOUNT_ELEMENT_ID);
+  const mountElement = document.getElementById(HYDRATION_ROOT_ID);
 
   if (mountElement === null) {
     throw new Error(
-      `Warlock hydration aborted: no element with id "${MOUNT_ELEMENT_ID}" was found. The ` +
-        'server is expected to render <div id="root"> as the hydration mount point ' +
-        "(web/src/components/default-app.tsx:39).",
+      `Warlock hydration aborted: no element with id "${HYDRATION_ROOT_ID}" was found. The ` +
+        `server is expected to render <div id="${HYDRATION_ROOT_ID}"> as the hydration mount ` +
+        "point (web/src/components/default-app.tsx)." +
+        legacyRootHint(),
     );
   }
 
@@ -132,4 +128,19 @@ export function hydratePage(buildTree: BuildHydratedTree): void {
   }
 
   mount(tree);
+}
+
+/**
+ * Apps created before 5.14 may still render `<div id="root">` in their own
+ * `src/web/root.tsx`; name the rename instead of only reporting a missing id.
+ */
+function legacyRootHint(): string {
+  if (document.getElementById("root") === null) {
+    return "";
+  }
+
+  return (
+    ` Found <div id="root"> instead: the hydration mount was renamed to "${HYDRATION_ROOT_ID}" ` +
+    "in 5.14; update src/web/root.tsx."
+  );
 }

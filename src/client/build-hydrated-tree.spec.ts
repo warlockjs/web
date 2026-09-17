@@ -173,8 +173,8 @@ describe("buildHydratedTree", () => {
   });
 
   /**
-   * The App level renders `<html>`/`<body>` and the `<div id="root">` this tree
-   * is mounted INTO, so it is never part of the markup inside `#root`.
+   * The App level renders `<html>`/`<body>` and the `<div id="vessel">` this tree
+   * is mounted INTO, so it is never part of the markup inside `#vessel`.
    * Composing it here would hydrate a document the server never put there.
    */
   it("excludes App from the tree even when the composition carries one", async () => {

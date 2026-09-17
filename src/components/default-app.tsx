@@ -1,5 +1,5 @@
 import type { ReactElement, ReactNode } from "react";
-import { useDocumentContext } from "./document-context";
+import { HYDRATION_ROOT_ID, useDocumentContext } from "./document-context";
 import { Head } from "./head";
 import { Scripts } from "./scripts";
 
@@ -35,7 +35,7 @@ export default function DefaultApp({ children }: DefaultAppProps): ReactElement 
           a stable hydration target — this default only covers the
           no-custom-root case.
         */}
-        <div id="root">{children}</div>
+        <div id={HYDRATION_ROOT_ID}>{children}</div>
         {/* Prop-less: inherits the nonce slot via Scripts' own fallback
             (scripts.ts) rather than reading document-context twice here. */}
         <Scripts />

@@ -1,11 +1,11 @@
 ---
 name: write-the-root
-description: 'Author `src/web/root.tsx`, the full-document application root that owns `<html>`, `<head>`, and `<body>`, places page metadata with `<Head />`, renders the hydrated subtree inside `#root`, and emits the payload with `<Scripts />`. Triggers: `root.tsx`, `AppProps`, `AppLoader`, `Head`, `Scripts`, `id="root"`; "customize the root document", "add html lang", "add an app provider", "where do Head and Scripts go"; typical import `import { Head, Scripts, type AppProps } from "@warlock.js/web"`. Skip: page component contract — `@warlock.js/web/create-a-page/SKILL.md`; layout wrappers — `@warlock.js/web/use-layouts/SKILL.md`; CSS delivery — `@warlock.js/web/serve-styles/SKILL.md`; competing roots `next/layout`, Remix `root`, React `createRoot`.'
+description: 'Author `src/web/root.tsx`, the full-document application root that owns `<html>`, `<head>`, and `<body>`, places page metadata with `<Head />`, renders the hydrated subtree inside `#vessel`, and emits the payload with `<Scripts />`. Triggers: `root.tsx`, `AppProps`, `AppLoader`, `Head`, `Scripts`, `id="vessel"`; "customize the root document", "add html lang", "add an app provider", "where do Head and Scripts go"; typical import `import { Head, Scripts, type AppProps } from "@warlock.js/web"`. Skip: page component contract — `@warlock.js/web/create-a-page/SKILL.md`; layout wrappers — `@warlock.js/web/use-layouts/SKILL.md`; CSS delivery — `@warlock.js/web/serve-styles/SKILL.md`; competing roots `next/layout`, Remix `root`, React `createRoot`.'
 ---
 
 # Warlock — write the root
 
-`src/web/root.tsx` is the application document. Its default export renders the complete `<html>` tree and contains the one DOM node the browser hydrates: `#root`.
+`src/web/root.tsx` is the application document. Its default export renders the complete `<html>` tree and contains the one DOM node the browser hydrates: `#vessel`.
 
 ## The shape
 
@@ -21,7 +21,7 @@ export default function App({ children }: AppProps) {
         <link rel="icon" href="/favicon.svg" />
       </head>
       <body>
-        <div id="root">{children}</div>
+        <div id="vessel">{children}</div>
         <Scripts />
       </body>
     </html>
@@ -48,7 +48,7 @@ export default function App({ children }: AppProps) {
         <Head />
       </head>
       <body>
-        <div id="root">{children}</div>
+        <div id="vessel">{children}</div>
         <Scripts />
       </body>
     </html>
@@ -60,20 +60,20 @@ export default function App({ children }: AppProps) {
 
 To switch the active locale without a full reload, call `changeLocaleCode(code)`. The server persists the choice in its `locale` cookie when the resulting navigation data request carries `?locale=`, so `lang` and `dir` on the next render (and every render after) reflect the new locale.
 
-## `#root` is the hydration boundary
+## `#vessel` is the hydration boundary
 
 The server renders this document shape:
 
 ```text
 App document
-└── #root
+└── #vessel
     └── Layout
         └── Page
 ```
 
-The browser hydrates `#root`, not the whole document. The client tree deliberately contains Layout + Page and excludes App because App contains the mount point. Keep exactly one element with `id="root"` around `{children}`. It may be nested inside your own body markup, but it must not be renamed or omitted.
+The browser hydrates `#vessel`, not the whole document. The client tree deliberately contains Layout + Page and excludes App because App contains the mount point. Keep exactly one element with `id="vessel"` around `{children}`. It may be nested inside your own body markup, but it must not be renamed or omitted.
 
-Because App is outside the hydrated subtree, put client state that must survive navigation in a layout or component beneath `#root`, not in the document root.
+Because App is outside the hydrated subtree, put client state that must survive navigation in a layout or component beneath `#vessel`, not in the document root.
 
 If `root.tsx` (or any module it needs) fails to load or its `register()` throws, there is no trustworthy Layout+Page composition left to hydrate — Warlock falls back to a plain document with no hydration script at all rather than hydrate the browser against markup nothing can vouch for. See [create-a-page](../create-a-page/SKILL.md) for the app's own `error.page.tsx` boundary, which is tried first.
 
@@ -89,7 +89,7 @@ Do not also hard-code a `<title>` for the current page; that produces two titles
 
 ## `<Scripts />`
 
-`<Scripts />` emits the escaped `application/json` payload that hydration and client navigation consume, followed by the hydration client entry `<script type="module">` (Stage 1 streaming SSR renders both through React now, in this one component — see below). Put it after `#root`, normally near the end of `<body>`.
+`<Scripts />` emits the escaped `application/json` payload that hydration and client navigation consume, followed by the hydration client entry `<script type="module">` (Stage 1 streaming SSR renders both through React now, in this one component — see below). Put it after `#vessel`, normally near the end of `<body>`.
 
 For a Content Security Policy nonce:
 
@@ -104,7 +104,7 @@ export default function App({ children, shared }: AppProps) {
         <Head />
       </head>
       <body>
-        <div id="root">{children}</div>
+        <div id="vessel">{children}</div>
         <Scripts nonce={(shared as { nonce?: string }).nonce} />
       </body>
     </html>
@@ -149,7 +149,7 @@ export default function App({ data, children }: AppProps<typeof loader>) {
         <meta name="application-name" content={data.applicationName} />
       </head>
       <body>
-        <div id="root">{children}</div>
+        <div id="vessel">{children}</div>
         <Scripts />
       </body>
     </html>
@@ -162,7 +162,7 @@ The App loader runs first and is awaited before the outermost layout loader star
 ## Gotchas
 
 - **The root owns the complete document.** Return `<html>`, `<head>`, and `<body>`, not a fragment.
-- **Keep `{children}` inside `#root`.** Server rendering can still look correct without it, but hydration cannot mount.
+- **Keep `{children}` inside `#vessel`.** Server rendering can still look correct without it, but hydration cannot mount.
 - **Render `<Head />` in a custom root.** It is what turns the page's `metadata` into elements.
 - **Render `<Scripts />` in a custom root.** Without the payload script, the browser cannot hydrate the server-rendered page.
 - **Do not make the component `async`.** Load data with `AppLoader`.
@@ -172,6 +172,6 @@ The App loader runs first and is awaited before the outermost layout loader star
 ## See also
 
 - [`create-a-page/SKILL.md`](../create-a-page/SKILL.md) — the Page level rendered under the root.
-- [`use-layouts/SKILL.md`](../use-layouts/SKILL.md) — the persistent wrapper inside `#root`.
+- [`use-layouts/SKILL.md`](../use-layouts/SKILL.md) — the persistent wrapper inside `#vessel`.
 - [`load-page-data/SKILL.md`](../load-page-data/SKILL.md) — `AppLoader` and typed `shared`.
 - [`serve-styles/SKILL.md`](../serve-styles/SKILL.md) — global CSS from `root.tsx`.

@@ -112,6 +112,18 @@ export type HydrationDocumentPayloadSource = {
 
 export const PAYLOAD_SCRIPT_ID = "__WARLOCK_DATA__";
 
+/**
+ * The hydration MOUNT point id — a different id from {@link PAYLOAD_SCRIPT_ID}.
+ * `id="root"` used to collide with common embeds and third-party widgets that
+ * also reach for `#root` (analytics snippets, payment SDKs, dev extensions),
+ * so the framework's own mount point is namespaced instead. Single source of
+ * truth for both the App shell (`components/default-app.tsx`) that renders
+ * `<div id={HYDRATION_ROOT_ID}>` and the client entry
+ * (`client/hydrate-page.tsx`) that resolves it via `getElementById` — apps and
+ * docs that cannot import this constant use the literal `vessel` instead.
+ */
+export const HYDRATION_ROOT_ID = "vessel";
+
 const LINE_SEPARATOR = String.fromCharCode(0x2028);
 const PARAGRAPH_SEPARATOR = String.fromCharCode(0x2029);
 

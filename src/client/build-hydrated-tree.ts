@@ -128,7 +128,7 @@ function wrap(
 }
 
 /**
- * Compose the tree the server rendered inside `#root`: ordered layouts wrapping
+ * Compose the tree the server rendered inside `#vessel`: ordered layouts wrapping
  * the selected Page or ErrorPage leaf, layouts OUTERMOST FIRST as
  * `ClientRouteComposition` declares them. Ordinary levels receive
  * `{ data, shared }`; the error leaf receives the serialized `{ error, status
@@ -143,9 +143,9 @@ function wrap(
  *    `["layout", "app"]` (`render-page.ts:274`), so the document React renders
  *    is `App( Layout( Page ) )`.
  *  - The app root is the level that owns `<html>`/`<body>` and renders
- *    `<div id="root">{children}</div>` inside the body. So App CONTAINS the
- *    mount point — the markup actually inside `#root` is `Layout( Page )`.
- *  - `hydrate-page.tsx` mounts at `#root` and nowhere else.
+ *    `<div id="vessel">{children}</div>` inside the body. So App CONTAINS the
+ *    mount point — the markup actually inside `#vessel` is `Layout( Page )`.
+ *  - `hydrate-page.tsx` mounts at `#vessel` and nowhere else.
  *
  * Composing App here would therefore hydrate a whole `<html>` document inside a
  * `<div>` the server filled with a layout: a guaranteed hydration mismatch. If

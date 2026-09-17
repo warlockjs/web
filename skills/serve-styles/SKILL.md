@@ -21,7 +21,7 @@ export default function App({ children }: AppProps) {
         <Head />
       </head>
       <body>
-        <div id="root">{children}</div>
+        <div id="vessel">{children}</div>
         <Scripts />
       </body>
     </html>

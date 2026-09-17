@@ -4,6 +4,10 @@ All notable changes to `@warlock.js/web` are documented here.
 
 ## Unreleased
 
+### Breaking
+
+- **The hydration mount point's element id changed from `#root` to `#vessel`.** `id="root"` collided with common embeds and third-party widgets (analytics snippets, payment SDKs, browser extensions) that also reach for `#root`, so the framework's own mount point is namespaced instead. Internally, the framework's fallback App (`src/components/default-app.tsx`) and the client entry that hydrates (`src/client/hydrate-page.tsx`) now share one source of truth for the id instead of each hardcoding the literal. Apps with a custom `root.tsx`, or with CSS/tests/E2E assertions targeting `#root`, must update `<div id="root">` to `<div id="vessel">` and any matching selectors.
+
 ### Security
 
 - **The client-build secret scan now refuses every reference to the global `process` in client code**, not only direct `process.env.X` reads. Aliased and indirect forms such as `const p = globalThis.process; p.env.SECRET`, `const { env } = process`, `window.process` and an aliased `globalThis` used to pass the scan. **BREAKING for client code that feature-detects with `typeof process`**: use `import.meta.env` instead.

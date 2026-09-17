@@ -276,7 +276,7 @@ export default function App({ children, shared }: AppProps) {
         <Head />
       </head>
       <body>
-        <div id="root">{children}</div>
+        <div id="vessel">{children}</div>
         <Scripts />
       </body>
     </html>

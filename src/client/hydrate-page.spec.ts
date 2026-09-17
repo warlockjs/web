@@ -2,14 +2,14 @@ import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { stringify } from "devalue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hydrateRoot } from "react-dom/client";
-import { PAYLOAD_SCRIPT_ID } from "../components/document-context";
+import { HYDRATION_ROOT_ID, PAYLOAD_SCRIPT_ID } from "../components/document-context";
 import { hydratePage, type BuildHydratedTree } from "./hydrate-page";
 import { installStreamClosedRejection, prepareDeferredPageData } from "./runtime/defer-registry";
 
 /**
  * React's real `hydrateRoot` needs a live DOM; the suite runs in `node`. What
  * is under test here is hydratePage's ORDER and its failure guarantees — that
- * validation precedes the mount and that nothing touches `#root` when a step
+ * validation precedes the mount and that nothing touches `#vessel` when a step
  * fails — so the mount itself is stubbed and asserted on as a call.
  */
 vi.mock("react-dom/client", () => ({ hydrateRoot: vi.fn() }));
@@ -44,14 +44,19 @@ type FakeRoot = { id: string; innerHTML: string };
 type FakeDocumentOptions = {
   payloadText?: string | null;
   withRoot?: boolean;
+  withLegacyRoot?: boolean;
 };
 
 let root: FakeRoot;
 
 function installFakeDocument(options: FakeDocumentOptions = {}): void {
-  const { payloadText = stringify(validPayload), withRoot = true } = options;
+  const {
+    payloadText = stringify(validPayload),
+    withRoot = true,
+    withLegacyRoot = false,
+  } = options;
 
-  root = { id: "root", innerHTML: SERVER_MARKUP };
+  root = { id: HYDRATION_ROOT_ID, innerHTML: SERVER_MARKUP };
 
   vi.stubGlobal("document", {
     getElementById(id: string) {
@@ -59,7 +64,9 @@ function installFakeDocument(options: FakeDocumentOptions = {}): void {
         return payloadText === null ? null : { textContent: payloadText };
       }
 
-      if (id === "root") return withRoot ? root : null;
+      if (id === HYDRATION_ROOT_ID) return withRoot ? root : null;
+
+      if (id === "root") return withLegacyRoot ? { id: "root", innerHTML: SERVER_MARKUP } : null;
 
       return null;
     },
@@ -95,7 +102,7 @@ afterEach(() => {
 });
 
 describe("hydratePage", () => {
-  it("mounts a synchronously built tree at #root", () => {
+  it("mounts a synchronously built tree at #vessel", () => {
     installFakeDocument();
 
     hydratePage(() => "tree");
@@ -135,7 +142,7 @@ describe("hydratePage", () => {
     expect(buildTree).toHaveBeenCalledWith(expect.objectContaining({ name: "main.home" }));
   });
 
-  it("does not clear #root when buildTree rejects", async () => {
+  it("does not clear #vessel when buildTree rejects", async () => {
     installFakeDocument();
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const boom = new Error("chunk 404");
@@ -180,18 +187,30 @@ describe("hydratePage", () => {
     expect(hydrateRoot).not.toHaveBeenCalled();
   });
 
-  it("throws when #root is absent", () => {
+  it("throws when #vessel is absent", () => {
     installFakeDocument({ withRoot: false });
 
-    expect(() => hydratePage(() => "tree")).toThrow(/no element with id "root"/);
+    expect(() => hydratePage(() => "tree")).toThrow(/no element with id "vessel"/);
     expect(hydrateRoot).not.toHaveBeenCalled();
   });
 
-  it("throws for a missing #root before ever calling buildTree", () => {
+  it("names the 5.14 rename when the app still renders the legacy #root", () => {
+    installFakeDocument({ withRoot: false, withLegacyRoot: true });
+
+    expect(() => hydratePage(() => "tree")).toThrow(/renamed to "vessel" in 5\.14/);
+  });
+
+  it("does not mention the rename when no legacy #root exists", () => {
+    installFakeDocument({ withRoot: false });
+
+    expect(() => hydratePage(() => "tree")).not.toThrow(/renamed/);
+  });
+
+  it("throws for a missing #vessel before ever calling buildTree", () => {
     installFakeDocument({ withRoot: false });
     const buildTree = vi.fn(() => "tree");
 
-    expect(() => hydratePage(buildTree)).toThrow(/no element with id "root"/);
+    expect(() => hydratePage(buildTree)).toThrow(/no element with id "vessel"/);
     expect(buildTree).not.toHaveBeenCalled();
   });
 });
