@@ -2,6 +2,16 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## Unreleased
+
+### Security
+
+- **The client-build secret scan now refuses every reference to the global `process` in client code**, not only direct `process.env.X` reads. Aliased and indirect forms such as `const p = globalThis.process; p.env.SECRET`, `const { env } = process`, `window.process` and an aliased `globalThis` used to pass the scan. **BREAKING for client code that feature-detects with `typeof process`**: use `import.meta.env` instead.
+
+### Fixed
+
+- A local variable or parameter named `process` in client code is no longer falsely refused.
+
 ## 5.13.0 - 2026-09-17
 
 ### Upgrading
