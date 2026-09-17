@@ -565,7 +565,7 @@ export function NavigationRoot({
     universal shape — the server provides the resolved metadata around the same
     tree — so handing the client's readers `undefined` was a lie the payload can
     now correct. It also removes a latent mismatch: a `<Head/>` rendered inside
-    a Layout (not the App level) renders its tags into `#root` server-side, and
+    a Layout (not the App level) renders its tags into `#vessel` server-side, and
     hydrating that markup against `metadata: undefined` produced a tree the
     server never rendered.
   */

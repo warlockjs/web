@@ -77,7 +77,7 @@ export type HydrationDocumentPayloadSource = {
    *
    * Why it has to be on the wire at all: `<Head/>` renders inside the App
    * level, and the App level is not part of the hydrated tree (the client
-   * mounts at `#root`, which App contains). So on a client navigation there is
+   * mounts at `#vessel`, which App contains). So on a client navigation there is
    * no React render that can reach `<head>` — without this key the browser
    * never learns the new page's title and the tab keeps the old one.
    *

@@ -100,7 +100,7 @@ function resolveManagedTags(
  * ## Why this is imperative, and why that is not a shortcut
  *
  * `<Head/>` renders inside the App level, and the App level is deliberately NOT
- * in the hydrated tree — the client mounts at `#root`, which App contains
+ * in the hydrated tree — the client mounts at `#vessel`, which App contains
  * (`client/build-hydrated-tree.ts`'s header). So no client render can reach
  * `<head>`, and a swap either writes it directly or leaves the previous page's
  * title in the tab. It leaves it today; that is the bug.

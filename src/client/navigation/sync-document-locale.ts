@@ -9,7 +9,7 @@ import { localeDirection } from "../../text-direction";
  * The server render sets `<html lang dir>` from the request's resolved
  * locale (`components/default-app.tsx:25`, or an app's own `root.tsx`
  * following the same rule). But `root.tsx` sits OUTSIDE the hydrated
- * subtree — the browser hydrates `#root`, not the document
+ * subtree — the browser hydrates `#vessel`, not the document
  * (`skills/write-the-root/SKILL.md`) — so no client render, including one
  * produced by {@link changeLocaleCode} or a plain navigation, can ever reach
  * it. Left alone, `useLocale()`/`useTextDirection()` update in-page while
