@@ -110,3 +110,60 @@ describe("dev SSR config: stateful framework packages stay external", () => {
     }
   });
 });
+
+/**
+ * The externalisation rule must be DERIVED from `@warlock.js/*` membership,
+ * not a hand-maintained list: `1726e3b` externalised core, cache, logger,
+ * context and cascade by name, and the very next family package (auth here)
+ * would have repeated the 5.0.2 / 5.13 defect if nobody remembered to add it.
+ * These specs cover a package that was NEVER in that hand list, plus a deep
+ * subpath import, and prove `@warlock.js/web` — the one package dev SSR must
+ * keep inside Vite's graph — still is not swept in by the same rule.
+ */
+describe("dev SSR config: the family rule covers packages the old hand list never named", () => {
+  it("externalises a family package the 1726e3b hand list never mentioned", async () => {
+    const config = await createWebConnectorViteConfig({
+      appRoot: WORKSPACE_ROOT,
+      appSrcRoot: path.join(WORKSPACE_ROOT, "src"),
+      webRoot: WEB_ROOT,
+      workspaceRoot: WORKSPACE_ROOT,
+      hmrServer: createNodeServer(),
+      handlePageHotUpdate: async () => false,
+      leadingPlugins: [],
+    });
+
+    expect(config.ssr?.external).toContain("@warlock.js/auth");
+  });
+
+  it("externalises a deep subpath import of a family package by its package name", async () => {
+    const config = await createWebConnectorViteConfig({
+      appRoot: WORKSPACE_ROOT,
+      appSrcRoot: path.join(WORKSPACE_ROOT, "src"),
+      webRoot: WEB_ROOT,
+      workspaceRoot: WORKSPACE_ROOT,
+      hmrServer: createNodeServer(),
+      handlePageHotUpdate: async () => false,
+      leadingPlugins: [],
+    });
+
+    // Vite reduces `@warlock.js/queue/notifications` to its package name
+    // (`getNpmPackageName`) before checking `ssr.external`, so the deep
+    // import is covered by the same bare entry a top-level import needs.
+    expect(config.ssr?.external).toContain("@warlock.js/queue");
+  });
+
+  it("does not externalise @warlock.js/web, which dev SSR deliberately inlines", async () => {
+    const config = await createWebConnectorViteConfig({
+      appRoot: WORKSPACE_ROOT,
+      appSrcRoot: path.join(WORKSPACE_ROOT, "src"),
+      webRoot: WEB_ROOT,
+      workspaceRoot: WORKSPACE_ROOT,
+      hmrServer: createNodeServer(),
+      handlePageHotUpdate: async () => false,
+      leadingPlugins: [],
+    });
+
+    expect(config.ssr?.external).not.toContain("@warlock.js/web");
+    expect(config.ssr?.noExternal).toContain("@warlock.js/web");
+  });
+});

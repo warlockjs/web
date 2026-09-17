@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import type { Alias, HttpServer, InlineConfig, PluginOption } from "vite";
 import { appConventionAliases } from "./app-convention-aliases";
 import { warlockClientBoundary } from "./index";
@@ -14,7 +15,8 @@ import { resolveReactFastRefreshPlugins } from "./react-refresh-preamble";
  * one pass from `peerDependenciesMeta.optional` across every workspace package
  * reachable from `core/src/index.ts`, and carried over verbatim from
  * `dev-error-transport.ts`'s own list. Only THIRD-PARTY peers belong here; the
- * framework's own stateful packages are {@link SERVER_SINGLETON_PACKAGES}.
+ * framework's own family packages are derived by
+ * {@link discoverWarlockFamilyPackages}.
  *
  * This list is core's peer list, not web's; publishing it from core instead
  * of duplicating it here is still outstanding.
@@ -59,26 +61,72 @@ const CORE_OPTIONAL_PEERS = [
 const WEB_OPTIONAL_PEERS = ["vite", "@vitejs/plugin-react", "@warlock.js/cache"] as const;
 
 /**
- * Framework packages that hold PROCESS state the Node side initialises at boot:
- * core's config and router, the cache manager's driver, the logger's channels,
- * the context stores, cascade's data-source registry.
+ * `@warlock.js/*` packages that dev SSR deliberately keeps INSIDE Vite's SSR
+ * graph rather than externalising — the opposite default from every other
+ * family package; see {@link discoverWarlockFamilyPackages}.
  *
- * Dev SSR must use the SAME module instance core booted, as production does
- * (the server bundle and an installed app both load them from `node_modules`,
- * outside any Vite graph). An inlined copy is a fresh instance with none of
- * that state: a `serverCache: true` route then answers 500
- * `CacheDriverNotInitializedError` although the cache connector ran.
- *
- * Listed explicitly because a workspace checkout resolves them to TypeScript
- * source outside `node_modules`, which Vite never externalises on its own.
+ * `web` is the one member that holds `.tsx` / client-boundary code (Fast
+ * Refresh boundaries, the document context Vite's `<Head/>` writes into) that
+ * only makes sense transformed by Vite's own pipeline; externalising it
+ * reproduces the two-instance `<Head/>` defect `noExternal` below documents
+ * (canon `6b7ab838`). No other family package has that shape, so this set
+ * stays a single, explicit, commented entry rather than growing by hand
+ * alongside {@link discoverWarlockFamilyPackages}'s discovery.
  */
-const SERVER_SINGLETON_PACKAGES = [
-  "@warlock.js/core",
-  "@warlock.js/cache",
-  "@warlock.js/logger",
-  "@warlock.js/context",
-  "@warlock.js/cascade",
-] as const;
+const WARLOCK_FAMILY_INLINE_PACKAGES = ["@warlock.js/web"] as const;
+
+/**
+ * True for the specifier of any `@warlock.js/*` family package, including a
+ * deep subpath import such as `@warlock.js/queue/notifications` — the regex
+ * only needs the scope-plus-name prefix because Vite's own SSR externalizer
+ * reduces a specifier to its package name (`getNpmPackageName`) before
+ * checking it against `ssr.external`, so listing the bare package name below
+ * is enough to cover every subpath.
+ */
+const WARLOCK_FAMILY_SPECIFIER_RE = /^@warlock\.js\/[^/]+/;
+
+/**
+ * Every `@warlock.js/*` package this install actually has, read from
+ * `node_modules/@warlock.js` instead of typed out by hand.
+ *
+ * Every family package holds PROCESS state the Node side initialises at
+ * boot — core's config and router, the cache manager's driver, the logger's
+ * channels, the context stores, cascade's data-source registry, and so on
+ * for every package the family adds next (auth, access, notifications,
+ * queue, seal, herald, fs, scheduler, ai, ...). Dev SSR must use the SAME
+ * module instance core booted, as production does (the server bundle and an
+ * installed app both load these from `node_modules`, outside any Vite
+ * graph): an inlined copy is a fresh instance with none of that state, and a
+ * `serverCache: true` route then answers 500 `CacheDriverNotInitializedError`
+ * although the cache connector ran. `5.0.2` hit this for `web` itself; `5.13`
+ * (`1726e3b`) hand-added core, cache, logger, context and cascade after
+ * hitting it again — a hand list one `@warlock.js/*` name behind the family
+ * at any given moment. This reads the family instead of naming it.
+ *
+ * `workspaceRoot`'s `node_modules` is used rather than `appRoot`'s: pnpm
+ * hoists a workspace's `@warlock.js` scope there in a monorepo checkout
+ * (`ls node_modules/@warlock.js` from THIS repo's root lists every sibling
+ * package as a symlink), and for an installed, non-monorepo app Vite's own
+ * `searchForWorkspaceRoot` returns the app's own root, so the two paths
+ * coincide and this still finds the app's installed `@warlock.js/*` deps.
+ *
+ * A missing or unreadable scope directory is not an error here: it means
+ * this install has no `@warlock.js` scope to discover yet, and the caller's
+ * own explicit externals still apply.
+ */
+function discoverWarlockFamilyPackages(workspaceRoot: string): string[] {
+  const scopeDirectory = path.join(workspaceRoot, "node_modules", "@warlock.js");
+
+  try {
+    return fs
+      .readdirSync(scopeDirectory, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
+      .map((entry) => `@warlock.js/${entry.name}`)
+      .filter((specifier) => WARLOCK_FAMILY_SPECIFIER_RE.test(specifier));
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Drops every application alias whose `find` matches a package this config
@@ -159,11 +207,15 @@ export type WebConnectorViteConfigOptions = {
 export async function createWebConnectorViteConfig(
   options: WebConnectorViteConfigOptions,
 ): Promise<InlineConfig> {
+  const warlockFamilyExternal = discoverWarlockFamilyPackages(options.workspaceRoot).filter(
+    (specifier) => !(WARLOCK_FAMILY_INLINE_PACKAGES as readonly string[]).includes(specifier),
+  );
+
   const ssrExternal = [
     ...new Set<string>([
       ...CORE_OPTIONAL_PEERS,
       ...WEB_OPTIONAL_PEERS,
-      ...SERVER_SINGLETON_PACKAGES,
+      ...warlockFamilyExternal,
       ...(options.ssrExternal ?? []),
     ]),
   ];
@@ -348,7 +400,7 @@ export async function createWebConnectorViteConfig(
        * so both paths land on one instance and the bug cannot reproduce.
        * Canon `6b7ab838`.
        */
-      noExternal: ["@warlock.js/web"],
+      noExternal: [...WARLOCK_FAMILY_INLINE_PACKAGES],
     },
     resolve: {
       // ONE React, resolved from the application. A linked `@warlock.js/web`
