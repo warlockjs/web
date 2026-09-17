@@ -49,6 +49,7 @@ import { resolveAuthCookieName } from "./auth-cookie-name";
 import { looksAuthenticated, isStoreEligible } from "./page-cache-eligibility";
 import { computePageCacheKey, type PageCacheVariant } from "./page-cache-key";
 import { getPageCacheEntry, setPageCacheEntry } from "./page-cache-store";
+import { pageVaryHeader } from "./page-vary-header";
 import { reportServerError } from "./report-server-error";
 import { ensureSetCookieCacheFloorHook, markPageResponse } from "./set-cookie-cache-floor-hook";
 import type { BufferedCookie, PageRouteEntry, PageTripleModule } from "./execute-page-request";
@@ -433,12 +434,21 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
             response.header("Cache-Control", `public, max-age=${cache.maxAge}`);
             response.header("x-warlock-cache", "hit");
 
-            if (hit.usesDefer) {
-              response.header("Vary", "User-Agent");
-            }
+            // ONE `header()` call for the whole response — see
+            // `pageVaryHeader`'s doc comment on why a second call would
+            // silently overwrite this one instead of combining with it. A
+            // HIT is only ever reached for a `cache.serverCache === true`
+            // route, so `cache` is always defined here.
+            response.header(
+              "Vary",
+              pageVaryHeader({
+                dataRepresentation: pageCacheVariant === "json",
+                cacheOptedIn: true,
+                deferred: hit.usesDefer,
+              }),
+            );
 
             if (pageCacheVariant === "json") {
-              response.header("Vary", WARLOCK_DATA_REQUEST_HEADER);
               response.setContentType(hit.contentType);
               await response.send(hit.body, hit.status);
             } else {
@@ -609,6 +619,22 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         response.header("x-warlock-cache", cacheHeaderValue);
       }
 
+      // ONE `header()` call for the whole response, HTML and JSON alike —
+      // see `pageVaryHeader`'s doc comment on why a second `header("Vary",
+      // ...)` call further down (the old per-branch calls this replaces)
+      // would silently overwrite this one instead of combining with it. A
+      // route with no `cache` opt-in and no `defer()` gets no `Vary` at all,
+      // same as before this fix.
+      const varyHeader = pageVaryHeader({
+        dataRepresentation: wantsData,
+        cacheOptedIn: cache !== undefined,
+        deferred: rendered.usesDefer ?? false,
+      });
+
+      if (varyHeader !== undefined) {
+        response.header("Vary", varyHeader);
+      }
+
       // Store-time eligibility (lead decision 3), checked once we actually
       // have a rendered response to store. `precomputedJsonBody` lets the
       // `wantsData` branch below reuse the exact string just written to the
@@ -684,10 +710,8 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         // same function, for the same reason.
         persistRequestedLocale(request, response);
 
-        // So a shared cache can never serve a document to a client that asked for
-        // JSON, or the reverse. See `data-request.ts` on why this stays even
-        // while page responses are `no-store`.
-        response.header("Vary", WARLOCK_DATA_REQUEST_HEADER);
+        // `Vary` is already set above, once, for both representations — see
+        // the call site right after the `x-warlock-cache` header.
 
         // `bundle` is absent on exactly one path: nothing matched, so no pipeline
         // ran and there is no payload to build. Fastify already matched this
@@ -747,15 +771,9 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         return;
       }
 
-      // Rule 4: a page that never calls `defer()` renders identically for
-      // every user agent, so its headers stay untouched. A page that DOES
-      // defer renders differently for a detected crawler (the fully
-      // resolved document) than for anything else (the streamed shell) —
-      // the one axis this framework varies a document response on by
-      // `User-Agent` — so a shared cache must be told.
-      if (rendered.usesDefer) {
-        response.header("Vary", "User-Agent");
-      }
+      // Rule 4 (`User-Agent` when deferred) is already folded into the single
+      // `Vary` set above, alongside `wantsData`'s JSON case — see the call
+      // site right after the `x-warlock-cache` header.
 
       // A page middleware that returned 2xx content without writing the reply
       // replaces the page: its value is the body, so there is no document to
@@ -851,8 +869,22 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
 
         applyCommit(response, rendered, applyBufferedCookie);
 
+        // Same rule as the ordinary path (see the `pageVaryHeader` call
+        // above): the JSON representation always gets `x-warlock-data`; the
+        // HTML representation gets it only when this route opted into
+        // `cache`. An error page never defers, so `User-Agent` never applies
+        // here.
+        const errorVaryHeader = pageVaryHeader({
+          dataRepresentation: wantsData,
+          cacheOptedIn: cache !== undefined,
+          deferred: false,
+        });
+
+        if (errorVaryHeader !== undefined) {
+          response.header("Vary", errorVaryHeader);
+        }
+
         if (wantsData) {
-          response.header("Vary", WARLOCK_DATA_REQUEST_HEADER);
           response.setContentType(DATA_RESPONSE_CONTENT_TYPE);
           await response.send(stringify(buildHydrationPayload(rendered.bundle!, request.locale)), 500);
           return;

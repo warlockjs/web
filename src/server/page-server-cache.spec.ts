@@ -562,6 +562,57 @@ describe("server-side page cache (route.cache.serverCache)", () => {
     expect(second.headers["cache-control"]).toBe("public, max-age=60");
   });
 
+  // ── Vary correctness for shared caches ───────────────────────────────────
+  // A CDN in front of this framework keeps the HTML and JSON representations
+  // of a `route.cache` route apart ONLY if every response — HTML included —
+  // carries `Vary: x-warlock-data`. These three specs pin that down (a, b,
+  // c), and exercise real Fastify `reply.header()` semantics via
+  // `server.inject()` rather than a `vi.fn()` mock, because a plain mock
+  // records every call and would never reveal a second `header("Vary", ...)`
+  // call silently overwriting the first.
+  it("(a) the HTML response of a route.cache route carries Vary containing x-warlock-data, on both MISS and HIT", async () => {
+    const miss = await server.inject({ method: "GET", url: "/__scache-basic" });
+    expect(miss.headers["x-warlock-cache"]).toBe("miss");
+    expect(String(miss.headers["vary"] ?? "")).toContain(WARLOCK_DATA_REQUEST_HEADER);
+
+    const hit = await server.inject({ method: "GET", url: "/__scache-basic" });
+    expect(hit.headers["x-warlock-cache"]).toBe("hit");
+    expect(String(hit.headers["vary"] ?? "")).toContain(WARLOCK_DATA_REQUEST_HEADER);
+  });
+
+  it("(b) a deferred page HIT carries both User-Agent and x-warlock-data in Vary", async () => {
+    renderPageRequest.mockImplementation(async () => renderedJson({ usesDefer: true }));
+
+    const miss = await server.inject({
+      method: "GET",
+      url: "/__scache-basic",
+      headers: { [WARLOCK_DATA_REQUEST_HEADER]: WARLOCK_DATA_REQUEST_VALUE },
+    });
+    expect(miss.headers["x-warlock-cache"]).toBe("miss");
+
+    const hit = await server.inject({
+      method: "GET",
+      url: "/__scache-basic",
+      headers: { [WARLOCK_DATA_REQUEST_HEADER]: WARLOCK_DATA_REQUEST_VALUE },
+    });
+    expect(hit.headers["x-warlock-cache"]).toBe("hit");
+
+    const vary = String(hit.headers["vary"] ?? "");
+    expect(vary).toContain("User-Agent");
+    expect(vary).toContain(WARLOCK_DATA_REQUEST_HEADER);
+  });
+
+  it("(c) the JSON response still carries x-warlock-data in Vary", async () => {
+    renderPageRequest.mockImplementation(async () => renderedJson());
+
+    const response = await server.inject({
+      method: "GET",
+      url: "/__scache-basic",
+      headers: { [WARLOCK_DATA_REQUEST_HEADER]: WARLOCK_DATA_REQUEST_VALUE },
+    });
+
+    expect(String(response.headers["vary"] ?? "")).toContain(WARLOCK_DATA_REQUEST_HEADER);
+  });
 
   // ── Tenants and themes never share an entry ─────────────────────────────
   it("two tenants on different hosts never share an entry for the same URL", async () => {

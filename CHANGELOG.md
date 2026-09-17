@@ -15,6 +15,7 @@ All notable changes to `@warlock.js/web` are documented here.
 ### Fixed
 
 - A local variable or parameter named `process` in client code is no longer falsely refused.
+- A page route's HTML response now carries `Vary: x-warlock-data` when its route opts into `route.cache`, so a shared cache can no longer serve a cached document to an SPA data fetch (or the reverse). Also fixed a related bug where a deferred page's cache HIT lost its `Vary: User-Agent` the moment the JSON branch also set `Vary`, since `response.header()` replaces a header value rather than appending to it — every page response now computes its `Vary` value once (`page-vary-header.ts`) and sets it with a single call.
 
 ## 5.13.0 - 2026-09-17
 
