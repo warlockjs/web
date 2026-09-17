@@ -68,35 +68,33 @@ function isNodeModulesFile(id: string): boolean {
 }
 
 /**
- * Generic duck-typed AST walk (mirrors `projection.ts`'s `collectIdentifierNames`
- * — no `@babel/traverse` dependency, this package only needs `@babel/parser`).
- * Visits every node in the tree, including nested function bodies and JSX
- * expression containers, so a secret read buried inside a callback or a
- * conditional is caught just as one at the top level is.
+ * Field names that only ever hold TYPE-space nodes (annotations, generic
+ * parameters/arguments). Both the scope collector and the violation walker
+ * skip these entirely — a reference to `process` that appears only in a
+ * type position (e.g. `function f(env: typeof process.env)`) is erased at
+ * compile time and is never a runtime read, so it is one of the required
+ * innocent cases and must never be visited as a candidate.
  */
-function walk(node: unknown, visit: (node: Record<string, any>) => void): void {
-  if (!node || typeof node !== "object") return;
-  if (Array.isArray(node)) {
-    for (const item of node) walk(item, visit);
-    return;
-  }
-  const record = node as Record<string, any>;
-  if (typeof record.type !== "string") return;
-  visit(record);
-  for (const key of Object.keys(record)) {
-    if (key === "type" || key === "start" || key === "end" || key === "loc" || key === "range")
-      continue;
-    if (
-      key === "leadingComments" ||
-      key === "trailingComments" ||
-      key === "innerComments" ||
-      key === "extra"
-    ) {
-      continue;
-    }
-    walk(record[key], visit);
-  }
-}
+const TYPE_ONLY_KEYS = new Set([
+  "typeAnnotation",
+  "returnType",
+  "typeParameters",
+  "typeArguments",
+  "superTypeParameters",
+]);
+
+const SKIPPED_WALK_KEYS = new Set([
+  "type",
+  "start",
+  "end",
+  "loc",
+  "range",
+  "leadingComments",
+  "trailingComments",
+  "innerComments",
+  "extra",
+  ...TYPE_ONLY_KEYS,
+]);
 
 function isIdentifierNamed(node: any, name: string): boolean {
   return node?.type === "Identifier" && node.name === name;
@@ -106,27 +104,263 @@ function isMemberExpression(node: any): boolean {
   return node?.type === "MemberExpression" || node?.type === "OptionalMemberExpression";
 }
 
-function isProcessObject(node: any): boolean {
-  if (isIdentifierNamed(node, "process")) return true;
+function isGlobalObjectLiteral(node: any): boolean {
+  return (
+    isIdentifierNamed(node, "globalThis") ||
+    isIdentifierNamed(node, "window") ||
+    isIdentifierNamed(node, "self")
+  );
+}
+
+/**
+ * Binding names a pattern introduces (the LEFT side of a destructure/param —
+ * never a value-reference). Used both to seed a scope's declared-names set
+ * and to mark those same identifier nodes as excluded from the "is this a
+ * `process` reference" check, since a binding site names a variable, it
+ * doesn't read one.
+ */
+function collectPatternIdentifiers(pattern: any, sink: (identifier: any) => void): void {
+  if (!pattern || typeof pattern !== "object") return;
+  switch (pattern.type) {
+    case "Identifier":
+      sink(pattern);
+      return;
+    case "ObjectPattern":
+      for (const prop of pattern.properties ?? []) {
+        if (prop.type === "RestElement") {
+          collectPatternIdentifiers(prop.argument, sink);
+        } else {
+          if (!prop.computed && prop.key) sink(prop.key);
+          collectPatternIdentifiers(prop.value, sink);
+        }
+      }
+      return;
+    case "ArrayPattern":
+      for (const element of pattern.elements ?? []) {
+        if (element) collectPatternIdentifiers(element, sink);
+      }
+      return;
+    case "AssignmentPattern":
+      // Only the LEFT side is a binding; `.right` is a real value expression
+      // (a default value) and must stay visitable.
+      collectPatternIdentifiers(pattern.left, sink);
+      return;
+    case "RestElement":
+      collectPatternIdentifiers(pattern.argument, sink);
+      return;
+    default:
+      return;
+  }
+}
+
+/**
+ * A single lexical scope's worth of state, keyed by identifier NAME (not
+ * node identity — a name can be referenced anywhere inside the scope it was
+ * declared in, including in nested functions that close over it, which is
+ * exactly real JS scoping).
+ */
+interface Scope {
+  readonly declaredNames: Set<string>;
+  readonly globalAliasNames: Set<string>;
+}
+
+const FUNCTION_SCOPE_TYPES = new Set([
+  "FunctionDeclaration",
+  "FunctionExpression",
+  "ArrowFunctionExpression",
+  "ObjectMethod",
+  "ClassMethod",
+  "ClassPrivateMethod",
+]);
+
+/**
+ * Populates `declaredNames` (every binding introduced directly in this
+ * scope — var/let/const, function/class names, import specifiers) and
+ * `globalAliasNames` (names assigned directly from `globalThis`/`window`/
+ * `self`, or from an already-known alias, in source order) by scanning a
+ * scope's own statements. Never descends into a NESTED function/class body
+ * — that is a separate scope, built separately when the walker reaches it —
+ * but DOES record that nested function/class's own declared name, since the
+ * name itself is bound in the enclosing scope.
+ */
+function collectScope(node: any, scope: Scope): void {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const item of node) collectScope(item, scope);
+    return;
+  }
+  const type = node.type;
+  if (typeof type !== "string") return;
+
+  if (type === "VariableDeclarator") {
+    collectPatternIdentifiers(node.id, (identifier) => scope.declaredNames.add(identifier.name));
+    if (node.id?.type === "Identifier" && node.init) {
+      const initIsAlias =
+        isGlobalObjectLiteral(node.init) ||
+        (node.init.type === "Identifier" && scope.globalAliasNames.has(node.init.name));
+      if (initIsAlias) scope.globalAliasNames.add(node.id.name);
+    }
+    collectScope(node.init, scope);
+    return;
+  }
+
+  if (type === "FunctionDeclaration" || type === "ClassDeclaration" || type === "ClassExpression") {
+    if (node.id?.name) scope.declaredNames.add(node.id.name);
+    return; // params/body (or class body) are a separate scope — don't descend
+  }
+
+  if (FUNCTION_SCOPE_TYPES.has(type)) {
+    return; // separate scope, built when the walker reaches this node
+  }
+
+  if (type === "ImportDeclaration") {
+    for (const specifier of node.specifiers ?? []) {
+      if (specifier.local?.name) scope.declaredNames.add(specifier.local.name);
+    }
+    return;
+  }
+
+  if (type === "CatchClause") {
+    if (node.param) {
+      collectPatternIdentifiers(node.param, (identifier) => scope.declaredNames.add(identifier.name));
+    }
+    collectScope(node.body, scope);
+    return;
+  }
+
+  for (const key of Object.keys(node)) {
+    if (SKIPPED_WALK_KEYS.has(key)) continue;
+    collectScope(node[key], scope);
+  }
+}
+
+/** Builds a function/program scope from its parameters and body. */
+function buildScope(paramNodes: any[], bodyNode: any): Scope {
+  const scope: Scope = { declaredNames: new Set(), globalAliasNames: new Set() };
+  for (const param of paramNodes) {
+    collectPatternIdentifiers(param, (identifier) => scope.declaredNames.add(identifier.name));
+  }
+  collectScope(bodyNode, scope);
+  return scope;
+}
+
+/**
+ * Identifier nodes that name a BINDING SITE, a non-computed property/member
+ * KEY, or a statement LABEL rather than reading a variable's value — e.g.
+ * the `process` in `function f(process) {}`, in `{ process: 1 }`, or in
+ * `obj.process`. None of these are a reference to the `process` binding, so
+ * they must never trip the bare-identifier check. Built once per module via
+ * a dedicated pass (mirrors `consumedEnvBases`'s "mark, then check identity"
+ * shape) rather than re-derived from parent context during the main walk,
+ * so the exclusion logic lives in exactly one place.
+ */
+function collectExcludedIdentifiers(root: any): WeakSet<object> {
+  const excluded = new WeakSet<object>();
+  const exclude = (identifier: any): void => {
+    if (identifier) excluded.add(identifier);
+  };
+
+  const visit = (node: any): void => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item);
+      return;
+    }
+    const type = node.type;
+    if (typeof type !== "string") return;
+
+    switch (type) {
+      case "VariableDeclarator":
+        collectPatternIdentifiers(node.id, exclude);
+        break;
+      case "FunctionDeclaration":
+      case "FunctionExpression":
+        exclude(node.id);
+        for (const param of node.params ?? []) collectPatternIdentifiers(param, exclude);
+        break;
+      case "ArrowFunctionExpression":
+        for (const param of node.params ?? []) collectPatternIdentifiers(param, exclude);
+        break;
+      case "ClassDeclaration":
+      case "ClassExpression":
+        exclude(node.id);
+        break;
+      case "ImportSpecifier":
+        exclude(node.local);
+        exclude(node.imported);
+        break;
+      case "ImportDefaultSpecifier":
+      case "ImportNamespaceSpecifier":
+        exclude(node.local);
+        break;
+      case "ObjectProperty":
+      case "ClassProperty":
+      case "ClassPrivateProperty":
+        if (!node.computed) exclude(node.key);
+        break;
+      case "ObjectMethod":
+      case "ClassMethod":
+      case "ClassPrivateMethod":
+        if (!node.computed) exclude(node.key);
+        for (const param of node.params ?? []) collectPatternIdentifiers(param, exclude);
+        break;
+      case "CatchClause":
+        collectPatternIdentifiers(node.param, exclude);
+        break;
+      case "LabeledStatement":
+      case "BreakStatement":
+      case "ContinueStatement":
+        exclude(node.label);
+        break;
+      case "MemberExpression":
+      case "OptionalMemberExpression":
+        if (!node.computed) exclude(node.property);
+        break;
+      default:
+        break;
+    }
+
+    for (const key of Object.keys(node)) {
+      if (SKIPPED_WALK_KEYS.has(key)) continue;
+      visit(node[key]);
+    }
+  };
+
+  visit(root);
+  return excluded;
+}
+
+/**
+ * Matches an obtainable reference to Node's `process` object: the bare
+ * `process` identifier (only when NOT shadowed by a local declaration
+ * anywhere in the enclosing scope chain — the required innocent case), or a
+ * `.process` / `["process"]` member access on `globalThis`/`window`/`self`
+ * OR a variable known (via `scopeStack`'s `globalAliasNames`) to alias one
+ * of them. `scopeStack` is ordered innermost-first; a name declared/aliased
+ * in ANY enclosing scope counts, matching real lexical scoping (a nested
+ * function sees an outer `const process = ...` or `const g = globalThis`
+ * too).
+ */
+function isProcessObject(node: any, scopeStack: readonly Scope[]): boolean {
+  if (isIdentifierNamed(node, "process")) {
+    return !scopeStack.some((scope) => scope.declaredNames.has("process"));
+  }
   if (!isMemberExpression(node)) return false;
 
   const host = node.object;
-  if (
-    !isIdentifierNamed(host, "globalThis") &&
-    !isIdentifierNamed(host, "window") &&
-    !isIdentifierNamed(host, "self")
-  ) {
-    return false;
-  }
+  const hostIsAlias =
+    host?.type === "Identifier" &&
+    scopeStack.some((scope) => scope.globalAliasNames.has(host.name));
+  if (!isGlobalObjectLiteral(host) && !hostIsAlias) return false;
 
   if (!node.computed) return isIdentifierNamed(node.property, "process");
   return node.property?.type === "StringLiteral" && node.property.value === "process";
 }
 
 /** Matches the `process.env` member expression itself (dot or static-bracket). */
-function isProcessEnvBase(node: any): boolean {
+function isProcessEnvBase(node: any, scopeStack: readonly Scope[]): boolean {
   if (!isMemberExpression(node)) return false;
-  if (!isProcessObject(node.object)) return false;
+  if (!isProcessObject(node.object, scopeStack)) return false;
   if (!node.computed) return isIdentifierNamed(node.property, "env");
   return node.property?.type === "StringLiteral" && node.property.value === "env";
 }
@@ -217,6 +451,25 @@ interface Violation {
  * `.KEY` MemberExpression) — and leaks the WHOLE env object, not one key, so
  * it fails regardless of what it's assigned to.
  */
+/**
+ * Refuses ANY reference to the `process` binding when it is not locally
+ * declared — not only its `.env` narrowing. Once a reference to `process`
+ * is obtainable at all (bare, or via `.process`/`["process"]` on
+ * `globalThis`/`window`/`self`/an alias of one), what happens to it
+ * afterward can't be tracked by an AST-only gate, so the reference itself
+ * is the violation, exactly like `import.meta.env`'s bare-whole-object
+ * check just above it.
+ */
+function processReferenceViolation(node: any, code: string): Violation {
+  const expression = expressionText(code, node);
+  return {
+    line: node.loc.start.line,
+    expression,
+    cause: `"${expression}" obtains Node's "process" object (directly, or via globalThis/window/self or an alias of one) in client-bound code. process does not exist in the browser, and once a reference to it escapes into a variable its later use can't be tracked statically — so the reference itself is refused, not only a ".env" read off it.`,
+    fix: `Move the code that needs this value into a *.server.ts file or a server export (loader/route/middleware/validation/metadata), or — if the client genuinely needs a value — expose it via import.meta.env.${PUBLIC_ENV_PREFIX}* instead.`,
+  };
+}
+
 function findViolation(
   code: string,
   ast: any,
@@ -224,66 +477,116 @@ function findViolation(
 ): Violation | undefined {
   let found: Violation | undefined;
   const consumedEnvBases = new WeakSet<object>();
+  const excludedIdentifiers = collectExcludedIdentifiers(ast.program);
+  const scopeStack: Scope[] = [buildScope([], ast.program.body)];
 
-  walk(ast.program, (node) => {
-    if (found || !isMemberExpression(node)) return;
-    const outer = node;
+  function checkNode(node: any): void {
+    if (isMemberExpression(node)) {
+      const outer = node;
 
-    if (isProcessEnvBase(outer.object)) {
-      consumedEnvBases.add(outer.object);
-      const key = resolveKey(outer);
-      found = {
-        line: outer.loc.start.line,
-        expression: expressionText(code, outer),
-        cause: key.static
-          ? `"process.env.${key.key}" is read in client-bound code. process.env does not exist in the browser — there is no "public" process.env key, static or computed.`
-          : `a computed key is read off process.env in client-bound code. process.env does not exist in the browser, and the compiler cannot guess whether a computed key is safe.`,
-        fix: `Move the code that needs this value into a *.server.ts file or a server export (loader/route/middleware/validation/metadata), or — if the client genuinely needs this value — expose it via import.meta.env.${PUBLIC_ENV_PREFIX}* instead.`,
-      };
-      return;
-    }
-
-    if (isProcessEnvBase(outer) && !consumedEnvBases.has(outer)) {
-      found = {
-        line: outer.loc.start.line,
-        expression: expressionText(code, outer),
-        cause: `"process.env" is referenced as a whole object in client-bound code (not narrowed to one static "process.env.<KEY>" access) — process.env does not exist in the browser, so reading it as a value like this (assigned, destructured, spread, or passed as an argument) is never safe: there is no "public" process.env key, static or computed.`,
-        fix: `Move the code that needs this value into a *.server.ts file or a server export (loader/route/middleware/validation/metadata), reading only the specific "process.env.<KEY>" value you actually need, or — if the client genuinely needs a value — expose it via import.meta.env.${PUBLIC_ENV_PREFIX}* instead.`,
-      };
-      return;
-    }
-
-    if (isImportMetaEnvBase(outer.object)) {
-      consumedEnvBases.add(outer.object);
-      const key = resolveKey(outer);
-      if (key.static && VITE_BUILTIN_ENV_KEYS.has(key.key)) return; // Vite built-in, not a secret
-      if (key.static && key.key.startsWith(PUBLIC_ENV_PREFIX)) {
-        onPublicKeyRead(key.key);
-        return; // allowed
+      if (isProcessEnvBase(outer.object, scopeStack)) {
+        consumedEnvBases.add(outer.object);
+        const key = resolveKey(outer);
+        found = {
+          line: outer.loc.start.line,
+          expression: expressionText(code, outer),
+          cause: key.static
+            ? `"process.env.${key.key}" is read in client-bound code. process.env does not exist in the browser — there is no "public" process.env key, static or computed.`
+            : `a computed key is read off process.env in client-bound code. process.env does not exist in the browser, and the compiler cannot guess whether a computed key is safe.`,
+          fix: `Move the code that needs this value into a *.server.ts file or a server export (loader/route/middleware/validation/metadata), or — if the client genuinely needs this value — expose it via import.meta.env.${PUBLIC_ENV_PREFIX}* instead.`,
+        };
+        return;
       }
 
-      found = {
-        line: outer.loc.start.line,
-        expression: expressionText(code, outer),
-        cause: key.static
-          ? `"import.meta.env.${key.key}" is read in client-bound code, but its name does not start with "${PUBLIC_ENV_PREFIX}". Only import.meta.env keys prefixed "${PUBLIC_ENV_PREFIX}" are allowed in the client build — everything else is assumed to be a secret.`
-          : `a computed key is read off import.meta.env in client-bound code. The compiler cannot guess whether a computed key resolves to a "${PUBLIC_ENV_PREFIX}"-prefixed name, so it fails closed rather than assume the key is public.`,
-        fix: key.static
-          ? `Rename the env var to start with "${PUBLIC_ENV_PREFIX}" (e.g. "${PUBLIC_ENV_PREFIX}${key.key}") if it is genuinely safe to ship to the browser, or move the code that reads it into a *.server.ts file / server export otherwise.`
-          : `Use a static "import.meta.env.${PUBLIC_ENV_PREFIX}*" literal key instead of a computed one, or move the code that reads it into a *.server.ts file / server export if the key resolves to a secret.`,
-      };
+      if (isProcessEnvBase(outer, scopeStack) && !consumedEnvBases.has(outer)) {
+        found = {
+          line: outer.loc.start.line,
+          expression: expressionText(code, outer),
+          cause: `"process.env" is referenced as a whole object in client-bound code (not narrowed to one static "process.env.<KEY>" access) — process.env does not exist in the browser, so reading it as a value like this (assigned, destructured, spread, or passed as an argument) is never safe: there is no "public" process.env key, static or computed.`,
+          fix: `Move the code that needs this value into a *.server.ts file or a server export (loader/route/middleware/validation/metadata), reading only the specific "process.env.<KEY>" value you actually need, or — if the client genuinely needs a value — expose it via import.meta.env.${PUBLIC_ENV_PREFIX}* instead.`,
+        };
+        return;
+      }
+
+      if (isImportMetaEnvBase(outer.object)) {
+        consumedEnvBases.add(outer.object);
+        const key = resolveKey(outer);
+        if (key.static && VITE_BUILTIN_ENV_KEYS.has(key.key)) return; // Vite built-in, not a secret
+        if (key.static && key.key.startsWith(PUBLIC_ENV_PREFIX)) {
+          onPublicKeyRead(key.key);
+          return; // allowed
+        }
+
+        found = {
+          line: outer.loc.start.line,
+          expression: expressionText(code, outer),
+          cause: key.static
+            ? `"import.meta.env.${key.key}" is read in client-bound code, but its name does not start with "${PUBLIC_ENV_PREFIX}". Only import.meta.env keys prefixed "${PUBLIC_ENV_PREFIX}" are allowed in the client build — everything else is assumed to be a secret.`
+            : `a computed key is read off import.meta.env in client-bound code. The compiler cannot guess whether a computed key resolves to a "${PUBLIC_ENV_PREFIX}"-prefixed name, so it fails closed rather than assume the key is public.`,
+          fix: key.static
+            ? `Rename the env var to start with "${PUBLIC_ENV_PREFIX}" (e.g. "${PUBLIC_ENV_PREFIX}${key.key}") if it is genuinely safe to ship to the browser, or move the code that reads it into a *.server.ts file / server export otherwise.`
+            : `Use a static "import.meta.env.${PUBLIC_ENV_PREFIX}*" literal key instead of a computed one, or move the code that reads it into a *.server.ts file / server export if the key resolves to a secret.`,
+        };
+        return;
+      }
+
+      if (isImportMetaEnvBase(outer) && !consumedEnvBases.has(outer)) {
+        found = {
+          line: outer.loc.start.line,
+          expression: expressionText(code, outer),
+          cause: `"import.meta.env" is referenced as a whole object in client-bound code (not narrowed to one static "${PUBLIC_ENV_PREFIX}*" key access) — used as a value like this (assigned, destructured, spread, or passed as an argument), it leaks every declared env var, public or not, to the client.`,
+          fix: `Read only the specific "import.meta.env.${PUBLIC_ENV_PREFIX}*" key(s) you actually need, one at a time, instead of referencing the whole "import.meta.env" object.`,
+        };
+        return;
+      }
+
+      // Not narrowed to `.env` (or already consumed above) — but if this
+      // member expression IS `<global-or-alias>.process` / `["process"]`,
+      // it obtains the process object on its own and must be refused at
+      // this exact point, independent of whether `.env` is ever read off it
+      // (e.g. `const p = globalThis.process;`, `const p = window.process;`).
+      if (isProcessObject(outer, scopeStack)) {
+        found = processReferenceViolation(outer, code);
+      }
       return;
     }
 
-    if (isImportMetaEnvBase(outer) && !consumedEnvBases.has(outer)) {
-      found = {
-        line: outer.loc.start.line,
-        expression: expressionText(code, outer),
-        cause: `"import.meta.env" is referenced as a whole object in client-bound code (not narrowed to one static "${PUBLIC_ENV_PREFIX}*" key access) — used as a value like this (assigned, destructured, spread, or passed as an argument), it leaks every declared env var, public or not, to the client.`,
-        fix: `Read only the specific "import.meta.env.${PUBLIC_ENV_PREFIX}*" key(s) you actually need, one at a time, instead of referencing the whole "import.meta.env" object.`,
-      };
+    if (isIdentifierNamed(node, "process") && !excludedIdentifiers.has(node)) {
+      if (!scopeStack.some((scope) => scope.declaredNames.has("process"))) {
+        found = processReferenceViolation(node, code);
+      }
     }
-  });
+  }
+
+  function traverse(node: any): void {
+    if (found || !node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        traverse(item);
+        if (found) return;
+      }
+      return;
+    }
+    const type = node.type;
+    if (typeof type !== "string") return;
+
+    const isFunctionScope = FUNCTION_SCOPE_TYPES.has(type);
+    if (isFunctionScope) scopeStack.push(buildScope(node.params ?? [], node.body));
+
+    checkNode(node);
+
+    if (!found) {
+      for (const key of Object.keys(node)) {
+        if (SKIPPED_WALK_KEYS.has(key)) continue;
+        traverse(node[key]);
+        if (found) break;
+      }
+    }
+
+    if (isFunctionScope) scopeStack.pop();
+  }
+
+  traverse(ast.program);
 
   return found;
 }

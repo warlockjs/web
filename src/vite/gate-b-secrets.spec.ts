@@ -302,10 +302,114 @@ describe("gateBSecrets — Gate B inline-secret transform gate (real Vite builds
       }
     });
 
-    it("case 20: a process-object alias remains outside the structural matcher and passes", async () => {
-      const result = await buildEntry("case20-process-object-alias.tsx");
+    it("case 20: a process-object alias (`const p = globalThis.process`) is refused at the alias assignment", async () => {
+      try {
+        await buildEntry("case20-process-object-alias.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module");
+        expect(message).toContain("case20-process-object-alias.tsx:");
+        expect(message).toContain("Expression: globalThis.process");
+        expect(message).toContain("Cause:");
+        expect(message).toContain("Fix:");
+      }
+    });
+  });
+
+  describe("aliased/indirect access to the `process` binding — refused at the point of obtaining it", () => {
+    it("case 28: const { env } = process (destructured off the bare binding) fails", async () => {
+      try {
+        await buildEntry("case28-process-destructure-binding.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module");
+        expect(message).toContain("case28-process-destructure-binding.tsx:");
+        expect(message).toContain("Expression: process");
+        expect(message).toContain("Cause:");
+        expect(message).toContain("Fix:");
+      }
+    });
+
+    it("case 29: const p = window.process (aliased) fails at the alias assignment", async () => {
+      try {
+        await buildEntry("case29-window-process-alias.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module");
+        expect(message).toContain("case29-window-process-alias.tsx:");
+        expect(message).toContain("Expression: window.process");
+        expect(message).toContain("Cause:");
+        expect(message).toContain("Fix:");
+      }
+    });
+
+    it("case 30: const p = self.process (aliased) fails at the alias assignment", async () => {
+      try {
+        await buildEntry("case30-self-process-alias.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module");
+        expect(message).toContain("case30-self-process-alias.tsx:");
+        expect(message).toContain("Expression: self.process");
+        expect(message).toContain("Cause:");
+        expect(message).toContain("Fix:");
+      }
+    });
+
+    it("case 31: const g = globalThis; g.process.env.SECRET_KEY (globalThis itself aliased) fails", async () => {
+      try {
+        await buildEntry("case31-globalthis-alias-process.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module");
+        expect(message).toContain("case31-globalthis-alias-process.tsx:");
+        expect(message).toContain("Expression: g.process.env.SECRET_KEY");
+        expect(message).toContain("Cause:");
+        expect(message).toContain("Fix:");
+      }
+    });
+  });
+
+  describe("innocent cases that must stay allowed", () => {
+    it("case 33: a local function parameter named `process` is not the Node global", async () => {
+      const result = await buildEntry("case33-local-process-param.tsx");
       const code = firstChunkCode(result);
-      expect(code).toContain("Case20Component");
+      expect(code).toContain("Case33Component");
+    });
+
+    it("case 34: a local `const process = {...}` shadows the Node global", async () => {
+      const result = await buildEntry("case34-local-process-const.tsx");
+      const code = firstChunkCode(result);
+      expect(code).toContain("Case34Component");
+    });
+
+    it("case 35: `process` used as an object property key/member on a plain object is not the Node global", async () => {
+      const result = await buildEntry("case35-process-property-key.tsx");
+      const code = firstChunkCode(result);
+      expect(code).toContain("Case35Component");
+    });
+
+    it("case 36: `.process()` called on a non-global object (a job queue) is unrelated to the Node global", async () => {
+      const result = await buildEntry("case36-process-method-non-global.tsx");
+      const code = firstChunkCode(result);
+      expect(code).toContain("Case36Component");
+    });
+
+    it('case 37: a string literal containing "process.env" is not a code reference', async () => {
+      const result = await buildEntry("case37-string-process-env.tsx");
+      const code = firstChunkCode(result);
+      expect(code).toContain("Case37Component");
+    });
+
+    it("case 38: `process` in a type-only position (`typeof process.env` as a type annotation) is erased, not a runtime reference", async () => {
+      const result = await buildEntry("case38-type-only-process.tsx");
+      const code = firstChunkCode(result);
+      expect(code).toContain("Case38Component");
     });
   });
 
