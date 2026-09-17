@@ -7,7 +7,7 @@ description: 'Navigate hydrated pages with `<Link>`, resolve named URLs with `hr
 
 `<Link>` renders a real anchor for progressive enhancement and intercepts a plain in-app click after hydration. The server remains the only route matcher; client navigation fetches the page-data representation of the URL and swaps the Layout + Page tree.
 
-Every behaviour on this page depends on hydration having mounted. See [write-the-root](../write-the-root/SKILL.md#root-is-the-hydration-boundary).
+Every behaviour on this page depends on hydration having mounted. See [write-the-root](../write-the-root/SKILL.md#vessel-is-the-hydration-boundary).
 
 ## The shape
 
@@ -209,4 +209,4 @@ export function CurrentProductId() {
 - [`create-a-page/SKILL.md`](../create-a-page/SKILL.md) — declare route names and params.
 - [`load-page-data/SKILL.md`](../load-page-data/SKILL.md) — what `refresh()` re-runs.
 - [`use-layouts/SKILL.md`](../use-layouts/SKILL.md) — why layout state persists.
-- [`write-the-root/SKILL.md`](../write-the-root/SKILL.md) — the `#root` swap boundary.
+- [`write-the-root/SKILL.md`](../write-the-root/SKILL.md) — the `#vessel` swap boundary.

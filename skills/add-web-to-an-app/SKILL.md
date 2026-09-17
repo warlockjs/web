@@ -23,7 +23,7 @@ src/
 warlock.config.ts
 ```
 
-The generated index page declares `route = { path: "/", name: "index" }`, so the server payload and client registry consume one explicit identity. Universal localization setup is inside its synchronous `register()` hook. The generated root owns the document, renders `<Head />`, keeps `{children}` inside `#root`, and renders `<Scripts />`. `warlock dev` turns literal `groupedTranslations` registrations into typed `useTrans()` keys; it accepts `string` until the first generated typing file exists.
+The generated index page declares `route = { path: "/", name: "index" }`, so the server payload and client registry consume one explicit identity. Universal localization setup is inside its synchronous `register()` hook. The generated root owns the document, renders `<Head />`, keeps `{children}` inside `#vessel`, and renders `<Scripts />`. `warlock dev` turns literal `groupedTranslations` registrations into typed `useTrans()` keys; it accepts `string` until the first generated typing file exists.
 
 Every added `@warlock.js/*` package is saved at the exact version of the Core CLI executing the command. Third-party dependency ranges stay as declared by the feature.
 

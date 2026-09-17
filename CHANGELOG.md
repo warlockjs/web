@@ -2,20 +2,22 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
-## Unreleased
+## 5.14.0 - 2026-09-17
 
-### Breaking
+### Changed
 
-- **The hydration mount point's element id changed from `#root` to `#vessel`.** `id="root"` collided with common embeds and third-party widgets (analytics snippets, payment SDKs, browser extensions) that also reach for `#root`, so the framework's own mount point is namespaced instead. Internally, the framework's fallback App (`src/components/default-app.tsx`) and the client entry that hydrates (`src/client/hydrate-page.tsx`) now share one source of truth for the id instead of each hardcoding the literal. Apps with a custom `root.tsx`, or with CSS/tests/E2E assertions targeting `#root`, must update `<div id="root">` to `<div id="vessel">` and any matching selectors.
+- **BREAKING:** the hydration mount is `<div id="vessel">` (was `#root`), which no longer collides with embeds and widgets. Update custom `root.tsx` files and any `#root` CSS or tests; hydration errors name the rename when `#root` is found.
+- Dev SSR externalises every installed `@warlock.js/*` package (derived, not a hand list), so no family package can load twice and split its state.
 
 ### Security
 
-- **The client-build secret scan now refuses every reference to the global `process` in client code**, not only direct `process.env.X` reads. Aliased and indirect forms such as `const p = globalThis.process; p.env.SECRET`, `const { env } = process`, `window.process` and an aliased `globalThis` used to pass the scan. **BREAKING for client code that feature-detects with `typeof process`**: use `import.meta.env` instead.
+- **BREAKING:** the client-build secret scan refuses every reference to the global `process`, including aliased forms (`const p = globalThis.process`, `const { env } = process`, `window.process`). Use `import.meta.env` instead of `typeof process` checks.
 
 ### Fixed
 
 - A local variable or parameter named `process` in client code is no longer falsely refused.
-- A page route's HTML response now carries `Vary: x-warlock-data` when its route opts into `route.cache`, so a shared cache can no longer serve a cached document to an SPA data fetch (or the reverse). Also fixed a related bug where a deferred page's cache HIT lost its `Vary: User-Agent` the moment the JSON branch also set `Vary`, since `response.header()` replaces a header value rather than appending to it — every page response now computes its `Vary` value once (`page-vary-header.ts`) and sets it with a single call.
+- Cached pages send one `Vary` value on both HTML and data responses: HTML now varies on `x-warlock-data`, and deferred pages keep `Vary: User-Agent`.
+- The typed translation-key guard now actually runs as part of `typecheck`.
 
 ## 5.13.0 - 2026-09-17
 

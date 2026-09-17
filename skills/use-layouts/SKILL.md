@@ -99,7 +99,7 @@ This is scoped to the not-found page: an ordinary page in the same directory sti
 
 ## Why layout state persists
 
-Client navigation rebuilds the Layout + Page element tree at the same `#root` position. When the next page uses the same layout component type in the same position, React reconciles it instead of remounting it. Layout state such as open menus, scroll containers, and media survives.
+Client navigation rebuilds the Layout + Page element tree at the same `#vessel` position. When the next page uses the same layout component type in the same position, React reconciles it instead of remounting it. Layout state such as open menus, scroll containers, and media survives.
 
 `refresh()` has the same property: it re-fetches loaders and swaps the page data while the layout stays mounted. Navigating to a page with a different layout component changes the tree type and remounts that wrapper.
 
@@ -125,6 +125,6 @@ A layout is projected for the browser the same way a page is: `prefix`, `middlew
 ## See also
 
 - [`create-a-page/SKILL.md`](../create-a-page/SKILL.md) — declare the page path composed after the prefix.
-- [`write-the-root/SKILL.md`](../write-the-root/SKILL.md) — the document and `#root` outside the layout.
+- [`write-the-root/SKILL.md`](../write-the-root/SKILL.md) — the document and `#vessel` outside the layout.
 - [`load-page-data/SKILL.md`](../load-page-data/SKILL.md) — `LayoutLoader`, parallel execution, and `shared`.
 - [`navigate-on-the-client/SKILL.md`](../navigate-on-the-client/SKILL.md) — client swaps and `refresh()`.

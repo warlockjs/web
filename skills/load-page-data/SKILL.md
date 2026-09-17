@@ -1,6 +1,6 @@
 ---
 name: load-page-data
-description: 'Load App, Layout, and Page data with `AppLoader`, `LayoutLoader`, and `PageLoader`; type component `data`, validate page input, short-circuit with the buffered response, and publish request-scoped browser-safe values through `shared`. Triggers: `PageLoader`, `LayoutLoader`, `AppLoader`, `PageProps`, `shared`, `useShared`, `validation`, `request.validated`, `process.env`, `env("PUBLIC_...")`, `import.meta.env.PUBLIC_`; "load page data", "pass server data to React", "share request data", "redirect from a loader", "read an environment variable in a page", "process.env refused in the client build", "loader execution order", "return a Response from a loader". Skip: page module basics — `@warlock.js/web/create-a-page/SKILL.md`; layouts — `@warlock.js/web/use-layouts/SKILL.md`; mutation follow-up — `@warlock.js/web/navigate-on-the-client/SKILL.md`; competing loaders Next data functions, Remix loaders, React Server Components.'
+description: 'Load App, Layout, and Page data with `AppLoader`, `LayoutLoader`, and `PageLoader`; type component `data`, validate page input, short-circuit with the buffered response, and publish request-scoped browser-safe values through `shared`. Triggers: `PageLoader`, `LayoutLoader`, `AppLoader`, `PageProps`, `shared`, `useShared`, `validation`, `request.validated`, `process.env`, `env("PUBLIC_...")`, `import.meta.env.PUBLIC_`; "load page data", "pass server data to React", "share request data", "redirect from a loader", "read an environment variable in a page", "process.env refused in the client build", "globalThis.process refused", "window.process refused", "loader execution order", "return a Response from a loader". Skip: page module basics — `@warlock.js/web/create-a-page/SKILL.md`; layouts — `@warlock.js/web/use-layouts/SKILL.md`; mutation follow-up — `@warlock.js/web/navigate-on-the-client/SKILL.md`; competing loaders Next data functions, Remix loaders, React Server Components.'
 ---
 
 # Warlock — load page data
@@ -50,6 +50,21 @@ Bare value-reads matter as much as keyed ones: `process` does not exist in a
 browser, so referencing the object at all — assigned, destructured, spread, or
 passed as an argument — is already broken, and passing the whole object to a
 component is how a server secret reaches a page in one line.
+
+**Any reference to `process` is refused, aliased forms included — there is no
+way around the check by renaming the binding:**
+
+```tsx
+const p = process; // aliased — refused
+const p = globalThis.process; // globalThis alias — refused
+const { env } = process; // destructured alias — refused
+window.process; // window alias — refused
+self.process; // self alias — refused
+```
+
+A local variable or parameter that happens to be named `process` (e.g.
+`function f(process: Env) {}`) is not a reference to the global and is not
+refused — only an obtainable reference to Node's actual `process` object is.
 
 **Enforcement covers dev SSR as well as the client bundle, and a violation
 fails the build.** It is not a production-only check you can discover late: the
