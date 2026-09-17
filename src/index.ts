@@ -40,6 +40,11 @@ export type {
   SerializedPageError,
 } from "./components/document-context";
 export type { PageMetadata } from "./metadata";
+// The narrow build-time-adjacent, runtime-executed surface: every routable
+// page with its module's `metadata`/`sitemap` exports resolved. Reuses the
+// same discovery `discoverPages()` powers, so this and route registration can
+// never disagree about which pages exist.
+export { listRoutablePages } from "./build/list-routable-pages";
 export { shared, useShared } from "./shared";
 // Per-request stylesheets: a lazily imported module picked per request (a
 // tenant theme) declares its source so its CSS is render-blocking in <head>.
