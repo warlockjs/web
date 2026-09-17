@@ -172,7 +172,7 @@ export function createReplyShim(): ReplyShim {
   return shim;
 }
 
-export function createFastifyRequestShim(input: {
+function createFastifyRequestShim(input: {
   url: string;
   params?: Record<string, string>;
   query?: Record<string, string>;

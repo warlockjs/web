@@ -104,10 +104,10 @@ export type NavigationErrorPayload = {
 };
 
 /** A listener for one navigation event. Its return value is ignored. */
-export type RouterEventListener<Payload> = (payload: Payload) => void;
+type RouterEventListener<Payload> = (payload: Payload) => void;
 
 /** Call it to stop listening. Calling it more than once is a no-op. */
-export type RouterEventUnsubscribe = () => void;
+type RouterEventUnsubscribe = () => void;
 
 /**
  * The navigation lifecycle surface: three events, each with its own payload

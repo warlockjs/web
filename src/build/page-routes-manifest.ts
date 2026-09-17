@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { PageRoutesManifest } from "./generate-pages-barrel";
 
-export const PAGE_ROUTES_MANIFEST_FILE = "page-routes.manifest.json";
+const PAGE_ROUTES_MANIFEST_FILE = "page-routes.manifest.json";
 
 /** Atomically replace the snapshot only after the rest of the build succeeds. */
 export async function writePageRoutesManifest(

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export const PAGE_FILE_SUFFIX = ".page.tsx";
+const PAGE_FILE_SUFFIX = ".page.tsx";
 
 export type PageFileChanges = {
   added: string[];

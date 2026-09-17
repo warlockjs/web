@@ -296,7 +296,7 @@ function hazardFor(specifier: string): string | undefined {
  * inside a template literal (a code sample in a docs page, say) still matches.
  * Rare, and it fails loudly rather than silently, but it is not impossible.
  */
-export function assertNoViteOnlyImports(webRoots: readonly string[], appRoot: string): void {
+function assertNoViteOnlyImports(webRoots: readonly string[], appRoot: string): void {
   for (const webRoot of webRoots) {
     const sources = walkFiles(
       webRoot,

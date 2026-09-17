@@ -111,7 +111,7 @@ export type PageCacheTagContext = {
 export type DeclaredRouteExport = string | { path: string; name?: string; cache?: PageCacheOptIn };
 
 /** The canonical form every declared `route` export resolves to. */
-export type CanonicalRoute = {
+type CanonicalRoute = {
   path: string;
   name?: string;
 };

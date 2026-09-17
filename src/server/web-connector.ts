@@ -6,26 +6,26 @@
  * lifecycle. Everything this file does used to live in `startDevServer()`
  * (`web/src/server/dev-error-transport.ts`), which created its own Fastify instance,
  * scanned the router and called `listen()` itself — three responsibilities core
- * already owns at `core/src/connectors/http-connector.ts:72`, `:133` and `:147`.
+ * already owns at `core/src/connectors/http-connector.ts:123`, `:189` and `:248`.
  *
  * WHY A `Late` CONNECTOR IS THE RIGHT SEAM, in ordering terms:
  * `ConnectorsManager.startPhase` runs **every** `boot()` in a phase before
- * **any** `start()` (`core/src/connectors/connectors-manager.ts:87-93`).
- * `HttpConnector` is itself `Late` (`core/src/connectors/http-connector.ts:41`)
+ * **any** `start()` (`core/src/connectors/connectors-manager.ts:134-144`).
+ * `HttpConnector` is itself `Late` (`core/src/connectors/http-connector.ts:71`)
  * and publishes its Fastify instance during its own `boot()`
- * (`container.set("http.server", …)`, `core/src/connectors/http-connector.ts:74`).
+ * (`container.set("http.server", …)`, `core/src/connectors/http-connector.ts:125`).
  * So by the time this connector's `boot()` runs, Fastify and its plugins exist,
  * the raw node server exists, and NOTHING has been scanned or bound yet — page
  * routes registered here are picked up by `HttpConnector.start()`'s
- * `router.scanDevServer(…)` (`core/src/connectors/http-connector.ts:133`) before
- * `listen()` (`:147`). `SocketConnector.boot()` reads the same container key the
+ * `router.scanDevServer(…)` (`core/src/connectors/http-connector.ts:189`) before
+ * `listen()` (`:248`). `SocketConnector.boot()` reads the same container key the
  * same way (`core/src/connectors/socket-connector.ts:78-80`) — this file is
  * deliberately shaped after it.
  *
  * What it can NOT do, and why that is fine: route COLLECTION happens earlier
- * (`core/src/dev-server/development-server.ts:57` precedes `:66`), so pages are
+ * (`core/src/dev-server/development-server.ts:57` precedes `:65`), so pages are
  * not discovered by the framework's file scanner. They are discovered here, by
- * `installPageRoutes` (`./install-page-routes.ts:189`), and registered through
+ * `installPageRoutes` (`./install-page-routes.ts:405`), and registered through
  * the ordinary `router.get(…)` API — there is no second server matcher.
  *
  * DELIBERATE EXCEPTION to the rule that web has no core dependency, the same one
@@ -84,13 +84,13 @@ import { WEB_CONNECTOR_PRIORITY } from "./web-connector-factory";
  *
  * `ConnectorPriority.HTTP` is `5` and `ConnectorPriority.STORAGE` is `6`
  * (`core/src/connectors/types.ts:187-188`), and the manager sorts on a plain
- * numeric compare (`core/src/connectors/connectors-manager.ts:46`) — so `5.5`
+ * numeric compare (`core/src/connectors/connectors-manager.ts:87`) — so `5.5`
  * is "immediately after http, before everything else". Two consequences, both
  * wanted:
  *
  *  - `boot()` sees a Fastify instance that already has core's plugins and
- *    health routes on it (`core/src/connectors/http-connector.ts:76`, `:85`).
- *  - teardown is reverse-priority (`core/src/connectors/connectors-manager.ts:118`),
+ *    health routes on it (`core/src/connectors/http-connector.ts:123`, `:136`).
+ *  - teardown is reverse-priority (`core/src/connectors/connectors-manager.ts:170`),
  *    so Vite closes BEFORE the HTTP server does, not after.
  *
  * Note this is a magic number, not a declared dependency: core has no
@@ -104,16 +104,6 @@ import { WEB_CONNECTOR_PRIORITY } from "./web-connector-factory";
  */
 export { WEB_CONNECTOR_PRIORITY };
 
-/**
- * Production boot ran with no page manifest in the registry.
- *
- * `undefined` from `consumePageManifest()` is a FACT, not an error — the registry never throws
- * on absence. The connector supplies the meaning, and it does so from MODE, not
- * from the value: in dev the absence is normal because Vite supplies the
- * modules and no build has run; in production it means the app was not built
- * with web, and a prod server that boots anyway serves 404s while looking
- * healthy — the exact silent failure this error exists to prevent.
- */
 /**
  * Which half of the handoff is live: Vite serving from source, or a bundle
  * produced by `warlock build`.
@@ -130,7 +120,7 @@ export { WEB_CONNECTOR_PRIORITY };
  * (`core/src/production/production-builder.ts:245`).
  *
  * This is core's own connector-level idiom, not a new one:
- * `core/src/connectors/http-connector.ts:132` picks `scanDevServer` over `scan`
+ * `core/src/connectors/http-connector.ts:189` picks `scanDevServer` over `scan`
  * the same way.
  */
 function isProductionRuntime(): boolean {
@@ -154,6 +144,16 @@ function pageChangeVersions(changes: PageFileChanges): Map<string, string> {
   );
 }
 
+/**
+ * Production boot ran with no page manifest in the registry.
+ *
+ * `undefined` from `consumePageManifest()` is a FACT, not an error — the registry never throws
+ * on absence. The connector supplies the meaning, and it does so from MODE, not
+ * from the value: in dev the absence is normal because Vite supplies the
+ * modules and no build has run; in production it means the app was not built
+ * with web, and a prod server that boots anyway serves 404s while looking
+ * healthy — the exact silent failure this error exists to prevent.
+ */
 export class WebPageManifestMissingError extends Error {
   public constructor() {
     super(
@@ -176,7 +176,7 @@ export class WebPageManifestMissingError extends Error {
  * left to `path.resolve(cwd, undefined)`, which throws a `TypeError` naming
  * neither the manifest nor the rebuild that fixes it.
  */
-export class WebClientDirMissingError extends Error {
+class WebClientDirMissingError extends Error {
   public constructor() {
     super(
       "The page manifest carries pages or public files but no `clientDir`, so the " +
@@ -534,7 +534,7 @@ export class WebConnector extends BaseConnector {
    * it reads back the one string `build` wrote.
    */
   protected resolveClientDir(): string {
-    // The manifest CACHED at boot (line ~269), not a second `consumePageManifest()`:
+    // The manifest CACHED at boot (line ~325), not a second `consumePageManifest()`:
     // this runs from a callback the production branch invokes lazily, long after
     // that assignment, and reading the same field the mode branch already
     // decided on keeps one source of truth for the boot's view of the manifest.

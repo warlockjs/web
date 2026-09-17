@@ -16,7 +16,7 @@ const IN_PROCESS_DRIVER_NAMES = new Set(["memory", "lru", "memoryExtended"]);
  * cannot be loaded — names the package explicitly rather than surfacing a
  * bare "Cannot find module" error, per the lead decision to fail loudly.
  */
-export class PageCacheDependencyMissingError extends Error {
+class PageCacheDependencyMissingError extends Error {
   public constructor(cause: unknown) {
     super(
       'A route declares `route.cache.serverCache: true`, but "@warlock.js/cache" could not be ' +

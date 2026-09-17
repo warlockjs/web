@@ -49,7 +49,7 @@ declare module "@warlock.js/core" {
 }
 
 /** Stage 2 rule 7's stated default. */
-export const DEFAULT_DEFER_TIMEOUT_MS = 10_000;
+const DEFAULT_DEFER_TIMEOUT_MS = 10_000;
 
 /** Read `web.streaming.deferTimeout`, falling back to the documented default. */
 export function resolveDeferTimeoutMs(): number {
