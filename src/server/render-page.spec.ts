@@ -1,8 +1,8 @@
-import { Response, type Request } from "@warlock.js/core";
+import { Response, setEnvironment, type Request } from "@warlock.js/core";
 import { v } from "@warlock.js/seal";
 import { parse } from "devalue";
 import { createElement, type ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PAYLOAD_SCRIPT_ID } from "../components/document-context";
 import { useLocale } from "../localization";
 import type { ServerErrorPageProps } from "../props";
@@ -24,8 +24,9 @@ vi.mock("../shared", () => ({
 import { useQueryString } from "@warlock.js/web";
 import { connectPageContext, type PageRouteEntry } from "./execute-page-request";
 import { isNonHydrating } from "./page-render-bundle";
-import { renderPageFailure, renderPageRequest } from "./render-page";
-import type { ErrorPageModule } from "./error-page";
+import { renderPageFailure, renderPageRequest, resolveServerErrorPageProps } from "./render-page";
+import { hydrationErrorPageProps, type ErrorPageModule } from "./error-page";
+import { PublicPageError } from "./public-page-error";
 import type { PipelineStore } from "./execute-page-request.types";
 
 beforeEach(() => {
@@ -50,6 +51,122 @@ function createHttp(locale = "en") {
 
   return { request, response };
 }
+
+/**
+ * ── `resolveServerErrorPageProps` — card c52d5653 ────────────────────────────
+ * Tested directly (the pipeline stage that builds error-page props), not via
+ * a real `renderToString()` under `setEnvironment("production")`: this suite
+ * transforms JSX to `react/jsx-dev-runtime` calls unconditionally (Vite's
+ * test-mode transform, independent of `NODE_ENV`), which is incompatible
+ * with react-dom-server's PRODUCTION build — any real SSR render under
+ * simulated production throws `TypeError: dispatcher.getOwner is not a
+ * function` here regardless of import order (confirmed: the dev/test-mode
+ * describes elsewhere in this file only pass because they never flip
+ * `NODE_ENV`; see `error-disclosure-inventory.spec.ts`'s TEST-HARNESS NOTE
+ * for the sibling case). `resolveServerErrorPageProps` is the exact
+ * production/hydration-parity decision `render-page.ts`'s two SSR call
+ * sites make — testing it directly proves the decision itself without
+ * needing a real production React render.
+ */
+describe("resolveServerErrorPageProps — SSR/hydration parity (c52d5653)", () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+
+  afterEach(() => {
+    if (originalNodeEnv === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = originalNodeEnv;
+    }
+  });
+
+  const SECRET = "secret-xyz";
+
+  it("RED FIRST (would fail before the fix) — in production, SSR props.error is the SAME sanitized object hydration carries, not the raw thrown value", () => {
+    setEnvironment("production");
+    const thrown = new Error(SECRET);
+    const props: ServerErrorPageProps = { error: thrown, status: 500 };
+    const errorPage = hydrationErrorPageProps(props, thrown, "req-1");
+
+    const ssrProps = resolveServerErrorPageProps(props, errorPage);
+
+    expect(ssrProps.error).not.toBe(thrown);
+    expect((ssrProps.error as { message: string }).message).not.toContain(SECRET);
+    // Reference identity with the hydration payload's own error, not merely
+    // deep equality — the two channels must never be able to drift apart.
+    expect(ssrProps.error).toBe(errorPage.error);
+  });
+
+  it("PublicPageError's own message still reaches SSR props in production — the one documented exception", () => {
+    setEnvironment("production");
+    const thrown = new PublicPageError("This slug is already taken.");
+    const props: ServerErrorPageProps = { error: thrown, status: 500 };
+    const errorPage = hydrationErrorPageProps(props, thrown, "req-1");
+
+    const ssrProps = resolveServerErrorPageProps(props, errorPage);
+
+    expect((ssrProps.error as { message: string }).message).toBe("This slug is already taken.");
+  });
+
+  it("development is UNCHANGED — SSR props.error stays the raw thrown value", () => {
+    // Ambient NODE_ENV=test already exercises the non-production branch of
+    // `environment()`, same as every real-SSR describe elsewhere in this file.
+    const thrown = new Error(SECRET);
+    const props: ServerErrorPageProps = { error: thrown, status: 500 };
+    const errorPage = hydrationErrorPageProps(props, thrown, "req-1");
+
+    const ssrProps = resolveServerErrorPageProps(props, errorPage);
+
+    expect(ssrProps.error).toBe(thrown);
+  });
+});
+
+/**
+ * ── Real-SSR proof, dev mode only — card c52d5653 ────────────────────────────
+ * Companion to the pipeline-stage describe above: an actual `renderToString`
+ * render (no `setEnvironment`, so no react-dom production/jsx-dev-runtime
+ * conflict — see the note above) proving the wiring end to end for the
+ * branch this harness CAN exercise safely. Production's own HTML output is
+ * proven sanitized by construction: `resolveServerErrorPageProps` (proven
+ * above) is the ONLY thing `errorPageElement` ever renders in
+ * `render-page.ts`'s two SSR call sites.
+ */
+describe("finishRender — error.page.tsx SSR props, real render, dev mode (c52d5653)", () => {
+  it("an error.page.tsx that reads error.message renders the RAW thrown message in dev — unchanged by this fix", async () => {
+    const SECRET = "secret-xyz";
+    const entry: PageRouteEntry = {
+      path: "/boom",
+      name: "boom",
+      triple: {
+        app: {},
+        layout: {},
+        page: {
+          default: () => {
+            throw new Error(SECRET);
+          },
+        },
+      },
+    };
+    const { request, response } = createHttp();
+    const errorPageModule: ErrorPageModule = {
+      default: (props: ServerErrorPageProps) =>
+        createElement(
+          "span",
+          {},
+          props.error instanceof Error ? props.error.message : "no message",
+        ),
+    };
+
+    const rendered = await renderPageRequest("/boom", {
+      routes: [entry],
+      createHttp: () => ({ request, response }),
+      loadErrorPage: async () => errorPageModule,
+    });
+
+    if (rendered instanceof Response) throw new Error("unexpected terminal Response");
+
+    expect(rendered.html).toContain(SECRET);
+  });
+});
 
 describe("request-bound locale provider", () => {
   it("keeps concurrent SSR documents and their hydration payloads on their own locale", async () => {
@@ -276,6 +393,50 @@ describe("finishRender — render-error floor (d47f5696)", () => {
     // And the route is named, so the developer knows WHERE it threw.
     expect(
       calls.some((args) => args.some((arg) => typeof arg === "string" && arg.includes("/boom"))),
+    ).toBe(true);
+  });
+});
+
+function throwingErrorPageModule(): ErrorPageModule {
+  return {
+    default: () => {
+      throw new Error("error page exploded");
+    },
+  };
+}
+
+describe("finishRender — the application error page itself throws", () => {
+  it("reports the error page's own failure to stderr, not just the original error", async () => {
+    const entry = throwingPageEntry();
+    const { request, response } = createHttp();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    let calls: unknown[][];
+    try {
+      const rendered = await renderPageRequest("/boom", {
+        routes: [entry],
+        createHttp: () => ({ request, response }),
+        loadErrorPage: async () => throwingErrorPageModule(),
+      });
+      if (rendered instanceof Response) throw new Error("unexpected terminal Response");
+      calls = errorSpy.mock.calls.map((args) => [...args]);
+    } finally {
+      errorSpy.mockRestore();
+    }
+
+    // The original page-render throw is still reported (never swallowed).
+    expect(
+      calls.some((args) =>
+        args.some((arg) => arg instanceof Error && arg.message === "page render exploded"),
+      ),
+    ).toBe(true);
+
+    // The error page's OWN throw must also be reported — otherwise a
+    // developer whose error.page.tsx itself throws sees nothing at all.
+    expect(
+      calls.some((args) =>
+        args.some((arg) => arg instanceof Error && arg.message === "error page exploded"),
+      ),
     ).toBe(true);
   });
 });

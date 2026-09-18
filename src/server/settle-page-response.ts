@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { Response } from "@warlock.js/core";
+import { environment, type Response } from "@warlock.js/core";
+import { PublicPageError } from "./public-page-error";
 import type {
   PageBoundaryDesignation,
   PageErrorRecord,
@@ -36,7 +37,11 @@ export function buildErrorRecord(
 
   console.error("[warlock] page error", digest, ...(requestPath ? [requestPath] : []), thrown);
 
-  if (process.env.NODE_ENV === "production") {
+  // An explicitly public error owns its own message even in production — the
+  // same rule `serializePageError` (`./error-page.ts`) applies at the
+  // hydration boundary; this is the loader/middleware-throw boundary's own
+  // enforcement point, so the two never disagree about what "public" means.
+  if (environment() === "production" && !(thrown instanceof PublicPageError)) {
     const surrogate = new Error("An unexpected error occurred.");
 
     (surrogate as Error & { digest: string }).digest = digest;

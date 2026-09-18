@@ -50,6 +50,9 @@ export { shared, useShared } from "./shared";
 // Per-request stylesheets: a lazily imported module picked per request (a
 // tenant theme) declares its source so its CSS is render-blocking in <head>.
 export { InvalidStylesheetSourceError, linkStylesheetsFor } from "./request-stylesheets";
+// The one error whose message reaches the browser in production; every other
+// thrown value is sanitized to a generic message plus an error code.
+export { PublicPageError } from "./server/public-page-error";
 export { LocaleProvider, useLocale, useTrans } from "./localization";
 export type { LocaleProviderProps, Translate } from "./localization";
 export { localeDirection } from "./text-direction";

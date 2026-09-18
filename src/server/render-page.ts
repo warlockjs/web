@@ -3,6 +3,7 @@ import type { PipeableStream, RenderToPipeableStreamOptions } from "react-dom/se
 import {
   buildTracingContext,
   dispatchPhase,
+  environment,
   isTracingEnabled,
   Response,
   type Request,
@@ -13,6 +14,7 @@ import {
   escapePayload,
   PAYLOAD_SCRIPT_ID,
   type DocumentContextValue,
+  type SerializedErrorPageProps,
 } from "../components/document-context";
 import type { SharedContext } from "../index";
 import { LocaleProvider } from "../localization";
@@ -282,6 +284,24 @@ function errorPageElement(module: ErrorPageModule, props: ServerErrorPageProps):
   return createElement(ErrorPage, props);
 }
 
+/**
+ * THE single point that decides what `error.page.tsx` sees, in EITHER
+ * representation of the same failure: SSR props (this return value) and the
+ * hydration payload (`errorPage`, already built by `hydrationErrorPageProps`
+ * before this is called). In production the two must be the SAME sanitized
+ * {@link SerializedPageError} — never the raw `thrown` — or the initial HTML
+ * leaks what the hydration payload just redacted and the two disagree at
+ * hydration (card c52d5653). Development is unchanged: the raw error, same
+ * as before this rule existed.
+ */
+export function resolveServerErrorPageProps(
+  props: ServerErrorPageProps,
+  errorPage: SerializedErrorPageProps,
+): ServerErrorPageProps {
+  if (environment() !== "production") return props;
+  return { ...props, error: errorPage.error };
+}
+
 type LevelProps = {
   data: unknown;
   shared: Readonly<SharedContext> | undefined;
@@ -500,6 +520,26 @@ function reportRenderError(route: PageDataBundle["route"], thrown: unknown): voi
 }
 
 /**
+ * Unconditional stderr floor for the application's OWN `error.page.tsx`
+ * failing while rendering the fallback for some other error.
+ *
+ * The catch blocks around `renderErrorPage()` fall back to
+ * `renderFrameworkAfterErrorPageFailure()` so the response is still a
+ * complete document, but that fallback used to swallow the error page's own
+ * throw entirely — a developer whose error.page.tsx itself threw got no
+ * line anywhere, on top of the original failure it was meant to report. This
+ * never replaces `reportRenderError`: the original error and the error
+ * page's own failure are reported separately, since both matter.
+ */
+function reportErrorPageFailure(route: PageDataBundle["route"], thrown: unknown): void {
+  const where = route?.path ?? route?.name ?? "an unknown route";
+  console.error(
+    `[warlock:web] the application error page itself failed while rendering ${where}:`,
+    thrown,
+  );
+}
+
+/**
  * Render an already-finalized document element through React's streaming
  * renderer, resolving once it is ready to pipe.
  *
@@ -685,7 +725,11 @@ async function finishRender(
     (dataRequest && streamOptions.awaitDeferredForDataRequest === true) ||
     (!dataRequest && streamOptions.crawler === true);
 
-  if (awaitAndInlineDeferred && bundle.deferredKeys !== undefined && bundle.deferredKeys.length > 0) {
+  if (
+    awaitAndInlineDeferred &&
+    bundle.deferredKeys !== undefined &&
+    bundle.deferredKeys.length > 0
+  ) {
     const deferredKeys = bundle.deferredKeys;
     const settlements = bundle.deferredSettlements ?? {};
     const settled = await Promise.all(
@@ -844,15 +888,27 @@ async function finishRender(
     const props: ServerErrorPageProps = { error: thrown, status: currentError?.statusCode ?? 500 };
     const module = await loadErrorPage();
     registerModules([module as RegisterableModuleNamespace]);
-    const errorPage = hydrationErrorPageProps(props, serializableError);
+    // Prefer the digest `buildErrorRecord` already logged for THIS error
+    // (`console.error("[warlock] page error", digest, ...)`) so the browser's
+    // `errorCode` joins that exact line; fall back to the request id only
+    // when there is no such digest (the app-boundary-itself-threw path below,
+    // where `thrown` never went through `buildErrorRecord`).
+    const errorPage = hydrationErrorPageProps(
+      props,
+      serializableError,
+      currentError?.digest ?? request.id,
+    );
     bundle.errorPage = errorPage;
-    bundle.metadata = resolveErrorPageMetadata(module, props);
+    const ssrProps = resolveServerErrorPageProps(props, errorPage);
+    bundle.metadata = resolveErrorPageMetadata(module, ssrProps);
     documentValue = {
       ...documentValue,
       metadata: bundle.metadata,
       payload: buildHydrationPayload(bundle, documentSlots.locale),
     };
-    return renderWithContext(wrapRootward(triple, bundle, "page", errorPageElement(module, props)));
+    return renderWithContext(
+      wrapRootward(triple, bundle, "page", errorPageElement(module, ssrProps)),
+    );
   };
 
   for (;;) {
@@ -867,7 +923,8 @@ async function finishRender(
               currentError.originalError ?? currentError.error,
               currentError.error,
             )) ?? renderFrameworkRoot();
-        } catch {
+        } catch (errorPageThrown) {
+          reportErrorPageFailure(bundle.route, errorPageThrown);
           body = renderFrameworkAfterErrorPageFailure();
         }
         renderTimeThrow = true;
@@ -897,7 +954,8 @@ async function finishRender(
         // a bare `<main>` fragment.
         try {
           body = (await renderErrorPage(thrown)) ?? renderFrameworkRoot();
-        } catch {
+        } catch (errorPageThrown) {
+          reportErrorPageFailure(bundle.route, errorPageThrown);
           body = renderFrameworkAfterErrorPageFailure();
         }
         break;
@@ -986,9 +1044,19 @@ async function finishRender(
           nonce: documentSlots.nonce,
           allReady,
           routeName: bundle.route.name,
+          signal: bundle.abortSignal,
         });
 
-  return { html, status, headers, cookies, data: bundle.pageData, bundle, pipeableStream, usesDefer };
+  return {
+    html,
+    status,
+    headers,
+    cookies,
+    data: bundle.pageData,
+    bundle,
+    pipeableStream,
+    usesDefer,
+  };
 }
 
 /**
@@ -1048,17 +1116,21 @@ export async function renderPageFailure(options: RenderPageFailureOptions): Prom
     const props: ServerErrorPageProps = { error: thrown, status: 500 };
     const module = await loadErrorPage();
     registerModules([module as RegisterableModuleNamespace]);
-    const errorPage = hydrationErrorPageProps(props);
+    const errorPage = hydrationErrorPageProps(props, undefined, request.id);
     bundle.errorPage = errorPage;
+    // Same chokepoint as `renderErrorPage` above: production SSR must render
+    // the sanitized error, matching the hydration payload set below.
+    const ssrProps = resolveServerErrorPageProps(props, errorPage);
     value = {
       ...value,
-      metadata: resolveErrorPageMetadata(module, props),
+      metadata: resolveErrorPageMetadata(module, ssrProps),
       payload: markNonHydrating({ ...frameworkPayload, errorPage }),
     };
     body = renderWithContext(
-      createElement(DefaultApp, { children: errorPageElement(module, props) }),
+      createElement(DefaultApp, { children: errorPageElement(module, ssrProps) }),
     );
-  } catch {
+  } catch (errorPageThrown) {
+    if (loadErrorPage) reportErrorPageFailure(bundle.route, errorPageThrown);
     bundle.errorPage = undefined;
     bundle.metadata = ERROR_PAGE_METADATA;
     value = {

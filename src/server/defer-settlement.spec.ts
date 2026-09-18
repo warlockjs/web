@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setEnvironment } from "@warlock.js/core";
 import { createDeferredSettlement, DeferTimeoutError } from "./defer-settlement";
+import { PublicPageError } from "./public-page-error";
+
+const originalNodeEnv = process.env.NODE_ENV;
 
 describe("createDeferredSettlement()", () => {
   beforeEach(() => {
@@ -9,6 +13,11 @@ describe("createDeferredSettlement()", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
+    if (originalNodeEnv === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = originalNodeEnv;
+    }
   });
 
   it("resolves both the component promise and the settlement when the raw promise fulfills", async () => {
@@ -84,5 +93,58 @@ describe("createDeferredSettlement()", () => {
 
     const stillTimedOut = await pair.settlement;
     expect(stillTimedOut).toBe(timedOutSettlement);
+  });
+
+  describe("in production", () => {
+    it("never puts an unexpected loader error's own message on the wire settlement", async () => {
+      setEnvironment("production");
+      const raw = Promise.reject(new Error("db password=hunter2"));
+      const pair = createDeferredSettlement("secret", raw, 1_000);
+
+      await pair.componentPromise.catch(() => undefined);
+      const settlement = await pair.settlement;
+
+      expect(settlement.ok).toBe(false);
+      if (!settlement.ok) {
+        expect(settlement.error.message).not.toContain("hunter2");
+        expect(settlement.error.message).toBe("An unexpected error occurred.");
+        expect(settlement.error).not.toHaveProperty("stack");
+        expect(typeof settlement.error.errorCode).toBe("string");
+      }
+
+      // The report line joins to the SAME opaque code the wire settlement carries.
+      const [message] = (console.error as ReturnType<typeof vi.fn>).mock.calls[0] ?? [];
+      const settled = await pair.settlement;
+      if (!settled.ok) {
+        expect(message).toContain(settled.error.errorCode);
+      }
+    });
+
+    it("still exposes a PublicPageError's own message on the wire settlement", async () => {
+      setEnvironment("production");
+      const raw = Promise.reject(new PublicPageError("This slug is already taken."));
+      const pair = createDeferredSettlement("slug", raw, 1_000);
+
+      await pair.componentPromise.catch(() => undefined);
+      const settlement = await pair.settlement;
+
+      expect(settlement.ok).toBe(false);
+      if (!settlement.ok) {
+        expect(settlement.error.message).toBe("This slug is already taken.");
+      }
+    });
+
+    it("red control: a settlement built straight from the raw thrown value (bypassing serializePageError) leaks the secret", async () => {
+      // Proves the previous two assertions are meaningful: constructing the
+      // wire shape WITHOUT going through the sanitizing chokepoint reproduces
+      // the leak this task fixes. Never do this in real code.
+      const thrown = new Error("db password=hunter2");
+      const bypassedSettlement = {
+        ok: false as const,
+        error: { name: thrown.name, message: thrown.message },
+      };
+
+      expect(bypassedSettlement.error.message).toContain("hunter2");
+    });
   });
 });

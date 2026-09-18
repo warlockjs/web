@@ -7,6 +7,7 @@ describe("ErrorPageProps public contract", () => {
       readonly name: string;
       readonly message: string;
       readonly stack?: string;
+      readonly errorCode?: string;
     }>();
     expectTypeOf<ErrorPageProps>().toEqualTypeOf<{
       readonly error: unknown;

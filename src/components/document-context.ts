@@ -18,6 +18,12 @@ export type SerializedPageError = {
   readonly name: string;
   readonly message: string;
   readonly stack?: string;
+  /**
+   * Production-only opaque correlation id joining this browser-visible error
+   * to its full detail in the server's own error report line. Never present
+   * alongside `stack`; see `serializePageError` (`web/src/server/error-page.ts`).
+   */
+  readonly errorCode?: string;
 };
 
 /**

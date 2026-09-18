@@ -85,11 +85,18 @@ export function createDeferredSettlement(
     settled = true;
 
     const timeoutError = new DeferTimeoutError(key, timeoutMs);
-    resolveSettlement(toSettlementError(timeoutError));
+    const settlementError = toSettlementError(timeoutError);
+    resolveSettlement(settlementError);
     rejectComponent(timeoutError);
     // Rule 7: every timeout goes to the server error sink UNCONDITIONALLY —
     // never gated on whether anything downstream ever reads the settlement.
-    reportServerError(`deferred value "${key}" timed out`, timeoutError);
+    // The error's own `errorCode` (production only) is folded into this same
+    // report line so an operator can join the two.
+    reportServerError(
+      `deferred value "${key}" timed out` +
+        (settlementError.error.errorCode ? ` (errorCode ${settlementError.error.errorCode})` : ""),
+      timeoutError,
+    );
   }, timeoutMs);
 
   // A timer this pipeline holds open must never be the reason a Node process
@@ -110,10 +117,19 @@ export function createDeferredSettlement(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolveSettlement(toSettlementError(thrown));
+      const settlementError = toSettlementError(thrown);
+      resolveSettlement(settlementError);
       rejectComponent(thrown);
       // Rule 7: every rejection goes to the server error sink UNCONDITIONALLY.
-      reportServerError(`deferred value "${key}" rejected`, thrown);
+      // The error's own `errorCode` (production only) is folded into this
+      // same report line so an operator can join the two.
+      reportServerError(
+        `deferred value "${key}" rejected` +
+          (settlementError.error.errorCode
+            ? ` (errorCode ${settlementError.error.errorCode})`
+            : ""),
+        thrown,
+      );
     },
   );
 
