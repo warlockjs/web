@@ -477,7 +477,12 @@ describe("createPageRouteHandler — middleware 2xx short-circuit stays a plain 
       data: undefined,
       bundle: {
         route: { name: "account", path: "/account", params: {}, query: {} },
-        shortCircuit: { stage: "middleware", statusCode: 200, responseSent: false, value: "plain text body" },
+        shortCircuit: {
+          stage: "middleware",
+          statusCode: 200,
+          responseSent: false,
+          value: "plain text body",
+        },
       },
     });
 
@@ -780,7 +785,10 @@ describe("createPageRouteHandler — Stage 2 slice S3 (NDJSON client navigation)
       bundle,
     });
 
-    const requestContext = dataRequestContext("/dashboard", "application/x-ndjson, application/json");
+    const requestContext = dataRequestContext(
+      "/dashboard",
+      "application/x-ndjson, application/json",
+    );
     const handler = createPageRouteHandler(
       handlerOptions({ "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} }),
     );

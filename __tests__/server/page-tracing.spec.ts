@@ -93,120 +93,112 @@ function trackingHook(): { hook: TracingHooks; phases: RecordedPhase[] } {
 }
 
 describe("page tracing — enabled: loader (per level), render.shell, stream.end", () => {
-  it(
-    "emits loader(app), loader(layout), loader(page), render.shell, stream.end in order, all with numeric durations",
-    async () => {
-      const page = {
-        loader: async () => ({ greeting: "hi" }),
-        default: ({ data }: { data: { greeting: string } }) =>
-          createElement("main", null, data.greeting),
-      };
+  it("emits loader(app), loader(layout), loader(page), render.shell, stream.end in order, all with numeric durations", async () => {
+    const page = {
+      loader: async () => ({ greeting: "hi" }),
+      default: ({ data }: { data: { greeting: string } }) =>
+        createElement("main", null, data.greeting),
+    };
 
-      const handler = createPageRouteHandler({
-        path: "/tracing",
-        name: "tracing",
-        appFile: APP_FILE,
-        pageFile: PAGE_FILE,
-        layoutFile: LAYOUT_FILE,
-        loadModule: moduleLoader({ [APP_FILE]: App, [LAYOUT_FILE]: layout, [PAGE_FILE]: page }),
-        applyBufferedCookie: () => undefined,
-        httpServer: undefined,
-      });
+    const handler = createPageRouteHandler({
+      path: "/tracing",
+      name: "tracing",
+      appFile: APP_FILE,
+      pageFile: PAGE_FILE,
+      layoutFile: LAYOUT_FILE,
+      loadModule: moduleLoader({ [APP_FILE]: App, [LAYOUT_FILE]: layout, [PAGE_FILE]: page }),
+      applyBufferedCookie: () => undefined,
+      httpServer: undefined,
+    });
 
-      const http = createCoreHttp({ url: "/tracing" });
-      http.reply.raw.on("data", () => undefined);
+    const http = createCoreHttp({ url: "/tracing" });
+    http.reply.raw.on("data", () => undefined);
 
-      const { hook, phases } = trackingHook();
-      config.set("http.tracing", { enabled: true, hooks: [hook] });
+    const { hook, phases } = trackingHook();
+    config.set("http.tracing", { enabled: true, hooks: [hook] });
 
-      const startedAt = Date.now();
-      await handler({ request: http.request, response: http.response } as unknown as HttpContext);
-      const wallClockMs = Date.now() - startedAt;
+    const startedAt = Date.now();
+    await handler({ request: http.request, response: http.response } as unknown as HttpContext);
+    const wallClockMs = Date.now() - startedAt;
 
-      expect(phases.map(({ phase }) => phase.name)).toEqual([
-        "loader",
-        "loader",
-        "loader",
-        "render.shell",
-        "stream.end",
-      ]);
+    expect(phases.map(({ phase }) => phase.name)).toEqual([
+      "loader",
+      "loader",
+      "loader",
+      "render.shell",
+      "stream.end",
+    ]);
 
-      expect(phases[0]!.phase.attrs).toEqual({ level: "app" });
-      expect(phases[1]!.phase.attrs).toEqual({ level: "layout", layoutPath: LAYOUT_FILE });
-      expect(phases[2]!.phase.attrs).toEqual({ level: "page" });
+    expect(phases[0]!.phase.attrs).toEqual({ level: "app" });
+    expect(phases[1]!.phase.attrs).toEqual({ level: "layout", layoutPath: LAYOUT_FILE });
+    expect(phases[2]!.phase.attrs).toEqual({ level: "page" });
 
-      // Every phase has a real, non-negative numeric duration, and every one
-      // fits within the wall-clock window this one request actually took —
-      // i.e. it happened "inside" this request's start/end, not before or
-      // after it. A few ms of slack covers timer-resolution rounding.
-      for (const { ctx, phase } of phases) {
-        expect(typeof phase.durationMs).toBe("number");
-        expect(Number.isFinite(phase.durationMs)).toBe(true);
-        expect(phase.durationMs).toBeGreaterThanOrEqual(0);
-        expect(phase.durationMs).toBeLessThanOrEqual(wallClockMs + 50);
+    // Every phase has a real, non-negative numeric duration, and every one
+    // fits within the wall-clock window this one request actually took —
+    // i.e. it happened "inside" this request's start/end, not before or
+    // after it. A few ms of slack covers timer-resolution rounding.
+    for (const { ctx, phase } of phases) {
+      expect(typeof phase.durationMs).toBe("number");
+      expect(Number.isFinite(phase.durationMs)).toBe(true);
+      expect(phase.durationMs).toBeGreaterThanOrEqual(0);
+      expect(phase.durationMs).toBeLessThanOrEqual(wallClockMs + 50);
 
-        // Every phase correlates to the SAME request.
-        expect(ctx.requestId).toBe(http.request.id);
-        expect(ctx.traceId).toBe(http.request.traceId);
-      }
-    },
-    20_000,
-  );
+      // Every phase correlates to the SAME request.
+      expect(ctx.requestId).toBe(http.request.id);
+      expect(ctx.traceId).toBe(http.request.traceId);
+    }
+  }, 20_000);
 });
 
 describe("page tracing — deferred page: stream.end comes after the last settlement", () => {
-  it(
-    "does not dispatch stream.end until the deferred value has settled",
-    async () => {
-      let releaseReviews!: (value: unknown) => void;
-      const reviews = new Promise((resolve) => {
-        releaseReviews = resolve;
-      });
+  it("does not dispatch stream.end until the deferred value has settled", async () => {
+    let releaseReviews!: (value: unknown) => void;
+    const reviews = new Promise((resolve) => {
+      releaseReviews = resolve;
+    });
 
-      const page = {
-        loader: async () => defer({ greeting: "hi", reviews }),
-        default: ({ data }: { data: { greeting: string } }) =>
-          createElement("main", null, data.greeting),
-      };
+    const page = {
+      loader: async () => defer({ greeting: "hi", reviews }),
+      default: ({ data }: { data: { greeting: string } }) =>
+        createElement("main", null, data.greeting),
+    };
 
-      const handler = createPageRouteHandler({
-        path: "/tracing-defer",
-        name: "tracing-defer",
-        appFile: APP_FILE,
-        pageFile: DEFER_PAGE_FILE,
-        layoutFile: undefined,
-        loadModule: moduleLoader({ [APP_FILE]: App, [DEFER_PAGE_FILE]: page }),
-        applyBufferedCookie: () => undefined,
-        httpServer: undefined,
-      });
+    const handler = createPageRouteHandler({
+      path: "/tracing-defer",
+      name: "tracing-defer",
+      appFile: APP_FILE,
+      pageFile: DEFER_PAGE_FILE,
+      layoutFile: undefined,
+      loadModule: moduleLoader({ [APP_FILE]: App, [DEFER_PAGE_FILE]: page }),
+      applyBufferedCookie: () => undefined,
+      httpServer: undefined,
+    });
 
-      const http = createCoreHttp({ url: "/tracing-defer" });
-      http.reply.raw.on("data", () => undefined);
+    const http = createCoreHttp({ url: "/tracing-defer" });
+    http.reply.raw.on("data", () => undefined);
 
-      const { hook, phases } = trackingHook();
-      config.set("http.tracing", { enabled: true, hooks: [hook] });
+    const { hook, phases } = trackingHook();
+    config.set("http.tracing", { enabled: true, hooks: [hook] });
 
-      const pending = handler({
-        request: http.request,
-        response: http.response,
-      } as unknown as HttpContext);
+    const pending = handler({
+      request: http.request,
+      response: http.response,
+    } as unknown as HttpContext);
 
-      // The shell has every chance to flush before the deferred value settles
-      // — "stream.end" must not have fired yet.
-      await flushAsyncWork();
-      expect(phases.some(({ phase }) => phase.name === "stream.end")).toBe(false);
-      expect(http.reply.raw.writableEnded).toBe(false);
+    // The shell has every chance to flush before the deferred value settles
+    // — "stream.end" must not have fired yet.
+    await flushAsyncWork();
+    expect(phases.some(({ phase }) => phase.name === "stream.end")).toBe(false);
+    expect(http.reply.raw.writableEnded).toBe(false);
 
-      releaseReviews([{ id: 1, rating: 5 }]);
-      await pending;
+    releaseReviews([{ id: 1, rating: 5 }]);
+    await pending;
 
-      const streamEndPhases = phases.filter(({ phase }) => phase.name === "stream.end");
+    const streamEndPhases = phases.filter(({ phase }) => phase.name === "stream.end");
 
-      expect(streamEndPhases).toHaveLength(1);
-      expect(http.reply.raw.writableEnded).toBe(true);
-    },
-    20_000,
-  );
+    expect(streamEndPhases).toHaveLength(1);
+    expect(http.reply.raw.writableEnded).toBe(true);
+  }, 20_000);
 });
 
 describe("page tracing — disabled: no hook is called", () => {

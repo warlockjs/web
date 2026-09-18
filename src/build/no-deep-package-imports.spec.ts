@@ -40,7 +40,8 @@ const DEEP_PACKAGE_IMPORT = /@warlock\.js\/[^/"'`]+\/src\//;
 
 // Matches the specifier out of `from "..."`, bare `import "..."`, and
 // dynamic `import("...")` forms, static or type-only.
-const SPECIFIER_PATTERN = /\bfrom\s*["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)|\bimport\s*["']([^"']+)["']/g;
+const SPECIFIER_PATTERN =
+  /\bfrom\s*["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)|\bimport\s*["']([^"']+)["']/g;
 
 function isProductionSourceFile(fileName: string): boolean {
   if (!fileName.endsWith(".ts") && !fileName.endsWith(".tsx")) return false;
@@ -90,8 +91,7 @@ describe("no @warlock.js/<pkg>/src deep imports", () => {
     if (hits.length > 0) {
       const report = hits
         .map(
-          (hit) =>
-            `  ${path.relative(SRC_ROOT, hit.file)}:${hit.line} imports "${hit.specifier}"`,
+          (hit) => `  ${path.relative(SRC_ROOT, hit.file)}:${hit.line} imports "${hit.specifier}"`,
         )
         .join("\n");
 

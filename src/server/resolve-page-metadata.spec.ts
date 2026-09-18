@@ -95,9 +95,9 @@ describe("resolvePageMetadata — the error path", () => {
 
 describe("resolvePageMetadata — Stage 2 deferred keys (contract rule 11)", () => {
   it("reads a resolved key next to a deferred one without incident", () => {
-    const metadata = ((({ data }: { data: unknown }) => ({
+    const metadata = (({ data }: { data: unknown }) => ({
       title: (data as { product: { name: string } }).product.name,
-    })) as unknown) as PageMetadata<PipelineLoader>;
+    })) as unknown as PageMetadata<PipelineLoader>;
     const data = { product: { name: "Chair" }, reviews: Promise.resolve([]) };
 
     expect(resolve({ metadata, data, deferredKeys: ["reviews"] })).toEqual({
@@ -106,9 +106,9 @@ describe("resolvePageMetadata — Stage 2 deferred keys (contract rule 11)", () 
   });
 
   it("reports DeferredKeyInMetadataError, naming the key and the page, instead of letting it escape", () => {
-    const metadata = ((({ data }: { data: unknown }) => ({
+    const metadata = (({ data }: { data: unknown }) => ({
       title: (data as { reviews: unknown[] }).reviews.length.toString(),
-    })) as unknown) as PageMetadata<PipelineLoader>;
+    })) as unknown as PageMetadata<PipelineLoader>;
     const data = { product: { name: "Chair" }, reviews: Promise.resolve([]) };
 
     const result = resolve({

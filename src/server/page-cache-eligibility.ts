@@ -29,7 +29,10 @@ export type CredentialReadableRequest = {
  * Read BEFORE the loader/module-load Promise.all and before any cache
  * lookup — see `create-page-route-handler.ts`.
  */
-export function looksAuthenticated(request: CredentialReadableRequest, cookieName: string): boolean {
+export function looksAuthenticated(
+  request: CredentialReadableRequest,
+  cookieName: string,
+): boolean {
   return Boolean(request.header("authorization", undefined)) || Boolean(request.cookie(cookieName));
 }
 

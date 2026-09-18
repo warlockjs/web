@@ -743,9 +743,13 @@ describe("projection — type-only imports/exports never trip the client boundar
 
   it("still refuses a plain, fully-unused value import the same as before — the fix does not widen into never checking imports", async () => {
     const message = await refusalMessage(
-      [`import "./server-only-side-effect";`, ``, `export default function BlogPage() {`, `  return <h1>Blog</h1>;`, `}`].join(
-        "\n",
-      ),
+      [
+        `import "./server-only-side-effect";`,
+        ``,
+        `export default function BlogPage() {`,
+        `  return <h1>Blog</h1>;`,
+        `}`,
+      ].join("\n"),
       "blog.page.tsx",
     );
 

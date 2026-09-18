@@ -150,12 +150,16 @@ describe("dev-server smoke — a real GET yields the real document", () => {
     ]);
 
     expect(amber).toContain("<h1>Product 42</h1>");
-    expect((parse(extractPayload(amber)) as { shared: { user: { name: string } } }).shared.user).toEqual({
+    expect(
+      (parse(extractPayload(amber)) as { shared: { user: { name: string } } }).shared.user,
+    ).toEqual({
       name: "amber",
     });
     expect(amber).not.toContain("noor");
     expect(noor).toContain("<h1>Product 77</h1>");
-    expect((parse(extractPayload(noor)) as { shared: { user: { name: string } } }).shared.user).toEqual({
+    expect(
+      (parse(extractPayload(noor)) as { shared: { user: { name: string } } }).shared.user,
+    ).toEqual({
       name: "noor",
     });
     expect(noor).not.toContain("amber");

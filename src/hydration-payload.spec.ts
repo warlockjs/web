@@ -320,7 +320,10 @@ describe("document hydration payload — devalue round trip", () => {
   });
 
   it("round-trips a Map", () => {
-    const map = new Map([["a", 1], ["b", 2]]);
+    const map = new Map([
+      ["a", 1],
+      ["b", 2],
+    ]);
 
     expect(roundTrip({ map })).toEqual({ map });
   });
@@ -345,7 +348,10 @@ describe("document hydration payload — devalue round trip", () => {
 
   it("round-trips a repeated reference as the SAME object", () => {
     const shared = { id: 1 };
-    const result = roundTrip({ first: shared, second: shared }) as { first: unknown; second: unknown };
+    const result = roundTrip({ first: shared, second: shared }) as {
+      first: unknown;
+      second: unknown;
+    };
 
     expect(result.first).toBe(result.second);
   });

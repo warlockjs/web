@@ -33,7 +33,7 @@ describe("listRoutablePages", () => {
         "export default function Page() { return null; }",
       ].join("\n"),
       "src/web/posts/[id].page.tsx": [
-        "export const sitemap = async () => [{ path: \"/posts/hello-world\" }];",
+        'export const sitemap = async () => [{ path: "/posts/hello-world" }];',
         "export default function Page() { return null; }",
       ].join("\n"),
     });

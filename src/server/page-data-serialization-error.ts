@@ -58,7 +58,11 @@ export class PageDataSerializationError extends Error {
  * whichever wire path (document script, NDJSON line, data-request body) reads
  * this same value.
  */
-export function assertPageDataSerializable(value: unknown, level: PageDataLevel, route: string): void {
+export function assertPageDataSerializable(
+  value: unknown,
+  level: PageDataLevel,
+  route: string,
+): void {
   try {
     stringify(value);
   } catch (error) {

@@ -1,11 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
-import {
-  createEntryKey,
-  ensureEntryKey,
-  readEntryKey,
-  withEntryKey,
-} from "./history-entry-key";
+import { createEntryKey, ensureEntryKey, readEntryKey, withEntryKey } from "./history-entry-key";
 
 /**
  * Every history entry the client router touches needs an identity that

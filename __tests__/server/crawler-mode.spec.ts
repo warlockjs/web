@@ -324,11 +324,7 @@ describe("renderPageRequest — crawler mode and a Suspense boundary OUTSIDE def
     const page = {
       loader: async () => ({ greeting: "hi" }),
       default: () =>
-        createElement(
-          Suspense,
-          { fallback: "LOADING" },
-          createElement(SuspendingChild, {}),
-        ),
+        createElement(Suspense, { fallback: "LOADING" }, createElement(SuspendingChild, {})),
     };
 
     return { page, release };

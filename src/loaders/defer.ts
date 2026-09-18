@@ -39,9 +39,7 @@ export type DeferredResult<TData extends Record<string, unknown>> = {
  * // page: const reviews = use(data.reviews) inside <Suspense fallback={...}>
  * ```
  */
-export function defer<TData extends Record<string, unknown>>(
-  data: TData,
-): DeferredResult<TData> {
+export function defer<TData extends Record<string, unknown>>(data: TData): DeferredResult<TData> {
   return { [DEFERRED_BRAND]: true, data };
 }
 
@@ -87,7 +85,7 @@ export class NestedDeferredValueError extends Error {
   public constructor(path: string) {
     super(
       `defer(): the value at "${path}" is a Promise nested inside a top-level key. Only ` +
-        'TOP-LEVEL keys of defer()\'s argument may be promises — move "' +
+        "TOP-LEVEL keys of defer()'s argument may be promises — move \"" +
         path +
         '" to its own top-level key.',
     );

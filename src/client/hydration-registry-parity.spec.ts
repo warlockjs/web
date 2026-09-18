@@ -37,7 +37,10 @@ import path from "node:path";
 import { transform } from "esbuild";
 import { afterEach, describe, expect, it } from "vitest";
 import { discoverPages, isDiscoveredRoutablePage } from "../build/discover-pages";
-import { CLIENT_REGISTRY_EXPORT_NAME, generateClientRegistry } from "../build/generate-client-registry";
+import {
+  CLIENT_REGISTRY_EXPORT_NAME,
+  generateClientRegistry,
+} from "../build/generate-client-registry";
 import { validateClientRouteManifest } from "./runtime/manifest";
 import { filesystemPageFileFor } from "../server/install-page-routes";
 import { resolvePageRouteIdentity } from "../routing/route-identity";
@@ -135,8 +138,7 @@ describe("hydration payload name / client registry key parity", () => {
       "src/web/index.page.tsx": page(),
       "src/web/blog/archive.page.tsx": page(),
       "src/web/users/[id].page.tsx": page(),
-      "src/web/docs/[...slug].page.tsx":
-        `export const route = { path: "/docs/*", name: "docs.catchAll" };\n${page()}`,
+      "src/web/docs/[...slug].page.tsx": `export const route = { path: "/docs/*", name: "docs.catchAll" };\n${page()}`,
       "src/web/(marketing)/about.page.tsx": page(),
     });
 

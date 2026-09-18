@@ -76,7 +76,7 @@ describe("Scripts", () => {
   it("omits the hydration client entry module when no URL is configured", () => {
     const html = render(documentValue());
 
-    expect(html).not.toContain("type=\"module\"");
+    expect(html).not.toContain('type="module"');
   });
 
   it("omits the hydration client entry module on a non-hydrating document, even with a URL configured", () => {

@@ -80,8 +80,6 @@ describe("splitDeferredPageData()", () => {
       public constructor(public readonly cents: number) {}
     }
 
-    expect(() =>
-      splitDeferredPageData({ price: new Money(500) }),
-    ).not.toThrow();
+    expect(() => splitDeferredPageData({ price: new Money(500) })).not.toThrow();
   });
 });
