@@ -60,6 +60,21 @@ export default function App({ children }: AppProps) {
 
 To switch the active locale without a full reload, call `changeLocaleCode(code)`. The server persists the choice in its `locale` cookie when the resulting navigation data request carries `?locale=`, so `lang` and `dir` on the next render (and every render after) reflect the new locale.
 
+### `useTrans()` survives hydration via the payload's `translations` key (5.15.0)
+
+The hydration payload carries a seventh required key, `translations` — the
+active locale's registered keywords only, not every locale. It is registered
+into `@mongez/localization`'s client-side table *before* `hydrateRoot` runs
+(`hydrate-page.tsx`), because registering after the first client render would
+be too late: React would already have reconciled the DOM to the raw
+translation key. `useTrans()` reads that same table, so it now works
+identically before and after hydration — previously the server-rendered HTML
+was correctly translated but React silently replaced it with the raw key on
+hydration, with no error or warning. `isHydrationPayload()` requires
+`translations` to be present and an object; a payload built before 5.15
+(missing the key) is rejected as malformed rather than silently hydrating
+with an empty table.
+
 ## `#vessel` is the hydration boundary
 
 The server renders this document shape:
