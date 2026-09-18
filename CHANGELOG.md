@@ -2,6 +2,33 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.16.0 - 2026-09-18
+
+### Upgrading
+
+- In production, unexpected page errors no longer send their `message` to the browser. If your error page showed `error.message` to visitors, throw `PublicPageError` for messages meant for them. Other errors now show a generic message and an `errorCode`.
+
+### Added
+
+- `@warlock.js/web/sitemap`: `sitemap.xml` and `robots.txt` for web apps. Configure them under `web.sitemap` and `web.robots` in `src/config/web.ts`. Pages control their own listing with `export const sitemap` (`false`, static options, or a function that supplies URLs for dynamic routes). Locales expand into hreflang alternates, and web switches to a sharded `SitemapIndex` above 50,000 URLs. The sitemap is generated at `warlock build`, at boot, or when the app calls `regenerateSitemap()`, and never while serving a request.
+- Web now wraps every page in a default client error boundary. A rejected `defer()` value with no app boundary renders the app's error page, or a built-in fallback, instead of unmounting the tree. The boundary resets on every navigation, refresh and locale change.
+- `PublicPageError`: throw it, or reject a deferred value with it, when its `message` is meant for visitors. In production, only a `PublicPageError` message reaches the browser.
+- Loaders receive `signal`, an `AbortSignal` that fires when the client disconnects.
+- Development only: during client navigation, web checks that a page's translations were registered by `register()` before anything renders.
+- `pageCache.maxEntryBytes` (default 1 MiB): a cache miss larger than this is still served in full but is not cached.
+
+### Changed
+
+- **BREAKING (production error disclosure):** in production, an unexpected page error no longer sends its `message` to the browser. The browser gets a generic message plus an `errorCode` that matches the server's error report, and `stack` is never sent. Throw `PublicPageError` for messages visitors should see.
+
+### Fixed
+
+- A client disconnect now aborts SSR, NDJSON navigation streams and loader work, and stream errors no longer escape as uncaught exceptions. A refresh or locale change aborts the fetches it supersedes.
+- Deferred values are scoped per navigation, so late chunks from an abandoned navigation can no longer settle the active page. Finished scopes are released from memory.
+- SSR and client navigation now fall back the same way for missing metadata fields.
+- The dev client page registry keeps a custom `appSrcRoot`.
+- In development, page discovery for unmatched requests is cached until a page file changes.
+
 ## 5.15.0 - 2026-09-18
 
 ### Fixed
