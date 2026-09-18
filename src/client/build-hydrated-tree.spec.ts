@@ -1,5 +1,7 @@
+import { extend } from "@mongez/localization";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { IncompleteTranslationRegistrationError } from "./assert-translation-registration-complete";
 import {
   MissingHydrationErrorPageError,
   UnknownHydrationPageNameError,
@@ -378,5 +380,141 @@ describe("buildHydratedTree", () => {
       "component:error",
       "component:layout",
     ]);
+  });
+
+  /**
+   * The client-navigation gap this suite guards: unlike initial hydration
+   * (`hydrate-page.tsx` explicitly `extend()`s the payload's translations
+   * BEFORE `buildTree` runs), a navigation has nothing installing
+   * `payload.translations` — it relies entirely on the composed modules'
+   * `register()` hooks having done so themselves. `import.meta.env.DEV` is
+   * flipped for the duration of each case because the invariant is
+   * development-only by design (see `assert-translation-registration-
+   * complete.ts`); it is restored afterwards so later cases keep exercising
+   * the untouched, production-shaped default.
+   */
+  describe("translation registration completeness (development-only)", () => {
+    let localeCounter = 0;
+
+    function freshLocale(): string {
+      localeCounter += 1;
+
+      return `nav-locale-${localeCounter}`;
+    }
+
+    afterEach(() => {
+      // @ts-expect-error test-only mutation of Vite's injected env object
+      import.meta.env.DEV = false;
+    });
+
+    it("fails closed, naming the page/locale/keys, when register() never installed the target locale's keywords", async () => {
+      // @ts-expect-error test-only mutation of Vite's injected env object
+      import.meta.env.DEV = true;
+
+      const locale = freshLocale();
+      const pages = [
+        entry("main.home", () => ({
+          // A projection whose register() hook is a no-op — the real-world
+          // shape of a stale or hand-written module that never learned it
+          // needs to register a translation namespace.
+          Page: { register: () => {}, default: Page },
+          layouts: [],
+        })),
+      ];
+      const payload: HydrationDocumentPayloadSource = {
+        ...payloadFor("main.home"),
+        locale,
+        translations: { home: { title: "Home" } },
+      };
+
+      let failure: unknown;
+
+      try {
+        await buildHydratedTree(pages, payload);
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).toBeInstanceOf(IncompleteTranslationRegistrationError);
+      const error = failure as IncompleteTranslationRegistrationError;
+      expect(error.pageName).toBe("main.home");
+      expect(error.locale).toBe(locale);
+      expect(error.missingKeys).toEqual(["home"]);
+    });
+
+    it("renders normally when register() installs exactly what the payload requires", async () => {
+      // @ts-expect-error test-only mutation of Vite's injected env object
+      import.meta.env.DEV = true;
+
+      const locale = freshLocale();
+      const requiredTranslations = { home: { title: "Home" } };
+      const pages = [
+        entry("main.home", () => ({
+          Page: {
+            register: () => extend(locale, requiredTranslations),
+            default: Page,
+          },
+          layouts: [],
+        })),
+      ];
+      const payload: HydrationDocumentPayloadSource = {
+        ...payloadFor("main.home"),
+        locale,
+        translations: requiredTranslations,
+      };
+
+      const page = asElement(await buildHydratedTree(pages, payload));
+
+      expect(page.type).toBe(Page);
+    });
+
+    it("leaves initial hydration unchanged — translations installed ahead of buildTree satisfy the check without register()'s help", async () => {
+      // @ts-expect-error test-only mutation of Vite's injected env object
+      import.meta.env.DEV = true;
+
+      const locale = freshLocale();
+      const requiredTranslations = { home: { title: "Home" } };
+      // `hydrate-page.tsx`'s own call, made before `buildTree` — nothing about
+      // this test's register() hook installs translations at all.
+      extend(locale, requiredTranslations);
+
+      const pages = [
+        entry("main.home", () => ({
+          Page: { register: () => {}, default: Page },
+          layouts: [],
+        })),
+      ];
+      const payload: HydrationDocumentPayloadSource = {
+        ...payloadFor("main.home"),
+        locale,
+        translations: requiredTranslations,
+      };
+
+      const page = asElement(await buildHydratedTree(pages, payload));
+
+      expect(page.type).toBe(Page);
+    });
+
+    it("does not enforce the invariant outside development", async () => {
+      // @ts-expect-error test-only mutation of Vite's injected env object
+      import.meta.env.DEV = false;
+
+      const locale = freshLocale();
+      const pages = [
+        entry("main.home", () => ({
+          Page: { register: () => {}, default: Page },
+          layouts: [],
+        })),
+      ];
+      const payload: HydrationDocumentPayloadSource = {
+        ...payloadFor("main.home"),
+        locale,
+        translations: { home: { title: "Home" } },
+      };
+
+      const page = asElement(await buildHydratedTree(pages, payload));
+
+      expect(page.type).toBe(Page);
+    });
   });
 });

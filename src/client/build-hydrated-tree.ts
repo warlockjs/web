@@ -19,6 +19,7 @@ import type {
   SerializedErrorPageProps,
 } from "../hydration-payload";
 import { registerModules } from "../register-modules";
+import { assertTranslationRegistrationComplete } from "./assert-translation-registration-complete";
 import { loadClientRouteComposition } from "./runtime";
 import type { ClientPageEntry, ClientProjectedModule } from "./runtime/types";
 
@@ -182,6 +183,13 @@ export async function buildHydratedTree(
     ...composition.layouts,
     selectedPageModule,
   ]);
+
+  // Post-register, pre-render: register() has had its one chance to install
+  // this page's translations, and nothing below has read one yet.
+  // Development-only — see `assert-translation-registration-complete.ts`.
+  if (import.meta.env?.DEV) {
+    assertTranslationRegistrationComplete(payload.name, payload.locale, payload.translations);
+  }
 
   const { shared } = payload;
   let element: ReactNode;
