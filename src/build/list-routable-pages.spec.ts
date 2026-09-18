@@ -64,7 +64,7 @@ describe("listRoutablePages", () => {
     const pages = await listRoutablePages({ appRoot });
 
     expect(pages).toHaveLength(1);
-    expect(pages[0].routePath).toBe("/");
+    expect(pages[0]?.routePath).toBe("/");
   });
 
   it("reports a page's explicit sitemap opt-out", async () => {
@@ -78,6 +78,6 @@ describe("listRoutablePages", () => {
     const pages = await listRoutablePages({ appRoot });
 
     expect(pages).toHaveLength(1);
-    expect(pages[0].sitemap).toBe(false);
+    expect(pages[0]?.sitemap).toBe(false);
   });
 });
