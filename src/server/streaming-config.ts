@@ -10,6 +10,8 @@
  * different keys.
  */
 import { config, type Request } from "@warlock.js/core";
+import type { WebSitemapConfig } from "../sitemap/sitemap-config-types";
+import type { RobotsConfig } from "../sitemap/robots-config-types";
 
 /**
  * Customises crawler detection (`detect-crawler.ts`). `userAgents` REPLACES
@@ -40,6 +42,19 @@ export type WebStreamingConfigurations = {
 
 export type WebConfigurations = {
   streaming?: WebStreamingConfigurations;
+  /**
+   * Sitemap generation policy. There is deliberately no `sitemap.baseUrl`
+   * key — the origin is `app.publicUrl`, the single application origin, so
+   * generation refuses rather than derives one when it is unset. See
+   * `../sitemap/sitemap-config-types.ts`.
+   */
+  sitemap?: WebSitemapConfig;
+  /**
+   * Crawler policy — entirely owned by `web` (contract Part 3). Reads the
+   * `Sitemap:` line from `sitemap` above rather than a second `baseUrl`.
+   * See `../sitemap/robots-config-types.ts`.
+   */
+  robots?: RobotsConfig;
 };
 
 declare module "@warlock.js/core" {

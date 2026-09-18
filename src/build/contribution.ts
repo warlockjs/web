@@ -200,6 +200,35 @@ export function createWebBuildContribution(
         await import("./generate-pages-barrel");
       const { collectPublicFiles } = await import("./public-files");
 
+      // Sitemap Part B (v5.16 contract Part 6 rule 1): `warlock build`
+      // produces the artifact set here, a no-op when `web.sitemap.enabled`
+      // is unset. The set is written to its own directory
+      // (`resolveSitemapConfig().outputDir`, `storage/sitemap` by default),
+      // never into `public/`: the sitemap routes serve it from there, and the
+      // package refuses to replace a directory it does not own. Unlike the
+      // boot-time call in `WebConnector.boot()`, a build-time failure is
+      // NOT swallowed: a build that reports success while the sitemap it
+      // was asked for failed to generate is the exact silent failure this
+      // package exists to prevent.
+      //
+      // The enabled check reads `@mongez/config` directly rather than going
+      // through `resolveSitemapConfig()` — most builds never turn the
+      // sitemap on, and the ordinary sitemap import chain
+      // (`./sitemap-lifecycle` -> `generate-sitemap.ts` ->
+      // `collect-sitemap-entries.ts` -> `../build/list-routable-pages.ts`,
+      // and `resolveSitemapConfig` itself) reaches `@warlock.js/core`'s full
+      // runtime, which this hook otherwise never loads (its only `core`
+      // import anywhere in this file is `import type`). Paying that
+      // cold-import cost on every build, sitemap or not, is exactly the
+      // weight this file's own header says hooks must not carry
+      // unconditionally.
+      const { default: mongezConfig } = await import("@mongez/config");
+
+      if (mongezConfig.get("web.sitemap.enabled", false)) {
+        const { regenerateSitemap } = await import("../sitemap/sitemap-lifecycle");
+        await regenerateSitemap({ appRoot: context.appRoot });
+      }
+
       publicFiles = await collectPublicFiles(path.join(context.appRoot, "public"));
 
       const result = await generatePagesBarrel({
