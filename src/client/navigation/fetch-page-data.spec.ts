@@ -167,4 +167,63 @@ describe("fetchPageData", () => {
 
     expect((await fetchPageData("/nope")).type).toBe("hard-navigate");
   });
+
+  describe("the `signal` parameter", () => {
+    it("passes the signal to fetch", async () => {
+      respondWith(PAYLOAD);
+      const controller = new AbortController();
+
+      await fetchPageData("/products", controller.signal);
+
+      const [, init] = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [
+        string,
+        RequestInit,
+      ];
+
+      expect(init.signal).toBe(controller.signal);
+    });
+
+    /**
+     * The case this whole variant exists for: a superseded navigation's own
+     * abort must never read back as a network failure.
+     */
+    it("reports 'aborted', not 'hard-navigate', when the signal that aborted the request is the one passed in", async () => {
+      const controller = new AbortController();
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_url: string, init?: RequestInit) => {
+          controller.abort();
+
+          const error = new DOMException("The user aborted a request.", "AbortError");
+
+          // A real `fetch` rejects its own promise once the request it was
+          // given aborts — reproduced here rather than trusted, since jsdom's
+          // `fetch` is not present in this suite's `node` environment.
+          expect(init?.signal?.aborted).toBe(true);
+
+          throw error;
+        }),
+      );
+
+      const result = await fetchPageData("/products", controller.signal);
+
+      expect(result).toEqual({ type: "aborted", url: "/products" });
+    });
+
+    it("still reports 'hard-navigate' for a network failure unrelated to the signal", async () => {
+      const controller = new AbortController();
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => {
+          throw new TypeError("offline");
+        }),
+      );
+
+      const result = await fetchPageData("/products", controller.signal);
+
+      expect(result.type).toBe("hard-navigate");
+    });
+  });
 });

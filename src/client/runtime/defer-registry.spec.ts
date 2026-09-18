@@ -9,6 +9,9 @@ import {
   DEFER_BOOTSTRAP_SOURCE,
   installStreamClosedRejection,
   prepareDeferredPageData,
+  rejectPendingDeferredKeys,
+  releaseDeferredScope,
+  settleDeferredValue,
   type DeferredSettlement,
 } from "./defer-registry";
 
@@ -171,13 +174,22 @@ describe("defer-registry — installStreamClosedRejection", () => {
    * listener per page load) — so this single test exercises idempotency AND
    * the rejection itself together, rather than resetting modules between
    * tests (which would create a second `DeferredStreamClosedError` class
-   * identity and break `toBeInstanceOf`).
+   * identity and break `toBeInstanceOf`). The same constraint is why the
+   * scope-isolation assertion below lives in THIS test rather than a second
+   * one: a second call to `installStreamClosedRejection` anywhere else in
+   * this file is a guaranteed no-op once the flag is set here.
    */
-  it("is idempotent and rejects every still-pending key with DeferredStreamClosedError on DOMContentLoaded, with no hard navigation", async () => {
+  it("is idempotent, rejects every still-pending key with DeferredStreamClosedError on DOMContentLoaded, with no hard navigation, and never touches a navigation scope's own pending key", async () => {
     Object.defineProperty(document, "readyState", { value: "loading", configurable: true });
 
     const pageData: Record<string, unknown> = {};
     prepareDeferredPageData(pageData, ["reviews"]);
+
+    // A concurrent client navigation's own scope, still in flight — e.g. a
+    // prefetch — must not be swept up by the DOCUMENT scope's stream-closed
+    // rejection below.
+    const navPageData: Record<string, unknown> = {};
+    prepareDeferredPageData(navPageData, ["reviews"], "navigation:doc-isolation");
 
     const addEventListener = vi.spyOn(document, "addEventListener");
 
@@ -194,5 +206,130 @@ describe("defer-registry — installStreamClosedRejection", () => {
 
     await rejection;
     await expect(pageData.reviews).rejects.toMatchObject({ key: "reviews" });
+
+    let navSettled = false;
+    void (navPageData.reviews as Promise<unknown>).then(
+      () => {
+        navSettled = true;
+      },
+      () => {
+        navSettled = true;
+      },
+    );
+    await Promise.resolve();
+    expect(navSettled).toBe(false);
+
+    settleDeferredValue("reviews", { ok: true, value: { count: 1 } }, "navigation:doc-isolation");
+    await expect(navPageData.reviews).resolves.toEqual({ count: 1 });
+  });
+});
+
+describe("defer-registry — rejectPendingDeferredKeys scoping", () => {
+  it("rejecting one scope's keys never settles another scope's same-named pending key", async () => {
+    const pageDataA: Record<string, unknown> = {};
+    prepareDeferredPageData(pageDataA, ["reviews"], "navigation:1");
+
+    const pageDataB: Record<string, unknown> = {};
+    prepareDeferredPageData(pageDataB, ["reviews"], "navigation:2");
+
+    rejectPendingDeferredKeys(["reviews"], "navigation:1");
+
+    await expect(pageDataA.reviews).rejects.toBeInstanceOf(DeferredStreamClosedError);
+
+    let bSettled = false;
+    void (pageDataB.reviews as Promise<unknown>).then(
+      () => {
+        bSettled = true;
+      },
+      () => {
+        bSettled = true;
+      },
+    );
+    await Promise.resolve();
+    expect(bSettled).toBe(false);
+
+    settleDeferredValue("reviews", { ok: true, value: { count: 5 } }, "navigation:2");
+    await expect(pageDataB.reviews).resolves.toEqual({ count: 5 });
+  });
+});
+
+describe("defer-registry — rejected settlement scoping", () => {
+  it("a rejected settlement in one scope never settles another scope's same-named key", async () => {
+    const pageDataA: Record<string, unknown> = {};
+    prepareDeferredPageData(pageDataA, ["reviews"], "navigation:1");
+
+    const pageDataB: Record<string, unknown> = {};
+    prepareDeferredPageData(pageDataB, ["reviews"], "navigation:2");
+
+    settleDeferredValue(
+      "reviews",
+      { ok: false, error: { name: "ReviewsFetchError", message: "reviews service is down" } },
+      "navigation:1",
+    );
+
+    await expect(pageDataA.reviews).rejects.toMatchObject({
+      message: "reviews service is down",
+    });
+
+    let bSettled = false;
+    void (pageDataB.reviews as Promise<unknown>).then(
+      () => {
+        bSettled = true;
+      },
+      () => {
+        bSettled = true;
+      },
+    );
+    await Promise.resolve();
+    expect(bSettled).toBe(false);
+
+    settleDeferredValue("reviews", { ok: true, value: { count: 9 } }, "navigation:2");
+    await expect(pageDataB.reviews).resolves.toEqual({ count: 9 });
+  });
+});
+
+describe("defer-registry — releaseDeferredScope", () => {
+  it("deletes a settled entry belonging to the released scope", () => {
+    const pageData: Record<string, unknown> = {};
+    prepareDeferredPageData(pageData, ["reviews"], "navigation:1");
+    settleDeferredValue("reviews", { ok: true, value: { count: 1 } }, "navigation:1");
+
+    const beforeSize = Object.keys(warlockWindow().__WARLOCK_DEFERRED__ ?? {}).length;
+
+    releaseDeferredScope("navigation:1");
+
+    const afterSize = Object.keys(warlockWindow().__WARLOCK_DEFERRED__ ?? {}).length;
+    expect(afterSize).toBe(beforeSize - 1);
+  });
+
+  it("leaves a still-pending entry of the released scope alone", async () => {
+    const pageData: Record<string, unknown> = {};
+    prepareDeferredPageData(pageData, ["reviews"], "navigation:1");
+
+    const beforeSize = Object.keys(warlockWindow().__WARLOCK_DEFERRED__ ?? {}).length;
+
+    releaseDeferredScope("navigation:1");
+
+    const afterSize = Object.keys(warlockWindow().__WARLOCK_DEFERRED__ ?? {}).length;
+    expect(afterSize).toBe(beforeSize);
+
+    settleDeferredValue("reviews", { ok: true, value: { count: 2 } }, "navigation:1");
+    await expect(pageData.reviews).resolves.toEqual({ count: 2 });
+  });
+
+  it("never touches another scope's entries, document scope included", async () => {
+    const documentPageData: Record<string, unknown> = {};
+    prepareDeferredPageData(documentPageData, ["reviews"]);
+    settleDeferredValue("reviews", { ok: true, value: { count: 3 } });
+
+    const navPageData: Record<string, unknown> = {};
+    prepareDeferredPageData(navPageData, ["reviews"], "navigation:1");
+    settleDeferredValue("reviews", { ok: true, value: { count: 4 } }, "navigation:1");
+
+    releaseDeferredScope("navigation:1");
+
+    // The document scope's own settled entry survives a navigation scope's
+    // release — only the released scope's entries are removed.
+    await expect(documentPageData.reviews).resolves.toEqual({ count: 3 });
   });
 });

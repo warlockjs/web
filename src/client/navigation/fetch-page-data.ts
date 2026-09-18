@@ -30,6 +30,7 @@ import { isHydrationPayload, type HydrationDocumentPayloadSource } from "../../h
 import {
   prepareDeferredPageData,
   rejectPendingDeferredKeys,
+  releaseDeferredScope,
   settleDeferredValue,
   type DeferredSettlement,
 } from "../runtime/defer-registry";
@@ -63,6 +64,20 @@ export type PageDataResult =
       url: string;
       /** Why, for a console warning — never shown to the user. */
       reason: string;
+    }
+  | {
+      /**
+       * The request was aborted through the `signal` the caller passed in —
+       * a newer navigation, refresh or locale change claimed the ticket
+       * before this one's response arrived. NOT a `hard-navigate`: the
+       * ticket counter (`navigation-root.tsx`'s `claimTicket`) is the
+       * arbiter of which response wins, and it already dropped this one —
+       * this result exists only so the caller does not mistake ITS OWN
+       * cancellation for a network failure and warn about, or fall back
+       * from, a question it stopped asking.
+       */
+      type: "aborted";
+      url: string;
     };
 
 /**
@@ -87,13 +102,29 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * One counter per module load, incremented per NDJSON navigation, so two
+ * overlapping `fetchPageData` calls (e.g. a fast double-click, or a prefetch
+ * still in flight when the user navigates again) never share a deferred-
+ * registry scope. A plain counter is enough: it only has to be unique within
+ * this one `window`'s lifetime, never across page loads.
+ */
+let navigationScopeCounter = 0;
+
+function createNavigationScope(): string {
+  navigationScopeCounter += 1;
+  return `navigation:${navigationScopeCounter}`;
+}
+
+/**
  * One `{ defer, settlement }` line, after line 1 — server-written by
  * `write-deferred-ndjson-response.ts`, read back here. `settlement` is
  * devalue-serialized TEXT (a string), decoded separately — see
  * {@link readNdjsonPageData}'s per-line loop.
  */
 function isDeferredNdjsonLine(value: unknown): value is { defer: string; settlement: string } {
-  return isPlainRecord(value) && typeof value.defer === "string" && typeof value.settlement === "string";
+  return (
+    isPlainRecord(value) && typeof value.defer === "string" && typeof value.settlement === "string"
+  );
 }
 
 /**
@@ -170,7 +201,11 @@ async function readNdjsonPageData(response: Response, url: string): Promise<Page
     // text, not plain JSON — see `write-deferred-ndjson-response.ts`.
     parsed = parse(firstLine);
   } catch (error) {
-    return { type: "hard-navigate", url, reason: `malformed NDJSON payload line: ${String(error)}` };
+    return {
+      type: "hard-navigate",
+      url,
+      reason: `malformed NDJSON payload line: ${String(error)}`,
+    };
   }
 
   if (!isHydrationPayload(parsed)) {
@@ -179,9 +214,13 @@ async function readNdjsonPageData(response: Response, url: string): Promise<Page
 
   const payload = parsed;
   const deferredKeys = payload.deferred ?? [];
+  // Own scope per navigation: two overlapping `fetchPageData` calls that both
+  // defer a same-named key (e.g. two product pages both deferring "reviews")
+  // must not resolve into each other's registry entry.
+  const scope = createNavigationScope();
 
   if (deferredKeys.length > 0 && isPlainRecord(payload.pageData)) {
-    prepareDeferredPageData(payload.pageData, deferredKeys);
+    prepareDeferredPageData(payload.pageData, deferredKeys, scope);
   }
 
   void (async () => {
@@ -203,28 +242,52 @@ async function readNdjsonPageData(response: Response, url: string): Promise<Page
         }
 
         if (isDeferredNdjsonLine(record)) {
-          pending.delete(record.defer);
-
           let settlement: DeferredSettlement;
 
           try {
             settlement = parse(record.settlement) as DeferredSettlement;
           } catch {
+            // Left in `pending`: the `finally` rejects it, and only a settled
+            // key is removed by `releaseDeferredScope`.
             continue;
           }
 
-          settleDeferredValue(record.defer, settlement);
+          pending.delete(record.defer);
+          settleDeferredValue(record.defer, settlement, scope);
         }
       }
+    } catch {
+      // The stream broke — most commonly because the SAME `signal` that
+      // aborted this navigation's `fetch()` also aborts its still-streaming
+      // body reads. Swallowed rather than surfaced: this background reader
+      // has no caller left to report to, and the `finally` below already
+      // does the one thing that still matters — this scope's keys must not
+      // be left pending forever.
     } finally {
-      if (pending.size > 0) rejectPendingDeferredKeys([...pending]);
+      if (pending.size > 0) rejectPendingDeferredKeys([...pending], scope);
+
+      // This scope's own settlement traffic is now fully drained — nothing
+      // will ever call `settleDeferredValue`/`rejectPendingDeferredKeys` for
+      // it again, whether this navigation's payload ever gets applied or was
+      // superseded first. See `releaseDeferredScope`'s own doc.
+      releaseDeferredScope(scope);
     }
   })();
 
   return { type: "payload", payload, url: response.url || url };
 }
 
-export async function fetchPageData(url: string): Promise<PageDataResult> {
+/**
+ * @param signal Wired to `fetch()` so a caller (`navigation-root.tsx`,
+ * `refresh.ts`, `change-locale-code.ts`) can cancel an in-flight request once
+ * a newer one has taken its ticket. This is an OPTIMISATION on top of the
+ * ticket counter, not a substitute for it: aborting merely stops the browser
+ * doing wasted work sooner, and the ticket is what a caller must still check
+ * before acting on the result — a superseded fetch that resolves anyway
+ * (ignored `signal`, or a race between abort and response) is dropped by the
+ * ticket exactly as before this parameter existed.
+ */
+export async function fetchPageData(url: string, signal?: AbortSignal): Promise<PageDataResult> {
   let response: Response;
 
   try {
@@ -244,9 +307,17 @@ export async function fetchPageData(url: string): Promise<PageDataResult> {
       // us where we ended up. Handling redirects ourselves would mean
       // re-implementing the rules the browser already has.
       redirect: "follow",
+      signal,
     });
   } catch (error) {
-    // Offline, DNS, CORS, an aborted connection. The browser can render its own
+    // `signal.aborted` is checked BEFORE the error shape, because an abort's
+    // exact error (a `DOMException` named `"AbortError"` in a browser, a
+    // plain `Error` under some polyfills/test doubles) is not portable —
+    // whether THIS call was cancelled is. Aborted is never a `hard-navigate`:
+    // see the `PageDataResult` doc for why conflating the two would be wrong.
+    if (signal?.aborted === true) return { type: "aborted", url };
+
+    // Offline, DNS, CORS, a connection reset. The browser can render its own
     // network error far better than we can fake one.
     return { type: "hard-navigate", url, reason: `request failed: ${String(error)}` };
   }
