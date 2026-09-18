@@ -37,6 +37,7 @@
  * extend this file to cover them; they are separate, later slices.
  */
 import { parse } from "@babel/parser";
+import * as t from "@babel/types";
 import { builtinModules } from "node:module";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
@@ -509,17 +510,23 @@ function parserPluginsFor(id: string): ("typescript" | "jsx")[] {
  * it as type-only would turn this carve-out into a hole big enough to smuggle
  * a whole server package through.
  */
-function importDeclarationKind(decl: any): ImportKind {
+function importDeclarationKind(decl: t.ImportDeclaration): ImportKind {
   if (decl.importKind === "type") return "type";
   if (decl.specifiers.length === 0) return "value";
-  return decl.specifiers.every((spec: any) => spec.importKind === "type") ? "type" : "value";
+  return decl.specifiers.every((spec) => "importKind" in spec && spec.importKind === "type")
+    ? "type"
+    : "value";
 }
 
-function exportDeclarationKind(stmt: any): ImportKind {
+function exportDeclarationKind(
+  stmt: t.ExportNamedDeclaration | t.ExportAllDeclaration,
+): ImportKind {
   if (stmt.exportKind === "type") return "type";
-  const specifiers = stmt.specifiers ?? [];
+  const specifiers = t.isExportNamedDeclaration(stmt) ? stmt.specifiers : [];
   if (specifiers.length === 0) return "value"; // `export * from "P"` — a runtime edge.
-  return specifiers.every((spec: any) => spec.exportKind === "type") ? "type" : "value";
+  return specifiers.every((spec) => "exportKind" in spec && spec.exportKind === "type")
+    ? "type"
+    : "value";
 }
 
 /**
@@ -541,19 +548,20 @@ function collectRuntimeSpecifiers(node: unknown, into: Set<string>): void {
     for (const item of node) collectRuntimeSpecifiers(item, into);
     return;
   }
-  const record = node as Record<string, unknown>;
-  if (typeof record.type !== "string") return;
-  if (record.type === "CallExpression" || record.type === "ImportExpression") {
-    const callee = (record as any).callee;
+  const candidate = node as t.Node;
+  if (typeof candidate.type !== "string") return;
+  if (t.isCallExpression(candidate) || t.isImportExpression(candidate)) {
+    const callee = t.isCallExpression(candidate) ? candidate.callee : undefined;
     const isRuntimeLoad =
-      record.type === "ImportExpression" ||
-      callee?.type === "Import" ||
-      (callee?.type === "Identifier" && callee.name === "require");
+      t.isImportExpression(candidate) ||
+      t.isImport(callee) ||
+      (t.isIdentifier(callee) && callee.name === "require");
     if (isRuntimeLoad) {
-      const arg = (record as any).source ?? (record as any).arguments?.[0];
-      if (arg?.type === "StringLiteral" && typeof arg.value === "string") into.add(arg.value);
+      const arg = t.isImportExpression(candidate) ? candidate.source : candidate.arguments[0];
+      if (t.isStringLiteral(arg)) into.add(arg.value);
     }
   }
+  const record = candidate as unknown as Record<string, unknown>;
   for (const key of Object.keys(record)) {
     if (key === "type" || key === "start" || key === "end" || key === "loc" || key === "range")
       continue;
@@ -575,7 +583,7 @@ function collectRuntimeSpecifiers(node: unknown, into: Set<string>): void {
  * "no information", which leaves rule 2 refusing exactly as it does today.
  */
 function classifyImportKinds(code: string, id: string): Map<string, ImportKind> | undefined {
-  let ast;
+  let ast: t.File;
   try {
     ast = parse(code, {
       sourceType: "module",
@@ -594,16 +602,13 @@ function classifyImportKinds(code: string, id: string): Map<string, ImportKind> 
     if (kind === "value" || !kinds.has(source)) kinds.set(source, kind);
   };
 
-  for (const stmt of ast.program.body as any[]) {
-    if (stmt.type === "ImportDeclaration") {
-      record(stmt.source.value as string, importDeclarationKind(stmt));
+  for (const stmt of ast.program.body) {
+    if (t.isImportDeclaration(stmt)) {
+      record(stmt.source.value, importDeclarationKind(stmt));
       continue;
     }
-    if (
-      (stmt.type === "ExportNamedDeclaration" || stmt.type === "ExportAllDeclaration") &&
-      stmt.source
-    ) {
-      record(stmt.source.value as string, exportDeclarationKind(stmt));
+    if ((t.isExportNamedDeclaration(stmt) || t.isExportAllDeclaration(stmt)) && stmt.source) {
+      record(stmt.source.value, exportDeclarationKind(stmt));
     }
   }
 

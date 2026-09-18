@@ -33,6 +33,7 @@
  * has nothing to say about source, only about output.
  */
 import { parse } from "@babel/parser";
+import * as t from "@babel/types";
 import type { Plugin } from "vite";
 import {
   createEnvironmentClassifier,
@@ -90,24 +91,25 @@ type BundleLike = Record<
  *   - `export { route }` (the bare re-export-specifier form Rollup sometimes
  *     emits instead of inlining the declaration itself).
  */
-function collectServerExportNames(stmt: any): Array<{ name: string; line: number }> {
+function collectServerExportNames(stmt: t.Statement): Array<{ name: string; line: number }> {
   const matches: Array<{ name: string; line: number }> = [];
-  const line = stmt.loc?.start?.line as number | undefined;
+  const line = stmt.loc?.start?.line;
 
   function record(name: string | undefined) {
     if (name && SERVER_EXPORT_NAMES.has(name)) matches.push({ name, line: line ?? 0 });
   }
 
-  if (stmt.type === "VariableDeclaration") {
+  if (t.isVariableDeclaration(stmt)) {
     for (const decl of stmt.declarations) {
-      if (decl.id?.type === "Identifier") record(decl.id.name);
+      if (t.isIdentifier(decl.id)) record(decl.id.name);
     }
-  } else if (stmt.type === "FunctionDeclaration") {
+  } else if (t.isFunctionDeclaration(stmt)) {
     record(stmt.id?.name);
-  } else if (stmt.type === "ExportNamedDeclaration") {
+  } else if (t.isExportNamedDeclaration(stmt)) {
     if (stmt.declaration) matches.push(...collectServerExportNames(stmt.declaration));
-    for (const specifier of stmt.specifiers ?? []) {
-      record(specifier.exported?.name ?? specifier.exported?.value);
+    for (const specifier of stmt.specifiers) {
+      const exported = specifier.exported;
+      record(t.isIdentifier(exported) ? exported.name : exported.value);
     }
   }
 
@@ -165,14 +167,14 @@ export function findLeakedServerExports(bundle: BundleLike): ServerExportLeak[] 
   for (const file of Object.values(bundle)) {
     if (!file || file.type !== "chunk" || typeof file.code !== "string") continue;
 
-    let ast: any;
+    let ast: t.File;
     try {
       ast = parse(file.code, { sourceType: "module", plugins: ["typescript", "jsx"] });
     } catch (error) {
       throw new UnverifiableChunkError(file.fileName ?? "(unnamed chunk)", error);
     }
 
-    for (const stmt of ast.program.body as any[]) {
+    for (const stmt of ast.program.body) {
       for (const match of collectServerExportNames(stmt)) {
         leaks.push({ fileName: file.fileName as string, exportName: match.name, line: match.line });
       }

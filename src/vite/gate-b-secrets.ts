@@ -34,7 +34,12 @@
  * `process.env`, narrowed or bare.
  */
 import { parse } from "@babel/parser";
+import * as t from "@babel/types";
 import type { Plugin } from "vite";
+
+/** A generic AST node, opaque field values — this file's own walkers dispatch on `.type`. */
+type AnyNode = t.Node;
+type MaybeNode = AnyNode | null | undefined;
 
 const PUBLIC_ENV_PREFIX = "PUBLIC_";
 
@@ -96,15 +101,17 @@ const SKIPPED_WALK_KEYS = new Set([
   ...TYPE_ONLY_KEYS,
 ]);
 
-function isIdentifierNamed(node: any, name: string): boolean {
-  return node?.type === "Identifier" && node.name === name;
+function isIdentifierNamed(node: MaybeNode, name: string): boolean {
+  return t.isIdentifier(node) && node.name === name;
 }
 
-function isMemberExpression(node: any): boolean {
-  return node?.type === "MemberExpression" || node?.type === "OptionalMemberExpression";
+function isMemberExpression(
+  node: MaybeNode,
+): node is t.MemberExpression | t.OptionalMemberExpression {
+  return t.isMemberExpression(node) || t.isOptionalMemberExpression(node);
 }
 
-function isGlobalObjectLiteral(node: any): boolean {
+function isGlobalObjectLiteral(node: MaybeNode): boolean {
   return (
     isIdentifierNamed(node, "globalThis") ||
     isIdentifierNamed(node, "window") ||
@@ -119,37 +126,37 @@ function isGlobalObjectLiteral(node: any): boolean {
  * `process` reference" check, since a binding site names a variable, it
  * doesn't read one.
  */
-function collectPatternIdentifiers(pattern: any, sink: (identifier: any) => void): void {
-  if (!pattern || typeof pattern !== "object") return;
-  switch (pattern.type) {
-    case "Identifier":
-      sink(pattern);
-      return;
-    case "ObjectPattern":
-      for (const prop of pattern.properties ?? []) {
-        if (prop.type === "RestElement") {
-          collectPatternIdentifiers(prop.argument, sink);
-        } else {
-          if (!prop.computed && prop.key) sink(prop.key);
-          collectPatternIdentifiers(prop.value, sink);
-        }
+function collectPatternIdentifiers(pattern: MaybeNode, sink: (identifier: AnyNode) => void): void {
+  if (!pattern) return;
+  if (t.isIdentifier(pattern)) {
+    sink(pattern);
+    return;
+  }
+  if (t.isObjectPattern(pattern)) {
+    for (const prop of pattern.properties) {
+      if (t.isRestElement(prop)) {
+        collectPatternIdentifiers(prop.argument, sink);
+      } else {
+        if (!prop.computed && prop.key) sink(prop.key);
+        collectPatternIdentifiers(prop.value, sink);
       }
-      return;
-    case "ArrayPattern":
-      for (const element of pattern.elements ?? []) {
-        if (element) collectPatternIdentifiers(element, sink);
-      }
-      return;
-    case "AssignmentPattern":
-      // Only the LEFT side is a binding; `.right` is a real value expression
-      // (a default value) and must stay visitable.
-      collectPatternIdentifiers(pattern.left, sink);
-      return;
-    case "RestElement":
-      collectPatternIdentifiers(pattern.argument, sink);
-      return;
-    default:
-      return;
+    }
+    return;
+  }
+  if (t.isArrayPattern(pattern)) {
+    for (const element of pattern.elements) {
+      if (element) collectPatternIdentifiers(element, sink);
+    }
+    return;
+  }
+  if (t.isAssignmentPattern(pattern)) {
+    // Only the LEFT side is a binding; `.right` is a real value expression
+    // (a default value) and must stay visitable.
+    collectPatternIdentifiers(pattern.left, sink);
+    return;
+  }
+  if (t.isRestElement(pattern)) {
+    collectPatternIdentifiers(pattern.argument, sink);
   }
 }
 
@@ -183,62 +190,72 @@ const FUNCTION_SCOPE_TYPES = new Set([
  * but DOES record that nested function/class's own declared name, since the
  * name itself is bound in the enclosing scope.
  */
-function collectScope(node: any, scope: Scope): void {
+function collectScope(node: unknown, scope: Scope): void {
   if (!node || typeof node !== "object") return;
   if (Array.isArray(node)) {
     for (const item of node) collectScope(item, scope);
     return;
   }
-  const type = node.type;
-  if (typeof type !== "string") return;
+  const candidate = node as AnyNode;
+  if (typeof candidate.type !== "string") return;
 
-  if (type === "VariableDeclarator") {
-    collectPatternIdentifiers(node.id, (identifier) => scope.declaredNames.add(identifier.name));
-    if (node.id?.type === "Identifier" && node.init) {
+  const addName = (identifier: AnyNode) =>
+    scope.declaredNames.add((identifier as t.Identifier).name);
+
+  if (t.isVariableDeclarator(candidate)) {
+    collectPatternIdentifiers(candidate.id, addName);
+    if (t.isIdentifier(candidate.id) && candidate.init) {
       const initIsAlias =
-        isGlobalObjectLiteral(node.init) ||
-        (node.init.type === "Identifier" && scope.globalAliasNames.has(node.init.name));
-      if (initIsAlias) scope.globalAliasNames.add(node.id.name);
+        isGlobalObjectLiteral(candidate.init) ||
+        (t.isIdentifier(candidate.init) && scope.globalAliasNames.has(candidate.init.name));
+      if (initIsAlias) scope.globalAliasNames.add(candidate.id.name);
     }
-    collectScope(node.init, scope);
+    collectScope(candidate.init, scope);
     return;
   }
 
-  if (type === "FunctionDeclaration" || type === "ClassDeclaration" || type === "ClassExpression") {
-    if (node.id?.name) scope.declaredNames.add(node.id.name);
+  if (
+    t.isFunctionDeclaration(candidate) ||
+    t.isClassDeclaration(candidate) ||
+    t.isClassExpression(candidate)
+  ) {
+    if (candidate.id?.name) scope.declaredNames.add(candidate.id.name);
     return; // params/body (or class body) are a separate scope — don't descend
   }
 
-  if (FUNCTION_SCOPE_TYPES.has(type)) {
+  if (FUNCTION_SCOPE_TYPES.has(candidate.type)) {
     return; // separate scope, built when the walker reaches this node
   }
 
-  if (type === "ImportDeclaration") {
-    for (const specifier of node.specifiers ?? []) {
+  if (t.isImportDeclaration(candidate)) {
+    for (const specifier of candidate.specifiers) {
       if (specifier.local?.name) scope.declaredNames.add(specifier.local.name);
     }
     return;
   }
 
-  if (type === "CatchClause") {
-    if (node.param) {
-      collectPatternIdentifiers(node.param, (identifier) => scope.declaredNames.add(identifier.name));
+  if (t.isCatchClause(candidate)) {
+    if (candidate.param) {
+      collectPatternIdentifiers(candidate.param, addName);
     }
-    collectScope(node.body, scope);
+    collectScope(candidate.body, scope);
     return;
   }
 
-  for (const key of Object.keys(node)) {
+  const record = candidate as unknown as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
     if (SKIPPED_WALK_KEYS.has(key)) continue;
-    collectScope(node[key], scope);
+    collectScope(record[key], scope);
   }
 }
 
 /** Builds a function/program scope from its parameters and body. */
-function buildScope(paramNodes: any[], bodyNode: any): Scope {
+function buildScope(paramNodes: readonly AnyNode[], bodyNode: unknown): Scope {
   const scope: Scope = { declaredNames: new Set(), globalAliasNames: new Set() };
   for (const param of paramNodes) {
-    collectPatternIdentifiers(param, (identifier) => scope.declaredNames.add(identifier.name));
+    collectPatternIdentifiers(param, (identifier) =>
+      scope.declaredNames.add((identifier as t.Identifier).name),
+    );
   }
   collectScope(bodyNode, scope);
   return scope;
@@ -254,75 +271,62 @@ function buildScope(paramNodes: any[], bodyNode: any): Scope {
  * shape) rather than re-derived from parent context during the main walk,
  * so the exclusion logic lives in exactly one place.
  */
-function collectExcludedIdentifiers(root: any): WeakSet<object> {
+function collectExcludedIdentifiers(root: unknown): WeakSet<object> {
   const excluded = new WeakSet<object>();
-  const exclude = (identifier: any): void => {
+  const exclude = (identifier: MaybeNode): void => {
     if (identifier) excluded.add(identifier);
   };
 
-  const visit = (node: any): void => {
+  const visit = (node: unknown): void => {
     if (!node || typeof node !== "object") return;
     if (Array.isArray(node)) {
       for (const item of node) visit(item);
       return;
     }
-    const type = node.type;
-    if (typeof type !== "string") return;
+    const candidate = node as AnyNode;
+    if (typeof candidate.type !== "string") return;
 
-    switch (type) {
-      case "VariableDeclarator":
-        collectPatternIdentifiers(node.id, exclude);
-        break;
-      case "FunctionDeclaration":
-      case "FunctionExpression":
-        exclude(node.id);
-        for (const param of node.params ?? []) collectPatternIdentifiers(param, exclude);
-        break;
-      case "ArrowFunctionExpression":
-        for (const param of node.params ?? []) collectPatternIdentifiers(param, exclude);
-        break;
-      case "ClassDeclaration":
-      case "ClassExpression":
-        exclude(node.id);
-        break;
-      case "ImportSpecifier":
-        exclude(node.local);
-        exclude(node.imported);
-        break;
-      case "ImportDefaultSpecifier":
-      case "ImportNamespaceSpecifier":
-        exclude(node.local);
-        break;
-      case "ObjectProperty":
-      case "ClassProperty":
-      case "ClassPrivateProperty":
-        if (!node.computed) exclude(node.key);
-        break;
-      case "ObjectMethod":
-      case "ClassMethod":
-      case "ClassPrivateMethod":
-        if (!node.computed) exclude(node.key);
-        for (const param of node.params ?? []) collectPatternIdentifiers(param, exclude);
-        break;
-      case "CatchClause":
-        collectPatternIdentifiers(node.param, exclude);
-        break;
-      case "LabeledStatement":
-      case "BreakStatement":
-      case "ContinueStatement":
-        exclude(node.label);
-        break;
-      case "MemberExpression":
-      case "OptionalMemberExpression":
-        if (!node.computed) exclude(node.property);
-        break;
-      default:
-        break;
+    if (t.isVariableDeclarator(candidate)) {
+      collectPatternIdentifiers(candidate.id, exclude);
+    } else if (t.isFunctionDeclaration(candidate) || t.isFunctionExpression(candidate)) {
+      exclude(candidate.id);
+      for (const param of candidate.params) collectPatternIdentifiers(param, exclude);
+    } else if (t.isArrowFunctionExpression(candidate)) {
+      for (const param of candidate.params) collectPatternIdentifiers(param, exclude);
+    } else if (t.isClassDeclaration(candidate) || t.isClassExpression(candidate)) {
+      exclude(candidate.id);
+    } else if (t.isImportSpecifier(candidate)) {
+      exclude(candidate.local);
+      exclude(candidate.imported);
+    } else if (t.isImportDefaultSpecifier(candidate) || t.isImportNamespaceSpecifier(candidate)) {
+      exclude(candidate.local);
+    } else if (t.isClassPrivateProperty(candidate)) {
+      exclude(candidate.key);
+    } else if (t.isObjectProperty(candidate) || t.isClassProperty(candidate)) {
+      if (!candidate.computed) exclude(candidate.key);
+    } else if (
+      t.isObjectMethod(candidate) ||
+      t.isClassMethod(candidate) ||
+      t.isClassPrivateMethod(candidate)
+    ) {
+      if (!candidate.computed) exclude(candidate.key);
+      for (const param of candidate.params) collectPatternIdentifiers(param, exclude);
+    } else if (t.isCatchClause(candidate)) {
+      collectPatternIdentifiers(candidate.param, exclude);
+    } else if (
+      t.isLabeledStatement(candidate) ||
+      t.isBreakStatement(candidate) ||
+      t.isContinueStatement(candidate)
+    ) {
+      exclude(candidate.label);
+    } else if (isMemberExpression(candidate)) {
+      if (!candidate.computed) exclude(candidate.property);
     }
 
-    for (const key of Object.keys(node)) {
+    const record = candidate as unknown as Record<string, unknown>;
+    for (const key of Object.keys(record)) {
       if (SKIPPED_WALK_KEYS.has(key)) continue;
-      visit(node[key]);
+      visit(record[key]);
     }
   };
 
@@ -341,7 +345,7 @@ function collectExcludedIdentifiers(root: any): WeakSet<object> {
  * function sees an outer `const process = ...` or `const g = globalThis`
  * too).
  */
-function isProcessObject(node: any, scopeStack: readonly Scope[]): boolean {
+function isProcessObject(node: MaybeNode, scopeStack: readonly Scope[]): boolean {
   if (isIdentifierNamed(node, "process")) {
     return !scopeStack.some((scope) => scope.declaredNames.has("process"));
   }
@@ -349,30 +353,29 @@ function isProcessObject(node: any, scopeStack: readonly Scope[]): boolean {
 
   const host = node.object;
   const hostIsAlias =
-    host?.type === "Identifier" &&
-    scopeStack.some((scope) => scope.globalAliasNames.has(host.name));
+    t.isIdentifier(host) && scopeStack.some((scope) => scope.globalAliasNames.has(host.name));
   if (!isGlobalObjectLiteral(host) && !hostIsAlias) return false;
 
   if (!node.computed) return isIdentifierNamed(node.property, "process");
-  return node.property?.type === "StringLiteral" && node.property.value === "process";
+  return t.isStringLiteral(node.property) && node.property.value === "process";
 }
 
 /** Matches the `process.env` member expression itself (dot or static-bracket). */
-function isProcessEnvBase(node: any, scopeStack: readonly Scope[]): boolean {
+function isProcessEnvBase(node: MaybeNode, scopeStack: readonly Scope[]): boolean {
   if (!isMemberExpression(node)) return false;
   if (!isProcessObject(node.object, scopeStack)) return false;
   if (!node.computed) return isIdentifierNamed(node.property, "env");
-  return node.property?.type === "StringLiteral" && node.property.value === "env";
+  return t.isStringLiteral(node.property) && node.property.value === "env";
 }
 
 /** Matches the `import.meta.env` member expression itself (dot or static-bracket). */
-function isImportMetaEnvBase(node: any): boolean {
+function isImportMetaEnvBase(node: MaybeNode): boolean {
   if (!isMemberExpression(node)) return false;
   const object = node.object;
-  if (object?.type !== "MetaProperty") return false;
-  if (object.meta?.name !== "import" || object.property?.name !== "meta") return false;
+  if (!t.isMetaProperty(object)) return false;
+  if (object.meta.name !== "import" || object.property.name !== "meta") return false;
   if (!node.computed) return isIdentifierNamed(node.property, "env");
-  return node.property?.type === "StringLiteral" && node.property.value === "env";
+  return t.isStringLiteral(node.property) && node.property.value === "env";
 }
 
 type KeyResolution = { readonly static: true; readonly key: string } | { readonly static: false };
@@ -384,16 +387,16 @@ type KeyResolution = { readonly static: true; readonly key: string } | { readonl
  * anything else (a variable, a template literal, a call expression, ...) is
  * a computed key and must fail closed rather than guessed at.
  */
-function resolveKey(outer: any): KeyResolution {
+function resolveKey(outer: t.MemberExpression | t.OptionalMemberExpression): KeyResolution {
   if (!outer.computed) {
-    if (outer.property?.type === "Identifier") return { static: true, key: outer.property.name };
+    if (t.isIdentifier(outer.property)) return { static: true, key: outer.property.name };
     return { static: false };
   }
-  if (outer.property?.type === "StringLiteral") return { static: true, key: outer.property.value };
+  if (t.isStringLiteral(outer.property)) return { static: true, key: outer.property.value };
   return { static: false };
 }
 
-function expressionText(code: string, node: any): string {
+function expressionText(code: string, node: AnyNode): string {
   return code.slice(node.start as number, node.end as number);
 }
 
@@ -460,10 +463,10 @@ interface Violation {
  * is the violation, exactly like `import.meta.env`'s bare-whole-object
  * check just above it.
  */
-function processReferenceViolation(node: any, code: string): Violation {
+function processReferenceViolation(node: AnyNode, code: string): Violation {
   const expression = expressionText(code, node);
   return {
-    line: node.loc.start.line,
+    line: node.loc!.start.line,
     expression,
     cause: `"${expression}" obtains Node's "process" object (directly, or via globalThis/window/self or an alias of one) in client-bound code. process does not exist in the browser, and once a reference to it escapes into a variable its later use can't be tracked statically — so the reference itself is refused, not only a ".env" read off it.`,
     fix: `Move the code that needs this value into a *.server.ts file or a server export (loader/route/middleware/validation/metadata), or — if the client genuinely needs a value — expose it via import.meta.env.${PUBLIC_ENV_PREFIX}* instead.`,
@@ -472,7 +475,7 @@ function processReferenceViolation(node: any, code: string): Violation {
 
 function findViolation(
   code: string,
-  ast: any,
+  ast: t.File,
   onPublicKeyRead: (key: string) => void,
 ): Violation | undefined {
   let found: Violation | undefined;
@@ -480,7 +483,7 @@ function findViolation(
   const excludedIdentifiers = collectExcludedIdentifiers(ast.program);
   const scopeStack: Scope[] = [buildScope([], ast.program.body)];
 
-  function checkNode(node: any): void {
+  function checkNode(node: AnyNode): void {
     if (isMemberExpression(node)) {
       const outer = node;
 
@@ -488,7 +491,7 @@ function findViolation(
         consumedEnvBases.add(outer.object);
         const key = resolveKey(outer);
         found = {
-          line: outer.loc.start.line,
+          line: outer.loc!.start.line,
           expression: expressionText(code, outer),
           cause: key.static
             ? `"process.env.${key.key}" is read in client-bound code. process.env does not exist in the browser — there is no "public" process.env key, static or computed.`
@@ -500,7 +503,7 @@ function findViolation(
 
       if (isProcessEnvBase(outer, scopeStack) && !consumedEnvBases.has(outer)) {
         found = {
-          line: outer.loc.start.line,
+          line: outer.loc!.start.line,
           expression: expressionText(code, outer),
           cause: `"process.env" is referenced as a whole object in client-bound code (not narrowed to one static "process.env.<KEY>" access) — process.env does not exist in the browser, so reading it as a value like this (assigned, destructured, spread, or passed as an argument) is never safe: there is no "public" process.env key, static or computed.`,
           fix: `Move the code that needs this value into a *.server.ts file or a server export (loader/route/middleware/validation/metadata), reading only the specific "process.env.<KEY>" value you actually need, or — if the client genuinely needs a value — expose it via import.meta.env.${PUBLIC_ENV_PREFIX}* instead.`,
@@ -518,7 +521,7 @@ function findViolation(
         }
 
         found = {
-          line: outer.loc.start.line,
+          line: outer.loc!.start.line,
           expression: expressionText(code, outer),
           cause: key.static
             ? `"import.meta.env.${key.key}" is read in client-bound code, but its name does not start with "${PUBLIC_ENV_PREFIX}". Only import.meta.env keys prefixed "${PUBLIC_ENV_PREFIX}" are allowed in the client build — everything else is assumed to be a secret.`
@@ -532,7 +535,7 @@ function findViolation(
 
       if (isImportMetaEnvBase(outer) && !consumedEnvBases.has(outer)) {
         found = {
-          line: outer.loc.start.line,
+          line: outer.loc!.start.line,
           expression: expressionText(code, outer),
           cause: `"import.meta.env" is referenced as a whole object in client-bound code (not narrowed to one static "${PUBLIC_ENV_PREFIX}*" key access) — used as a value like this (assigned, destructured, spread, or passed as an argument), it leaks every declared env var, public or not, to the client.`,
           fix: `Read only the specific "import.meta.env.${PUBLIC_ENV_PREFIX}*" key(s) you actually need, one at a time, instead of referencing the whole "import.meta.env" object.`,
@@ -558,7 +561,7 @@ function findViolation(
     }
   }
 
-  function traverse(node: any): void {
+  function traverse(node: unknown): void {
     if (found || !node || typeof node !== "object") return;
     if (Array.isArray(node)) {
       for (const item of node) {
@@ -567,18 +570,22 @@ function findViolation(
       }
       return;
     }
-    const type = node.type;
-    if (typeof type !== "string") return;
+    const candidate = node as AnyNode;
+    if (typeof candidate.type !== "string") return;
 
-    const isFunctionScope = FUNCTION_SCOPE_TYPES.has(type);
-    if (isFunctionScope) scopeStack.push(buildScope(node.params ?? [], node.body));
+    const isFunctionScope = FUNCTION_SCOPE_TYPES.has(candidate.type);
+    if (isFunctionScope) {
+      const fn = candidate as t.Function;
+      scopeStack.push(buildScope(fn.params, fn.body));
+    }
 
-    checkNode(node);
+    checkNode(candidate);
 
     if (!found) {
-      for (const key of Object.keys(node)) {
+      const record = candidate as unknown as Record<string, unknown>;
+      for (const key of Object.keys(record)) {
         if (SKIPPED_WALK_KEYS.has(key)) continue;
-        traverse(node[key]);
+        traverse(record[key]);
         if (found) break;
       }
     }

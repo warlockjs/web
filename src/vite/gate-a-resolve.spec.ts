@@ -787,6 +787,31 @@ describe("gateAResolve — rule 2 and type-only imports (verbatimModuleSyntax fi
     }
   });
 
+  it('case F2 (NEGATIVE CONTROL): `export * from "P"` has no specifier list and must count as a VALUE edge', async () => {
+    try {
+      await buildTypeOnlyPage("export-all.page.tsx", CORE_AS_SERVER);
+      expect.unreachable("expected the build to fail");
+    } catch (error) {
+      expect((error as Error).message).toContain("server-only @warlock.js package");
+    }
+  });
+
+  it("case F3: a type-only re-export specifier CARRYING AN ALIAS is erased like any other type-only edge", async () => {
+    const result = await buildTypeOnlyPage("export-named-alias-type-only.page.tsx", CORE_AS_SERVER);
+    const code = firstChunkCode(result);
+    expect(code).toContain("export-named-alias-type-only-page");
+    expect(code).not.toContain(CORE_SIDE_EFFECT);
+  });
+
+  it("case F4 (NEGATIVE CONTROL): a VALUE re-export specifier carrying an alias still fails — the alias doesn't launder it", async () => {
+    try {
+      await buildTypeOnlyPage("export-named-alias-value.page.tsx", CORE_AS_SERVER);
+      expect.unreachable("expected the build to fail");
+    } catch (error) {
+      expect((error as Error).message).toContain("server-only @warlock.js package");
+    }
+  });
+
   it("case G: rule 3 still refuses a type-only import of a *.server file — the carve-out is rule 2 only", async () => {
     try {
       await buildTypeOnlyPage("type-only-server-file.page.tsx", CORE_AS_SERVER);
