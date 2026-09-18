@@ -55,7 +55,21 @@ function ThemeToggle() {
 
 **The trap:** `<ClientOnly>` decides what gets RENDERED. It has no say over what gets IMPORTED. A normal `import` statement runs at module-load time, wherever that module is reached from in the import graph — including the server, if the file that imports it is part of the page's server bundle.
 
-```tsx
+The widget and its fallback, shared by every example below:
+
+```tsx title="src/web/widgets/browser-only-widget.tsx"
+export default function BrowserOnlyWidget() {
+  return <span>{window.localStorage.getItem("lastVisited") ?? "first visit"}</span>;
+}
+```
+
+```tsx title="src/web/widgets/placeholder.tsx"
+export default function Placeholder() {
+  return <span>Loading…</span>;
+}
+```
+
+```tsx title="src/web/widgets/broken.page.tsx"
 // ❌ still breaks the server render
 import BrowserOnlyWidget from "./browser-only-widget"; // this import runs on the SERVER too,
                                                          // and if browser-only-widget.tsx touches
@@ -64,6 +78,7 @@ import BrowserOnlyWidget from "./browser-only-widget"; // this import runs on th
                                                          // gets a chance to hide it.
 
 import { ClientOnly } from "@warlock.js/web";
+import Placeholder from "./placeholder";
 
 export default function Page() {
   return (
@@ -78,10 +93,11 @@ export default function Page() {
 
 **The fix:** make the import itself lazy with `React.lazy`, so the dynamic `import()` only fires the first time the lazy component is actually rendered. Paired with `<ClientOnly>`, that render never happens on the server, so the import never happens on the server either:
 
-```tsx
+```tsx title="src/web/widgets/lazy.page.tsx"
 // ✅ the import is deferred, not just the render
 import { lazy } from "react";
 import { ClientOnly } from "@warlock.js/web";
+import Placeholder from "./placeholder";
 
 const BrowserOnlyWidget = lazy(() => import("./browser-only-widget"));
 
@@ -96,9 +112,10 @@ export default function Page() {
 
 `React.lazy` components suspend, so give `<ClientOnly>`'s subtree a `<Suspense>` boundary if the lazy chunk might not be cached yet:
 
-```tsx
+```tsx title="src/web/widgets/lazy-suspense.page.tsx"
 import { lazy, Suspense } from "react";
 import { ClientOnly } from "@warlock.js/web";
+import Placeholder from "./placeholder";
 
 const BrowserOnlyWidget = lazy(() => import("./browser-only-widget"));
 

@@ -191,7 +191,20 @@ below.
 | positional `layout.tsx` | `LayoutLoader` | `LayoutProps<typeof loader>` |
 | `*.page.tsx`            | `PageLoader`   | `PageProps<typeof loader>`   |
 
-All receive one context object with `request`, `response`, and `shared`. Page loaders add generics that connect their sibling `validation` and `route` exports to `request.validated()` and `request.input()`.
+All receive one context object with `request`, `response`, `shared`, and `signal`. Page loaders add generics that connect their sibling `validation` and `route` exports to `request.validated()` and `request.input()`.
+
+## Abandoned-request signal
+
+`ctx.signal` is an `AbortSignal` that fires when the client disconnects before the response finishes. Hand it to anything cancelable:
+
+```ts
+export const loader = (async ({ signal }) => {
+  const res = await fetch("https://api.example.com/products", { signal });
+  return { products: await res.json() };
+}) satisfies PageLoader;
+```
+
+**Honest limitation:** a loader that never checks `signal` runs to completion anyway — the framework only stops the pipeline *between* levels (app → layout → page), never inside a loader already running.
 
 ## Validation
 

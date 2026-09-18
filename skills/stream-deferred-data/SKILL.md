@@ -15,17 +15,32 @@ loader value, but a slow key no longer holds up everything else.
 
 ```tsx title="src/web/products/product-details.page.tsx"
 import { use, Suspense } from "react";
+import { v } from "@warlock.js/seal";
 import { defer } from "@warlock.js/web";
 import type { PageLoader, PageProps } from "@warlock.js/web";
 
+type Review = { id: string; text: string };
+
+async function getProduct(id: string) {
+  return { id, name: `Product ${id}` };
+}
+
+async function getReviews(id: string): Promise<Review[]> {
+  return [{ id: `${id}-1`, text: "Great product." }];
+}
+
+export const validation = {
+  params: v.object({ id: v.string() }),
+};
+
 export const loader = (async ({ request }) => {
-  const { id } = request.validated();
+  const { params } = request.validated();
 
   return defer({
-    product: await getProduct(id), // resolved before the shell — unchanged today
-    reviews: getReviews(id), // a Promise — streamed in after the shell
+    product: await getProduct(params.id), // resolved before the shell — unchanged today
+    reviews: getReviews(params.id), // a Promise — streamed in after the shell
   });
-}) satisfies PageLoader;
+}) satisfies PageLoader<typeof validation>;
 
 function Reviews({ reviews }: { reviews: Promise<Review[]> }) {
   const list = use(reviews);
@@ -80,9 +95,12 @@ browser already started receiving stays a 200.
 
 What `use()` throws is one of:
 
-- **`DeferredValueError`** — the loader's own promise rejected. Carries the
-  original error's `message` and, if the original error had one,
-  `statusCode`. Never a stack in production; dev may add one.
+- **`DeferredValueError`** — the loader's own promise rejected. In
+  development, carries the original error's own `message`/`stack`. In
+  production, carries a generic message plus an opaque `errorCode` (joinable
+  with the server's own report line) UNLESS the loader rejected with a
+  `PublicPageError` (`@warlock.js/web`), whose own `message` is exposed as-is.
+  Carries `statusCode` if the original error had one.
 - **`DeferTimeoutError`** — the promise did not settle within
   `web.streaming.deferTimeout` (default 10000ms). The server treats this
   exactly like a rejection: settle, emit, move on. The response is never
@@ -120,6 +138,35 @@ export class ReviewsBoundary extends Component<
 Wrap the `<Suspense>` boundary (or an ancestor of it) in a boundary like this
 one when a deferred failure should degrade gracefully instead of bubbling to
 the page's own `ErrorBoundary` export.
+
+### No app boundary anywhere above `use()`? The client still won't go blank
+
+The framework wraps every hydrated page tree in its own client-side floor
+(`DefaultErrorBoundary`) so a rejected deferred value that no app-authored
+boundary catches — no `ReviewsBoundary` like the one above, no page-level
+`ErrorBoundary` export — still renders a visible fallback instead of React
+silently unmounting the tree.
+
+- **An app-authored boundary nearer the failing component always wins.**
+  React walks up to the CLOSEST boundary above the throw, and the framework's
+  floor sits at the very top — so wrapping `<Reviews>` in `ReviewsBoundary`
+  means the floor never renders and never fires for that failure at all.
+- **No double reporting.** Only the boundary that actually catches the error
+  reports it — an app boundary that stops the failure lower in the tree, the
+  floor when nothing else does. The failure is reported exactly once either
+  way, never twice for the one throw — including when the floor's own choice
+  of fallback (below) itself fails to render.
+- **The floor prefers the current route's `error.page.tsx`.** When one is
+  configured, the floor renders it with a freshly sanitized error shape (the
+  same `{ error, status }` contract `error.page.tsx` receives during SSR —
+  `message`/`stack` redacted in production exactly as a hydration failure's
+  are, unless the failure is a `DeferredValueError`, whose message already
+  passed through that same redaction at settlement time). If the route has no
+  `error.page.tsx`, or rendering it throws in turn, the floor falls back to
+  its own plain, generic message instead — a last resort that can itself
+  never be the thing that fails. Give a failure mode a nicer message by
+  wrapping it in an app boundary like `ReviewsBoundary` above, or by giving
+  the route its own `error.page.tsx`.
 
 ## `web.streaming.deferTimeout`
 
@@ -214,15 +261,27 @@ Detection is case-insensitive and, by default, matches this built-in list:
 `applebot`, `facebookexternalhit`, `twitterbot`, `linkedinbot`, `discordbot`,
 `slackbot`, `telegrambot`, `whatsapp`, `embedly`, `pinterest`.
 
-```ts title="warlock.config.ts"
+```ts
+// disable detection entirely — every request streams:
 export default {
   web: {
     streaming: {
-      crawlers: false, // disable detection entirely — every request streams
-      // OR customise it:
+      crawlers: false,
+    },
+  },
+};
+```
+
+```ts
+// or customise it:
+import type { Request } from "@warlock.js/core";
+
+export default {
+  web: {
+    streaming: {
       crawlers: {
         userAgents: [/mybot/i], // REPLACES the built-in list, not merges with it
-        detect: (request) => request.header("x-render-mode") === "crawler", // wins outright when given
+        detect: (request: Request) => request.header("x-render-mode") === "crawler", // wins outright when given
       },
     },
   },

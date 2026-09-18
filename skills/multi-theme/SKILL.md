@@ -32,6 +32,24 @@ declare module "@warlock.js/web" {
 }
 ```
 
+Each `themes[id]` entry lazily imports a plain component module — nothing framework-specific about it:
+
+```tsx title="src/web/themes/alpha/alpha-theme.tsx"
+import "./alpha.css";
+
+export default function AlphaTheme() {
+  return <main className="theme-alpha">Alpha storefront</main>;
+}
+```
+
+```tsx title="src/web/themes/beta/beta-theme.tsx"
+import "./beta.css";
+
+export default function BetaTheme() {
+  return <main className="theme-beta">Beta storefront</main>;
+}
+```
+
 ```tsx title="src/web/root.tsx"
 import { Head, Scripts, linkStylesheetsFor, shared } from "@warlock.js/web";
 import type { AppProps, HttpContext } from "@warlock.js/web";

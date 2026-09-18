@@ -126,7 +126,7 @@ export const loader = (async ({ request }) => {
   const { params, query } = request.validated();
 
   return { id: params.id, tab: query.tab };
-}) satisfies PageLoader<undefined, typeof route>;
+}) satisfies PageLoader<typeof validation, typeof route>;
 
 export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
   return <h1>Product {data.id}</h1>;
@@ -254,6 +254,10 @@ writes the crawler-specific render).
 **Response headers**: `x-warlock-cache: hit | miss | bypass`, alongside the
 usual `Cache-Control`.
 
+**Size ceiling**: `pageCache.maxEntryBytes` (config key, default `1_048_576`
+— 1 MiB) caps one stored entry; an oversized MISS is still served to the
+visitor in full, it just isn't cached.
+
 **Invalidation**:
 
 ```ts
@@ -358,7 +362,7 @@ export default function ErrorPage({ error, status }: ErrorPageProps) {
 }
 ```
 
-During SSR the component receives the real thrown value in `error`. After hydration it receives the JSON-safe `{ name, message, stack? }` shape instead — the original value does not survive the wire. `robots: noindex` is a framework default on this path that an app-supplied `metadata` cannot remove.
+During SSR in development the component receives the real thrown value in `error`, for local debugging. In production, SSR receives the SAME sanitized shape hydration does — never the raw error — so the two never disagree: an unexpected error's own `message` never crosses the wire, in the initial HTML or after hydration. After hydration the component always receives the JSON-safe `{ name, message, stack?, errorCode? }` shape, and in production that shape is sanitized: the browser gets a stable generic message plus an opaque `errorCode` (joinable with the server's own error report line) instead of `message`, and `stack` never crosses at all. The one exception is `PublicPageError` (`@warlock.js/web`) — throw (or reject a `defer()`'d promise with) one of those when a message is meant for a real visitor, and its `message` is exposed as-is, in every environment, in both SSR and hydration. `robots: noindex` is a framework default on this path that an app-supplied `metadata` cannot remove.
 
 Every unhandled error response is also forced to
 `Cache-Control: private, no-store` at the framework's shared error funnel.
