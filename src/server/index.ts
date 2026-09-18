@@ -1,8 +1,18 @@
 /**
- * The pipeline-facing seam. Deliberately NOT re-exported from the app-facing
- * barrel (web/src/index.ts) — the same rule A.3 set for
- * connectSharedStore/enterSharedScope/sealShared: app code never touches the
- * pipeline's wiring surface.
+ * Internal SSR seam. `web-connector.ts` loads this module by filesystem path
+ * via `vite.ssrLoadModule` (see `WEB_SERVER_BARREL_RELATIVE_PATH` there) so
+ * that `connectSharedStore`, `connectPageContext` and `installPageRoutes` run
+ * against Vite's own module instance, not a second Node-imported one.
+ *
+ * This is why the file is deliberately NOT a `package.json` export and NOT
+ * re-exported from the app-facing barrel (web/src/index.ts) — the same rule
+ * A.3 set for connectSharedStore/enterSharedScope/sealShared: app code never
+ * touches the pipeline's wiring surface, and a package export would let it.
+ *
+ * Do not delete or move this file, or rename its exports, without updating
+ * `web-connector.ts`'s path resolution and the pkgist exports-parity
+ * allowlist (`builder/pkgist.config.ts`) — both trim it out on purpose;
+ * dropping it from either broke `warlock dev`.
  */
 export { connectSharedStore } from "../shared";
 export {

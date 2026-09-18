@@ -76,7 +76,11 @@ import {
 } from "./page-route-reload";
 import { consumePageManifest, type PageManifest } from "./page-manifest";
 import { registerProductionPublicFiles } from "./register-production-public-files";
-import { createUnregisteredPageReporter } from "./unregistered-pages";
+import { registerWebHttpRoutes } from "../sitemap/register-web-http-routes";
+import {
+  createUnregisteredPageReporter,
+  type UnregisteredPageReporter,
+} from "./unregistered-pages";
 import { WEB_CONNECTOR_PRIORITY } from "./web-connector-factory";
 
 /**
@@ -213,6 +217,21 @@ export function productionAssetsDirectoryOptions(clientDir: string) {
   };
 }
 
+/**
+ * Resolves the filesystem path to `./index.ts` (or `./index.js` once built)
+ * from `selfPath` — this module's own location. Extracted so the path this
+ * connector hands to `vite.ssrLoadModule` and the path a spec resolves to
+ * assert against are provably the same computation, not two copies that can
+ * drift.
+ *
+ * Extension-agnostic on purpose: the sibling barrel is `index.ts` when this
+ * package runs from source and `index.js` once it is built, the same trick
+ * `registerLoader` uses when it resolves its own siblings.
+ */
+export function resolveWebServerBarrelPath(selfPath: string): string {
+  return path.join(path.dirname(selfPath), `index${path.extname(selfPath)}`);
+}
+
 export type WebConnectorOptions = {
   /**
    * Vite's `root` — the application directory that owns `src/`, `package.json`
@@ -296,6 +315,15 @@ export class WebConnector extends BaseConnector {
 
   /** Committed file versions awaiting the overlapping watcher callback. */
   protected pendingHotUpdateSuppressions = new Map<string, string>();
+
+  /**
+   * Set once the dev 404 diagnostic reporter is created, so
+   * `classifyPageChanges` — reached from both the core watcher (`shouldRestart`)
+   * and Vite's own hot-update hook (`handlePageHotUpdate`) — can evict its
+   * cached filesystem walk on every page file add/remove/edit it observes.
+   * `undefined` in production, where this reporter is never created.
+   */
+  protected reportUnregisteredPages?: UnregisteredPageReporter;
 
   public constructor(options: WebConnectorOptions = {}) {
     super();
@@ -390,6 +418,11 @@ export class WebConnector extends BaseConnector {
         router.directory(productionAssetsDirectoryOptions(this.resolveClientDir()));
       }
 
+      // Sitemap Part B (v5.16 contract Part 6 rule 1): production boot
+      // produces the artifact set that `/sitemap.xml` and `/robots.txt` will
+      // serve from. See `../sitemap/register-web-http-routes.ts`.
+      await registerWebHttpRoutes(router, { appRoot: this.options.appRoot ?? process.cwd() });
+
       return;
     }
 
@@ -451,7 +484,7 @@ export class WebConnector extends BaseConnector {
       },
     );
 
-    const reportUnregisteredPages = createUnregisteredPageReporter({
+    this.reportUnregisteredPages = createUnregisteredPageReporter({
       appRoot: paths.appRoot,
       appSrcRoot: paths.appSrcRoot,
       registeredPageFiles: () => registeredPageFiles(router.list(), paths.appSrcRoot),
@@ -461,7 +494,7 @@ export class WebConnector extends BaseConnector {
       "onResponse",
       (request: FastifyRequest, reply: FastifyReply, done: HookHandlerDoneFunction) => {
         if (reply.statusCode === 404) {
-          reportUnregisteredPages({
+          this.reportUnregisteredPages?.({
             method: request.method,
             url: request.url,
             pathname: new URL(request.url, "http://warlock.local").pathname,
@@ -489,6 +522,10 @@ export class WebConnector extends BaseConnector {
       });
 
     this.installedPages = await this.installDevPageRoutes();
+
+    // Same lifecycle as production (Part 6 rule 1) — a dev boot also needs a
+    // real artifact for `/sitemap.xml` to serve, not just the route.
+    await registerWebHttpRoutes(router, { appRoot: paths.appRoot });
   }
 
   /**
@@ -596,6 +633,7 @@ export class WebConnector extends BaseConnector {
     this.pendingPageChanges = undefined;
     this.pendingHotUpdateSuppressions.clear();
     this.pageManifest = undefined;
+    this.reportUnregisteredPages = undefined;
 
     this.active = false;
   }
@@ -623,7 +661,16 @@ export class WebConnector extends BaseConnector {
       installedPageFiles: registeredPageFiles(router.list(), this.resolvedPaths.appSrcRoot),
     });
 
-    return hasPageFileChanges(changes) ? changes : undefined;
+    if (!hasPageFileChanges(changes)) return undefined;
+
+    // The one invalidation point for the 404 diagnostic's cached discovery
+    // walk: reached from both the core watcher batch (`shouldRestart`) and
+    // Vite's hot-update hook (`handlePageHotUpdate`), covering add/unlink/
+    // rename/change of any page or layout file. No time-based expiry — the
+    // snapshot is correct until one of these fires, then it is gone.
+    this.reportUnregisteredPages?.invalidateDiscovery();
+
+    return changes;
   }
 
   protected enqueuePageRouteReload(changes: PageFileChanges): Promise<boolean> {
@@ -767,10 +814,7 @@ export class WebConnector extends BaseConnector {
       appSrcRoot,
       appFile: this.options.appFile ?? path.join(appSrcRoot, "web/root.tsx"),
       webRoot,
-      // Extension-agnostic on purpose: the sibling barrel is `index.ts` when
-      // this package runs from source and `index.js` once it is built, the same
-      // trick `registerLoader` uses when it resolves its own siblings.
-      webServerBarrel: path.join(path.dirname(selfPath), `index${path.extname(selfPath)}`),
+      webServerBarrel: resolveWebServerBarrelPath(selfPath),
     };
   }
 
