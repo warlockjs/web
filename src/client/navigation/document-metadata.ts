@@ -1,97 +1,31 @@
 import type { MetadataOutput } from "../../metadata";
+import {
+  MANAGED_METADATA_KEYS,
+  resolveMetadataDescriptors,
+  type MetadataDescriptor,
+} from "../../metadata/metadata-descriptors";
 
-/**
- * ONE tag `<head>` may hold at most one of, addressed the way the browser
- * already addresses it. No marker attribute: the tags this replaces were
- * rendered by `<Head/>` on the server and carry none, and a marker would make
- * the applier ignore exactly the tags it exists to correct — the first
- * navigation's.
- */
-type ManagedTag = {
-  /** Finds the existing tag, server-rendered or applied by a previous swap. */
-  selector: string;
-  create: (documentNode: Document) => Element;
-  write: (element: Element, value: string) => void;
-};
+function createElementFor(documentNode: Document, key: string): Element {
+  if (key === "title") return documentNode.createElement("title");
+  if (key.startsWith("meta[")) return documentNode.createElement("meta");
 
-function metaTag(attribute: "name" | "property", key: string): ManagedTag {
-  return {
-    selector: `meta[${attribute}="${key}"]`,
-    create: (documentNode) => {
-      const element = documentNode.createElement("meta");
-
-      element.setAttribute(attribute, key);
-
-      return element;
-    },
-    write: (element, value) => element.setAttribute("content", value),
-  };
+  return documentNode.createElement("link");
 }
 
-const TITLE_TAG: ManagedTag = {
-  selector: "title",
-  create: (documentNode) => documentNode.createElement("title"),
-  write: (element, value) => {
-    element.textContent = value;
-  },
-};
-
-const CANONICAL_TAG: ManagedTag = {
-  selector: 'link[rel="canonical"]',
-  create: (documentNode) => {
-    const element = documentNode.createElement("link");
-
-    element.setAttribute("rel", "canonical");
-
-    return element;
-  },
-  write: (element, value) => element.setAttribute("href", value),
-};
-
-/**
- * The metadata, resolved into (tag, value) pairs in `<Head/>`'s ORDER and by
- * `<Head/>`'s RULES — including the og fallbacks and the fact that they apply
- * only when `openGraph` is present (`components/head.ts:21-24,43-48`).
- *
- * The duplication is deliberate and it is the known cost here. `<Head/>` is a
- * React component that renders elements into a tree; this writes elements into
- * a live `<head>` that no client tree owns. They cannot be one function today,
- * but they MUST agree: the head after navigating to a URL has to equal the head
- * after landing on it, or a share preview depends on how the visitor arrived.
- * The fix is a shared descriptor list both consume — see the report's followup.
- */
-function resolveManagedTags(
-  metadata: MetadataOutput | undefined,
-): readonly (readonly [ManagedTag, string | undefined])[] {
-  const keywords =
-    metadata?.keywords === undefined
-      ? undefined
-      : Array.isArray(metadata.keywords)
-        ? metadata.keywords.join(", ")
-        : (metadata.keywords as string);
-
-  const openGraph = metadata?.openGraph;
-  const twitter = metadata?.twitter;
-
-  return [
-    [TITLE_TAG, metadata?.title],
-    [metaTag("name", "description"), metadata?.description],
-    [metaTag("name", "keywords"), keywords],
-    [CANONICAL_TAG, metadata?.canonical],
-    [metaTag("name", "robots"), metadata?.robots],
-    [metaTag("property", "og:title"), openGraph && (openGraph.title ?? metadata?.title)],
-    [
-      metaTag("property", "og:description"),
-      openGraph && (openGraph.description ?? metadata?.description),
-    ],
-    [metaTag("property", "og:image"), openGraph?.image],
-    [metaTag("property", "og:url"), openGraph?.url],
-    [metaTag("property", "og:type"), openGraph?.type],
-    [metaTag("name", "twitter:card"), twitter?.card],
-    [metaTag("name", "twitter:title"), twitter?.title],
-    [metaTag("name", "twitter:description"), twitter?.description],
-    [metaTag("name", "twitter:image"), twitter?.image],
-  ];
+function writeDescriptor(element: Element, descriptor: MetadataDescriptor): void {
+  switch (descriptor.kind) {
+    case "title":
+      element.textContent = descriptor.attrs.value;
+      return;
+    case "meta":
+      element.setAttribute(descriptor.attrs.attribute, descriptor.attrs.name);
+      element.setAttribute("content", descriptor.attrs.content);
+      return;
+    case "link":
+      element.setAttribute("rel", descriptor.attrs.rel);
+      element.setAttribute("href", descriptor.attrs.href);
+      return;
+  }
 }
 
 /**
@@ -120,27 +54,33 @@ function resolveManagedTags(
  *
  * Takes the document as an argument rather than reaching for the global, which
  * is what makes it provable in a suite with no DOM.
+ *
+ * The (tag, value) pairs and their fallback rules come from
+ * {@link resolveMetadataDescriptors} — the SAME function `<Head/>` renders
+ * from, so the head after navigating to a URL equals the head after landing
+ * on it by construction.
  */
 export function applyDocumentMetadata(
   documentNode: Document,
   metadata: MetadataOutput | undefined,
 ): void {
-  for (const [tag, value] of resolveManagedTags(metadata)) {
-    const existing = documentNode.querySelector(tag.selector);
+  const descriptorsByKey = new Map(
+    resolveMetadataDescriptors(metadata).map((descriptor) => [descriptor.key, descriptor]),
+  );
 
-    if (value === undefined) {
+  for (const key of MANAGED_METADATA_KEYS) {
+    const existing = documentNode.querySelector(key);
+    const descriptor = descriptorsByKey.get(key);
+
+    if (descriptor === undefined) {
       existing?.remove();
       continue;
     }
 
-    if (existing !== null) {
-      tag.write(existing, value);
-      continue;
-    }
+    const element = existing ?? createElementFor(documentNode, key);
 
-    const created = tag.create(documentNode);
+    writeDescriptor(element, descriptor);
 
-    tag.write(created, value);
-    documentNode.head.appendChild(created);
+    if (existing === null) documentNode.head.appendChild(element);
   }
 }
