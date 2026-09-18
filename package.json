@@ -16,11 +16,11 @@
       "default": "./src/index.ts"
     },
     "./build": {
-    "types": "./src/build/index.ts",
-    "import": "./src/build/index.ts",
-    "default": "./src/build/index.ts"
-  },
-  "./client/runtime": {
+      "types": "./src/build/index.ts",
+      "import": "./src/build/index.ts",
+      "default": "./src/build/index.ts"
+    },
+    "./client/runtime": {
       "types": "./src/client/runtime/index.ts",
       "import": "./src/client/runtime/index.ts",
       "default": "./src/client/runtime/index.ts"
