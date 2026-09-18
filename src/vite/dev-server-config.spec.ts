@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import { createServer, type ViteDevServer } from "vite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createWebConnectorViteConfig } from "./dev-server-config";
+import { RESOLVED_CLIENT_PAGE_REGISTRY_ID } from "./page-registry-plugin";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = path.resolve(__dirname, "..", "..");
@@ -165,5 +166,58 @@ describe("dev SSR config: the family rule covers packages the old hand list neve
 
     expect(config.ssr?.external).not.toContain("@warlock.js/web");
     expect(config.ssr?.noExternal).toContain("@warlock.js/web");
+  });
+});
+
+/**
+ * A caller-configured `appSrcRoot` that differs from `<appRoot>/src` must
+ * still be the tree the dev client page registry discovers pages from —
+ * otherwise a custom source root's pages silently never reach the browser.
+ */
+describe("dev SSR config: the client page registry honours a custom appSrcRoot", () => {
+  it("discovers a page under a non-default appSrcRoot", async () => {
+    const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), "warlock-custom-src-root-"));
+    const appSrcRoot = path.join(appRoot, "custom-src");
+    const pageFile = path.join(appSrcRoot, "web", "home.page.tsx");
+    fs.mkdirSync(path.dirname(pageFile), { recursive: true });
+    fs.writeFileSync(
+      pageFile,
+      [
+        `export const route = { path: "/home" };`,
+        `export default function Home() { return null; }`,
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const hmrServer = createNodeServer();
+    const config = await createWebConnectorViteConfig({
+      appRoot,
+      appSrcRoot,
+      webRoot: WEB_ROOT,
+      workspaceRoot: WORKSPACE_ROOT,
+      hmrServer,
+      handlePageHotUpdate: async () => false,
+      leadingPlugins: [],
+    });
+
+    const vite = await createServer({
+      ...config,
+      configFile: false,
+      logLevel: "silent",
+      optimizeDeps: { ...config.optimizeDeps, noDiscovery: true, include: [] },
+      server: { ...config.server, hmr: false, watch: null },
+    });
+
+    try {
+      const result = await vite.environments.client.transformRequest(
+        RESOLVED_CLIENT_PAGE_REGISTRY_ID,
+      );
+
+      expect(result?.code).toContain(path.basename(pageFile));
+    } finally {
+      await vite.close();
+      hmrServer.close();
+      fs.rmSync(appRoot, { recursive: true, force: true });
+    }
   });
 });

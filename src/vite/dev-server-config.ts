@@ -233,6 +233,7 @@ export async function createWebConnectorViteConfig(
       ...options.leadingPlugins,
       ...warlockClientBoundary({
         appRoot: options.appRoot,
+        srcDir: path.relative(options.appRoot, options.appSrcRoot),
         beforePageHotUpdate: ({ file }) => options.handlePageHotUpdate(file),
       }),
       // AFTER the boundary, and the order matters among `enforce: "pre"`

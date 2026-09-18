@@ -57,6 +57,8 @@ export type { ProjectionResult } from "./projection";
 
 export type WarlockClientBoundaryOptions = Parameters<typeof gateAResolve>[0] & {
   beforePageHotUpdate?: ClientPageRegistryPluginOptions["beforePageHotUpdate"];
+  /** Forwarded verbatim to {@link clientPageRegistry}; see its own `srcDir` doc. */
+  srcDir?: ClientPageRegistryPluginOptions["srcDir"];
 };
 
 export type BuildWarlockHydrationClientOptions = Readonly<{
@@ -178,6 +180,7 @@ export function warlockClientBoundary(options: WarlockClientBoundaryOptions = {}
   return [
     clientPageRegistry({
       appRoot: options.appRoot,
+      srcDir: options.srcDir,
       beforePageHotUpdate: options.beforePageHotUpdate,
     }),
     projection(),
