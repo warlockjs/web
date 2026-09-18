@@ -40,11 +40,12 @@ export type {
   SerializedPageError,
 } from "./components/document-context";
 export type { PageMetadata } from "./metadata";
-// The narrow build-time-adjacent, runtime-executed surface: every routable
-// page with its module's `metadata`/`sitemap` exports resolved. Reuses the
-// same discovery `discoverPages()` powers, so this and route registration can
-// never disagree about which pages exist.
-export { listRoutablePages } from "./build/list-routable-pages";
+// `listRoutablePages` is NOT re-exported here. It reaches `./build`, which
+// walks the filesystem and imports page files by path — on this barrel that
+// module joins the graph of every page importing `@warlock.js/web`, and a
+// generated app answered 500 on every route in dev. It lives on the
+// `@warlock.js/web/build` subpath instead. The boundary is decided by the
+// IMPORT GRAPH, not by intent (canon `10f6041c`, `c604f0bc`).
 export { shared, useShared } from "./shared";
 // Per-request stylesheets: a lazily imported module picked per request (a
 // tenant theme) declares its source so its CSS is render-blocking in <head>.

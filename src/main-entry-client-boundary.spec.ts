@@ -50,4 +50,36 @@ describe("main entry (index.ts) client-boundary regression", () => {
     }
     expect(externalImports.has("@warlock.js/cache")).toBe(false);
   });
+
+  /**
+   * The same defect shape, one release later. `listRoutablePages` was added to
+   * the root barrel in 5.15.0; it reaches `src/build/discover-pages.ts`, which
+   * walks the filesystem and imports page files by path. Every page writing
+   * `import … from "@warlock.js/web"` inherited that module, and a generated
+   * app answered 500 on EVERY route in dev. Nothing caught it until the
+   * generator matrix booted a real app — so this is the check that would have.
+   *
+   * The build surface lives on `@warlock.js/web/build` instead.
+   */
+  it("never bundles src/build/** — the build surface is its own subpath", async () => {
+    const entry = path.join(__dirname, "index.ts");
+
+    const result = await build({
+      entryPoints: [entry],
+      bundle: true,
+      write: false,
+      metafile: true,
+      platform: "browser",
+      format: "esm",
+      logLevel: "silent",
+      packages: "external",
+      outfile: path.join(__dirname, "__out__.js"),
+    });
+
+    const buildInputs = Object.keys(result.metafile.inputs)
+      .map((inputPath) => path.resolve(inputPath).split(path.sep).join("/"))
+      .filter((inputPath) => inputPath.includes("/web/src/build/"));
+
+    expect(buildInputs).toEqual([]);
+  });
 });

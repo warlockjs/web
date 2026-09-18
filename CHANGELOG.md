@@ -10,6 +10,7 @@ All notable changes to `@warlock.js/web` are documented here.
 
 ### Changed
 
+- **BREAKING:** `listRoutablePages` is exported from `@warlock.js/web/build`, not the root barrel. It reaches the filesystem-walking page discovery, and on the root barrel that module joined the import graph of every page importing `@warlock.js/web` — a generated app answered 500 on every route in dev. A boundary spec now fails if the root barrel reaches `src/build/**`.
 - The hydration payload carries a seventh required key, `translations`, holding **only the active locale's** entries — never every locale.
 
 ## 5.14.0 - 2026-09-17
