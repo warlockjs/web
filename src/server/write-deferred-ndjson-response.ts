@@ -24,8 +24,10 @@ import type { Response } from "@warlock.js/core";
 import { stringify } from "devalue";
 import { buildHydrationPayload } from "./build-hydration-payload";
 import type { DeferSettlement } from "./defer-settlement";
+import { serializePageError } from "./error-page";
 import type { PageDataBundle } from "./execute-page-request";
 import { assertPageDataSerializable } from "./page-data-serialization-error";
+import { reportServerError } from "./report-server-error";
 
 /** The wire content type for a Stage 2 slice S3 streaming data response. */
 export const NDJSON_CONTENT_TYPE = "application/x-ndjson";
@@ -61,11 +63,31 @@ export async function writeDeferredNdjsonResponse(
 ): Promise<void> {
   const deferredKeys = bundle.deferredKeys ?? [];
   const settlements = bundle.deferredSettlements ?? {};
+  // The ONE per-request abort signal (`request-abort-signal.ts`, carried on
+  // the bundle by `execute-page-request.ts`) — fires when the client
+  // disconnects before this response finished (card a84d0644).
+  const signal = bundle.abortSignal;
 
   response.setContentType(NDJSON_CONTENT_TYPE);
   response.setStatusCode(status);
 
   const raw = response.raw;
+
+  // Past this point, headers and line 1 are already on the wire — a failure
+  // can never attempt a fresh response, only guarantee `raw.end()` fires
+  // exactly once (success, a deferred key's own rejection, a serialization
+  // failure caught below, the writer itself erroring, or the client
+  // disconnecting).
+  let ended = false;
+  const endOnce = (): void => {
+    if (ended) return;
+    ended = true;
+    raw.end();
+  };
+  raw.once("error", (error) => {
+    reportServerError("NDJSON response's destination stream errored", error);
+    endOnce();
+  });
 
   raw.writeHead(response.statusCode, response.getHeaders() as never);
 
@@ -73,19 +95,49 @@ export async function writeDeferredNdjsonResponse(
   // stays a well-formed NDJSON line 1 unchanged.
   raw.write(`${stringify(buildHydrationPayload(bundle, locale))}\n`);
 
+  if (signal?.aborted) {
+    endOnce();
+    return;
+  }
+
   // Each entry writes independently, the instant ITS OWN settlement
   // resolves — never chained one after another — so the line order on the
   // wire is the real settlement order, not declaration order (mirrors
   // `defer-emission.ts`'s document-path emission).
-  await Promise.all(
+  const settlementsWritten = Promise.all(
     deferredKeys.map((key) => {
       const settlement =
         settlements[key] ?? Promise.resolve<DeferSettlement>({ ok: true, value: undefined });
 
       return settlement.then((value) => {
-        assertPageDataSerializable(value, "page", bundle.route.name);
+        // A disconnect mid-settlement stops every remaining line — `raw` is
+        // already ending/ended by the abort race below.
+        if (signal?.aborted) return;
 
-        const line: DeferredNdjsonLine = { defer: key, settlement: stringify(value) };
+        let line: DeferredNdjsonLine;
+
+        try {
+          assertPageDataSerializable(value, "page", bundle.route.name);
+          line = { defer: key, settlement: stringify(value) };
+        } catch (thrown) {
+          // Line 1 is already flushed — this can never become a second
+          // response attempt. Settle the key in-band, on the SAME wire
+          // shape the client already understands for a rejected deferred
+          // value, and report through the same unconditional stderr floor
+          // a render-time throw uses (`render-page.ts`'s `reportRenderError`).
+          // The error's own `errorCode` (production only) is folded into
+          // this same report line so an operator can join the two.
+          const error = serializePageError(thrown);
+          const errorSettlement: DeferSettlement = { ok: false, error };
+          reportServerError(
+            `deferred value "${key}" failed to serialize for emission` +
+              (error.errorCode ? ` (errorCode ${error.errorCode})` : ""),
+            thrown,
+          );
+          line = { defer: key, settlement: stringify(errorSettlement) };
+        }
+
+        if (signal?.aborted) return;
 
         // The outer object is plain JSON (`JSON.stringify`), the inner
         // `settlement` string is devalue text — see the type doc above.
@@ -96,5 +148,25 @@ export async function writeDeferredNdjsonResponse(
     }),
   );
 
-  raw.end();
+  if (signal === undefined) {
+    try {
+      await settlementsWritten;
+    } finally {
+      endOnce();
+    }
+    return;
+  }
+
+  // Race the ordinary completion against the client disconnecting — a
+  // disconnect ends `raw` immediately rather than waiting for every
+  // remaining deferred key to settle (they may never settle at all).
+  await new Promise<void>((resolveRace) => {
+    signal.addEventListener("abort", () => resolveRace(), { once: true });
+    settlementsWritten.then(
+      () => resolveRace(),
+      () => resolveRace(),
+    );
+  });
+
+  endOnce();
 }

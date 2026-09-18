@@ -76,12 +76,15 @@ export type RefreshRuntime = {
   /**
    * Take a ticket from the navigation runtime's race counter.
    *
-   * @returns a predicate that answers whether this operation is still the
-   * newest one. THE SAME counter navigations take their tickets from — a
-   * refresh and a navigation can overtake each other, so a second mechanism
-   * would simply fail to notice.
+   * @returns `isCurrent`, a predicate that answers whether this operation is
+   * still the newest one — THE SAME counter navigations take their tickets
+   * from, so a refresh and a navigation can overtake each other and neither
+   * is blind to it. `signal` is aborted the moment something newer claims the
+   * next ticket; it is handed to `fetchPageData` purely to stop wasted work
+   * sooner — `isCurrent()` remains the one thing that decides which response
+   * wins, abort or no abort.
    */
-  claimTicket: () => () => boolean;
+  claimTicket: () => { isCurrent: () => boolean; signal: AbortSignal };
 };
 
 /**
@@ -138,16 +141,18 @@ export function createRefresher(runtime: RefreshRuntime): Refresher {
     // The address bar IS the current route's URL — the runtime has already put
     // the resolved URL there — so there is no second copy to drift from it.
     const url = window.location.href;
-    const isCurrent = runtime.claimTicket();
+    const { isCurrent, signal } = runtime.claimTicket();
 
     routerEvents.emitNavigating({ url, mode: REFRESH_MODE });
 
-    const result = await fetchPageData(url);
+    const result = await fetchPageData(url, signal);
 
     // Superseded, and silently: this is the answer to a question the user
     // stopped asking. Not an error, and not an event — the operation that
-    // overtook this one emits its own outcome.
-    if (!isCurrent()) return false;
+    // overtook this one emits its own outcome. Covers `result.type ===
+    // "aborted"` too, which `isCurrent()` catches on its own — the ticket,
+    // not the abort, is what actually decided this.
+    if (!isCurrent() || result.type === "aborted") return false;
 
     if (result.type === "hard-navigate") {
       /*

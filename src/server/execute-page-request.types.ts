@@ -32,6 +32,18 @@ export type PipelineLoaderContext = {
   request: Request;
   response: BufferedResponse;
   shared: SharedContext;
+  /**
+   * Fires when the underlying HTTP request is abandoned (client
+   * disconnected, socket closed) before the response finished — see
+   * `request-abort-signal.ts`.
+   *
+   * A loader that ignores this signal runs to completion: the framework
+   * only stops the pipeline BETWEEN levels (app → layout → page), never
+   * inside a loader that is already running. Hand it to anything
+   * cancelable (`fetch(url, { signal })`) if an abandoned request should
+   * stop that work early; nothing breaks if you don't.
+   */
+  signal: AbortSignal;
 };
 
 export type PipelineLoader = (ctx: PipelineLoaderContext) => unknown | Promise<unknown>;
@@ -172,4 +184,14 @@ export type PageDataBundle = {
    * rules 5 and 9).
    */
   deferredSettlements?: Record<string, Promise<DeferSettlement>>;
+  /**
+   * The SAME per-request signal `PipelineLoaderContext.signal` carries —
+   * `request-abort-signal.ts`'s one controller per request, fires when the
+   * client disconnects before the response finished. Carried on the bundle
+   * so the streaming writers reached after `finish()` (`render-page.ts`'s
+   * `finishRender`, `write-deferred-ndjson-response.ts`) can subscribe to
+   * the SAME signal loaders already read, rather than a second one (card
+   * a84d0644).
+   */
+  abortSignal?: AbortSignal;
 };

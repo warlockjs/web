@@ -90,16 +90,17 @@ export function createLocaleChanger(runtime: RefreshRuntime): LocaleChanger {
 
     const url = window.location.href;
     const fetchUrl = withLocaleParam(url, code);
-    const isCurrent = runtime.claimTicket();
+    const { isCurrent, signal } = runtime.claimTicket();
 
     routerEvents.emitNavigating({ url, mode: CHANGE_LOCALE_MODE });
 
-    const result = await fetchPageData(fetchUrl);
+    const result = await fetchPageData(fetchUrl, signal);
 
     // Superseded: a navigation or another locale change already answered this
     // question. Not an error — the operation that overtook this one emits its
-    // own outcome.
-    if (!isCurrent()) return;
+    // own outcome. Covers `result.type === "aborted"` too, which `isCurrent()`
+    // catches on its own — the ticket, not the abort, is what decided this.
+    if (!isCurrent() || result.type === "aborted") return;
 
     if (result.type === "hard-navigate") {
       const error = new Error(`Warlock changeLocaleCode failed: ${result.reason}`);

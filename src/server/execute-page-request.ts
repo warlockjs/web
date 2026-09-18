@@ -3,16 +3,13 @@ import { v } from "@warlock.js/seal";
 import { enterSharedScope, sealShared } from "../shared";
 import { connectRequestSearch } from "../routing/query-string";
 import { enterAdditionalSharedScope, requireRunner } from "./page-context";
+import { createRequestAbortController } from "./request-abort-signal";
 import { matchRoute } from "./match-page-route";
 import { resolvePageMetadata } from "./resolve-page-metadata";
 import { resolveValidationData } from "./resolve-validation-data";
 import { resolvePageValidationInput } from "./resolve-route-validation-input";
 import { PageValidationFailedError } from "./page-validation-failed-error";
-import {
-  DeferredInNonPageLoaderError,
-  isDeferred,
-  splitDeferredPageData,
-} from "../loaders/defer";
+import { DeferredInNonPageLoaderError, isDeferred, splitDeferredPageData } from "../loaders/defer";
 import { createDeferredSettlement, type DeferSettlement } from "./defer-settlement";
 import { resolveDeferTimeoutMs } from "./streaming-config";
 import {
@@ -121,6 +118,7 @@ export async function executePageRequest<TResult = PageDataBundle>(
   const match: PageRouteMatch = { entry: matched.entry, params: matched.params, query };
   const { triple } = matched.entry;
   const { request, response } = options.createHttp(match);
+  const requestAbortController = createRequestAbortController(request, response);
   const store: PipelineStore = runner.buildStore
     ? runner.buildStore({ request, response })
     : { request, response };
@@ -139,6 +137,7 @@ export async function executePageRequest<TResult = PageDataBundle>(
         params: match.params,
         query,
       },
+      abortSignal: requestAbortController.signal,
     };
 
     // `route.middleware` shipped in 5.6.0 and was withdrawn (owner ruling,
@@ -263,7 +262,12 @@ export async function executePageRequest<TResult = PageDataBundle>(
           kind: "shortCircuit";
           index: number;
           level: PageLevelName;
-          circuit: { kind: "redirect" | "notFound"; statusCode: number; url?: string; body?: unknown };
+          circuit: {
+            kind: "redirect" | "notFound";
+            statusCode: number;
+            url?: string;
+            body?: unknown;
+          };
         };
     let signal: LoaderSignal | undefined;
 
@@ -274,6 +278,11 @@ export async function executePageRequest<TResult = PageDataBundle>(
     const tracingEnabled = isTracingEnabled();
 
     for (const [index, level] of LEVEL_ORDER.entries()) {
+      // Level boundary: an abandoned request does not START the next level.
+      // A level already running is left alone — the framework only stops
+      // BETWEEN levels (see `PipelineLoaderContext.signal`'s JSDoc).
+      if (requestAbortController.signal.aborted) break;
+
       // `route.validate` — the PAGE's own declared schema, over `{ params,
       // query }` kept as two separate keys (canon `b79c4f55`, point 1). Runs
       // HERE, at the front of the page level's own turn: app and layout
@@ -297,6 +306,7 @@ export async function executePageRequest<TResult = PageDataBundle>(
           request,
           response: createBufferedResponse(buffers[level]),
           shared: sealedShared,
+          signal: requestAbortController.signal,
         });
       } catch (thrown) {
         signal = { kind: "throw", index, level, thrown };
@@ -369,6 +379,10 @@ export async function executePageRequest<TResult = PageDataBundle>(
     let committedLevels: PageLevelName[];
     /** Set only when a THROW escalated to the app boundary — forces 500. */
     let forcedStatusCode: number | undefined;
+    // Nothing is committed for an abandoned request — every buffered
+    // mutation (cookies, headers, the forced-status write below) is
+    // discarded, no matter which level queued it.
+    const discarded = requestAbortController.signal.aborted;
 
     if (!signal) {
       committedLevels = [...LEVEL_ORDER];
@@ -385,7 +399,7 @@ export async function executePageRequest<TResult = PageDataBundle>(
 
       if (boundary.boundaryLevel === "app") {
         const status = ownStatusCode ?? 500;
-        response.setStatusCode(status);
+        if (!discarded) response.setStatusCode(status);
         forcedStatusCode = status;
       }
     } else {
@@ -405,12 +419,14 @@ export async function executePageRequest<TResult = PageDataBundle>(
       } as unknown as PageDataBundle["shortCircuit"];
     }
 
+    if (discarded) committedLevels = [];
+
     bundle.commit = commitBuffers(response, buffers, committedLevels);
 
     // Forced AFTER the fold: an app-boundary escalation forces 500
     // regardless of what the surviving (rootward) buffers happened to set —
     // it is the framework's answer, not a loader's.
-    if (forcedStatusCode !== undefined) bundle.commit.statusCode = forcedStatusCode;
+    if (forcedStatusCode !== undefined && !discarded) bundle.commit.statusCode = forcedStatusCode;
 
     // Stage 8 — METADATA. Skipped entirely for a short-circuit (there is no
     // page to describe); a throw still runs it, same as before this stage 6/7

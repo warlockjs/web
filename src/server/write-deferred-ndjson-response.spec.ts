@@ -1,8 +1,11 @@
 import { parse } from "devalue";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCoreHttp } from "./__fixtures__/core-http";
 import type { PageDataBundle } from "./execute-page-request";
 import { NDJSON_CONTENT_TYPE, writeDeferredNdjsonResponse } from "./write-deferred-ndjson-response";
+
+/** A value devalue refuses to serialize — a function is one of the documented cases. */
+const unserializableValue = { handler: () => undefined };
 
 /** Wait for every pending microtask/macrotask so the raw stream has flushed. */
 async function flush(rounds = 5): Promise<void> {
@@ -101,6 +104,187 @@ describe("writeDeferredNdjsonResponse()", () => {
     const line = JSON.parse(lines[1]!) as { defer: string; settlement: string };
 
     expect(line.defer).toBe("reviews");
-    expect(parse(line.settlement)).toEqual({ ok: false, error: { name: "Error", message: "boom" } });
+    expect(parse(line.settlement)).toEqual({
+      ok: false,
+      error: { name: "Error", message: "boom" },
+    });
+  });
+
+  describe("when a deferred key resolves to a value devalue cannot serialize", () => {
+    beforeEach(() => {
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("ends the raw stream exactly once, without a second response attempt", async () => {
+      const bundle = bundleWith({
+        pageData: { greeting: "hi", reviews: Promise.resolve(unserializableValue) },
+        deferredKeys: ["reviews"],
+        deferredSettlements: {
+          reviews: Promise.resolve({ ok: true, value: unserializableValue } as const),
+        },
+      });
+
+      const http = createCoreHttp({ url: "/dashboard" });
+      const chunks: Buffer[] = [];
+      http.reply.raw.on("data", (chunk: Buffer) => chunks.push(chunk));
+
+      let endCalls = 0;
+      const realEnd = http.reply.raw.end.bind(http.reply.raw);
+      http.reply.raw.end = ((...args: unknown[]) => {
+        endCalls += 1;
+        return (realEnd as (...args: unknown[]) => typeof http.reply.raw)(...args);
+      }) as typeof http.reply.raw.end;
+
+      await writeDeferredNdjsonResponse(http.response, bundle, "en", 200);
+
+      expect(endCalls).toBe(1);
+      expect(http.reply.raw.writableEnded).toBe(true);
+
+      const lines = Buffer.concat(chunks).toString("utf8").trim().split("\n");
+      expect(lines).toHaveLength(2);
+      const line = JSON.parse(lines[1]!) as { defer: string; settlement: string };
+      expect(line.defer).toBe("reviews");
+      expect(parse(line.settlement)).toMatchObject({ ok: false });
+    });
+
+    it("reports the serialization failure to the unconditional stderr floor", async () => {
+      const bundle = bundleWith({
+        pageData: { greeting: "hi", reviews: Promise.resolve(unserializableValue) },
+        deferredKeys: ["reviews"],
+        deferredSettlements: {
+          reviews: Promise.resolve({ ok: true, value: unserializableValue } as const),
+        },
+      });
+
+      const http = createCoreHttp({ url: "/dashboard" });
+
+      await writeDeferredNdjsonResponse(http.response, bundle, "en", 200);
+
+      expect(console.error).toHaveBeenCalled();
+    });
+  });
+
+  describe("client disconnect mid-stream", () => {
+    it("ends raw immediately and never writes the pending deferred key's line", async () => {
+      const controller = new AbortController();
+
+      let releaseValue!: (value: { ok: true; value: unknown }) => void;
+      const pending = new Promise<{ ok: true; value: unknown }>((resolve) => {
+        releaseValue = resolve;
+      });
+
+      const bundle = bundleWith({
+        pageData: { greeting: "hi", reviews: pending },
+        deferredKeys: ["reviews"],
+        deferredSettlements: { reviews: pending },
+        abortSignal: controller.signal,
+      });
+
+      const http = createCoreHttp({ url: "/dashboard" });
+      const chunks: Buffer[] = [];
+      http.reply.raw.on("data", (chunk: Buffer) => chunks.push(chunk));
+
+      const writing = writeDeferredNdjsonResponse(http.response, bundle, "en", 200);
+
+      await flush();
+      // Line 1 is on the wire; the deferred key is still pending.
+      expect(Buffer.concat(chunks).toString("utf8").trim().split("\n")).toHaveLength(1);
+
+      controller.abort();
+      await writing;
+
+      expect(http.reply.raw.writableEnded).toBe(true);
+
+      // The loader's own promise settles only after the disconnect — its
+      // value must never reach the wire.
+      releaseValue({ ok: true, value: "late" });
+      await flush();
+
+      const lines = Buffer.concat(chunks).toString("utf8").trim().split("\n");
+      expect(lines).toHaveLength(1);
+    });
+
+    it("still streams every deferred line when the client never disconnects (control)", async () => {
+      const controller = new AbortController();
+      const bundle = bundleWith({
+        pageData: { greeting: "hi", reviews: Promise.resolve("value") },
+        deferredKeys: ["reviews"],
+        deferredSettlements: {
+          reviews: Promise.resolve({ ok: true, value: "value" } as const),
+        },
+        abortSignal: controller.signal,
+      });
+
+      const http = createCoreHttp({ url: "/dashboard" });
+      const chunks: Buffer[] = [];
+      http.reply.raw.on("data", (chunk: Buffer) => chunks.push(chunk));
+
+      await writeDeferredNdjsonResponse(http.response, bundle, "en", 200);
+
+      const lines = Buffer.concat(chunks).toString("utf8").trim().split("\n");
+      expect(lines).toHaveLength(2);
+      expect(http.reply.raw.writableEnded).toBe(true);
+    });
+  });
+
+  describe("raw socket errors mid-stream", () => {
+    beforeEach(() => {
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("ends raw exactly once, reports the failure, and never writes the pending deferred line", async () => {
+      let releaseValue!: (value: { ok: true; value: unknown }) => void;
+      const pending = new Promise<{ ok: true; value: unknown }>((resolve) => {
+        releaseValue = resolve;
+      });
+
+      const bundle = bundleWith({
+        pageData: { greeting: "hi", reviews: pending },
+        deferredKeys: ["reviews"],
+        deferredSettlements: { reviews: pending },
+      });
+
+      const http = createCoreHttp({ url: "/dashboard" });
+      const chunks: Buffer[] = [];
+      http.reply.raw.on("data", (chunk: Buffer) => chunks.push(chunk));
+
+      let endCalls = 0;
+      const realEnd = http.reply.raw.end.bind(http.reply.raw);
+      http.reply.raw.end = ((...args: unknown[]) => {
+        endCalls += 1;
+        return (realEnd as (...args: unknown[]) => typeof http.reply.raw)(...args);
+      }) as typeof http.reply.raw.end;
+
+      const writing = writeDeferredNdjsonResponse(http.response, bundle, "en", 200);
+
+      await flush();
+      // Line 1 is on the wire; the deferred key is still pending.
+      expect(Buffer.concat(chunks).toString("utf8").trim().split("\n")).toHaveLength(1);
+
+      // A real socket failure mid-stream: destroy(error) is how Node itself
+      // reports this (not a bare `emit`), and marks the stream unwritable the
+      // same way a dropped connection would.
+      http.reply.raw.destroy(new Error("socket hang up"));
+      await flush();
+
+      // The loader's own promise settles only AFTER raw errored — its value
+      // must never reach the wire.
+      releaseValue({ ok: true, value: "late" });
+      await writing;
+      await flush();
+
+      expect(endCalls).toBe(1);
+      expect(console.error).toHaveBeenCalled();
+      const lines = Buffer.concat(chunks).toString("utf8").trim().split("\n");
+      expect(lines).toHaveLength(1);
+    });
   });
 });

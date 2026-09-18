@@ -40,6 +40,8 @@ import type { PipeableStream } from "react-dom/server";
 import { stringify } from "devalue";
 import { escapePayload } from "../components/document-context";
 import { DEFER_BOOTSTRAP_SOURCE } from "../client/runtime/defer-registry";
+import { serializePageError } from "./error-page";
+import { reportServerError } from "./report-server-error";
 import type { DeferSettlement } from "./defer-settlement";
 import { assertPageDataSerializable } from "./page-data-serialization-error";
 
@@ -58,6 +60,15 @@ export type WrapPipeableStreamOptions = {
   allReady: Promise<void>;
   /** The matched route's name — carried only for a named `PageDataSerializationError`. */
   routeName: string;
+  /**
+   * The ONE per-request abort signal (`request-abort-signal.ts`, carried on
+   * `PageDataBundle.abortSignal`) — fires when the client disconnects before
+   * this stream finished. On fire: the underlying React stream is aborted
+   * exactly once, no further deferred chunk is written, and the destination
+   * is ended exactly once (card a84d0644). Undefined only for a caller that
+   * never went through the request pipeline (a standalone/test render).
+   */
+  signal?: AbortSignal;
 };
 
 function escapeAttribute(value: string): string {
@@ -104,27 +115,85 @@ function deferCallScript(key: string, settlement: DeferSettlement, routeName: st
 export function wrapPipeableStreamForDeferredEmission(
   options: WrapPipeableStreamOptions,
 ): PipeableStream {
-  const { pipeableStream, deferred, nonce, allReady, routeName } = options;
+  const { pipeableStream, deferred, nonce, allReady, routeName, signal } = options;
 
   if (deferred.length === 0) return pipeableStream;
 
+  let destination: NodeJS.WritableStream | undefined;
+
+  // Past the point headers/shell bytes are on the wire, a failure can never
+  // attempt a fresh response — the ONLY thing left to guarantee is that
+  // `destination.end()` fires exactly once, however emission finishes
+  // (success, a deferred key's own rejection, a serialization failure
+  // caught below, the writer itself erroring, or the client disconnecting).
+  let ended = false;
+  const endOnce = (): void => {
+    if (ended) return;
+    ended = true;
+    signal?.removeEventListener("abort", onClientDisconnect);
+    destination?.end();
+  };
+
+  // Guards the underlying React stream's own `abort()` — it may be reached
+  // from a client-disconnect signal AND (via `abort()` below) from whatever
+  // called this wrapper's own `.abort()` externally; either way React's
+  // `abort()` runs at most once.
+  let streamAborted = false;
+  const abortOnce = (reason?: unknown): void => {
+    if (streamAborted) return;
+    streamAborted = true;
+    pipeableStream.abort(reason);
+  };
+
+  const onClientDisconnect = (): void => {
+    abortOnce();
+    endOnce();
+  };
+
+  if (signal !== undefined) {
+    if (signal.aborted) {
+      onClientDisconnect();
+    } else {
+      signal.addEventListener("abort", onClientDisconnect, { once: true });
+    }
+  }
+
   return {
     abort(reason) {
-      pipeableStream.abort(reason);
+      abortOnce(reason);
+      endOnce();
     },
 
-    pipe<Writable extends NodeJS.WritableStream>(destination: Writable): Writable {
+    pipe<Writable extends NodeJS.WritableStream>(target: Writable): Writable {
+      destination = target;
+
+      // The client was already gone before piping even started — nothing
+      // left to stream, just close out the destination.
+      if (ended) {
+        target.end();
+        return target;
+      }
+
       const shell = new PassThrough();
 
+      target.once("error", (error) => {
+        reportServerError("deferred emission's destination stream errored", error);
+        endOnce();
+      });
+
       pipeableStream.pipe(shell);
-      shell.pipe(destination, { end: false });
+      shell.pipe(target, { end: false });
 
       const shellFlushed = new Promise<void>((resolveShellFlushed) => {
         shell.once("end", () => resolveShellFlushed());
       });
 
       const settlementsWritten = shellFlushed.then(async () => {
-        destination.write(scriptTag(nonce, DEFER_BOOTSTRAP_SOURCE));
+        // The client disconnected while the shell was still flushing — no
+        // deferred chunk is safe to write onto a destination already ended.
+        if (streamAborted) return;
+
+        target.write(scriptTag(nonce, DEFER_BOOTSTRAP_SOURCE));
 
         // Each entry writes independently, the instant ITS OWN settlement
         // resolves — never chained one after another — so the chunk order on
@@ -132,17 +201,41 @@ export function wrapPipeableStreamForDeferredEmission(
         await Promise.all(
           deferred.map(({ key, settlement }) =>
             settlement.then((value) => {
-              destination.write(scriptTag(nonce, deferCallScript(key, value, routeName)));
+              // A disconnect mid-settlement stops every remaining chunk —
+              // the destination this would write to is already ending/ended.
+              if (streamAborted) return;
+
+              try {
+                target.write(scriptTag(nonce, deferCallScript(key, value, routeName)));
+              } catch (thrown) {
+                // Headers and the shell are already flushed — this can never
+                // become a second response attempt. Settle the key in-band,
+                // on the SAME wire shape the client already understands for
+                // a rejected deferred value, and report the failure through
+                // the same unconditional stderr floor a render-time throw
+                // uses (`render-page.ts`'s `reportRenderError`). The error's
+                // own `errorCode` (production only) is folded into this same
+                // report line so an operator can join the two.
+                const error = serializePageError(thrown);
+                const errorSettlement: DeferSettlement = { ok: false, error };
+                reportServerError(
+                  `deferred value "${key}" failed to serialize for emission` +
+                    (error.errorCode ? ` (errorCode ${error.errorCode})` : ""),
+                  thrown,
+                );
+                target.write(scriptTag(nonce, deferCallScript(key, errorSettlement, routeName)));
+              }
             }),
           ),
         );
       });
 
-      Promise.all([settlementsWritten, allReady]).then(() => {
-        destination.end();
+      Promise.all([settlementsWritten, allReady]).then(endOnce, (thrown) => {
+        reportServerError("deferred emission failed while writing to the response stream", thrown);
+        endOnce();
       });
 
-      return destination;
+      return target;
     },
   };
 }

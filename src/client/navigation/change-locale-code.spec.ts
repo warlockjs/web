@@ -95,7 +95,7 @@ function harness(initial: RefreshablePage): Harness {
       claimTicket: () => {
         const ticket = ++token;
 
-        return () => ticket === token;
+        return { isCurrent: () => ticket === token, signal: new AbortController().signal };
       },
     },
     writes,

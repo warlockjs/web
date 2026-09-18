@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { Request, Response } from "@warlock.js/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -33,6 +34,25 @@ function route(
       page: { loader: loaders.page },
     },
   };
+}
+
+/**
+ * A `{ request, response }` pair wired to a fake raw Node req/res, so a test
+ * can trip `request-abort-signal.ts`'s "aborted" listener the same way a
+ * real dropped connection would, without a real HTTP server.
+ */
+function abortableHttp(): { request: Request; response: Response; rawRequest: EventEmitter } {
+  const rawRequest = new EventEmitter();
+  const rawResponse = Object.assign(new EventEmitter(), { writableEnded: false });
+  const abortableRequest = {
+    setValidatedData: vi.fn(),
+    baseRequest: { raw: rawRequest },
+  } as unknown as Request;
+  const abortableResponse = new Response();
+
+  (abortableResponse as unknown as { baseResponse: unknown }).baseResponse = { raw: rawResponse };
+
+  return { request: abortableRequest, response: abortableResponse, rawRequest };
 }
 
 beforeEach(() => {
@@ -105,5 +125,100 @@ describe("executePageRequest loaders", () => {
       layoutData: 0,
       pageData: false,
     });
+  });
+});
+
+describe("executePageRequest ctx.signal", () => {
+  it("hands every loader the same AbortSignal instance", async () => {
+    const { request: abortRequest, response } = abortableHttp();
+    const signals: AbortSignal[] = [];
+    const entry = route({
+      app: ({ signal }) => {
+        signals.push(signal);
+      },
+      layout: ({ signal }) => {
+        signals.push(signal);
+      },
+      page: ({ signal }) => {
+        signals.push(signal);
+      },
+    });
+
+    await executePageRequest({
+      url: "/account",
+      routes: [entry],
+      createHttp: () => ({ request: abortRequest, response }),
+    });
+
+    expect(signals).toHaveLength(3);
+    expect(signals[0]).toBeInstanceOf(AbortSignal);
+    expect(signals[0]).toBe(signals[1]);
+    expect(signals[1]).toBe(signals[2]);
+    expect(signals[0]?.aborted).toBe(false);
+  });
+
+  it("does not start the layout or page loader once the request is aborted after the app loader", async () => {
+    const { request: abortRequest, response, rawRequest } = abortableHttp();
+    const calls: string[] = [];
+    const entry = route({
+      app: () => {
+        calls.push("app");
+        // Simulate the client disconnecting while the app loader is
+        // already running — the app loader still completes, but the
+        // boundary check before the NEXT level must see it.
+        rawRequest.emit("aborted");
+      },
+      layout: () => {
+        calls.push("layout");
+      },
+      page: () => {
+        calls.push("page");
+      },
+    });
+
+    await executePageRequest({
+      url: "/account",
+      routes: [entry],
+      createHttp: () => ({ request: abortRequest, response }),
+    });
+
+    expect(calls).toEqual(["app"]);
+  });
+
+  it("discards a cookie a loader queued before the request was abandoned", async () => {
+    const { request: abortRequest, response, rawRequest } = abortableHttp();
+    const entry = route({
+      app: ({ response: bufferedResponse }) => {
+        bufferedResponse.cookie("session", "abc");
+        rawRequest.emit("aborted");
+      },
+    });
+
+    const result = await executePageRequest({
+      url: "/account",
+      routes: [entry],
+      createHttp: () => ({ request: abortRequest, response }),
+    });
+
+    expect((result as { commit?: { cookies: unknown[] } }).commit?.cookies).toEqual([]);
+  });
+
+  it("commits a loader's cookie unchanged when the request is never aborted", async () => {
+    const { request: abortRequest, response } = abortableHttp();
+    const entry = route({
+      app: ({ response: bufferedResponse }) => {
+        bufferedResponse.cookie("session", "abc");
+      },
+    });
+
+    const result = await executePageRequest({
+      url: "/account",
+      routes: [entry],
+      createHttp: () => ({ request: abortRequest, response }),
+    });
+
+    expect((result as { commit?: { cookies: unknown[] } }).commit?.cookies).toEqual([
+      { name: "session", value: "abc", options: undefined },
+    ]);
   });
 });
