@@ -242,7 +242,7 @@ export const loader = (async ({ request }) => {
   const { params, query } = request.validated();
 
   return { id: params.id, tab: query.tab };
-}) satisfies PageLoader<undefined, typeof route>;
+}) satisfies PageLoader<typeof validation, typeof route>;
 
 export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
   return <h1>Product {data.id}</h1>;
@@ -370,6 +370,10 @@ writes the crawler-specific render).
 **Response headers**: `x-warlock-cache: hit | miss | bypass`, alongside the
 usual `Cache-Control`.
 
+**Size ceiling**: `pageCache.maxEntryBytes` (config key, default `1_048_576`
+— 1 MiB) caps one stored entry; an oversized MISS is still served to the
+visitor in full, it just isn't cached.
+
 **Invalidation**:
 
 ```ts
@@ -474,7 +478,7 @@ export default function ErrorPage({ error, status }: ErrorPageProps) {
 }
 ```
 
-During SSR the component receives the real thrown value in `error`. After hydration it receives the JSON-safe `{ name, message, stack? }` shape instead — the original value does not survive the wire. `robots: noindex` is a framework default on this path that an app-supplied `metadata` cannot remove.
+During SSR in development the component receives the real thrown value in `error`, for local debugging. In production, SSR receives the SAME sanitized shape hydration does — never the raw error — so the two never disagree: an unexpected error's own `message` never crosses the wire, in the initial HTML or after hydration. After hydration the component always receives the JSON-safe `{ name, message, stack?, errorCode? }` shape, and in production that shape is sanitized: the browser gets a stable generic message plus an opaque `errorCode` (joinable with the server's own error report line) instead of `message`, and `stack` never crosses at all. The one exception is `PublicPageError` (`@warlock.js/web`) — throw (or reject a `defer()`'d promise with) one of those when a message is meant for a real visitor, and its `message` is exposed as-is, in every environment, in both SSR and hydration. `robots: noindex` is a framework default on this path that an app-supplied `metadata` cannot remove.
 
 Every unhandled error response is also forced to
 `Cache-Control: private, no-store` at the framework's shared error funnel.
@@ -560,6 +564,150 @@ Creating a page, deleting one, or editing its `route` export's path is a differe
 - [`use-layouts/SKILL.md`](../use-layouts/SKILL.md) — positional layouts, prefixes, and persistence.
 - [`navigate-on-the-client/SKILL.md`](../navigate-on-the-client/SKILL.md) — `Link`, `href`, navigation, and `refresh()`.
 - [`serve-styles/SKILL.md`](../serve-styles/SKILL.md) — CSS imports in page and root modules.
+
+## generate-sitemap  `@warlock.js/web/generate-sitemap/SKILL.md`
+
+---
+name: generate-sitemap
+description: 'Serve `/sitemap.xml` and `/robots.txt` from a Warlock web app with the `@warlock.js/web/sitemap` subpath — the `web.sitemap` and `web.robots` keys in `src/config/web.ts`, the page-level `export const sitemap` (opt out, static options, or a supplier for dynamic routes), locale/hreflang expansion, the automatic switch to a sharded `SitemapIndex`, when generation runs (`warlock build`, boot, or `regenerateSitemap()`), the 503-before-first-generation rule, and `MissingPublicUrlError`. Triggers: `web.sitemap`, `web.robots`, `WebSitemapConfig`, `RobotsConfig`, `SitemapPageExport`, `export const sitemap`, `regenerateSitemap`, `generateSitemap`, `MissingPublicUrlError`, `splitByLocale`, `localeUrl`, `referenceSitemap`, `warlock add sitemap`; "add a sitemap to my Warlock site", "dynamic route missing from sitemap.xml", "regenerate the sitemap after publishing a post", "robots.txt", "sitemap returns 503", "hreflang in the sitemap". Skip: the framework-blind builder classes themselves (`Sitemap`, `SitemapIndex`, Express/cron usage) — `@warlock.js/sitemap/sitemap-overview/SKILL.md`; `app.publicUrl` — `@warlock.js/core/configure-app/SKILL.md`; page metadata `robots: noindex` — `@warlock.js/web/create-a-page/SKILL.md`; competing tools `next-sitemap`, `sitemap` npm package direct.'
+---
+
+# Warlock — generate a sitemap and robots.txt
+
+`@warlock.js/web` turns the app's page graph into `sitemap.xml` and serves it,
+plus an optional generated `robots.txt`. `@warlock.js/sitemap` owns the XML
+protocol; web is its caller — it discovers pages, expands locales, picks the
+single-file or sharded builder, and wires the routes.
+
+## Turn it on
+
+`warlock add sitemap` installs `@warlock.js/sitemap` and merges a **disabled**
+`sitemap` section into `src/config/web.ts` (creating the file when missing).
+There is no `src/config/sitemap.ts` and no connector to register — web reads
+`web.sitemap` itself.
+
+Two steps to enable it:
+
+1. Set the public origin: `app.publicUrl` in `src/config/app.ts`, or the
+   `PUBLIC_APP_URL` environment variable. The origin is never guessed from a
+   request host.
+2. Flip `sitemap.enabled` to `true`.
+
+```ts
+import type { RobotsConfig, WebSitemapConfig } from "@warlock.js/web/sitemap";
+
+const webConfig: { sitemap: WebSitemapConfig; robots: RobotsConfig } = {
+  sitemap: {
+    enabled: true,
+    path: "/sitemap.xml",
+    defaults: { changefreq: "weekly", priority: 0.5 },
+    locales: { codes: ["en", "ar"], defaultLocale: "en" },
+  },
+  robots: {
+    enabled: true,
+    groups: [{ userAgent: "*", disallow: ["/admin"] }],
+  },
+};
+
+export default webConfig;
+```
+
+`@warlock.js/web/sitemap` is a separate subpath, not the root barrel — it
+reaches page discovery, which a page's own graph must never pull in.
+
+## `web.sitemap` keys
+
+| key | default | meaning |
+| --- | --- | --- |
+| `enabled` | `false` | Nothing is discovered, generated or routed until `true`. |
+| `path` | `/sitemap.xml` | The served path of the single file or the index. |
+| `outputDir` | `storagePath("sitemap")` | Where files are written. Must be a directory the sitemap owns outright — publishing replaces it whole, and `@warlock.js/sitemap` refuses a non-empty directory it did not create (`UnownedOutputDirectoryError`). Never point it at `public/`. |
+| `gzip` | `false` | On the sharded path, write each shard as `.xml.gz` instead of `.xml`. |
+| `defaults` | — | `changefreq` / `priority` applied to every entry that does not set its own. |
+| `locales.codes` | `app.locales` | Locale codes each page is expanded into, with `xhtml:link` hreflang alternates. |
+| `locales.defaultLocale` | — | Also emitted as `x-default`. Unset: no `x-default`. |
+| `locales.splitByLocale` | `false` | One shard per locale, listed in an index. |
+| `localeUrl` | `path?locale=<code>` | Override how a path becomes a locale URL — only when the app implements its own prefix routing. A page's `localePaths` still wins. |
+| `regenerate.onBoot` | `true` | Generate at boot (dev and production). `warlock build` generates whenever the sitemap is enabled, regardless of this key. |
+
+Above 50,000 URLs (or with `splitByLocale`) web switches from a single
+`Sitemap` to a sharded `SitemapIndex` automatically; `path` then serves the
+index and each shard is served at `/<shard file>`.
+
+## Per-page control: `export const sitemap`
+
+Every routable page is included by default, expanded per locale. Error pages
+are never listed. A page module can export `sitemap` to change that:
+
+```tsx
+export const sitemap = false;
+```
+
+```tsx
+export const sitemap = { priority: 0.9, changefreq: "daily", locales: false };
+```
+
+The object form takes `priority`, `changefreq`, `lastmod`, `locales: false`
+(one locale-invariant URL) and `localePaths` (per-locale slugs).
+
+**A dynamic route (`/posts/:slug`) is not a URL.** Only a supplier function
+can name its concrete paths; without one the route contributes nothing and is
+reported with `count: 0` in the result's `routes`, never silently dropped:
+
+```tsx
+export const sitemap = async () => [
+  { path: "/posts/hello-world", lastmod: new Date("2026-09-01") },
+  { path: "/posts/second-post", localePaths: { ar: "/posts/thani" } },
+];
+```
+
+In a real page, read the rows from your model — the function runs at
+generation time, not per request.
+
+## When it runs — never on a request
+
+Generation happens at `warlock build` (whenever enabled), at boot (dev and production) when
+`regenerate.onBoot` is on, and whenever the app calls `regenerateSitemap()`:
+
+```ts
+import { regenerateSitemap } from "@warlock.js/web/sitemap";
+
+export async function onPostPublished(): Promise<void> {
+  await regenerateSitemap();
+}
+```
+
+- A call while a generation is running joins it instead of starting another.
+- A failed run keeps serving the last good set and is always reported to
+  stderr. A boot never fails because the sitemap did.
+- `/sitemap.xml` only ever serves what was last written. Before the first
+  successful generation it answers **503 with `Retry-After`**, never a 404 and
+  never a generation on the request's behalf.
+
+`generateSitemap()` is the underlying one-shot call (no join, no last-good
+tracking); it throws `MissingPublicUrlError` when `enabled` is `true` and no
+origin is configured, before any page is read.
+
+## `web.robots`
+
+| key | default | meaning |
+| --- | --- | --- |
+| `enabled` | `false` | Registers `GET /robots.txt`. |
+| `groups` | — | `{ userAgent, allow?, disallow? }` blocks. |
+| `referenceSitemap` | `true` | Appends `Sitemap: <origin><web.sitemap.path>` when the sitemap is enabled and has an origin. |
+| `extra` | — | Raw lines appended verbatim (`Host:`, `Crawl-delay:`). |
+
+A hand-written `public/robots.txt` wins outright: web registers no route and
+warns that the `Sitemap:` line is then yours to add.
+
+## Pitfalls
+
+- **503 on `/sitemap.xml`** — no generation has succeeded yet. Check the
+  build/boot log for `[warlock:web] sitemap regeneration failed`; a missing
+  `app.publicUrl` is the usual cause.
+- **A dynamic page is missing** — it has no `export const sitemap` supplier.
+  Its route shows up with `count: 0` in the generation result.
+- **`outputDir` inside `public/`** — refused. The sitemap owns its directory.
 
 ## load-page-data  `@warlock.js/web/load-page-data/SKILL.md`
 
@@ -756,7 +904,20 @@ below.
 | positional `layout.tsx` | `LayoutLoader` | `LayoutProps<typeof loader>` |
 | `*.page.tsx`            | `PageLoader`   | `PageProps<typeof loader>`   |
 
-All receive one context object with `request`, `response`, and `shared`. Page loaders add generics that connect their sibling `validation` and `route` exports to `request.validated()` and `request.input()`.
+All receive one context object with `request`, `response`, `shared`, and `signal`. Page loaders add generics that connect their sibling `validation` and `route` exports to `request.validated()` and `request.input()`.
+
+## Abandoned-request signal
+
+`ctx.signal` is an `AbortSignal` that fires when the client disconnects before the response finishes. Hand it to anything cancelable:
+
+```ts
+export const loader = (async ({ signal }) => {
+  const res = await fetch("https://api.example.com/products", { signal });
+  return { products: await res.json() };
+}) satisfies PageLoader;
+```
+
+**Honest limitation:** a loader that never checks `signal` runs to completion anyway — the framework only stops the pipeline *between* levels (app → layout → page), never inside a loader already running.
 
 ## Validation
 
@@ -949,6 +1110,24 @@ declare module "@warlock.js/web" {
   interface SharedContext {
     theme: ThemeId;
   }
+}
+```
+
+Each `themes[id]` entry lazily imports a plain component module — nothing framework-specific about it:
+
+```tsx title="src/web/themes/alpha/alpha-theme.tsx"
+import "./alpha.css";
+
+export default function AlphaTheme() {
+  return <main className="theme-alpha">Alpha storefront</main>;
+}
+```
+
+```tsx title="src/web/themes/beta/beta-theme.tsx"
+import "./beta.css";
+
+export default function BetaTheme() {
+  return <main className="theme-beta">Beta storefront</main>;
 }
 ```
 
@@ -1296,7 +1475,21 @@ function ThemeToggle() {
 
 **The trap:** `<ClientOnly>` decides what gets RENDERED. It has no say over what gets IMPORTED. A normal `import` statement runs at module-load time, wherever that module is reached from in the import graph — including the server, if the file that imports it is part of the page's server bundle.
 
-```tsx
+The widget and its fallback, shared by every example below:
+
+```tsx title="src/web/widgets/browser-only-widget.tsx"
+export default function BrowserOnlyWidget() {
+  return <span>{window.localStorage.getItem("lastVisited") ?? "first visit"}</span>;
+}
+```
+
+```tsx title="src/web/widgets/placeholder.tsx"
+export default function Placeholder() {
+  return <span>Loading…</span>;
+}
+```
+
+```tsx title="src/web/widgets/broken.page.tsx"
 // ❌ still breaks the server render
 import BrowserOnlyWidget from "./browser-only-widget"; // this import runs on the SERVER too,
                                                          // and if browser-only-widget.tsx touches
@@ -1305,6 +1498,7 @@ import BrowserOnlyWidget from "./browser-only-widget"; // this import runs on th
                                                          // gets a chance to hide it.
 
 import { ClientOnly } from "@warlock.js/web";
+import Placeholder from "./placeholder";
 
 export default function Page() {
   return (
@@ -1319,10 +1513,11 @@ export default function Page() {
 
 **The fix:** make the import itself lazy with `React.lazy`, so the dynamic `import()` only fires the first time the lazy component is actually rendered. Paired with `<ClientOnly>`, that render never happens on the server, so the import never happens on the server either:
 
-```tsx
+```tsx title="src/web/widgets/lazy.page.tsx"
 // ✅ the import is deferred, not just the render
 import { lazy } from "react";
 import { ClientOnly } from "@warlock.js/web";
+import Placeholder from "./placeholder";
 
 const BrowserOnlyWidget = lazy(() => import("./browser-only-widget"));
 
@@ -1337,9 +1532,10 @@ export default function Page() {
 
 `React.lazy` components suspend, so give `<ClientOnly>`'s subtree a `<Suspense>` boundary if the lazy chunk might not be cached yet:
 
-```tsx
+```tsx title="src/web/widgets/lazy-suspense.page.tsx"
 import { lazy, Suspense } from "react";
 import { ClientOnly } from "@warlock.js/web";
+import Placeholder from "./placeholder";
 
 const BrowserOnlyWidget = lazy(() => import("./browser-only-widget"));
 
@@ -1545,17 +1741,32 @@ loader value, but a slow key no longer holds up everything else.
 
 ```tsx title="src/web/products/product-details.page.tsx"
 import { use, Suspense } from "react";
+import { v } from "@warlock.js/seal";
 import { defer } from "@warlock.js/web";
 import type { PageLoader, PageProps } from "@warlock.js/web";
 
+type Review = { id: string; text: string };
+
+async function getProduct(id: string) {
+  return { id, name: `Product ${id}` };
+}
+
+async function getReviews(id: string): Promise<Review[]> {
+  return [{ id: `${id}-1`, text: "Great product." }];
+}
+
+export const validation = {
+  params: v.object({ id: v.string() }),
+};
+
 export const loader = (async ({ request }) => {
-  const { id } = request.validated();
+  const { params } = request.validated();
 
   return defer({
-    product: await getProduct(id), // resolved before the shell — unchanged today
-    reviews: getReviews(id), // a Promise — streamed in after the shell
+    product: await getProduct(params.id), // resolved before the shell — unchanged today
+    reviews: getReviews(params.id), // a Promise — streamed in after the shell
   });
-}) satisfies PageLoader;
+}) satisfies PageLoader<typeof validation>;
 
 function Reviews({ reviews }: { reviews: Promise<Review[]> }) {
   const list = use(reviews);
@@ -1610,9 +1821,12 @@ browser already started receiving stays a 200.
 
 What `use()` throws is one of:
 
-- **`DeferredValueError`** — the loader's own promise rejected. Carries the
-  original error's `message` and, if the original error had one,
-  `statusCode`. Never a stack in production; dev may add one.
+- **`DeferredValueError`** — the loader's own promise rejected. In
+  development, carries the original error's own `message`/`stack`. In
+  production, carries a generic message plus an opaque `errorCode` (joinable
+  with the server's own report line) UNLESS the loader rejected with a
+  `PublicPageError` (`@warlock.js/web`), whose own `message` is exposed as-is.
+  Carries `statusCode` if the original error had one.
 - **`DeferTimeoutError`** — the promise did not settle within
   `web.streaming.deferTimeout` (default 10000ms). The server treats this
   exactly like a rejection: settle, emit, move on. The response is never
@@ -1650,6 +1864,35 @@ export class ReviewsBoundary extends Component<
 Wrap the `<Suspense>` boundary (or an ancestor of it) in a boundary like this
 one when a deferred failure should degrade gracefully instead of bubbling to
 the page's own `ErrorBoundary` export.
+
+### No app boundary anywhere above `use()`? The client still won't go blank
+
+The framework wraps every hydrated page tree in its own client-side floor
+(`DefaultErrorBoundary`) so a rejected deferred value that no app-authored
+boundary catches — no `ReviewsBoundary` like the one above, no page-level
+`ErrorBoundary` export — still renders a visible fallback instead of React
+silently unmounting the tree.
+
+- **An app-authored boundary nearer the failing component always wins.**
+  React walks up to the CLOSEST boundary above the throw, and the framework's
+  floor sits at the very top — so wrapping `<Reviews>` in `ReviewsBoundary`
+  means the floor never renders and never fires for that failure at all.
+- **No double reporting.** Only the boundary that actually catches the error
+  reports it — an app boundary that stops the failure lower in the tree, the
+  floor when nothing else does. The failure is reported exactly once either
+  way, never twice for the one throw — including when the floor's own choice
+  of fallback (below) itself fails to render.
+- **The floor prefers the current route's `error.page.tsx`.** When one is
+  configured, the floor renders it with a freshly sanitized error shape (the
+  same `{ error, status }` contract `error.page.tsx` receives during SSR —
+  `message`/`stack` redacted in production exactly as a hydration failure's
+  are, unless the failure is a `DeferredValueError`, whose message already
+  passed through that same redaction at settlement time). If the route has no
+  `error.page.tsx`, or rendering it throws in turn, the floor falls back to
+  its own plain, generic message instead — a last resort that can itself
+  never be the thing that fails. Give a failure mode a nicer message by
+  wrapping it in an app boundary like `ReviewsBoundary` above, or by giving
+  the route its own `error.page.tsx`.
 
 ## `web.streaming.deferTimeout`
 
@@ -1744,15 +1987,27 @@ Detection is case-insensitive and, by default, matches this built-in list:
 `applebot`, `facebookexternalhit`, `twitterbot`, `linkedinbot`, `discordbot`,
 `slackbot`, `telegrambot`, `whatsapp`, `embedly`, `pinterest`.
 
-```ts title="warlock.config.ts"
+```ts
+// disable detection entirely — every request streams:
 export default {
   web: {
     streaming: {
-      crawlers: false, // disable detection entirely — every request streams
-      // OR customise it:
+      crawlers: false,
+    },
+  },
+};
+```
+
+```ts
+// or customise it:
+import type { Request } from "@warlock.js/core";
+
+export default {
+  web: {
+    streaming: {
       crawlers: {
         userAgents: [/mybot/i], // REPLACES the built-in list, not merges with it
-        detect: (request) => request.header("x-render-mode") === "crawler", // wins outright when given
+        detect: (request: Request) => request.header("x-render-mode") === "crawler", // wins outright when given
       },
     },
   },
