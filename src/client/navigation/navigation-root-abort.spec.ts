@@ -81,7 +81,7 @@ function stubGatedFetch(
       if (payload === undefined) throw new Error(`no stub for ${path}`);
       if (init?.signal) signals[path] = init.signal;
 
-      await gates[path].opened;
+      await gates[path]!.opened;
 
       if (respectAbort && init?.signal?.aborted) {
         throw new DOMException("The user aborted a request.", "AbortError");
@@ -176,7 +176,7 @@ describe("NavigationRoot — abort on a superseded navigation", () => {
     });
     await flush();
 
-    expect(signals["/b"].aborted).toBe(false);
+    expect(signals["/b"]?.aborted).toBe(false);
 
     act(() => {
       currentNavigator()?.("/c");
@@ -184,9 +184,9 @@ describe("NavigationRoot — abort on a superseded navigation", () => {
     await flush();
 
     // Claiming the second ticket must have aborted the first's signal.
-    expect(signals["/b"].aborted).toBe(true);
+    expect(signals["/b"]?.aborted).toBe(true);
 
-    gates["/c"].open();
+    gates["/c"]!.open();
     await flush();
 
     expect(pageText()).toBe("page.c");
@@ -217,7 +217,7 @@ describe("NavigationRoot — abort on a superseded navigation", () => {
     await flush();
 
     // "/c" answers first — the ordinary case.
-    gates["/c"].open();
+    gates["/c"]!.open();
     await flush();
 
     expect(pageText()).toBe("page.c");
@@ -225,7 +225,7 @@ describe("NavigationRoot — abort on a superseded navigation", () => {
     // "/b"'s abort is ignored by this stub (it answers with real data instead
     // of throwing), simulating a race between the abort signal and a
     // response that was already in flight. The ticket must still drop it.
-    gates["/b"].open();
+    gates["/b"]!.open();
     await flush();
 
     expect(pageText()).toBe("page.c");

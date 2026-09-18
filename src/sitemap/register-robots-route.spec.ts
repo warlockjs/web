@@ -96,6 +96,6 @@ describe("registerRobotsRoute", () => {
 
     expect(routes.size).toBe(0);
     expect(warn).toHaveBeenCalledOnce();
-    expect(warn.mock.calls[0][0]).toContain("public/robots.txt");
+    expect(warn.mock.calls[0]?.[0]).toContain("public/robots.txt");
   });
 });

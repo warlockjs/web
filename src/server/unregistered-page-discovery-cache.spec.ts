@@ -90,6 +90,6 @@ describe("createUnregisteredPageReporter discovery caching", () => {
     report({ method: "GET", url: "/contact", pathname: "/contact" });
     expect(discover).toHaveBeenCalledTimes(2);
     expect(warn).toHaveBeenCalledTimes(2);
-    expect(warn.mock.calls[1][0]).toContain("contact.page.tsx");
+    expect(warn.mock.calls[1]?.[0]).toContain("contact.page.tsx");
   });
 });
