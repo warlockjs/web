@@ -1,7 +1,18 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import { DocumentContext } from "../../components/document-context";
+import { DefaultErrorBoundary } from "../default-error-boundary";
 import { LocaleProvider } from "../../localization";
-import type { HydrationDocumentPayloadSource } from "../../hydration-payload";
+import type {
+  HydrationDocumentPayloadSource,
+  SerializedErrorPageProps,
+} from "../../hydration-payload";
 import { connectNavigator } from "../../routing/navigator";
 import { routerEvents, type NavigationMode } from "../../routing/router-events";
 import {
@@ -13,6 +24,8 @@ import {
 import { hydrateShared } from "../../shared";
 import type { ClientPageEntry } from "../runtime";
 import { recordCurrentRoute } from "./current-route";
+import { DOCUMENT_SCOPE, releaseDeferredScope } from "../runtime/defer-registry";
+import { resolveErrorPageComponent } from "./resolve-error-page-component";
 import { applyDocumentMetadata } from "./document-metadata";
 import { connectLocaleChanger, createLocaleChanger } from "./change-locale-code";
 import { fetchPageData } from "./fetch-page-data";
@@ -123,6 +136,72 @@ export function NavigationRoot({
   currentRef.current = current;
 
   /*
+    THE DEFAULT ERROR BOUNDARY'S RESET SIGNAL. Bumped by `applySwap` below —
+    the one place every applied payload swap passes through, whether it is a
+    navigation, a `refresh()`, or a locale change — and handed to
+    `DefaultErrorBoundary` as `resetToken` instead of keying it on
+    `current.payload.name`: a same-name swap (`/posts/1` -> `/posts/2`, or a
+    plain `refresh()`) must also clear a stale error, and a changing `key`
+    would remount the layouts inside it to do that, throwing away the state
+    client navigation exists to keep. A ref, not state: it has nothing to
+    render on its own, and mutating it before the `setCurrent` that follows
+    guarantees the boundary sees the new value on the very render the swap
+    causes.
+  */
+  const resetTokenRef = useRef(0);
+
+  // Set once the initial document's deferred scope has been released.
+  const documentScopeReleased = useRef(false);
+
+  /*
+    THE DEFAULT FLOOR'S ERROR PAGE, resolved independently of `current.tree`.
+    A route's `error.page.tsx` is loaded the same way `buildTree` loads its
+    ordinary `Page` — an async module fetch, resolved here rather than
+    threaded through `buildTree`'s own result so this component stays the one
+    place that owns `DefaultErrorBoundary`'s props, and so a caller's
+    existing `buildTree` (returning a plain `ReactNode`, unchanged) keeps
+    working unmodified.
+
+    Kept in STATE, not a ref: unlike `resetTokenRef` (mutated synchronously,
+    always fresh by the render its own swap causes), this resolves later,
+    off a dynamic import — nothing else would force `DefaultErrorBoundary` to
+    receive the freshly loaded component once that import settles.
+
+    Reset to `undefined` on every route-name change, not kept until the new
+    one resolves: a stale error page from the page just left must not render
+    for a failure on the page just arrived at.
+  */
+  const [errorPageComponent, setErrorPageComponent] = useState<
+    ComponentType<SerializedErrorPageProps> | undefined
+  >(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    setErrorPageComponent(undefined);
+
+    resolveErrorPageComponent(pages, current.payload.name)
+      .then((component) => {
+        // Wrapped: a component IS a function, and a bare function passed to a
+        // state setter is called as an updater rather than stored.
+        if (!cancelled) setErrorPageComponent(() => component);
+      })
+      .catch(() => {
+        if (!cancelled) setErrorPageComponent(undefined);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pages, current.payload.name]);
+
+  const applySwap = (next: Current): void => {
+    resetTokenRef.current += 1;
+
+    setCurrent(next);
+  };
+
+  /*
     THE ORDERING PROBLEM, and this ref is half of the answer to it.
 
     Whatever the scroll bar should do next — jump to a fragment's element,
@@ -166,6 +245,13 @@ export function NavigationRoot({
     let token = 0;
     let disposed = false;
     /*
+      The controller behind the one in-flight `fetchPageData` request that
+      still matters. Claiming a new ticket aborts it first — see
+      `claimTicket` below — so at most one request is ever left running past
+      the moment something newer starts.
+    */
+    let activeController: AbortController | undefined;
+    /*
       The URL this runtime last put in the address bar, so `popstate` can tell a
       move BETWEEN pages from a move between two fragments of one page. Seeded
       with the URL the document was loaded at, which is the entry the first Back
@@ -203,7 +289,7 @@ export function NavigationRoot({
       replace: boolean,
       kind: "navigate" | "popstate",
     ): Promise<void> => {
-      const ticket = ++token;
+      const { isCurrent, signal } = claimTicket();
       /*
         `"replace"` covers a Back/Forward press as well as an explicit
         `<Link replace>` — both calls into `apply` pass `replace: true` for
@@ -223,11 +309,22 @@ export function NavigationRoot({
         replay the speculative response on the real click.
 
         The race guard below still holds on a cache hit: `??` short-circuits the
-        await, and the synchronous path reaches the same `ticket !== token` check.
+        await, and the synchronous path reaches the same `isCurrent()` check.
+        A prefetched hit is never aborted — there is no request in flight to
+        abort — so `signal` is only ever consulted on the network path.
       */
-      const result = takePrefetchedPageData(url) ?? (await fetchPageData(url));
+      const result = takePrefetchedPageData(url) ?? (await fetchPageData(url, signal));
 
-      if (disposed || ticket !== token) return;
+      if (disposed || !isCurrent()) return;
+
+      if (result.type === "aborted") {
+        // Superseded — the ticket already told us so, and would have caught
+        // this even if aborting had done nothing (a test double that ignores
+        // `signal`, or a response that raced the abort). Not an error, not a
+        // fallback: the operation that overtook this one reports its own
+        // outcome.
+        return;
+      }
 
       if (result.type === "hard-navigate") {
         // The documented degradation: hand the URL back to the browser. The
@@ -261,7 +358,7 @@ export function NavigationRoot({
         return;
       }
 
-      if (disposed || ticket !== token) return;
+      if (disposed || !isCurrent()) return;
 
       /*
         Shared state BEFORE the render that consumes it. `hydrateShared`
@@ -316,21 +413,43 @@ export function NavigationRoot({
 
       // A navigation IS the route moving, so the fetched payload is both the
       // page and the route's identity.
-      setCurrent({ payload: result.payload, tree, routeSource: result.payload });
+      applySwap({ payload: result.payload, tree, routeSource: result.payload });
+
+      // The initial document's deferred values have no stream reader of their
+      // own to release them, so the first page that replaces it does. By now
+      // the document stream has closed and every pending key has settled.
+      if (!documentScopeReleased.current) {
+        documentScopeReleased.current = true;
+        releaseDeferredScope(DOCUMENT_SCOPE);
+      }
 
       routerEvents.emitNavigated({ url, resolvedUrl: finalUrl, mode });
     };
 
     /*
       The same counter `apply` above takes its tickets from, handed to
-      `refresh()` as a predicate. ONE mechanism, not two: a refresh and a
-      navigation can overtake each other in either direction, and separate
-      counters would leave each blind to the other.
+      `refresh()` and `changeLocaleCode()` too. ONE mechanism, not two: a
+      refresh, a locale change and a navigation can each overtake the others
+      in any direction, and separate counters would leave each blind to the
+      others.
+
+      Claiming a ticket also aborts whatever request the PREVIOUS ticket
+      holder started, and hands the new ticket holder a fresh signal of its
+      own. This is an optimisation layered on the counter, not a second
+      arbiter: `isCurrent()` — checked by every caller, abort or no abort —
+      is still what decides which response wins. Aborting only stops the
+      browser doing work nobody will look at.
     */
-    const claimTicket = (): (() => boolean) => {
+    const claimTicket = (): { isCurrent: () => boolean; signal: AbortSignal } => {
+      activeController?.abort();
+
+      const controller = new AbortController();
+
+      activeController = controller;
+
       const ticket = ++token;
 
-      return () => !disposed && ticket === token;
+      return { isCurrent: () => !disposed && ticket === token, signal: controller.signal };
     };
 
     // Both the refresher and the locale changer are one seam, built from the
@@ -339,7 +458,7 @@ export function NavigationRoot({
     // sharing `claimTicket`'s counter lets any of them notice.
     const runtime = {
       readCurrent: () => currentRef.current,
-      writeCurrent: setCurrent,
+      writeCurrent: applySwap,
       buildTree: (payload: HydrationDocumentPayloadSource) => buildTree(pages, payload),
       claimTicket,
     };
@@ -440,6 +559,7 @@ export function NavigationRoot({
 
     return () => {
       disposed = true;
+      activeController?.abort();
       window.removeEventListener("popstate", onPopState);
       connectNavigator(previousNavigator);
       connectRefresher(previousRefresher);
@@ -573,7 +693,25 @@ export function NavigationRoot({
     <DocumentContext.Provider
       value={{ metadata: current.payload.metadata, payload: current.payload }}
     >
-      <LocaleProvider locale={current.payload.locale}>{current.tree}</LocaleProvider>
+      <LocaleProvider locale={current.payload.locale}>
+        {/*
+          THE FIRST-PARTY FLOOR. NOT keyed on the page name — a changing
+          `key` would remount this boundary's whole subtree, layouts
+          included, on every swap, which is exactly the reconciliation
+          client navigation exists to avoid (see this file's own doc on "Why
+          the layout stays mounted"). `resetToken` instead: it moves on
+          every applied swap too, but only clears a caught error rather than
+          unmounting anything, so a fallback rendered for the page just left
+          never lingers over the page just arrived at without paying for a
+          layout remount to get there. An app-authored ErrorBoundary
+          anywhere in `current.tree` (a layout, the page) is nearer and
+          catches first; this one only fires when nothing else did — see
+          `default-error-boundary.tsx`.
+        */}
+        <DefaultErrorBoundary resetToken={resetTokenRef.current} errorPage={errorPageComponent}>
+          {current.tree}
+        </DefaultErrorBoundary>
+      </LocaleProvider>
     </DocumentContext.Provider>
   );
 }
