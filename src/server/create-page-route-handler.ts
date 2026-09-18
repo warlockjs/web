@@ -30,31 +30,27 @@ import {
   type HttpContext,
   type Request,
 } from "@warlock.js/core";
-import { stringify } from "devalue";
 
-import {
-  DATA_RESPONSE_CONTENT_TYPE,
-  isDataRequest,
-  WARLOCK_DATA_REQUEST_HEADER,
-} from "../routing/data-request";
+import { isDataRequest, WARLOCK_DATA_REQUEST_HEADER } from "../routing/data-request";
 import { isCrawlerRequest } from "./detect-crawler";
 import { registerModules, type RegisterableModuleNamespace } from "../register-modules";
-import { buildHydrationPayload } from "./build-hydration-payload";
 import { applyResponseCacheFloor } from "./response-cache-floor";
 import type { PageCacheOptIn } from "../routing/route-identity";
-import type { SharedContext } from "../index";
 import type { RequestStylesheetUrlResolver } from "./document-stylesheet-urls";
-import { collectPipeableStream } from "./collect-pipeable-stream";
 import { resolveAuthCookieName } from "./auth-cookie-name";
-import { looksAuthenticated, isStoreEligible } from "./page-cache-eligibility";
-import { computePageCacheKey, type PageCacheVariant } from "./page-cache-key";
-import { getPageCacheEntry, setPageCacheEntry } from "./page-cache-store";
+import { looksAuthenticated } from "./page-cache-eligibility";
+import { type PageCacheVariant } from "./page-cache-key";
 import { pageVaryHeader } from "./page-vary-header";
 import { reportServerError } from "./report-server-error";
 import { ensureSetCookieCacheFloorHook, markPageResponse } from "./set-cookie-cache-floor-hook";
 import type { BufferedCookie, PageRouteEntry, PageTripleModule } from "./execute-page-request";
-import { renderPageFailure, renderPageRequest, type RenderedPage } from "./render-page";
-import { NDJSON_CONTENT_TYPE, writeDeferredNdjsonResponse } from "./write-deferred-ndjson-response";
+import { renderPageRequest } from "./render-page";
+import { NDJSON_CONTENT_TYPE } from "./write-deferred-ndjson-response";
+import { applyCommit } from "./page-route-handler/apply-commit";
+import { resolvePageCacheHitOrMiss } from "./page-route-handler/serve-page-cache-hit";
+import { storePageCacheAfterRender } from "./page-route-handler/store-page-cache-after-render";
+import { sendPageDataResponse } from "./page-route-handler/send-page-data-response";
+import { writePageFailureResponse } from "./page-route-handler/write-page-failure-response";
 
 declare module "@warlock.js/core" {
   interface RequestLocals {
@@ -104,76 +100,6 @@ export class MissingHttpServerForPageRouteError extends Error {
  */
 export function defaultApplyBufferedCookie(response: Response, cookie: BufferedCookie): void {
   response.cookie(cookie.name, cookie.value as never, cookie.options ?? {});
-}
-
-/**
- * Stage 10a — apply the stage 7 commit (headers, then cookies) to the LIVE
- * response, once, before either terminal write (10b: `html()` or `send()`).
- * Both the document and data representations of a page route go through this
- * so a client navigation never drops a `Set-Cookie` a full load would have
- * kept (`create-page-route-handler.spec.ts` — "applies committed cookies and
- * headers exactly as the document path does").
- */
-function applyCommit(
-  response: Response,
-  rendered: Pick<RenderedPage, "headers" | "cookies">,
-  applyBufferedCookie: (response: Response, cookie: BufferedCookie) => void,
-): void {
-  response.headers(rendered.headers ?? {});
-
-  for (const cookie of rendered.cookies ?? []) {
-    applyBufferedCookie(response, cookie);
-  }
-}
-
-/**
- * `changeLocaleCode()`'s client half asks for a locale switch by putting
- * `?locale=<code>` on a navigation DATA request's FETCH URL only — never on a
- * document load, and never any other way (`client/navigation/change-locale-code.ts`).
- * Persisting it here, through the SAME `response.setLocale()` an ordinary
- * controller would call, writes the SAME cookie `request.locale` already read
- * it back from (`core/src/http/request.ts:352-360`), so a later full load
- * agrees without the query param.
- *
- * `request.locale`, not the raw query value: `resolveLocale()` has already run
- * the query value through `cacheLocale()`'s `app.localeCodes` allow-list by
- * the time this runs, so a code outside it is already the configured
- * fallback — and the fallback, not what the client asked for, is what gets
- * persisted.
- *
- * Called from TWO seams that must never disagree: the MISS/full-render path
- * below (`if (wantsData)`), and the cache HIT path above it. A HIT never runs
- * the loader/render pipeline at all — that is the entire point of caching —
- * but it must still run this ONE side effect, or a locale switch served from
- * a warm cache entry returns the right body while silently never persisting
- * the cookie, and the next full load reverts to the old locale
- * (`page-server-cache.spec.ts` — "a HIT still persists a requested locale
- * switch"). A full document load with the same `?locale=` param never calls
- * this — it is gated on `wantsData` by both call sites — so it never
- * persists.
- */
-function persistRequestedLocale(request: Request, response: Response): void {
-  if (typeof request.query["locale"] === "string" && request.query["locale"].length > 0) {
-    response.setLocale(request.locale);
-  }
-}
-
-/**
- * Resolves a route's `cache.tags` (static list or a function of the
- * resolved page data) into a concrete list at store time. Called with
- * `rendered.data` — the page's own loader data (`RenderedPage.data`,
- * `render-page.ts`) — as the most sensible "data" argument for the function
- * form: it is the same value a page's own component/loader already sees, and
- * is available at this seam without threading anything new through.
- */
-function resolveCacheTags(
-  tags: PageCacheOptIn["tags"],
-  data: unknown,
-  shared: Readonly<SharedContext> | undefined,
-): string[] {
-  if (tags === undefined) return [];
-
-  return typeof tags === "function" ? tags(data, { shared: shared ?? {} }) : tags;
 }
 
 /**
@@ -388,79 +314,19 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
 
     try {
       if (cache?.serverCache === true) {
-        if (request.method !== "GET") {
-          // Decision 3 ("GET only"): a non-GET request to a serverCache route
-          // is never looked up and never stored — it flows through the
-          // ordinary pipeline below untouched, just reporting a miss-shaped
-          // header since nothing was ever cached for it either way.
-          cacheHeaderValue = "miss";
-        } else if (credentialedRequest) {
-          cacheHeaderValue = "bypass";
-        } else {
-          cacheKey = computePageCacheKey({
-            host: String(request.header("host", "") ?? ""),
-            vary: cache.varyBy?.(request),
-            path: request.path,
-            query: request.query as Record<string, unknown>,
-            locale: request.locale,
-            variant: pageCacheVariant,
-          });
+        const outcome = await resolvePageCacheHitOrMiss({
+          request,
+          response,
+          cache,
+          credentialedRequest,
+          pageCacheVariant,
+        });
 
-          const hit = await getPageCacheEntry(cacheKey);
+        if (outcome.served) return;
 
-          if (hit !== undefined) {
-            // A HIT is always served buffered, straight from the store, with
-            // no loader and no render — see `render-page.ts`'s
-            // await-and-inline path, reused only on the MISS side below.
-            markPageResponse(request);
-
-            // BEFORE the early return, and before the `Cache-Control` below:
-            // a navigation data request's `?locale=` switch must persist even
-            // when served from the cache — see `persistRequestedLocale`. When
-            // it does write a cookie, the `Set-Cookie` cache-floor `onSend`
-            // hook (`set-cookie-cache-floor-hook.ts`, registered above) then
-            // downgrades the `Cache-Control` this seam is about to set to
-            // `private, no-store` at send time — the same floor a MISS gets
-            // from `applyResponseCacheFloor`, just applied one hook later.
-            if (wantsData) {
-              persistRequestedLocale(request, response);
-            }
-
-            // Replays exactly what a MISS on this same route would emit: the
-            // opt-in already requires `public: true`, so this is the same
-            // `Cache-Control` `applyResponseCacheFloor` would compute for a
-            // store-eligible response (`authDerived === false`, no cookie —
-            // both already proven true of whatever got stored).
-            response.header("Cache-Control", `public, max-age=${cache.maxAge}`);
-            response.header("x-warlock-cache", "hit");
-
-            // ONE `header()` call for the whole response — see
-            // `pageVaryHeader`'s doc comment on why a second call would
-            // silently overwrite this one instead of combining with it. A
-            // HIT is only ever reached for a `cache.serverCache === true`
-            // route, so `cache` is always defined here.
-            response.header(
-              "Vary",
-              pageVaryHeader({
-                dataRepresentation: pageCacheVariant === "json",
-                cacheOptedIn: true,
-                deferred: hit.usesDefer,
-              }),
-            );
-
-            if (pageCacheVariant === "json") {
-              response.setContentType(hit.contentType);
-              await response.send(hit.body, hit.status);
-            } else {
-              await response.html(hit.body, hit.status);
-            }
-
-            return;
-          }
-
-          cacheHeaderValue = "miss";
-          attemptStorageAfterRender = true;
-        }
+        cacheHeaderValue = outcome.cacheHeaderValue;
+        cacheKey = outcome.cacheKey;
+        attemptStorageAfterRender = outcome.attemptStorageAfterRender;
       }
 
       const [appModule, layoutModule, ownPageModule, registrationLayouts] = await Promise.all([
@@ -540,7 +406,9 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         // (`wantsNdjson`): a serverCache-eligible route never streams NDJSON
         // on a miss, it stores (and serves) the fully-resolved JSON variant
         // instead — see `page-cache-store.ts`.
-        awaitDeferredForDataRequest: attemptStorageAfterRender ? wantsData : wantsData && !wantsNdjson,
+        awaitDeferredForDataRequest: attemptStorageAfterRender
+          ? wantsData
+          : wantsData && !wantsNdjson,
         stylesheetUrls,
         resolveRequestStylesheetUrls,
         hydrationClientModuleUrl,
@@ -635,138 +503,44 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         response.header("Vary", varyHeader);
       }
 
-      // Store-time eligibility (lead decision 3), checked once we actually
-      // have a rendered response to store. `precomputedJsonBody` lets the
-      // `wantsData` branch below reuse the exact string just written to the
-      // cache instead of calling `stringify(buildHydrationPayload(...))`
-      // twice.
-      let precomputedJsonBody: string | undefined;
-      // The drained document stream, when this MISS was stored — sent
-      // buffered below, since the stream itself has been consumed.
-      let storedDocumentBody: string | undefined;
-
-      if (attemptStorageAfterRender && cacheKey !== undefined && cache !== undefined) {
-        const eligible = isStoreEligible({
-          method: request.method,
-          authDerived: authDerivedState,
-          response,
-          status,
-          crawler,
-          hasBufferedCookie:
-            (rendered.cookies?.length ?? 0) > 0 ||
-            Boolean((rendered.headers as Record<string, unknown> | undefined)?.["set-cookie"]),
-        });
-
-        if (eligible) {
-          const ttl = cache.ttl ?? cache.maxAge;
-          const tags = resolveCacheTags(cache.tags, rendered.data, rendered.bundle?.shared);
-
-          if (pageCacheVariant === "html") {
-            // Store the STREAMED document (already forced to `onAllReady` by
-            // `crawler: true` above), never `rendered.html`: that is the
-            // synchronous escalation pass, where a `React.lazy` boundary that
-            // has not resolved yet in this process renders its Suspense
-            // fallback. The visitor on this MISS got the streamed bytes, so
-            // the stored entry — and every HIT — must be those same bytes.
-            const isMiddlewareBody =
-              rendered.bundle?.shortCircuit?.stage === "middleware" &&
-              !rendered.bundle.shortCircuit.responseSent;
-
-            if (rendered.pipeableStream !== undefined && !isMiddlewareBody) {
-              storedDocumentBody = await collectPipeableStream(rendered.pipeableStream);
-            }
-
-            await setPageCacheEntry(
+      // Store-time eligibility (lead decision 3) and the write itself, when
+      // applicable — see `store-page-cache-after-render.ts`. Its result feeds
+      // both the `wantsData` branch below (`precomputedJsonBody`, so the
+      // response never re-serializes the same bundle) and the streaming send
+      // further down (`documentPipeableStreamForSend`/`pendingPageCacheWrite`,
+      // so `tapPipeableStreamForPageCacheLimit`'s tap sees every byte as it
+      // flows to the visitor).
+      const cacheStorageAttempt =
+        attemptStorageAfterRender && cacheKey !== undefined && cache !== undefined
+          ? await storePageCacheAfterRender({
+              request,
+              response,
+              cache,
               cacheKey,
-              {
-                body: storedDocumentBody ?? rendered.html,
-                status: 200,
-                contentType: "text/html",
-                usesDefer: rendered.usesDefer ?? false,
-              },
-              ttl,
-              tags,
-            );
-          } else if (rendered.bundle !== undefined) {
-            precomputedJsonBody = stringify(buildHydrationPayload(rendered.bundle, request.locale));
+              authDerivedState,
+              status,
+              crawler,
+              rendered,
+              pageCacheVariant,
+            })
+          : undefined;
 
-            await setPageCacheEntry(
-              cacheKey,
-              {
-                body: precomputedJsonBody,
-                status: 200,
-                contentType: DATA_RESPONSE_CONTENT_TYPE,
-                usesDefer: rendered.usesDefer ?? false,
-              },
-              ttl,
-              tags,
-            );
-          }
-        }
-      }
+      const { documentPipeableStreamForSend, pendingPageCacheWrite, precomputedJsonBody } =
+        cacheStorageAttempt ?? {
+          documentPipeableStreamForSend: undefined,
+          pendingPageCacheWrite: undefined,
+          precomputedJsonBody: undefined,
+        };
 
       if (wantsData) {
-        // See `persistRequestedLocale` — the cache HIT branch above calls the
-        // same function, for the same reason.
-        persistRequestedLocale(request, response);
-
-        // `Vary` is already set above, once, for both representations — see
-        // the call site right after the `x-warlock-cache` header.
-
-        // `bundle` is absent on exactly one path: nothing matched, so no pipeline
-        // ran and there is no payload to build. Fastify already matched this
-        // route to get here, so reaching it means `request.path` did not satisfy
-        // the entry's own pattern — answered as the 404 it is, rather than
-        // synthesising an empty payload the client would try to render as a page.
-        if (rendered.bundle === undefined) {
-          response.setContentType(DATA_RESPONSE_CONTENT_TYPE);
-          await response.send(JSON.stringify({ error: "not_found" }), status);
-
-          return;
-        }
-
-        // Stage 2 slice S3 (contract rule 10): a page that deferred at least
-        // one key, asked for over `Accept: application/x-ndjson`, streams
-        // instead of answering one buffered JSON body. A page with no
-        // deferred keys is UNCHANGED under either `Accept` value — it never
-        // reaches this branch, `deferredKeys` is undefined/empty for it.
-        const deferredKeys = rendered.bundle.deferredKeys;
-
-        if (wantsNdjson && deferredKeys !== undefined && deferredKeys.length > 0) {
-          await writeDeferredNdjsonResponse(response, rendered.bundle, request.locale, status);
-
-          return;
-        }
-
-        // SERIALIZED HERE, and handed over as a STRING on purpose.
-        //
-        // `response.send(object)` runs the body through core's `Response.parse`,
-        // which recurses the object, calls `toJSON()` on anything that has one
-        // (assigning `request` onto it as it goes) and rebuilds arrays. That is
-        // the right behaviour for a controller returning Resources; it is the
-        // wrong behaviour here, because the DOCUMENT path serializes this exact
-        // object with devalue's `stringify` into `#__WARLOCK_DATA__`. Routing
-        // one path through a transformer and not the other is precisely the
-        // drift `build-hydration-payload.ts` exists to prevent — the browser
-        // would build one tree on a page load and a different one on a
-        // navigation to the same URL.
-        //
-        // A string body also bypasses `parseBody()` entirely, so the content type
-        // has to be declared rather than inferred from an object body.
-        //
-        // CONTENT TYPE: kept as `DATA_RESPONSE_CONTENT_TYPE` (`application/json`)
-        // deliberately. devalue's `stringify` output is syntactically valid JSON
-        // text — it only recurses `["Date", ...]`/`["Map", ...]`-shaped arrays and
-        // reference indices instead of the literal object graph, so `JSON.parse`
-        // never throws on it, it just does not reconstruct the same value devalue
-        // does. `application/json` here documents "the bytes are valid JSON",
-        // which is true; the semantic decode is `readHydrationPayload`'s job, not
-        // this response's content type.
-        response.setContentType(DATA_RESPONSE_CONTENT_TYPE);
-        await response.send(
-          precomputedJsonBody ?? stringify(buildHydrationPayload(rendered.bundle, request.locale)),
+        await sendPageDataResponse({
+          request,
+          response,
+          rendered,
           status,
-        );
+          wantsNdjson,
+          precomputedJsonBody,
+        });
 
         return;
       }
@@ -802,8 +576,20 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       // buffered fallback below exists for a `renderPageRequest` result that
       // is not a genuine document render (a non-standard caller, or a test
       // double) and stays a plain, unspliced send.
-      if (storedDocumentBody !== undefined) {
-        await response.html(storedDocumentBody, status);
+      //
+      // A store-eligible MISS streams from `documentPipeableStreamForSend`
+      // (the live half of `tapPipeableStreamForPageCacheLimit`'s tap) instead
+      // of `rendered.pipeableStream` directly — the visitor gets every byte
+      // either way; only the SEPARATE, capped copy handed to the page cache
+      // can be dropped once it crosses `maxEntryBytes`. The cache write
+      // itself only happens once this stream has fully drained, so it always
+      // knows the copy's final size.
+      if (documentPipeableStreamForSend !== undefined) {
+        response.setContentType("text/html");
+        response.setStatusCode(status);
+
+        await response.streamReact(documentPipeableStreamForSend);
+        await pendingPageCacheWrite?.();
 
         return;
       }
@@ -856,44 +642,18 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       // no try/catch at all (the file header's stated contract) — the
       // router's own error path is still the answer, just one throw later.
       try {
-        const rendered = await renderPageFailure({
+        await writePageFailureResponse({
           name,
-          path: request.path,
           request,
           response,
           thrown,
           loadErrorPage,
           stylesheetUrls,
           hydrationClientModuleUrl,
+          cache,
+          wantsData,
+          applyBufferedCookie,
         });
-
-        applyCommit(response, rendered, applyBufferedCookie);
-
-        // Same rule as the ordinary path (see the `pageVaryHeader` call
-        // above): the JSON representation always gets `x-warlock-data`; the
-        // HTML representation gets it only when this route opted into
-        // `cache`. An error page never defers, so `User-Agent` never applies
-        // here.
-        const errorVaryHeader = pageVaryHeader({
-          dataRepresentation: wantsData,
-          cacheOptedIn: cache !== undefined,
-          deferred: false,
-        });
-
-        if (errorVaryHeader !== undefined) {
-          response.header("Vary", errorVaryHeader);
-        }
-
-        if (wantsData) {
-          response.setContentType(DATA_RESPONSE_CONTENT_TYPE);
-          await response.send(stringify(buildHydrationPayload(rendered.bundle!, request.locale)), 500);
-          return;
-        }
-
-        // `renderPageFailure` renders stylesheets and (when hydratable, which
-        // this path never is) the hydration module through React already —
-        // see that function. Nothing left to splice here either.
-        await response.html(rendered.html, 500);
       } catch {
         throw thrown;
       }

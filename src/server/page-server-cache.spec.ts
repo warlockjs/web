@@ -79,14 +79,22 @@ vi.mock("@warlock.js/cache", async (importOriginal) => {
 import { createPageRouteHandler } from "./create-page-route-handler";
 import { invalidatePageCache } from "./invalidate-page-cache";
 import { resetPageCacheDriverStateForTests } from "./page-cache-driver";
+import {
+  DEFAULT_PAGE_CACHE_MAX_ENTRY_BYTES,
+  InvalidPageCacheMaxEntryBytesError,
+  resolvePageCacheMaxEntryBytes,
+} from "./page-cache-entry-limit";
+import * as pageCacheEntryLimit from "./page-cache-entry-limit";
 
-function renderedHtml(overrides: {
-  html?: string;
-  status?: number;
-  usesDefer?: boolean;
-  data?: unknown;
-  cookies?: BufferedCookie[];
-} = {}) {
+function renderedHtml(
+  overrides: {
+    html?: string;
+    status?: number;
+    usesDefer?: boolean;
+    data?: unknown;
+    cookies?: BufferedCookie[];
+  } = {},
+) {
   return {
     html: overrides.html ?? "<!doctype html><html><body>ok</body></html>",
     status: overrides.status ?? 200,
@@ -98,12 +106,14 @@ function renderedHtml(overrides: {
   };
 }
 
-function renderedJson(overrides: {
-  status?: number;
-  usesDefer?: boolean;
-  data?: unknown;
-  deferredKeys?: string[];
-} = {}) {
+function renderedJson(
+  overrides: {
+    status?: number;
+    usesDefer?: boolean;
+    data?: unknown;
+    deferredKeys?: string[];
+  } = {},
+) {
   const data = overrides.data ?? { id: 1 };
 
   return {
@@ -161,7 +171,12 @@ describe("server-side page cache (route.cache.serverCache)", () => {
   beforeAll(async () => {
     await registerHttpPlugins(server);
 
-    registerRoute("/__scache-basic", server, { public: true, maxAge: 60, serverCache: true, tags: ["basic"] });
+    registerRoute("/__scache-basic", server, {
+      public: true,
+      maxAge: 60,
+      serverCache: true,
+      tags: ["basic"],
+    });
     registerRoute("/__scache-locale", server, {
       public: true,
       maxAge: 60,
@@ -230,6 +245,12 @@ describe("server-side page cache (route.cache.serverCache)", () => {
       serverCache: true,
       tags: ["streamed"],
     });
+    registerRoute("/__scache-entry-limit", server, {
+      public: true,
+      maxAge: 60,
+      serverCache: true,
+      tags: ["entry-limit"],
+    });
 
     router.scan(server);
   });
@@ -251,6 +272,7 @@ describe("server-side page cache (route.cache.serverCache)", () => {
 
   afterEach(() => {
     setConfig("auth.cookie.name", undefined as never);
+    setConfig("pageCache.maxEntryBytes", undefined as never);
   });
 
   afterAll(async () => {
@@ -285,7 +307,11 @@ describe("server-side page cache (route.cache.serverCache)", () => {
     // locale cookie is present (`core/src/http/request.ts`'s `resolveLocale`)
     // — a deterministic way to force two different resolved locales without
     // any localization config.
-    const en = await server.inject({ method: "GET", url: "/__scache-locale", headers: { locale: "en" } });
+    const en = await server.inject({
+      method: "GET",
+      url: "/__scache-locale",
+      headers: { locale: "en" },
+    });
     expect(en.headers["x-warlock-cache"]).toBe("miss");
     expect(renderPageRequest).toHaveBeenCalledTimes(1);
 
@@ -297,7 +323,11 @@ describe("server-side page cache (route.cache.serverCache)", () => {
     expect(enHit.headers["x-warlock-cache"]).toBe("hit");
     expect(renderPageRequest).toHaveBeenCalledTimes(1);
 
-    const fr = await server.inject({ method: "GET", url: "/__scache-locale", headers: { locale: "fr" } });
+    const fr = await server.inject({
+      method: "GET",
+      url: "/__scache-locale",
+      headers: { locale: "fr" },
+    });
     expect(fr.headers["x-warlock-cache"]).toBe("miss");
     expect(renderPageRequest).toHaveBeenCalledTimes(2);
   });
@@ -502,7 +532,10 @@ describe("server-side page cache (route.cache.serverCache)", () => {
     await server.inject({
       method: "GET",
       url: "/__scache-locale",
-      headers: { [WARLOCK_DATA_REQUEST_HEADER]: WARLOCK_DATA_REQUEST_VALUE, accept: NDJSON_CONTENT_TYPE },
+      headers: {
+        [WARLOCK_DATA_REQUEST_HEADER]: WARLOCK_DATA_REQUEST_VALUE,
+        accept: NDJSON_CONTENT_TYPE,
+      },
     });
     const jsonCallOptions = renderPageRequest.mock.calls[1]![1] as {
       awaitDeferredForDataRequest?: boolean;
@@ -619,14 +652,24 @@ describe("server-side page cache (route.cache.serverCache)", () => {
     renderPageRequest.mockImplementation(
       async (_url: string, options: { createHttp: () => { request: Request } }) => {
         const { request } = options.createHttp();
-        return renderedHtml({ html: `<html><body>${String(request.header("host"))}</body></html>` });
+        return renderedHtml({
+          html: `<html><body>${String(request.header("host"))}</body></html>`,
+        });
       },
     );
 
-    const alpha = await server.inject({ method: "GET", url: "/__scache-tenant", headers: { host: "alpha.test" } });
+    const alpha = await server.inject({
+      method: "GET",
+      url: "/__scache-tenant",
+      headers: { host: "alpha.test" },
+    });
     expect(alpha.headers["x-warlock-cache"]).toBe("miss");
 
-    const beta = await server.inject({ method: "GET", url: "/__scache-tenant", headers: { host: "beta.test" } });
+    const beta = await server.inject({
+      method: "GET",
+      url: "/__scache-tenant",
+      headers: { host: "beta.test" },
+    });
     expect(beta.headers["x-warlock-cache"]).toBe("miss");
     expect(beta.body).toContain("beta.test");
     expect(beta.body).not.toContain("alpha.test");
@@ -642,8 +685,16 @@ describe("server-side page cache (route.cache.serverCache)", () => {
   });
 
   it("route.cache.varyBy splits entries on the same host (e.g. a preview-theme header)", async () => {
-    const a = await server.inject({ method: "GET", url: "/__scache-vary", headers: { "x-preview-theme": "a" } });
-    const b = await server.inject({ method: "GET", url: "/__scache-vary", headers: { "x-preview-theme": "b" } });
+    const a = await server.inject({
+      method: "GET",
+      url: "/__scache-vary",
+      headers: { "x-preview-theme": "a" },
+    });
+    const b = await server.inject({
+      method: "GET",
+      url: "/__scache-vary",
+      headers: { "x-preview-theme": "b" },
+    });
     const aAgain = await server.inject({
       method: "GET",
       url: "/__scache-vary",
@@ -694,6 +745,236 @@ describe("server-side page cache (route.cache.serverCache)", () => {
     expect(hit.headers["x-warlock-cache"]).toBe("hit");
     expect(hit.body).toBe(miss.body);
     expect(hit.body).not.toContain("loading theme");
+  });
+
+  // ── Per-entry byte ceiling (`pageCache.maxEntryBytes`) ───────────────────
+  // The cache write for a store-eligible document happens AFTER the tee'd
+  // live response has fully drained (`create-page-route-handler.ts`'s
+  // `pendingPageCacheWrite`) — `server.inject()` itself resolves the moment
+  // the underlying (mocked) HTTP response ends, which is a tick earlier than
+  // that trailing write. A microtask/timer flush closes that gap, the same
+  // way `defer-streaming.spec.ts`/`crawler-mode.spec.ts` already do for
+  // their own post-response async work.
+  async function flushPendingCacheWrite(): Promise<void> {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+
+  // A streamed document, built out of many small chunks so the ceiling is
+  // genuinely crossed mid-stream rather than in one write.
+  function oversizedPipeableStream(totalBytes: number, chunkSize = 65_536) {
+    return {
+      pipe<T extends NodeJS.WritableStream>(destination: T): T {
+        let written = 0;
+
+        while (written < totalBytes) {
+          const size = Math.min(chunkSize, totalBytes - written);
+          destination.write("a".repeat(size));
+          written += size;
+        }
+
+        destination.end();
+        return destination;
+      },
+      abort() {},
+    };
+  }
+
+  it("an oversized document on a MISS is served in full, never cached, with one entry_too_large observation", async () => {
+    const bytes = DEFAULT_PAGE_CACHE_MAX_ENTRY_BYTES + 1024;
+    renderPageRequest.mockImplementation(async () => ({
+      ...renderedHtml(),
+      pipeableStream: oversizedPipeableStream(bytes),
+    }));
+
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const miss = await server.inject({ method: "GET", url: "/__scache-entry-limit" });
+      expect(miss.headers["x-warlock-cache"]).toBe("miss");
+      expect(Buffer.byteLength(miss.body)).toBe(bytes);
+      await flushPendingCacheWrite();
+
+      const observations = warned.mock.calls.filter(
+        (args) => (args[1] as { reason?: string } | undefined)?.reason === "entry_too_large",
+      );
+      expect(observations).toHaveLength(1);
+      expect(observations[0]![1]).toEqual({
+        reason: "entry_too_large",
+        bytes,
+        limit: DEFAULT_PAGE_CACHE_MAX_ENTRY_BYTES,
+      });
+
+      renderPageRequest.mockImplementation(async () => renderedHtml());
+      const again = await server.inject({ method: "GET", url: "/__scache-entry-limit" });
+      expect(again.headers["x-warlock-cache"]).toBe("miss");
+      expect(renderPageRequest).toHaveBeenCalledTimes(2);
+    } finally {
+      warned.mockRestore();
+    }
+  });
+
+  it("a document under the ceiling is cached exactly as before", async () => {
+    const bytes = DEFAULT_PAGE_CACHE_MAX_ENTRY_BYTES - 1024;
+    renderPageRequest.mockImplementation(async () => ({
+      ...renderedHtml(),
+      pipeableStream: oversizedPipeableStream(bytes),
+    }));
+
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const miss = await server.inject({ method: "GET", url: "/__scache-entry-limit" });
+      expect(miss.headers["x-warlock-cache"]).toBe("miss");
+      expect(Buffer.byteLength(miss.body)).toBe(bytes);
+      await flushPendingCacheWrite();
+
+      const hit = await server.inject({ method: "GET", url: "/__scache-entry-limit" });
+      expect(hit.headers["x-warlock-cache"]).toBe("hit");
+      expect(hit.body).toBe(miss.body);
+      expect(renderPageRequest).toHaveBeenCalledTimes(1);
+      expect(
+        warned.mock.calls.some(
+          (args) => (args[1] as { reason?: string } | undefined)?.reason === "entry_too_large",
+        ),
+      ).toBe(false);
+    } finally {
+      warned.mockRestore();
+    }
+  });
+
+  it("an explicitly non-cacheable response over the ceiling is untouched: served in full, no observation", async () => {
+    const bytes = DEFAULT_PAGE_CACHE_MAX_ENTRY_BYTES + 1024;
+    renderPageRequest.mockImplementation(async () =>
+      renderedHtml({
+        html: "a".repeat(bytes),
+        cookies: [{ name: "session", value: "abc", options: { raw: true } }],
+      }),
+    );
+
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const response = await server.inject({ method: "GET", url: "/__scache-cookie" });
+      expect(Buffer.byteLength(response.body)).toBe(bytes);
+      expect(response.headers["set-cookie"]).toBeDefined();
+      expect(
+        warned.mock.calls.some(
+          (args) => (args[1] as { reason?: string } | undefined)?.reason === "entry_too_large",
+        ),
+      ).toBe(false);
+      expect(fakeCacheStore.size).toBe(0);
+    } finally {
+      warned.mockRestore();
+    }
+  });
+
+  it("an explicitly non-cacheable streamed page is never tapped: no buffering, no observation", async () => {
+    const bytes = DEFAULT_PAGE_CACHE_MAX_ENTRY_BYTES + 1024;
+    renderPageRequest.mockImplementation(async () => ({
+      ...renderedHtml({ cookies: [{ name: "session", value: "abc", options: { raw: true } }] }),
+      pipeableStream: oversizedPipeableStream(bytes),
+    }));
+
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const tapped = vi.spyOn(pageCacheEntryLimit, "tapPipeableStreamForPageCacheLimit");
+
+    try {
+      const response = await server.inject({ method: "GET", url: "/__scache-cookie" });
+      expect(Buffer.byteLength(response.body)).toBe(bytes);
+      await flushPendingCacheWrite();
+
+      // Store-time eligibility (`isStoreEligible`) is checked BEFORE the
+      // ceiling is ever consulted, so a page the eligibility check already
+      // refused must never be wrapped for byte-counting — the live response
+      // above is the ORIGINAL stream, not a tapped copy.
+      expect(tapped).not.toHaveBeenCalled();
+      expect(
+        warned.mock.calls.some(
+          (args) => (args[1] as { reason?: string } | undefined)?.reason === "entry_too_large",
+        ),
+      ).toBe(false);
+      expect(fakeCacheStore.size).toBe(0);
+    } finally {
+      warned.mockRestore();
+      tapped.mockRestore();
+    }
+  });
+
+  it("concurrent oversized misses each serve in full and neither is cached", async () => {
+    const bytes = DEFAULT_PAGE_CACHE_MAX_ENTRY_BYTES + 1024;
+    renderPageRequest.mockImplementation(async () => ({
+      ...renderedHtml(),
+      pipeableStream: oversizedPipeableStream(bytes),
+    }));
+
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const [first, second, third] = await Promise.all([
+        server.inject({ method: "GET", url: "/__scache-entry-limit" }),
+        server.inject({ method: "GET", url: "/__scache-entry-limit" }),
+        server.inject({ method: "GET", url: "/__scache-entry-limit" }),
+      ]);
+
+      expect(first.headers["x-warlock-cache"]).toBe("miss");
+      expect(second.headers["x-warlock-cache"]).toBe("miss");
+      expect(third.headers["x-warlock-cache"]).toBe("miss");
+      expect(Buffer.byteLength(first.body)).toBe(bytes);
+      expect(Buffer.byteLength(second.body)).toBe(bytes);
+      expect(Buffer.byteLength(third.body)).toBe(bytes);
+      expect(renderPageRequest).toHaveBeenCalledTimes(3);
+      await flushPendingCacheWrite();
+      expect(fakeCacheStore.size).toBe(0);
+
+      // Each concurrent MISS taps and reports its own oversized copy — one
+      // `entry_too_large` observation per response, never deduplicated down
+      // to one per key.
+      const observations = warned.mock.calls.filter(
+        (args) => (args[1] as { reason?: string } | undefined)?.reason === "entry_too_large",
+      );
+      expect(observations).toHaveLength(3);
+      for (const observation of observations) {
+        expect(observation[1]).toEqual({
+          reason: "entry_too_large",
+          bytes,
+          limit: DEFAULT_PAGE_CACHE_MAX_ENTRY_BYTES,
+        });
+      }
+    } finally {
+      warned.mockRestore();
+    }
+  });
+
+  it("a custom pageCache.maxEntryBytes is honoured", async () => {
+    setConfig("pageCache.maxEntryBytes", 2048);
+
+    renderPageRequest.mockImplementation(async () => ({
+      ...renderedHtml(),
+      pipeableStream: oversizedPipeableStream(4096, 512),
+    }));
+
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const miss = await server.inject({ method: "GET", url: "/__scache-entry-limit" });
+      expect(Buffer.byteLength(miss.body)).toBe(4096);
+      await flushPendingCacheWrite();
+
+      const observations = warned.mock.calls.filter(
+        (args) => (args[1] as { reason?: string } | undefined)?.reason === "entry_too_large",
+      );
+      expect(observations).toHaveLength(1);
+      expect(observations[0]![1]).toEqual({ reason: "entry_too_large", bytes: 4096, limit: 2048 });
+    } finally {
+      warned.mockRestore();
+    }
+  });
+
+  it("rejects an invalid pageCache.maxEntryBytes at config read", () => {
+    for (const invalid of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, "1mb"]) {
+      setConfig("pageCache.maxEntryBytes", invalid as never);
+      expect(() => resolvePageCacheMaxEntryBytes()).toThrow(InvalidPageCacheMaxEntryBytesError);
+    }
   });
 
   // ── A cache failure must never be silent ──────────────────────────────────
