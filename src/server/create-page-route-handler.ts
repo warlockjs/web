@@ -40,6 +40,7 @@ import type { RequestStylesheetUrlResolver } from "./document-stylesheet-urls";
 import { resolveAuthCookieName } from "./auth-cookie-name";
 import { frameworkDefaultNotFoundDocument } from "./not-found-page";
 import { looksAuthenticated } from "./page-cache-eligibility";
+import { hasCookieRequiringPageCacheBypass } from "./page-cache-cookie-bypass";
 import { type PageCacheVariant } from "./page-cache-key";
 import { pageVaryHeader } from "./page-vary-header";
 import { reportServerError } from "./report-server-error";
@@ -335,6 +336,13 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     // verification, no loader execution — exactly like `looksAuthenticated`'s
     // own doc comment describes.
     //
+    // SECURITY FIX, card ad861076 (5.17): ORed with
+    // `hasCookieRequiringPageCacheBypass`, which does not depend on
+    // `auth.cookie.name` at all — it bypasses on ANY cookie other than the
+    // framework's locale cookie, so a session cookie under an app-specific
+    // name (never recognized by `looksAuthenticated`) still forces a bypass
+    // instead of being cached and replayed to the next anonymous visitor.
+    //
     // Computed for every GET to an opted-in route, not only when
     // `serverCache` is on: `applyResponseCacheFloor` below reuses this SAME
     // result to decide `Cache-Control`, so a route with `cache.public` but no
@@ -343,7 +351,8 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     // `request.locals.authDerived` (`response-cache-floor.ts`).
     const requestLooksAuthenticated =
       cache !== undefined && request.method === "GET"
-        ? looksAuthenticated(request, resolveAuthCookieName())
+        ? looksAuthenticated(request, resolveAuthCookieName()) ||
+          hasCookieRequiringPageCacheBypass(request)
         : false;
 
     const credentialedRequest = cache?.serverCache === true ? requestLooksAuthenticated : false;

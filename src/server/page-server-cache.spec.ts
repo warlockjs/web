@@ -460,6 +460,131 @@ describe("server-side page cache (route.cache.serverCache)", () => {
     expect(bypassed.headers["x-warlock-cache"]).toBe("bypass");
   });
 
+  // ── General cookie bypass — SECURITY FIX, card ad861076 (5.17) ──────────
+  // `auth.cookie.name` never learns about a cookie named `token` (or any
+  // other app-specific session cookie name), so the checks above alone would
+  // let a signed-in render get stored and replayed to the next guest. These
+  // prove the general bypass: ANY cookie other than the locale cookie, with
+  // no dependency on `auth.cookie.name` at all.
+  it("admin GET with Cookie: token=abc bypasses before any guest entry exists; a following anonymous GET misses and never sees the admin's body", async () => {
+    renderPageRequest.mockImplementation(
+      async (_url: string, options: { createHttp: () => { request: Request } }) => {
+        const { request } = options.createHttp();
+        request.decodedAccessToken = { userType: "admin" };
+        return renderedHtml({ html: "<!doctype html><html><body>admin secret</body></html>" });
+      },
+    );
+
+    const admin = await server.inject({
+      method: "GET",
+      url: "/__scache-basic",
+      headers: { cookie: "token=abc" },
+    });
+    expect(admin.headers["x-warlock-cache"]).toBe("bypass");
+    expect(admin.headers["cache-control"]).toBe("private, no-store");
+    expect(admin.body).toContain("admin secret");
+
+    renderPageRequest.mockImplementation(async () => renderedHtml());
+
+    const guest = await server.inject({ method: "GET", url: "/__scache-basic" });
+    expect(guest.headers["x-warlock-cache"]).toBe("miss");
+    expect(guest.body).not.toContain("admin secret");
+    expect(renderPageRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("guest miss then hit, then Cookie: token=abc bypasses with a fresh render body — never the stored guest entry", async () => {
+    const miss = await server.inject({ method: "GET", url: "/__scache-basic" });
+    expect(miss.headers["x-warlock-cache"]).toBe("miss");
+
+    const hit = await server.inject({ method: "GET", url: "/__scache-basic" });
+    expect(hit.headers["x-warlock-cache"]).toBe("hit");
+    expect(renderPageRequest).toHaveBeenCalledTimes(1);
+
+    renderPageRequest.mockImplementation(async () =>
+      renderedHtml({ html: "<!doctype html><html><body>fresh admin render</body></html>" }),
+    );
+
+    const bypassed = await server.inject({
+      method: "GET",
+      url: "/__scache-basic",
+      headers: { cookie: "token=abc" },
+    });
+    expect(bypassed.headers["x-warlock-cache"]).toBe("bypass");
+    expect(bypassed.headers["cache-control"]).toBe("private, no-store");
+    expect(bypassed.body).toContain("fresh admin render");
+    expect(bypassed.body).not.toBe(hit.body);
+    expect(renderPageRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("a Cookie header carrying only the locale cookie stays cacheable — hit on the second request", async () => {
+    const first = await server.inject({
+      method: "GET",
+      url: "/__scache-basic",
+      headers: { cookie: "locale=en" },
+    });
+    expect(first.headers["x-warlock-cache"]).toBe("miss");
+
+    const second = await server.inject({
+      method: "GET",
+      url: "/__scache-basic",
+      headers: { cookie: "locale=en" },
+    });
+    expect(second.headers["x-warlock-cache"]).toBe("hit");
+    expect(renderPageRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("the general cookie bypass applies to the data (x-warlock-data) representation too", async () => {
+    renderPageRequest.mockImplementation(async () => renderedJson());
+
+    const bypassed = await server.inject({
+      method: "GET",
+      url: "/__scache-basic",
+      headers: {
+        [WARLOCK_DATA_REQUEST_HEADER]: WARLOCK_DATA_REQUEST_VALUE,
+        cookie: "token=abc",
+      },
+    });
+
+    expect(bypassed.headers["x-warlock-cache"]).toBe("bypass");
+    expect(bypassed.headers["cache-control"]).toBe("private, no-store");
+  });
+
+  it("a locale cookie alongside another cookie still bypasses — the exemption is ONLY 'nothing but the locale cookie'", async () => {
+    const bypassed = await server.inject({
+      method: "GET",
+      url: "/__scache-basic",
+      headers: { cookie: "locale=en; token=abc" },
+    });
+
+    expect(bypassed.headers["x-warlock-cache"]).toBe("bypass");
+  });
+
+  it("cache.public without serverCache: Cookie: token=abc forces Cache-Control private, no-store, never public", async () => {
+    const response = await server.inject({
+      method: "GET",
+      url: "/__scache-plain",
+      headers: { cookie: "token=abc" },
+    });
+
+    expect(response.headers["x-warlock-cache"]).toBeUndefined();
+    expect(response.headers["cache-control"]).toBe("private, no-store");
+  });
+
+  it.each([
+    ["empty", ""],
+    ["semicolons only", ";;;"],
+    ["no equals sign", "garbage-no-equals"],
+  ])("a malformed/empty Cookie header (%s) fails closed — bypass", async (_label, cookieHeader) => {
+    const response = await server.inject({
+      method: "GET",
+      url: "/__scache-basic",
+      headers: { cookie: cookieHeader },
+    });
+
+    expect(response.headers["x-warlock-cache"]).toBe("bypass");
+    expect(response.headers["cache-control"]).toBe("private, no-store");
+  });
+
   // ── Store eligibility ─────────────────────────────────────────────────
   it("an authDerived response is never stored — a subsequent guest request still misses", async () => {
     touchAuth = (request) => {
