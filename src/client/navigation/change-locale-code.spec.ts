@@ -2,6 +2,7 @@ import { stringify } from "devalue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HydrationDocumentPayloadSource } from "../../hydration-payload";
 import { publishLocaleRouting } from "../../routing/locale-routing";
+import { publishRouteTable, resetRouteTable } from "../../routing/route-table";
 import { routerEvents } from "../../routing/router-events";
 import {
   changeLocaleCode,
@@ -421,5 +422,80 @@ describe("changeLocaleCode — locale routing (design note §B.3)", () => {
 
     expect(scenario.writes).toHaveLength(1);
     expect(scenario.onScreen().payload.locale).toBe("ar");
+  });
+});
+
+describe("changeLocaleCode — [locale] folder routing (design note §C.3)", () => {
+  afterEach(() => {
+    resetRouteTable();
+  });
+
+  /** A payload whose matched route carries `:locale` as its first segment. */
+  function localeParamPayloadOf(locale: string, params: Record<string, string>) {
+    return { ...payloadOf("posts.show", locale), params };
+  }
+
+  it("en→ar pushes the same path with the first segment swapped, keeping query and hash", async () => {
+    publishRouteTable([{ name: "posts.show", path: "/:locale/posts/:slug" }], "clc.spec");
+
+    const browser = stubBrowser("https://app.test/en/posts/x?q=1#h");
+    const fetchMock = respondWith(localeParamPayloadOf("ar", { locale: "ar", slug: "x" }));
+
+    const scenario = harness(pageOf(localeParamPayloadOf("en", { locale: "en", slug: "x" })));
+
+    await createLocaleChanger(scenario.runtime)("ar");
+
+    const [requestedUrl] = fetchMock.mock.calls[0] as [string];
+
+    expect(requestedUrl).toBe("https://app.test/ar/posts/x?q=1#h");
+    expect(browser.pushState).toHaveBeenCalledWith(null, "", "https://app.test/ar/posts/x?q=1#h");
+    expect(browser.replaceState).not.toHaveBeenCalled();
+  });
+
+  it("does not send ?locale= for a [locale]-routed page", async () => {
+    publishRouteTable([{ name: "posts.show", path: "/:locale/posts/:slug" }], "clc.spec");
+
+    stubBrowser("https://app.test/en/posts/x");
+    const fetchMock = respondWith(localeParamPayloadOf("ar", { locale: "ar", slug: "x" }));
+
+    const scenario = harness(pageOf(localeParamPayloadOf("en", { locale: "en", slug: "x" })));
+
+    await createLocaleChanger(scenario.runtime)("ar");
+
+    const [requestedUrl] = fetchMock.mock.calls[0] as [string];
+
+    expect(requestedUrl).not.toContain("locale=");
+  });
+
+  it("does not treat the page as [locale]-routed when strategy none and no [locale] route is published", async () => {
+    // No route table published at all — `routePathOf` answers `undefined`,
+    // the same as a plain page under strategy `"none"`, the innocent case.
+    const browser = stubBrowser("https://app.test/products?page=2#reviews");
+    const fetchMock = respondWith(payloadOf("products.list", "ar"));
+
+    const scenario = harness(pageOf(payloadOf("products.list", "en")));
+
+    await createLocaleChanger(scenario.runtime)("ar");
+
+    const [requestedUrl] = fetchMock.mock.calls[0] as [string];
+
+    expect(requestedUrl).toBe("https://app.test/products?page=2&locale=ar#reviews");
+    expect(browser.pushState).not.toHaveBeenCalled();
+  });
+
+  it("does not treat an ordinary param route named posts.show as [locale]-routed when its path has no leading :locale", async () => {
+    publishRouteTable([{ name: "posts.show", path: "/posts/:slug" }], "clc.spec");
+
+    const browser = stubBrowser("https://app.test/posts/x?page=2#reviews");
+    const fetchMock = respondWith({ ...payloadOf("posts.show", "ar"), params: { slug: "x" } });
+
+    const scenario = harness(pageOf({ ...payloadOf("posts.show", "en"), params: { slug: "x" } }));
+
+    await createLocaleChanger(scenario.runtime)("ar");
+
+    const [requestedUrl] = fetchMock.mock.calls[0] as [string];
+
+    expect(requestedUrl).toBe("https://app.test/posts/x?page=2&locale=ar#reviews");
+    expect(browser.pushState).not.toHaveBeenCalled();
   });
 });

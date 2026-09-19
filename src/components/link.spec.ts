@@ -465,6 +465,76 @@ describe("Link — locale routing (design note §B.2)", () => {
   });
 });
 
+describe("Link — [locale] folder routing (design note §C.2)", () => {
+  /*
+    Same server-branch reasoning as the §B.2 suite above (see its own header):
+    this runs in `node`, so `readCurrentLocale()` reads the per-request ALS
+    store via `withLocale`, never the browser-only slot.
+  */
+  beforeEach(() => {
+    connectSharedStore(() => requestContext.getStore());
+    publishRouteTable(
+      [
+        { name: "main.home", path: "/" },
+        { name: "products.details", path: "/products/:id" },
+        { name: "posts.show", path: "/:locale/posts/:slug" },
+        { name: "posts.deep", path: "/posts/:locale" },
+      ],
+      "link.spec",
+    );
+  });
+
+  afterEach(() => {
+    connectSharedStore(undefined);
+  });
+
+  function withLocale<T>(locale: string, fn: () => T): T {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return requestContext.run(
+      { request: { locale }, response: {} } as any,
+      fn as unknown as () => Promise<T>,
+    ) as unknown as T;
+  }
+
+  it("fills a missing leading :locale param with the current locale", () => {
+    const href = withLocale(
+      "en",
+      () => render({ to: "posts.show", params: { slug: "hello" } }).props.href,
+    );
+
+    expect(href).toBe("/en/posts/hello");
+  });
+
+  it("lets an explicit locale param win over the current locale", () => {
+    const href = withLocale(
+      "en",
+      () => render({ to: "posts.show", params: { slug: "hello", locale: "ar" } }).props.href,
+    );
+
+    expect(href).toBe("/ar/posts/hello");
+  });
+
+  it("does not fill a :locale that is not the first segment", () => {
+    withLocale("en", () => {
+      expect(() => render({ to: "posts.deep" })).toThrow();
+    });
+  });
+
+  it("leaves the link unfilled when no current locale is known", () => {
+    // No `withLocale` — no request context open on the server.
+    expect(() => render({ to: "posts.show", params: { slug: "hello" } })).toThrow();
+  });
+
+  it("does not touch a route with no :locale param at all", () => {
+    const href = withLocale(
+      "en",
+      () => render({ to: "products.details", params: { id: 7 } }).props.href,
+    );
+
+    expect(href).toBe("/products/7");
+  });
+});
+
 describe("Link — locale routing never leaks across concurrent SSR requests", () => {
   /*
     THE CASE the coordinator flagged: `typeof window === "undefined"` in this

@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
+import { hasLeadingLocaleParam } from "../../routing/locale-param-route";
 import { withLocalePrefix } from "../../routing/locale-prefixed-paths";
 import { isPrefixedLocale, readLocaleRouting } from "../../routing/locale-routing";
+import { routePathOf } from "../../routing/route-table";
 import { routerEvents, type NavigationMode } from "../../routing/router-events";
 import { hydrateShared } from "../../shared";
 import { fetchPageData } from "./fetch-page-data";
@@ -40,6 +42,17 @@ import type { RefreshRuntime } from "./refresh";
  * server never has a cookie to persist in this mode (§A.2: the path
  * outranks the cookie), so there is nothing to strip from the address bar
  * either.
+ *
+ * A `[locale]`-folder page (design note §C.3) gets the identical URL-change
+ * treatment, under `strategy: "none"` — the two are mutually exclusive by
+ * construction (`LocaleParamRoutingConflictError`, §C.4), so there is never
+ * a question of which rule applies. The page on screen is recognised as one
+ * by asking the SAME route table `href()` reads (`routePathOf`, never a
+ * second matcher — canon `9c8f878b`): the current payload's matched route
+ * name has a path whose first segment is `:locale`, and that param's value
+ * is the payload's own `locale`. The first path segment is then swapped for
+ * the new code directly, with no `isPrefixedLocale` gate — a `[locale]`
+ * route has no bare/default case the way `prefix-except-default` does.
  *
  * ## Same runtime as `refresh()`, different question
  *
@@ -86,6 +99,20 @@ function withoutLocaleParam(href: string): string | undefined {
   return url.toString();
 }
 
+/** `pathname`'s first segment, e.g. `"ar"` for `/ar/posts`, `""` for `/`. */
+function firstPathSegment(pathname: string): string {
+  const slashIndex = pathname.indexOf("/", 1);
+
+  return slashIndex === -1 ? pathname.slice(1) : pathname.slice(1, slashIndex);
+}
+
+/** `pathname` with its first segment removed, e.g. `/ar/posts` → `/posts`, `/ar` → `/`. */
+function pathWithoutFirstSegment(pathname: string): string {
+  const slashIndex = pathname.indexOf("/", 1);
+
+  return slashIndex === -1 ? "/" : pathname.slice(slashIndex);
+}
+
 /**
  * `href`'s PATH re-prefixed for `code`, under an active
  * `web.localeRouting.strategy` (design note §B.3) — the query and hash are
@@ -101,14 +128,10 @@ function withoutLocaleParam(href: string): string | undefined {
 function reprefixedUrl(href: string, code: string): string {
   const url = new URL(href);
   const routing = readLocaleRouting();
-  const slashIndex = url.pathname.indexOf("/", 1);
-  const firstSegment =
-    slashIndex === -1 ? url.pathname.slice(1) : url.pathname.slice(1, slashIndex);
+  const firstSegment = firstPathSegment(url.pathname);
   const strippedPath =
     firstSegment !== "" && isPrefixedLocale(routing, firstSegment)
-      ? slashIndex === -1
-        ? "/"
-        : url.pathname.slice(slashIndex)
+      ? pathWithoutFirstSegment(url.pathname)
       : url.pathname;
 
   url.pathname = isPrefixedLocale(routing, code)
@@ -116,6 +139,46 @@ function reprefixedUrl(href: string, code: string): string {
     : strippedPath;
 
   return url.toString();
+}
+
+/**
+ * `href`'s PATH re-prefixed for `code`, for a `[locale]`-folder page (design
+ * note §C.3) — the query and hash are carried over untouched, and the
+ * current first path segment is unconditionally replaced: unlike
+ * {@link reprefixedUrl}, a `[locale]` route has no bare/default-locale case
+ * to gate on ({@link isPrefixedLocale} is a `web.localeRouting.strategy`
+ * concept, and the two never coexist — §C.4), and the caller has already
+ * confirmed that first segment IS the current locale before reaching here.
+ */
+function reprefixedUrlForLocaleParam(href: string, code: string): string {
+  const url = new URL(href);
+
+  url.pathname = withLocalePrefix(pathWithoutFirstSegment(url.pathname), code);
+
+  return url.toString();
+}
+
+/**
+ * Whether the page on screen is `[locale]`-routed (design note §C) — its
+ * matched route's path has `:locale` as its FIRST segment, and that param
+ * resolved to the payload's own `locale`. Reads the same published route
+ * table `href()` reads (`routePathOf`), never a second matcher (canon
+ * `9c8f878b`).
+ *
+ * `payload.params` is the key `README`/`hydration-payload.ts` documents as
+ * OPTIONAL — an older build, or a document cached across a deploy — and its
+ * absence answers `false` here rather than guessing.
+ */
+function isLocaleParamRoute(payload: {
+  readonly name: string;
+  readonly locale: string;
+  readonly params?: Readonly<Record<string, string>>;
+}): boolean {
+  if (payload.params?.locale !== payload.locale) return false;
+
+  const path = routePathOf(payload.name);
+
+  return path !== undefined && hasLeadingLocaleParam(path);
 }
 
 /**
@@ -139,18 +202,26 @@ export function createLocaleChanger(runtime: RefreshRuntime): LocaleChanger {
 
     const url = window.location.href;
 
-    // Under an active strategy the locale lives in the PATH, so the switch is
-    // a real URL change — pushState, and a normal (unmarked) page-data fetch
-    // against the re-prefixed URL — instead of the `?locale=` fetch-only
-    // param this module used exclusively before locale routing existed
-    // (design note §B.3). Strategy `"none"` keeps that exact original
-    // behaviour: there is no prefix to move, so the address bar is left
+    // Under an active strategy, OR on a `[locale]`-folder page (design note
+    // §C.3; the two never coexist, §C.4), the locale lives in the URL PATH,
+    // so the switch is a real URL change — pushState, and a normal
+    // (unmarked) page-data fetch against the re-prefixed URL — instead of
+    // the `?locale=` fetch-only param this module used exclusively before
+    // locale routing existed. Neither keeps that exact original behaviour
+    // otherwise: there is no prefix to move, so the address bar is left
     // alone and the choice travels to the server as a query param instead.
     const routing = readLocaleRouting();
     const usesLocaleRouting = routing.strategy !== "none";
-    const targetUrl = usesLocaleRouting ? reprefixedUrl(url, code) : url;
-    const fetchUrl = usesLocaleRouting ? targetUrl : withLocaleParam(url, code);
-    const mode: NavigationMode = usesLocaleRouting ? "push" : CHANGE_LOCALE_MODE;
+    const usesLocaleParamRoute =
+      !usesLocaleRouting && isLocaleParamRoute(runtime.readCurrent().payload);
+    const pathCarriesLocale = usesLocaleRouting || usesLocaleParamRoute;
+    const targetUrl = usesLocaleRouting
+      ? reprefixedUrl(url, code)
+      : usesLocaleParamRoute
+        ? reprefixedUrlForLocaleParam(url, code)
+        : url;
+    const fetchUrl = pathCarriesLocale ? targetUrl : withLocaleParam(url, code);
+    const mode: NavigationMode = pathCarriesLocale ? "push" : CHANGE_LOCALE_MODE;
     const { isCurrent, signal } = runtime.claimTicket();
 
     routerEvents.emitNavigating({ url, mode });
@@ -192,7 +263,7 @@ export function createLocaleChanger(runtime: RefreshRuntime): LocaleChanger {
     const previous = runtime.readCurrent();
     const sameEntry = result.payload.name === previous.payload.name;
 
-    if (usesLocaleRouting) {
+    if (pathCarriesLocale) {
       // A REAL URL change: the new prefix is the address for this page now,
       // not a fetch-only marker to clean up — `pushState`, same as a plain
       // navigation, so Back returns to the previous locale's URL.
@@ -219,14 +290,14 @@ export function createLocaleChanger(runtime: RefreshRuntime): LocaleChanger {
       routeSource: sameEntry ? previous.routeSource : result.payload,
     });
 
-    // `result.url` is the URL the response actually came from. Under the
-    // `"none"` path it is the FETCH url, which always carries the `?locale=`
-    // this module added — reporting it verbatim would announce a URL that
-    // was never, and is never meant to be, on the address bar, so it is
-    // stripped back off. Under an active strategy the fetch URL IS the
-    // visible URL (no marker was ever added), so `result.url` is reported
-    // as-is.
-    const resolvedUrl = usesLocaleRouting
+    // `result.url` is the URL the response actually came from. Without a
+    // path-carried locale it is the FETCH url, which always carries the
+    // `?locale=` this module added — reporting it verbatim would announce a
+    // URL that was never, and is never meant to be, on the address bar, so
+    // it is stripped back off. With a path-carried locale the fetch URL IS
+    // the visible URL (no marker was ever added), so `result.url` is
+    // reported as-is.
+    const resolvedUrl = pathCarriesLocale
       ? result.url
       : (withoutLocaleParam(result.url) ?? result.url);
 

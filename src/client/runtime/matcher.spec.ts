@@ -332,3 +332,33 @@ describe("matchClientRoute — locale routing (design note §B.1)", () => {
     expect(match).not.toHaveProperty("locale");
   });
 });
+
+describe("matchClientRoute — [locale] folder routing (design note §C)", () => {
+  /*
+    §C.1's page carries `:locale` as an ORDINARY leading param — the same
+    grammar `parsePattern` already compiles for any `:name` segment, and
+    strategy `"none"` (a `[locale]` page and a `web.localeRouting.strategy`
+    never coexist — §C.4). So this needs no special-casing in the matcher
+    itself: the point of this suite is to CONFIRM that, not to add behaviour.
+  */
+  const localePage = entry("posts.show", "/:locale/posts");
+
+  it("matches /:locale/posts as a plain param route, with params.locale set", () => {
+    const match = matchClientRoute([localePage], "/ar/posts");
+
+    expect(match).toEqual({ entry: localePage, params: { locale: "ar" } });
+  });
+
+  it("reports no top-level `locale` (that field is the config-prefix strategy's own)", () => {
+    const match = matchClientRoute([localePage], "/ar/posts");
+
+    expect(match).not.toHaveProperty("locale");
+  });
+
+  it("matches the server exactly, same as every other route shape", () => {
+    const server = serverMatch([localePage], "/ar/posts");
+    const client = matchClientRoute([localePage], "/ar/posts");
+
+    expectExactMatch(client, server);
+  });
+});

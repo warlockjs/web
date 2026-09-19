@@ -212,6 +212,22 @@ export function knownRouteNames(): readonly string[] {
   return slot === undefined ? [] : [...slot.table.keys()];
 }
 
+/**
+ * The raw, uninterpolated path pattern published for `name` (e.g.
+ * `"/:locale/posts"`), or `undefined` when the name is not known or nothing
+ * is published yet.
+ *
+ * A second, narrower reader alongside {@link href} rather than a change to
+ * it: `href()` stays the pure interpolation primitive (durable — emails,
+ * redirects, non-React callers), while this exists for a caller that needs
+ * to reason about the PATTERN itself before interpolating it — `<Link>`
+ * filling a leading `:locale` param with the current locale (design note
+ * §C.2) is the one caller today.
+ */
+export function routePathOf(name: string): string | undefined {
+  return readSlot()?.table.get(name);
+}
+
 /** Who published the live table, for diagnosis. `undefined` when nothing has. */
 export function routeTablePublisher(): string | undefined {
   return readSlot()?.publishedBy;

@@ -16,21 +16,9 @@ import type { HttpContext } from "@warlock.js/core";
 import { frameworkDefaultNotFoundDocument } from "../not-found-page";
 import type { PageRouteHandler } from "../create-page-route-handler";
 
-/** The literal param name a leading `:locale` segment must use. */
-const LOCALE_PARAM_NAME = "locale";
+import { LOCALE_PARAM_NAME } from "../../routing/locale-param-route";
 
-/**
- * True when `path`'s FIRST segment is the param `:locale` — a bare
- * `src/web/[locale]/...` page or an explicit `/:locale/...` route. A
- * `:locale` param appearing deeper in the path (`/posts/:locale`) is an
- * ordinary param and does not count (design note §C.1's "only the first
- * segment counts").
- */
-export function hasLeadingLocaleParam(path: string): boolean {
-  const [firstSegment] = path.split("/").filter((segment) => segment.length > 0);
-
-  return firstSegment === `:${LOCALE_PARAM_NAME}`;
-}
+export { hasLeadingLocaleParam } from "../../routing/locale-param-route";
 
 /**
  * Wraps a `[locale]`-routed page's ordinary handler so that:

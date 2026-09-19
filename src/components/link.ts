@@ -8,10 +8,11 @@ import type {
 } from "react";
 import { prefetchPageData } from "../client/navigation/prefetch";
 import { readCurrentLocale } from "../routing/current-locale";
+import { hasLeadingLocaleParam } from "../routing/locale-param-route";
 import { withLocalePrefix } from "../routing/locale-prefixed-paths";
 import { isPrefixedLocale, readLocaleRouting } from "../routing/locale-routing";
 import { currentNavigator } from "../routing/navigator";
-import { href, knownRouteNames } from "../routing/route-table";
+import { href, knownRouteNames, routePathOf } from "../routing/route-table";
 
 /**
  * `<Link>` is SUGAR over `href()`, and deliberately thin.
@@ -307,6 +308,37 @@ function prefixForActiveLocale(url: string): string {
   return withLocalePrefix(url, locale);
 }
 
+/**
+ * Fills a missing `locale` param with the current locale, for a route NAME
+ * whose path's FIRST segment is `:locale` (design note §C.2) — a
+ * `[locale]`-folder page. An explicit `locale` in `params` always wins, over
+ * both the current locale and over the check below: a caller naming the
+ * locale it wants is never second-guessed. A `:locale` appearing deeper in
+ * the path is left alone — only {@link hasLeadingLocaleParam} counts, so a
+ * `/posts/:locale` route (an ordinary param, not this feature) is never
+ * touched.
+ *
+ * `href()` itself stays pure (see this file's own header on why) — this is
+ * `<Link>` sugar, the same seam {@link prefixForActiveLocale} already
+ * occupies for the config-prefix strategy (design note §B.2).
+ */
+function fillLocaleParam(
+  name: string,
+  params: LinkDestinationProps["params"],
+): LinkDestinationProps["params"] {
+  if (params?.locale !== undefined) return params;
+
+  const path = routePathOf(name);
+
+  if (path === undefined || !hasLeadingLocaleParam(path)) return params;
+
+  const locale = readCurrentLocale();
+
+  if (locale === undefined) return params;
+
+  return { ...params, locale };
+}
+
 const ROUTE_ARGUMENT_PROPS = ["params", "query"] as const;
 
 function resolveDestination(props: LinkDestinationProps): Destination {
@@ -350,7 +382,9 @@ function resolveDestination(props: LinkDestinationProps): Destination {
     linked, and nothing said so at the call site.
   */
   return {
-    url: prefixForActiveLocale(href(destination, props.params, props.query)),
+    url: prefixForActiveLocale(
+      href(destination, fillLocaleParam(destination, props.params), props.query),
+    ),
     isInApp: true,
   };
 }
