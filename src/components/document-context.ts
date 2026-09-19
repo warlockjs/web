@@ -24,6 +24,18 @@ export type SerializedPageError = {
    * alongside `stack`; see `serializePageError` (`web/src/server/error-page.ts`).
    */
   readonly errorCode?: string;
+  /**
+   * Present only for a `PageValidationFailedError` (a failed page-level
+   * `validation` export). Each entry is the Seal validation result's
+   * `{ input, type, error }` — the field name, the failing rule's type, and
+   * its (translated) message — and NOTHING else: never the submitted value.
+   * See `serializePageError` (`web/src/server/error-page.ts`).
+   */
+  readonly errors?: readonly {
+    readonly input: string;
+    readonly type: string;
+    readonly error: string;
+  }[];
 };
 
 /**

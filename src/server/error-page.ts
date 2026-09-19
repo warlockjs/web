@@ -5,6 +5,34 @@ import { ERROR_PAGE_METADATA } from "./resolve-page-metadata";
 import type { MetadataOutput } from "../metadata";
 import type { ServerErrorPageProps } from "../props";
 import { PublicPageError } from "./public-page-error";
+import { PageValidationFailedError } from "./page-validation-failed-error";
+
+/** One sanitized Seal validation issue — never the submitted value. */
+type SafeValidationIssue = {
+  readonly input: string;
+  readonly type: string;
+  readonly error: string;
+};
+
+/**
+ * Picks ONLY `{ input, type, error }` off each raw Seal validation error,
+ * dropping every other field a validator might carry (notably the submitted
+ * value) before it can reach the browser. Trusts nothing about the shape of
+ * `thrown.errors` beyond what it reads here.
+ */
+function sanitizeValidationIssues(errors: unknown): SafeValidationIssue[] {
+  if (!Array.isArray(errors)) return [];
+
+  return errors
+    .filter(
+      (issue): issue is Record<string, unknown> => typeof issue === "object" && issue !== null,
+    )
+    .map((issue) => ({
+      input: typeof issue.input === "string" ? issue.input : "",
+      type: typeof issue.type === "string" ? issue.type : "",
+      error: typeof issue.error === "string" ? issue.error : "",
+    }));
+}
 
 /** Server-only shape of an application-owned `error.page.tsx` namespace. */
 export type ErrorPageModule = {
@@ -23,11 +51,15 @@ export const GENERIC_PRODUCTION_ERROR_MESSAGE = "An unexpected error occurred.";
  * THE chokepoint every browser-bound error — initial HTML/hydration,
  * navigation/NDJSON, and deferred settlements alike — must pass through
  * before it reaches a response. In production, only a {@link PublicPageError}
- * exposes its own `message`; every other thrown value serializes to the same
- * generic message plus an opaque `errorCode` an operator can join against the
- * unconditional server-side report line (`reportServerError`/`reportRenderError`).
- * `stack` never crosses this boundary in production, including for a
- * `PublicPageError`. Development keeps full diagnostics, unchanged.
+ * exposes its own `message`, and a `PageValidationFailedError` (a visitor's
+ * malformed input, never a server fault) exposes its own stable message plus
+ * `errors` — the field name, rule type and translated rule message for each
+ * failed Seal rule, NEVER the submitted value; every other thrown value
+ * serializes to the same generic message plus an opaque `errorCode` an
+ * operator can join against the unconditional server-side report line
+ * (`reportServerError`/`reportRenderError`). `stack` never crosses this
+ * boundary in production, including for a `PublicPageError` or a
+ * `PageValidationFailedError`. Development keeps full diagnostics, unchanged.
  *
  * `requestId`, when the caller has one on hand (an in-flight HTTP request),
  * becomes the `errorCode` so it joins the SAME id already carried on
@@ -36,6 +68,17 @@ export const GENERIC_PRODUCTION_ERROR_MESSAGE = "An unexpected error occurred.";
  * joinable through the report line the caller logs alongside it.
  */
 export function serializePageError(thrown: unknown, requestId?: string): SerializedPageError {
+  if (thrown instanceof PageValidationFailedError) {
+    return {
+      name: thrown.name,
+      message: thrown.message,
+      errors: sanitizeValidationIssues(thrown.errors),
+      ...(environment() !== "production" && typeof thrown.stack === "string"
+        ? { stack: thrown.stack }
+        : {}),
+    };
+  }
+
   if (environment() === "production") {
     if (thrown instanceof PublicPageError) {
       return { name: thrown.name || "Error", message: thrown.message };
