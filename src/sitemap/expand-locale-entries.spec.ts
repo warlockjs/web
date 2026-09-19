@@ -116,6 +116,72 @@ describe("expandLocaleEntries", () => {
   });
 });
 
+// Card D, design note §D.1.
+describe("expandLocaleEntries — localeRoutingActive (an active web.localeRouting.strategy)", () => {
+  it("points x-default at the default locale's OWN resolved URL, not the bare path", () => {
+    const result = expandLocaleEntries({ path: "/posts/x" }, undefined, {
+      codes: ["en", "ar"],
+      defaultLocale: "en",
+      // Mirrors what `resolveSitemapConfig()` folds in under "prefix": every
+      // code, including the default, is prefixed.
+      localeUrl: (path, code) => `/${code}${path}`,
+      localeRoutingActive: true,
+    });
+
+    const alternates = result[0]?.entry.alternates;
+
+    expect(alternates).toEqual([
+      { hreflang: "en", path: "/en/posts/x" },
+      { hreflang: "ar", path: "/ar/posts/x" },
+      { hreflang: "x-default", path: "/en/posts/x" },
+    ]);
+  });
+
+  it("still keeps x-default at the bare path when localeRoutingActive is unset (today's behaviour)", () => {
+    const result = expandLocaleEntries({ path: "/posts/x" }, undefined, {
+      codes: ["en", "ar"],
+      defaultLocale: "en",
+      localeUrl: (path, code) => `/${code}${path}`,
+    });
+
+    expect(result[0]?.entry.alternates).toContainEqual({
+      hreflang: "x-default",
+      path: "/posts/x",
+    });
+  });
+});
+
+// Card D, design note §D.1's last bullet: `[locale]`-folder pages (card C).
+describe("expandLocaleEntries — a page whose path carries the :locale param", () => {
+  it("substitutes each code into :locale, and x-default takes the default locale's substitution", () => {
+    const result = expandLocaleEntries(
+      { path: "/:locale/posts/hello-world" },
+      "/:locale/posts/:slug",
+      { codes: ["en", "ar"], defaultLocale: "en" },
+    );
+
+    expect(result.map((item) => item.entry.path)).toEqual([
+      "/en/posts/hello-world",
+      "/ar/posts/hello-world",
+    ]);
+    expect(result[0]?.entry.alternates).toEqual([
+      { hreflang: "en", path: "/en/posts/hello-world" },
+      { hreflang: "ar", path: "/ar/posts/hello-world" },
+      { hreflang: "x-default", path: "/en/posts/hello-world" },
+    ]);
+  });
+
+  it("still prefers a page's own localePaths for a divergent slug over the substitution", () => {
+    const result = expandLocaleEntries(
+      { path: "/:locale/about", localePaths: { ar: "/:locale/about-ar" } },
+      "/:locale/about",
+      { codes: ["en", "ar"] },
+    );
+
+    expect(result.map((item) => item.entry.path)).toEqual(["/en/about", "/:locale/about-ar"]);
+  });
+});
+
 describe("localeInvariantEntry", () => {
   it("produces one entry with zero alternates at the page's own path", () => {
     const result = localeInvariantEntry({ path: "/privacy" }, undefined);

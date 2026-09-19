@@ -37,13 +37,25 @@ function renderDescriptor(descriptor: MetadataDescriptor): ReactElement {
  * rather than by two hand-kept lists of fallback rules.
  */
 export function Head(): ReactElement {
-  const { metadata, stylesheetUrls } = useDocumentContext("Head");
+  const { metadata, stylesheetUrls, localeAlternates } = useDocumentContext("Head");
 
   return createElement(
     Fragment,
     null,
     createElement("meta", { charSet: "utf-8" }),
     ...resolveMetadataDescriptors(metadata).map(renderDescriptor),
+    // Design note §D.2 — framework-owned, not a `MetadataDescriptor`: these
+    // are derived from the request/route, never from a page's own
+    // `metadata` export (which `resolveMetadataDescriptors` already covers
+    // via `canonical`), so they need no slot in that descriptor list.
+    ...(localeAlternates ?? []).map((alternate) =>
+      createElement("link", {
+        key: `alternate-${alternate.hreflang}`,
+        rel: "alternate",
+        hrefLang: alternate.hreflang,
+        href: alternate.href,
+      }),
+    ),
     // Rendered last, mirroring where the framework's old post-render splice
     // inserted them (right before `</head>`, after everything else the
     // document already put there) — see `stylesheetUrls` on

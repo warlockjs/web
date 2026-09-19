@@ -31,6 +31,17 @@ export type LocaleMatrix = {
   readonly defaultLocale?: string;
   /** App override for the default `?locale=<code>` URL convention — `web.sitemap.localeUrl`. */
   readonly localeUrl?: (path: string, localeCode: string) => string;
+  /**
+   * True when `web.localeRouting.strategy` is active — design note §D.1.
+   * `resolveSitemapConfig()` is the one place this is decided (it also folds
+   * a strategy-aware default into {@link localeUrl} when the app did not set
+   * its own), so `x-default` here can point at the DEFAULT LOCALE'S OWN URL
+   * (prefixed or bare, whichever the strategy gives it) instead of always
+   * the bare `path` — bare would be wrong under `"prefix"`, where the
+   * default locale is prefixed too. `undefined`/`false` keeps today's
+   * behaviour: `x-default` always the bare path.
+   */
+  readonly localeRoutingActive?: boolean;
 };
 
 /** One collected URL, tagged with the locale it primarily belongs to — `undefined` when locale-invariant or the app has no configured locales. */
@@ -46,8 +57,27 @@ function defaultLocaleUrl(path: string, code: string): string {
   return `${path}${separator}locale=${encodeURIComponent(code)}`;
 }
 
+/**
+ * True for a page whose path carries the literal `:locale` route param — a
+ * `[locale]`-folder page (design note §C, §D.1's last bullet). Such a page
+ * has no bare form at all: EVERY locale, including the default, substitutes
+ * into the same segment.
+ */
+function hasLocaleParam(path: string): boolean {
+  return /(^|\/):locale(\/|$)/.test(path);
+}
+
+/** Substitutes `code` into a `[locale]`-folder page's literal `:locale` segment. */
+function substituteLocaleParam(path: string, code: string): string {
+  return path.replace(
+    /(^|\/):locale(\/|$)/,
+    (_match, before: string, after: string) => `${before}${code}${after}`,
+  );
+}
+
 function pathForLocale(url: SitemapPageUrl, code: string, matrix: LocaleMatrix): string {
   if (url.localePaths?.[code] !== undefined) return url.localePaths[code];
+  if (hasLocaleParam(url.path)) return substituteLocaleParam(url.path, code);
 
   return (matrix.localeUrl ?? defaultLocaleUrl)(url.path, code);
 }
@@ -95,7 +125,19 @@ export function expandLocaleEntries(
   }));
 
   if (matrix.defaultLocale) {
-    alternates.push({ hreflang: "x-default", path: url.path });
+    // Design note §D.1: under an active strategy (or a `:locale`-folder
+    // page), `x-default` points at the DEFAULT locale's own resolved URL —
+    // bare under `"prefix-except-default"`, but PREFIXED under `"prefix"`
+    // or a `:locale` page, where the bare `path` either redirects or does
+    // not resolve at all. Outside that (today's `?locale=` convention, or an
+    // app's own unrelated `localeUrl` hook), `x-default` keeps pointing at
+    // the page's bare `path` — the language-neutral fallback, unchanged.
+    const xDefaultPath =
+      matrix.localeRoutingActive || hasLocaleParam(url.path)
+        ? pathForLocale(url, matrix.defaultLocale, matrix)
+        : url.path;
+
+    alternates.push({ hreflang: "x-default", path: xDefaultPath });
   }
 
   return matrix.codes.map((code) => ({

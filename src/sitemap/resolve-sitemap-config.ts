@@ -6,6 +6,8 @@
  * declared, not where every namespace's defaults are folded in.
  */
 import { config, getPublicUrl, storagePath } from "@warlock.js/core";
+import { isPrefixedLocale, readLocaleRouting, type LocaleRouting } from "../routing/locale-routing";
+import { withLocalePrefix } from "../routing/locale-prefixed-paths";
 import { MissingPublicUrlError } from "./errors";
 import type {
   RegeneratePolicy,
@@ -28,9 +30,23 @@ export type ResolvedSitemapConfig = {
     Pick<SitemapLocaleConfig, "defaultLocale"> & {
       readonly codes: readonly string[];
       readonly localeUrl: WebSitemapConfig["localeUrl"];
+      /** See `expand-locale-entries.ts`'s `LocaleMatrix.localeRoutingActive`. */
+      readonly localeRoutingActive: boolean;
     };
   readonly regenerate: Required<RegeneratePolicy>;
 };
+
+/**
+ * Design note §D.1: the strategy-aware `localeUrl` default an active
+ * `web.localeRouting.strategy` gives the sitemap when the app did not
+ * configure its own — the default locale bare under `"prefix-except-default"`,
+ * prefixed under `"prefix"`, mirroring `isPrefixedLocale`/`withLocalePrefix`
+ * (`../routing/locale-routing.ts`, `../routing/locale-prefixed-paths.ts`),
+ * the SAME functions the server installers use to register these exact URLs.
+ */
+function routingAwareLocaleUrl(routing: LocaleRouting): (path: string, code: string) => string {
+  return (path, code) => (isPrefixedLocale(routing, code) ? withLocalePrefix(path, code) : path);
+}
 
 /**
  * Resolves policy without requiring `app.publicUrl` — a disabled sitemap
@@ -53,6 +69,13 @@ export function resolveSitemapConfig(): ResolvedSitemapConfig {
   const defaultLocale =
     localesConfig?.defaultLocale ?? config.key<string>("app.localeCode") ?? undefined;
 
+  // Design note §D.1: "the codes/default are the same as the routing's" —
+  // `readLocaleRouting()` reads the SAME `app.localeCodes`/`app.localeCode`
+  // keys above, published once at install (`resolve-locale-routing.ts`), so
+  // this never re-derives a second answer for the same question.
+  const routing = readLocaleRouting();
+  const localeRoutingActive = routing.strategy !== "none";
+
   return {
     enabled,
     baseUrl: getPublicUrl(),
@@ -73,7 +96,13 @@ export function resolveSitemapConfig(): ResolvedSitemapConfig {
       codes,
       defaultLocale,
       splitByLocale: localesConfig?.splitByLocale ?? false,
-      localeUrl: sitemapConfig?.localeUrl,
+      // Design note §D.1: "an explicit web.sitemap.localeUrl ... still wins" —
+      // the app's own hook is read first, the routing-aware default only
+      // fills in when the app never set one AND a strategy is active.
+      localeUrl:
+        sitemapConfig?.localeUrl ??
+        (localeRoutingActive ? routingAwareLocaleUrl(routing) : undefined),
+      localeRoutingActive,
     },
     regenerate: {
       onBoot: sitemapConfig?.regenerate?.onBoot ?? true,

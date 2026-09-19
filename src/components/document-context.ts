@@ -221,6 +221,18 @@ export type DocumentContextValue = {
    * present).
    */
   hydrationClientModuleUrl?: string;
+  /**
+   * The `<link rel="alternate" hreflang>` set for THIS request — design note
+   * §D.2, built by `server/resolve-locale-alternates.ts` and rendered
+   * verbatim by `<Head/>`. `undefined` for a page that is not locale-routed
+   * at all (strategy `"none"` and not a `:locale` route), and also when the
+   * page's own `metadata.canonical` is set — an author who already declared
+   * their own canonical owns their own alternates too, so the framework
+   * never adds a second, possibly-conflicting set (design note §D.2, "A
+   * page's own metadata alternates/canonical, if any exists, wins; don't
+   * duplicate").
+   */
+  localeAlternates?: readonly { readonly hreflang: string; readonly href: string }[];
 };
 
 export const DocumentContext = createContext<DocumentContextValue | undefined>(undefined);

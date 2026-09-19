@@ -4,6 +4,7 @@ import {
   buildTracingContext,
   dispatchPhase,
   environment,
+  getPublicUrl,
   isTracingEnabled,
   Response,
   type Request,
@@ -28,6 +29,8 @@ import {
 import { ERROR_PAGE_METADATA } from "./resolve-page-metadata";
 import { registerModules, type RegisterableModuleNamespace } from "../register-modules";
 import { markNonHydrating } from "./page-render-bundle";
+import { resolveLocaleAlternates } from "./resolve-locale-alternates";
+import { readLocaleRouting } from "../routing/locale-routing";
 import type { ServerErrorPageProps } from "../props";
 import {
   buildErrorRecord,
@@ -888,6 +891,20 @@ async function finishRender(
     bundle.metadata = { ...bundle.metadata, robots: "noindex" };
   }
 
+  // Design note §D.2: skipped entirely when the page already declared its
+  // own `metadata.canonical` — that page owns its own alternates too, and
+  // the framework never adds a second, possibly-conflicting set (see
+  // `DocumentContextValue.localeAlternates`).
+  const localeAlternates =
+    bundle.metadata?.canonical === undefined
+      ? resolveLocaleAlternates(
+          request.path,
+          bundle.route.path,
+          readLocaleRouting(),
+          getPublicUrl(),
+        )
+      : undefined;
+
   let documentValue: DocumentContextValue = {
     metadata: bundle.metadata,
     payload: buildHydrationPayload(bundle, documentSlots.locale),
@@ -899,6 +916,7 @@ async function finishRender(
       streamOptions.resolveRequestStylesheetUrls,
     ),
     hydrationClientModuleUrl: streamOptions.hydrationClientModuleUrl,
+    localeAlternates,
   };
 
   const wrapWithContext = (element: ReactNode): ReactNode =>
