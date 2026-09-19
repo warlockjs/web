@@ -1,4 +1,3 @@
-import { extend } from "@mongez/localization";
 import type { ReactNode } from "react";
 import { hydrateRoot } from "react-dom/client";
 import {
@@ -94,14 +93,16 @@ function reportHydrationFailure(error: unknown): void {
 export function hydratePage(buildTree: BuildHydratedTree): void {
   const payload = readHydrationPayload(document);
 
-  // BEFORE `buildTree`/`hydrateRoot`, not after: `useTrans()`
+  // NOT installed here: `installPayloadTranslations` (`install-payload-
+  // translations.ts`) is called from inside `buildTree` itself —
+  // `entry/index.ts`'s callback runs `buildHydratedTree`, which is also the
+  // one function every navigation, `refresh()` and `changeLocaleCode()` swap
+  // funnels through — so installing here too would extend the same locale
+  // twice on every initial hydration for no second effect. `useTrans()`
   // (`../localization.tsx`) reads `@mongez/localization`'s process-global
-  // table, and nothing else on the client ever fills it. Registering after
-  // the first client render would be too late — React has already
-  // reconciled the DOM to whatever that render returned, which is the raw
-  // key, by the time a later call could fix the table.
-  extend(payload.locale, payload.translations);
-
+  // table, and nothing else on the client ever fills it; `buildTree` is still
+  // called, and awaited, before `mount()` below, so the table is filled
+  // before the first client render regardless of which callback does it.
   prepareDeferredPayload(payload);
 
   hydrateShared(payload.shared);

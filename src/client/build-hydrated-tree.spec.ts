@@ -1,7 +1,6 @@
-import { extend } from "@mongez/localization";
+import { extend, getKeywordsListOf } from "@mongez/localization";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { IncompleteTranslationRegistrationError } from "./assert-translation-registration-complete";
 import {
   MissingHydrationErrorPageError,
   UnknownHydrationPageNameError,
@@ -383,15 +382,22 @@ describe("buildHydratedTree", () => {
   });
 
   /**
-   * The client-navigation gap this suite guards: unlike initial hydration
-   * (`hydrate-page.tsx` explicitly `extend()`s the payload's translations
-   * BEFORE `buildTree` runs), a navigation has nothing installing
-   * `payload.translations` — it relies entirely on the composed modules'
-   * `register()` hooks having done so themselves. `import.meta.env.DEV` is
-   * flipped for the duration of each case because the invariant is
-   * development-only by design (see `assert-translation-registration-
-   * complete.ts`); it is restored afterwards so later cases keep exercising
-   * the untouched, production-shaped default.
+   * `buildHydratedTree` installs `payload.translations` itself
+   * (`install-payload-translations.ts`, called before `registerModules`) —
+   * every render of a payload it composes, whether the initial hydration tree
+   * or a later navigation/`refresh()`/`changeLocaleCode()` swap, therefore
+   * already carries the server's full locale table before a single
+   * `register()` hook runs. A page/layout whose `register()` never learned
+   * about a namespace (an app-level one registered only server-side, in the
+   * real bug this suite guards against — see `navigation-payload-
+   * translations.spec.ts`) is no longer the only source, so it no longer
+   * causes a failure here. `import.meta.env.DEV` is flipped for the duration
+   * of each case because the invariant is development-only by design (see
+   * `assert-translation-registration-complete.ts`); it is restored afterwards
+   * so later cases keep exercising the untouched, production-shaped default.
+   * The assertion's own closed-failure behaviour (given a mismatched
+   * required/registered pair) is unit-tested directly in `assert-
+   * translation-registration-complete.spec.ts` — nothing about that changed.
    */
   describe("translation registration completeness (development-only)", () => {
     let localeCounter = 0;
@@ -407,7 +413,7 @@ describe("buildHydratedTree", () => {
       import.meta.env.DEV = false;
     });
 
-    it("fails closed, naming the page/locale/keys, when register() never installed the target locale's keywords", async () => {
+    it("renders normally when the payload carries a namespace no register() provides", async () => {
       // @ts-expect-error test-only mutation of Vite's injected env object
       import.meta.env.DEV = true;
 
@@ -415,8 +421,9 @@ describe("buildHydratedTree", () => {
       const pages = [
         entry("main.home", () => ({
           // A projection whose register() hook is a no-op — the real-world
-          // shape of a stale or hand-written module that never learned it
-          // needs to register a translation namespace.
+          // shape of a page whose namespace was registered only server-side
+          // (an app-level `locales.ts`), never mirrored into this page's own
+          // register().
           Page: { register: () => {}, default: Page },
           layouts: [],
         })),
@@ -427,19 +434,10 @@ describe("buildHydratedTree", () => {
         translations: { home: { title: "Home" } },
       };
 
-      let failure: unknown;
+      const page = asElement(await buildHydratedTree(pages, payload));
 
-      try {
-        await buildHydratedTree(pages, payload);
-      } catch (error) {
-        failure = error;
-      }
-
-      expect(failure).toBeInstanceOf(IncompleteTranslationRegistrationError);
-      const error = failure as IncompleteTranslationRegistrationError;
-      expect(error.pageName).toBe("main.home");
-      expect(error.locale).toBe(locale);
-      expect(error.missingKeys).toEqual(["home"]);
+      expect(page.type).toBe(Page);
+      expect(getKeywordsListOf(locale)).toEqual({ home: { title: "Home" } });
     });
 
     it("renders normally when register() installs exactly what the payload requires", async () => {

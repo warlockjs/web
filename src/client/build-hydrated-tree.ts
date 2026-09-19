@@ -20,6 +20,7 @@ import type {
 } from "../hydration-payload";
 import { registerModules } from "../register-modules";
 import { assertTranslationRegistrationComplete } from "./assert-translation-registration-complete";
+import { installPayloadTranslations } from "./install-payload-translations";
 import { loadClientRouteComposition } from "./runtime";
 import type { ClientPageEntry, ClientProjectedModule } from "./runtime/types";
 
@@ -171,6 +172,18 @@ export async function buildHydratedTree(
   if (selectedPageModule === undefined) {
     throw new MissingHydrationErrorPageError(payload.name);
   }
+
+  // BEFORE `registerModules`, not after: the payload's own `translations`
+  // (`build-hydration-payload.ts`'s `translations` key) is the server's full
+  // locale table, not a page-scoped subset, so it does not need a
+  // `register()` hook to land it client-side — the same install
+  // `hydrate-page.tsx` performs for the initial document. Doing this here
+  // makes it the ONE place every client render of a payload (navigation,
+  // `refresh()`, `changeLocaleCode()`, and the initial hydration tree, which
+  // all funnel through this function) picks it up, so a page/layout whose
+  // `register()` never learned about an app-level namespace still renders
+  // correctly instead of throwing (dev) or rendering raw keys (prod).
+  installPayloadTranslations(payload);
 
   // Registration is the first lifecycle action after the real namespaces have
   // loaded. Keep server order: root/App, layouts outermost-to-innermost, page.
