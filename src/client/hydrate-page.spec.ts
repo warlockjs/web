@@ -12,7 +12,36 @@ import { installStreamClosedRejection, prepareDeferredPageData } from "./runtime
  * validation precedes the mount and that nothing touches `#vessel` when a step
  * fails — so the mount itself is stubbed and asserted on as a call.
  */
-vi.mock("react-dom/client", () => ({ hydrateRoot: vi.fn() }));
+vi.mock("react-dom/client", () => ({
+  hydrateRoot: vi.fn(() => {
+    hydratedInsideTransition.push(transitionDepth > 0);
+  }),
+}));
+
+/**
+ * `startTransition` is wrapped (not replaced) so the spec can record whether
+ * `hydrateRoot` ran inside it. Hydrating at default priority is one task that
+ * never yields; a transition lets React time-slice the hydration pass.
+ */
+let transitionDepth = 0;
+const hydratedInsideTransition: boolean[] = [];
+
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react")>();
+
+  return {
+    ...actual,
+    startTransition: (callback: () => void) => {
+      transitionDepth += 1;
+
+      try {
+        actual.startTransition(callback);
+      } finally {
+        transitionDepth -= 1;
+      }
+    },
+  };
+});
 
 /**
  * The defer-registry module reaches for `window`/`document` machinery this
@@ -103,6 +132,15 @@ afterEach(() => {
 });
 
 describe("hydratePage", () => {
+  it("hydrates inside a transition so React can yield during hydration", () => {
+    installFakeDocument();
+    hydratedInsideTransition.length = 0;
+
+    hydratePage(() => "tree");
+
+    expect(hydratedInsideTransition).toEqual([true]);
+  });
+
   it("mounts a synchronously built tree at #vessel", () => {
     installFakeDocument();
 

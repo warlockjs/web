@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { startTransition, type ReactNode } from "react";
 import { hydrateRoot } from "react-dom/client";
 import {
   DocumentContext,
@@ -120,11 +120,18 @@ export function hydratePage(buildTree: BuildHydratedTree): void {
 
   const value: DocumentContextValue = { metadata: undefined, payload };
 
+  // Hydrated as a transition: at default priority React hydrates the whole
+  // tree in one task that never yields (a ~470ms long task on a throttled
+  // phone for a modest page). A transition lane lets the reconciler yield
+  // between units of work, and a click during hydration still hydrates its
+  // target first.
   const mount = (tree: ReactNode): void => {
-    hydrateRoot(
-      mountElement,
-      <DocumentContext.Provider value={value}>{tree}</DocumentContext.Provider>,
-    );
+    startTransition(() => {
+      hydrateRoot(
+        mountElement,
+        <DocumentContext.Provider value={value}>{tree}</DocumentContext.Provider>,
+      );
+    });
   };
 
   const tree = buildTree(payload);
