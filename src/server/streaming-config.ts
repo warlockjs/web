@@ -12,6 +12,7 @@
 import { config, type Request } from "@warlock.js/core";
 import type { WebSitemapConfig } from "../sitemap/sitemap-config-types";
 import type { RobotsConfig } from "../sitemap/robots-config-types";
+import type { LocaleRoutingStrategy } from "../routing/locale-routing";
 
 /**
  * Customises crawler detection (`detect-crawler.ts`). `userAgents` REPLACES
@@ -55,6 +56,12 @@ export type WebConfigurations = {
    * See `../sitemap/robots-config-types.ts`.
    */
   robots?: RobotsConfig;
+  /**
+   * Locale URL routing policy (card A, `releases/v5.17-locale-routing-design-note.md`).
+   * Codes come from `app.localeCodes` and the default from `app.localeCode` —
+   * there is no second locale list here. See `../server/locale-routing/resolve-locale-routing.ts`.
+   */
+  localeRouting?: { strategy?: LocaleRoutingStrategy };
 };
 
 declare module "@warlock.js/core" {

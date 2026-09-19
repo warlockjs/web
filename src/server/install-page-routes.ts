@@ -51,9 +51,12 @@ import {
   resolvePageRouteName,
 } from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
+import { publishLocaleRouting } from "../routing/locale-routing";
 import { type FastifyInstance, type Router } from "@warlock.js/core";
 import { composeLayoutModules } from "./compose-layout-modules";
 import { createPageRouteHandler, type PageRouteHandler } from "./create-page-route-handler";
+import { resolveLocaleRouting } from "./locale-routing/resolve-locale-routing";
+import { localePageRegistrations } from "./locale-routing/locale-page-registrations";
 import type { ErrorPageModule } from "./error-page";
 import type { PipelineLoader, PipelineMiddleware } from "./execute-page-request";
 import { layoutPrefixesByDirectory } from "./layout-prefixes";
@@ -421,6 +424,10 @@ export async function installPageRoutes(
   // declared file's own imports are read directly, so a cold graph still links.
   const resolveRequestStylesheetUrls: RequestStylesheetUrlResolver = (sourceFiles) =>
     devDeclaredStylesheetUrls(stylesheetRoot, sourceFiles, vite.moduleGraph);
+  // Resolved once, up front: every page's registrations below (and the
+  // catch-all's absence of them) are decided against this one value, and
+  // publishing it once after the loop keeps it in step with `publishRouteTable`.
+  const localeRouting = resolveLocaleRouting();
   const discovered = [...discoverPageFiles(appSrcRoot)].sort((left, right) =>
     left.pageFile < right.pageFile ? -1 : left.pageFile > right.pageFile ? 1 : 0,
   );
@@ -549,51 +556,65 @@ export async function installPageRoutes(
       vite.moduleGraph,
     );
 
-    await router.withSourceFile(sourceFile, () =>
-      router.get(
+    // The handler itself is `createPageRouteHandler`
+    // (`web/src/server/create-page-route-handler.ts`) — a named seam a future
+    // `type: "page"` route can bind to, and testable without a Vite server.
+    // Vite appears here only as the dev answer to "how do I load a module";
+    // the handler takes that as an input and knows nothing else about it.
+    const pageHandler = createPageRouteHandler({
+      path: effectivePath,
+      name,
+      appFile,
+      pageFile,
+      layoutFile,
+      // The layout slot's id resolves to the COMPOSED level — every layout's
+      // middleware, in chain order — and every other id goes straight to
+      // Vite. A one-layout chain has nothing to compose, so it is left to
+      // resolve as the exact module Vite hands back, untouched.
+      loadModule:
+        layoutLevel.chain.length > 1 && layoutFile !== undefined
+          ? (moduleId) =>
+              moduleId === layoutFile
+                ? composeLayoutLevel({ ...layoutLevel, layoutFile }, loadLayout)
+                : vite.ssrLoadModule(moduleId)
+          : (moduleId) => vite.ssrLoadModule(moduleId),
+      // Registration tracks real module namespaces, not the composed
+      // layout wrapper above. Loading the raw chain per request also lets
+      // Vite hand over a replacement namespace after an HMR update; the
+      // helper's WeakSet then gives that new identity its one invocation.
+      loadRegistrationLayouts: () => Promise.all(layoutLevel.chain.map(loadLayout)),
+      hydrationClientModuleUrl,
+      loadErrorPage,
+      stylesheetUrls,
+      resolveRequestStylesheetUrls,
+      cache,
+      renderNotFound,
+      ...httpServerOption,
+    });
+
+    // Under an active `web.localeRouting.strategy` this is more than one
+    // registration — the base path (possibly rewritten into a locale
+    // redirect) plus one literal path per prefixed code
+    // (`./locale-routing/locale-page-registrations.ts`). Under `"none"` it is
+    // exactly the base registration, unchanged.
+    await router.withSourceFile(sourceFile, () => {
+      for (const registration of localePageRegistrations(
         effectivePath,
-        // The handler itself is `createPageRouteHandler`
-        // (`web/src/server/create-page-route-handler.ts`) — a named seam a
-        // future `type: "page"` route can bind to, and testable without a Vite
-        // server. Vite appears here only as the dev answer to "how do I load a
-        // module"; the handler takes that as an input and knows nothing else
-        // about it.
-        createPageRouteHandler({
-          path: effectivePath,
-          name,
-          appFile,
-          pageFile,
-          layoutFile,
-          // The layout slot's id resolves to the COMPOSED level — every layout's
-          // middleware, in chain order — and every other id goes straight to
-          // Vite. A one-layout chain has nothing to compose, so it is left to
-          // resolve as the exact module Vite hands back, untouched.
-          loadModule:
-            layoutLevel.chain.length > 1 && layoutFile !== undefined
-              ? (moduleId) =>
-                  moduleId === layoutFile
-                    ? composeLayoutLevel({ ...layoutLevel, layoutFile }, loadLayout)
-                    : vite.ssrLoadModule(moduleId)
-              : (moduleId) => vite.ssrLoadModule(moduleId),
-          // Registration tracks real module namespaces, not the composed
-          // layout wrapper above. Loading the raw chain per request also lets
-          // Vite hand over a replacement namespace after an HMR update; the
-          // helper's WeakSet then gives that new identity its one invocation.
-          loadRegistrationLayouts: () => Promise.all(layoutLevel.chain.map(loadLayout)),
-          hydrationClientModuleUrl,
-          loadErrorPage,
-          stylesheetUrls,
-          resolveRequestStylesheetUrls,
-          cache,
-          renderNotFound,
-          ...httpServerOption,
-        }),
-        // `isPage` marks this route as SSR-served. Pages and API routes share one
-        // router and one route-name namespace, so the router's duplicate-name
-        // error reads this flag to say which claimant is the page.
-        { name, isPage: true },
-      ),
-    );
+        name,
+        pageHandler,
+        localeRouting,
+      )) {
+        router.get(
+          registration.path,
+          registration.handler,
+          // `isPage` marks this route as SSR-served. Pages and API routes
+          // share one router and one route-name namespace, so the router's
+          // duplicate-name error reads this flag to say which claimant is the
+          // page. The name stays on the base registration only.
+          { name: registration.name, isPage: true },
+        );
+      }
+    });
 
     installed.push({
       declaredPath: routePath,
@@ -677,6 +698,7 @@ export async function installPageRoutes(
     name has to stop resolving.
   */
   publishRouteTable(installed, "installPageRoutes (dev)");
+  publishLocaleRouting(localeRouting);
 
   return installed;
 }

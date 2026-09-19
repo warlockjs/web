@@ -31,9 +31,12 @@ import { deriveFilesystemRoutePath } from "../routing/filesystem-route";
 import { resolveLayoutLevel } from "../routing/layout-level";
 import { resolvePageRouteCache, resolvePageRouteIdentity } from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
+import { publishLocaleRouting } from "../routing/locale-routing";
 import { type Router } from "@warlock.js/core";
 import { composeLayoutModules } from "./compose-layout-modules";
 import { createPageModuleLoader } from "./create-page-module-loader";
+import { resolveLocaleRouting } from "./locale-routing/resolve-locale-routing";
+import { localePageRegistrations } from "./locale-routing/locale-page-registrations";
 import type { ErrorPageModule } from "./error-page";
 import {
   createPageRouteHandler,
@@ -270,6 +273,11 @@ export function installPageRoutesFromManifest(
 
   if (manifest.pages.length === 0) return [];
 
+  // Resolved once, up front — the same value dev resolves in
+  // `../install-page-routes.ts`, so a page's registrations cannot disagree
+  // between dev and production.
+  const localeRouting = resolveLocaleRouting();
+
   // Per-request `linkStylesheetsFor()` declarations, resolved against the same
   // client manifest the chains above read. Memoised per declared set: the
   // manifest is immutable for the life of a production process.
@@ -420,34 +428,49 @@ export function installPageRoutesFromManifest(
             page.sourceFile,
           ]);
 
-    router.get(
+    const pageHandler = createHandler({
+      path: effectivePath,
+      name,
+      appFile: app.sourceFile,
+      pageFile: page.sourceFile,
+      layoutFile: layout?.sourceFile,
+      loadModule:
+        composedLayout === undefined
+          ? loadModule
+          : (moduleId) =>
+              moduleId === layout?.sourceFile
+                ? Promise.resolve(composedLayout)
+                : loadModule(moduleId),
+      loadRegistrationLayouts: () => Promise.resolve(page.layouts.map((layout) => layout.module)),
+      hydrationClientModuleUrl,
+      loadErrorPage,
+      stylesheetUrls,
+      resolveRequestStylesheetUrls,
+      cache,
+      renderNotFound,
+    });
+
+    // Under an active `web.localeRouting.strategy` this is more than one
+    // registration — the base path (possibly rewritten into a locale
+    // redirect) plus one literal path per prefixed code, mirroring
+    // `../install-page-routes.ts` exactly (`./locale-routing/locale-page-registrations.ts`).
+    // Under `"none"` it is exactly the base registration, unchanged.
+    for (const registration of localePageRegistrations(
       effectivePath,
-      createHandler({
-        path: effectivePath,
-        name,
-        appFile: app.sourceFile,
-        pageFile: page.sourceFile,
-        layoutFile: layout?.sourceFile,
-        loadModule:
-          composedLayout === undefined
-            ? loadModule
-            : (moduleId) =>
-                moduleId === layout?.sourceFile
-                  ? Promise.resolve(composedLayout)
-                  : loadModule(moduleId),
-        loadRegistrationLayouts: () => Promise.resolve(page.layouts.map((layout) => layout.module)),
-        hydrationClientModuleUrl,
-        loadErrorPage,
-        stylesheetUrls,
-        resolveRequestStylesheetUrls,
-        cache,
-        renderNotFound,
-      }),
-      // `isPage` marks this route as SSR-served. Pages and API routes share one
-      // router and one route-name namespace, so the router's duplicate-name
-      // error reads this flag to say which claimant is the page.
-      { name, isPage: true },
-    );
+      name,
+      pageHandler,
+      localeRouting,
+    )) {
+      router.get(
+        registration.path,
+        registration.handler,
+        // `isPage` marks this route as SSR-served. Pages and API routes
+        // share one router and one route-name namespace, so the router's
+        // duplicate-name error reads this flag to say which claimant is the
+        // page. The name stays on the base registration only.
+        { name: registration.name, isPage: true },
+      );
+    }
 
     installed.push({
       declaredPath: routePath,
@@ -475,6 +498,7 @@ export function installPageRoutesFromManifest(
     replacement is a single write before the first request.
   */
   publishRouteTable(installed, "installPageRoutesFromManifest (production)");
+  publishLocaleRouting(localeRouting);
 
   return installed;
 }
