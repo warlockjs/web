@@ -584,6 +584,18 @@ async function renderElementToPipeableStream(
   element: ReactNode,
   waitForAll: boolean,
   route: PageDataBundle["route"],
+  /**
+   * The SAME per-request CSP nonce `documentSlots.nonce` carries onto
+   * `<Scripts/>`/`defer-emission.ts`'s own inline scripts — passed straight
+   * through to React's `renderToPipeableStream`, which stamps it onto EVERY
+   * inline `<script>` it emits itself: the bootstrap script and, for a
+   * Suspense boundary that resolves after the shell, the `$RC`/`$RS`
+   * boundary-reveal/segment scripts (card 3926afb3). Undefined when the app
+   * has no CSP nonce configured for this request — React then emits its
+   * inline scripts with no `nonce` attribute at all, exactly as before this
+   * fix, so a deployment with CSP disabled sees no change.
+   */
+  nonce: string | undefined,
 ): Promise<{ pipeableStream: PipeableStream; allReady: Promise<void> }> {
   const { renderToPipeableStream } = await import("react-dom/server");
 
@@ -595,6 +607,7 @@ async function renderElementToPipeableStream(
   const pipeableStream = await new Promise<PipeableStream>((resolve, reject) => {
     let stream: PipeableStream;
     const options: RenderToPipeableStreamOptions = {
+      nonce,
       onShellError: (error) => reject(error),
       onError: (error) => {
         // Stage 1 renders no Suspense boundaries of its own, so this firing
@@ -1117,6 +1130,7 @@ async function finishRender(
     finalWrappedElement,
     waitForAll,
     bundle.route,
+    documentSlots.nonce,
   );
 
   // React's shell is ready to pipe the instant `renderElementToPipeableStream`
