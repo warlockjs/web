@@ -824,3 +824,114 @@ describe("projection — type-only imports/exports never trip the client boundar
     expect(code).not.toMatch(/from ["']\.\/server-only-helper["']/);
   });
 });
+
+/**
+ * `isServerExportDeclaration` only recognizes the DECLARATION form (`export
+ * const sitemap = ...` / `export async function loader() {}`). A page can
+ * equally reach a server name through a RE-EXPORT — `export { x as sitemap }
+ * from "m"` or `export { x as sitemap }` locally — which is a second form
+ * reaching the same place unexamined (canon `1ca1e8ae`). These pin that
+ * projection strips the specifier (and, when it was the only reason to import
+ * the source module, the module edge itself) for every one of the 7 server
+ * export names, the same as the declaration form already does.
+ */
+describe("projection — re-export forms of the 7 server export names", () => {
+  it('drops a renamed re-export-with-source specifier ("export { x as sitemap } from") and the source module edge entirely', async () => {
+    const code = await transformSource(
+      [
+        `export { postSitemapEntries as sitemap } from "./post-sitemap-entries";`,
+        ``,
+        `export default function PostPage() {`,
+        `  return <article />;`,
+        `}`,
+      ].join("\n"),
+      "post.page.tsx",
+    );
+
+    expect(code).not.toMatch(/sitemap/);
+    expect(code).not.toMatch(/from ["']\.\/post-sitemap-entries["']/);
+    expect(code).toContain("export default function PostPage");
+  });
+
+  it('drops an unrenamed re-export-with-source specifier ("export { loader } from") and the source module edge', async () => {
+    const code = await transformSource(
+      [
+        `export { loader } from "./post-loader";`,
+        ``,
+        `export default function PostPage() {`,
+        `  return <article />;`,
+        `}`,
+      ].join("\n"),
+      "post.page.tsx",
+    );
+
+    expect(code).not.toMatch(/\bloader\b/);
+    expect(code).not.toMatch(/from ["']\.\/post-loader["']/);
+  });
+
+  it('drops a local re-export of an imported binding ("import { x } from m; export { x as sitemap };") and lets unused-import elimination remove the import', async () => {
+    const code = await transformSource(
+      [
+        `import { postSitemapEntries } from "./post-sitemap-entries";`,
+        ``,
+        `export { postSitemapEntries as sitemap };`,
+        ``,
+        `export default function PostPage() {`,
+        `  return <article />;`,
+        `}`,
+      ].join("\n"),
+      "post.page.tsx",
+    );
+
+    expect(code).not.toMatch(/sitemap/);
+    expect(code).not.toMatch(/postSitemapEntries/);
+    expect(code).not.toMatch(/from ["']\.\/post-sitemap-entries["']/);
+  });
+
+  it('keeps an innocent co-exported name in a mixed re-export ("export { loader, Helper } from")', async () => {
+    const code = await transformSource(
+      [
+        `export { loader, Helper } from "./post-loader";`,
+        ``,
+        `export default function PostPage() {`,
+        `  return <article />;`,
+        `}`,
+      ].join("\n"),
+      "post.page.tsx",
+    );
+
+    expect(code).not.toMatch(/export \{[^}]*\bloader\b/);
+    expect(code).toContain('export { Helper } from "./post-loader";');
+  });
+
+  it("strips every one of the 7 server names in re-export-with-source form, one export statement per name", async () => {
+    const names = ["route", "middleware", "validation", "loader", "metadata", "prefix", "sitemap"];
+    const code = await transformSource(
+      names.map((name) => `export { ${name}Impl as ${name} } from "./post-${name}";`).join("\n") +
+        `\n\nexport default function PostPage() {\n  return <article />;\n}`,
+      "post.page.tsx",
+    );
+
+    for (const name of names) {
+      expect(code).not.toMatch(new RegExp(`\\b${name}\\b`));
+      expect(code).not.toMatch(new RegExp(`from ["']\\./post-${name}["']`));
+    }
+    expect(code).toContain("export default function PostPage");
+  });
+
+  it("does not silently pass a server export through `export * from` — it stays refused the same as any other star re-export (ruling requested from @Suki, see task report)", async () => {
+    const message = await refusalMessage(
+      [
+        `export * from "./post-sitemap-entries";`,
+        ``,
+        `export default function PostPage() {`,
+        `  return <article />;`,
+        `}`,
+      ].join("\n"),
+      "post.page.tsx",
+    );
+
+    expect(message).toContain('export * from "./post-sitemap-entries"');
+    expect(message).toContain("server-only binding");
+  });
+});

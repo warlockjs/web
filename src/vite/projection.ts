@@ -144,6 +144,35 @@ function isKnownSafeAsset(source: string): boolean {
 }
 
 /**
+ * The exported-side name of an `ExportSpecifier` — `sitemap` in both
+ * `export { x as sitemap }` and `export { sitemap }`. `null` for any other
+ * specifier kind (`ExportNamespaceSpecifier` is refused earlier, before this
+ * is ever called).
+ */
+function exportedSpecifierName(specifier: any): string | null {
+  if (specifier.type !== "ExportSpecifier") return null;
+  const exported = specifier.exported;
+  if (exported.type === "Identifier") return exported.name;
+  if (exported.type === "StringLiteral") return exported.value;
+  return null;
+}
+
+/**
+ * A re-export by specifier list — `export { x as sitemap } from "m"` (with a
+ * source) or `export { x as sitemap }` (a local re-export of an imported or
+ * module-scope binding) — reaches the exact same 7 server names the
+ * declaration form does, just through a second syntax shape
+ * `isServerExportDeclaration` does not parse. One rule inspecting one form
+ * while a second form reaches the same place unexamined is exactly the
+ * defect shape this function exists to close (canon `1ca1e8ae`).
+ */
+interface ReexportEdit {
+  stmt: any;
+  keep: any[];
+  remove: any[];
+}
+
+/**
  * Matches `export const <name> = ...` only when the declaration has exactly
  * one declarator — every server export in every fixture and v5/app page is
  * written one-const-per-export (`product-details.page.tsx:15-18,42-69,71-74`);
@@ -357,6 +386,8 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
   const removedServerExports: any[] = [];
   const importDeclarations: any[] = [];
   const localDeclarations: LocalDeclaration[] = [];
+  const reexportEdits: ReexportEdit[] = [];
+  const reexportEditByStmt = new Map<any, ReexportEdit>();
 
   for (const stmt of body) {
     if (stmt.type === "ImportDeclaration") {
@@ -394,6 +425,25 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
     if (isServerExportDeclaration(stmt)) {
       removedServerExports.push(stmt);
       continue;
+    }
+    if (
+      stmt.type === "ExportNamedDeclaration" &&
+      !stmt.declaration &&
+      (stmt.specifiers as any[] | undefined)?.length
+    ) {
+      // Re-export by specifier list, with or without a source — the second
+      // form a server export name reaches through, alongside the declaration
+      // form above.
+      const remove = (stmt.specifiers as any[]).filter((specifier) =>
+        SERVER_EXPORT_NAMES.has(exportedSpecifierName(specifier) ?? ""),
+      );
+      if (remove.length > 0) {
+        const keep = (stmt.specifiers as any[]).filter((specifier) => !remove.includes(specifier));
+        const edit: ReexportEdit = { stmt, keep, remove };
+        reexportEdits.push(edit);
+        reexportEditByStmt.set(stmt, edit);
+        continue;
+      }
     }
     if (ALWAYS_SAFE_STATEMENT_TYPES.has(stmt.type)) continue;
     if (DECLARATION_STATEMENT_TYPES.has(stmt.type)) {
@@ -440,9 +490,20 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
       if (stmt.type === "ImportDeclaration") continue;
       if (removedServerExports.includes(stmt) || removedLocals.has(stmt)) continue;
       const own = new Set<string>();
-      collectIdentifierNames(stmt, own);
-      if (DECLARATION_STATEMENT_TYPES.has(stmt.type)) {
-        for (const name of declaredNames(stmt)) own.delete(name);
+      const reexport = reexportEditByStmt.get(stmt);
+      if (reexport) {
+        // A specifier's `local` name is a real reference to a module-scope
+        // binding ONLY when the export has no source — `export { x as
+        // sitemap } from "m"` names "x" as it exists in "m", not anything in
+        // THIS file's scope, so it contributes no read here either way.
+        if (!reexport.stmt.source) {
+          for (const specifier of reexport.keep) own.add(specifier.local.name);
+        }
+      } else {
+        collectIdentifierNames(stmt, own);
+        if (DECLARATION_STATEMENT_TYPES.has(stmt.type)) {
+          for (const name of declaredNames(stmt)) own.delete(name);
+        }
       }
       for (const name of own) names.add(name);
     }
@@ -527,6 +588,26 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
 
   for (const stmt of removedLocals) {
     removeStatement(s, code, stmt);
+  }
+
+  for (const edit of reexportEdits) {
+    if (edit.keep.length === 0) {
+      // No specifier survives — a re-export WITH a source must not leave the
+      // source module imported for nothing, so the whole statement goes.
+      removeStatement(s, code, edit.stmt);
+      continue;
+    }
+    // Some specifiers survive (the innocent-co-export case, canon `77c18a77`)
+    // — rewrite the specifier list in place, keeping each surviving
+    // specifier's original source text (so an alias like `x as Helper`
+    // round-trips unchanged) and the statement's `from "m"` clause, if any.
+    const specifiers = edit.stmt.specifiers as any[];
+    const start = specifiers[0].start as number;
+    const end = specifiers[specifiers.length - 1].end as number;
+    const newText = edit.keep
+      .map((specifier: any) => code.slice(specifier.start, specifier.end))
+      .join(", ");
+    s.overwrite(start, end, newText);
   }
 
   return {
