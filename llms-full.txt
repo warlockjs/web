@@ -220,7 +220,7 @@ The build reads `route` without executing application code. Declare it directly 
 
 ### Validate the page's input — the `validation` export
 
-Declare `validation` as its own top-level export: a [Seal](https://www.npmjs.com/package/@warlock.js/seal) schema per source, `params` and `query` kept as two separate keys — never merged into one bag, so a `:id` path segment and a `?id=` query key can never collide or silently shadow one another:
+Declare `validation` as its own top-level export: a [Seal](https://www.npmjs.com/package/@warlock.js/seal) schema per source, `params` and `query` kept as two separate keys — never merged into one bag, so a `:id` path segment and a `?id=` query key can never collide or silently shadow one another. A page may declare only `params`, only `query`, or both:
 
 > **Withdrawn after 5.6.0: `route.validate`.** A page that still declares it does not silently lose its validation — the app **refuses to boot** and names the file. Move the schema to the `validation` export shown below; the shape and the 400 are unchanged.
 
@@ -235,7 +235,7 @@ export const route = {
 
 export const validation = {
   params: v.object({ id: v.string().minLength(2) }),
-  query: v.object({ tab: v.string().optional() }),
+  query: v.object({ tab: v.string().optional() }).stripUnknown(),
 };
 
 export const loader = (async ({ request }) => {
@@ -249,9 +249,11 @@ export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
 }
 ```
 
-`request.validated()` types `params` and `query` from the schema — never a flattened merge of the two. There is exactly ONE validation surface on a page; see [load-page-data](../load-page-data/SKILL.md) for how the validated data reaches the loader.
+`request.validated()` types `params` and `query` from the schema — never a flattened merge of the two — and only includes the key(s) actually declared, so a page validating just `params` gets `{ params }` back, not `{ params, query: undefined }`. There is exactly ONE validation surface on a page; see [load-page-data](../load-page-data/SKILL.md) for how the validated data reaches the loader.
 
-Rejected input never reaches the loader. A full page load renders the application's `error.page.tsx` boundary at status 400, and the error it receives carries the validation issues (read them off `(error as { errors?: unknown }).errors` — see [load-page-data](../load-page-data/SKILL.md#validation) for the full shape) — a page is a document, not an API endpoint, so invalid input never gets a raw JSON body. A client navigation to the same URL gets the same 400 status, with no document to render.
+`request.params`/`request.query` arrive as strings, so a numeric `id` or `tab` needs `v.int().coerce()` (or the matching coercing primitive), not `v.int()` alone. `query` objects are strict by default — an unrecognized key such as `?utm_source=…` 400s unless the schema calls `.stripUnknown()`, the normal spelling for a public page's query.
+
+Rejected input never reaches the page loader — validation runs after the app and layout loaders and before the page's own. A full page load renders the application's `error.page.tsx` boundary at status 400, and the error it receives carries the validation issues (read them off `(error as { errors?: unknown }).errors` — see [load-page-data](../load-page-data/SKILL.md#validation) for the full shape) — a page is a document, not an API endpoint, so invalid input never gets a raw JSON body. Those issues are always the safe `{ input, type, error }` shape, never the submitted value. A client navigation to the same URL gets the same 400 status, with no document to render.
 
 ### `middleware` — a page's own guard, run last
 
@@ -373,6 +375,24 @@ usual `Cache-Control`.
 **Size ceiling**: `pageCache.maxEntryBytes` (config key, default `1_048_576`
 — 1 MiB) caps one stored entry; an oversized MISS is still served to the
 visitor in full, it just isn't cached.
+
+**Where entries live**: the page cache keeps its entries and tag index in
+its own namespace, `warlock.page.<deployment>`, separate from your app's
+cache `globalPrefix`. That way a GET and the POST that invalidates it always
+see the same entries, even when your `globalPrefix` varies per request. The
+Host is part of every entry key, so two sites never share a page. The
+`<deployment>` part is:
+
+1. `pageCache.namespace` (config key), when set;
+2. otherwise your cache driver's `globalPrefix`, when it is a static string;
+3. otherwise nothing.
+
+Case 3 is fine for an in-process driver (memory/LRU/memory-extended). On a
+shared backend (redis, pg/database, file) it is a startup error the first
+time the page cache is used: two deployments sharing one Redis would
+otherwise read each other's pages. Set `pageCache.namespace` to something
+unique per deployment, such as `"shop-production"` or `"shop-staging"`. The
+app name alone is not enough to tell staging from production.
 
 **Invalidation**:
 
@@ -569,7 +589,7 @@ Creating a page, deleting one, or editing its `route` export's path is a differe
 
 ---
 name: generate-sitemap
-description: 'Serve `/sitemap.xml` and `/robots.txt` from a Warlock web app with the `@warlock.js/web/sitemap` subpath — the `web.sitemap` and `web.robots` keys in `src/config/web.ts`, the page-level `export const sitemap` (opt out, static options, or a supplier for dynamic routes), locale/hreflang expansion, the automatic switch to a sharded `SitemapIndex`, when generation runs (`warlock build`, boot, or `regenerateSitemap()`), the 503-before-first-generation rule, and `MissingPublicUrlError`. Triggers: `web.sitemap`, `web.robots`, `WebSitemapConfig`, `RobotsConfig`, `SitemapPageExport`, `export const sitemap`, `regenerateSitemap`, `generateSitemap`, `MissingPublicUrlError`, `splitByLocale`, `localeUrl`, `referenceSitemap`, `warlock add sitemap`; "add a sitemap to my Warlock site", "dynamic route missing from sitemap.xml", "regenerate the sitemap after publishing a post", "robots.txt", "sitemap returns 503", "hreflang in the sitemap". Skip: the framework-blind builder classes themselves (`Sitemap`, `SitemapIndex`, Express/cron usage) — `@warlock.js/sitemap/sitemap-overview/SKILL.md`; `app.publicUrl` — `@warlock.js/core/configure-app/SKILL.md`; page metadata `robots: noindex` — `@warlock.js/web/create-a-page/SKILL.md`; competing tools `next-sitemap`, `sitemap` npm package direct.'
+description: 'Serve `/sitemap.xml` and `/robots.txt` from a Warlock web app with the `@warlock.js/web/sitemap` subpath — the `web.sitemap` and `web.robots` keys in `src/config/web.ts`, the page-level `export const sitemap` (opt out, static options, or a supplier for dynamic routes), locale/hreflang expansion, the automatic switch to a sharded `SitemapIndex`, when generation runs (runtime boot or `regenerateSitemap()` — never `warlock build`), the 503-before-first-generation rule, and `MissingPublicUrlError`. Triggers: `web.sitemap`, `web.robots`, `WebSitemapConfig`, `RobotsConfig`, `SitemapPageExport`, `export const sitemap`, `regenerateSitemap`, `generateSitemap`, `MissingPublicUrlError`, `splitByLocale`, `localeUrl`, `referenceSitemap`, `warlock add sitemap`; "add a sitemap to my Warlock site", "dynamic route missing from sitemap.xml", "regenerate the sitemap after publishing a post", "robots.txt", "sitemap returns 503", "hreflang in the sitemap". Skip: the framework-blind builder classes themselves (`Sitemap`, `SitemapIndex`, Express/cron usage) — `@warlock.js/sitemap/sitemap-overview/SKILL.md`; `app.publicUrl` — `@warlock.js/core/configure-app/SKILL.md`; page metadata `robots: noindex` — `@warlock.js/web/create-a-page/SKILL.md`; competing tools `next-sitemap`, `sitemap` npm package direct.'
 ---
 
 # Warlock — generate a sitemap and robots.txt
@@ -628,7 +648,7 @@ reaches page discovery, which a page's own graph must never pull in.
 | `locales.defaultLocale` | — | Also emitted as `x-default`. Unset: no `x-default`. |
 | `locales.splitByLocale` | `false` | One shard per locale, listed in an index. |
 | `localeUrl` | `path?locale=<code>` | Override how a path becomes a locale URL — only when the app implements its own prefix routing. A page's `localePaths` still wins. |
-| `regenerate.onBoot` | `true` | Generate at boot (dev and production). `warlock build` generates whenever the sitemap is enabled, regardless of this key. |
+| `regenerate.onBoot` | `true` | Generate at boot (dev and production). `warlock build` never generates — see below. |
 
 Above 50,000 URLs (or with `splitByLocale`) web switches from a single
 `Sitemap` to a sharded `SitemapIndex` automatically; `path` then serves the
@@ -666,8 +686,12 @@ generation time, not per request.
 
 ## When it runs — never on a request
 
-Generation happens at `warlock build` (whenever enabled), at boot (dev and production) when
-`regenerate.onBoot` is on, and whenever the app calls `regenerateSitemap()`:
+`warlock build` never generates the sitemap — the build process loads no app
+config and ships no page source files, so it logs
+`[warlock:web] sitemap: \`warlock build\` never generates the sitemap; when web.sitemap is enabled it is generated at runtime boot (web.sitemap.regenerate.onBoot)`
+and leaves generation to boot. Generation happens at boot (dev and
+production) when `regenerate.onBoot` is on, and whenever the app calls
+`regenerateSitemap()`:
 
 ```ts
 import { regenerateSitemap } from "@warlock.js/web/sitemap";
@@ -703,7 +727,7 @@ warns that the `Sitemap:` line is then yours to add.
 ## Pitfalls
 
 - **503 on `/sitemap.xml`** — no generation has succeeded yet. Check the
-  build/boot log for `[warlock:web] sitemap regeneration failed`; a missing
+  boot log for `[warlock:web] sitemap regeneration failed`; a missing
   `app.publicUrl` is the usual cause.
 - **A dynamic page is missing** — it has no `export const sitemap` supplier.
   Its route shows up with `count: 0` in the generation result.
@@ -817,14 +841,12 @@ export const route = {
 } as const;
 
 export const validation = {
-  schema: v.object({
-    id: v.string().minLength(2),
-  }),
-  validating: ["params"],
+  params: v.object({ id: v.string().minLength(2) }),
 } as const;
 
 export const loader = (async ({ request, response, shared }) => {
-  const { id } = request.validated();
+  const { params } = request.validated();
+  const { id } = params;
 
   if (id === "missing") {
     return response.notFound();
@@ -921,24 +943,29 @@ export const loader = (async ({ signal }) => {
 
 ## Validation
 
-A page's `validation` export declares a [Seal](https://www.npmjs.com/package/@warlock.js/seal) schema per source, `params` and `query` kept as two separate keys — never merged into one bag:
+A page's `validation` export declares a [Seal](https://www.npmjs.com/package/@warlock.js/seal) schema per source, `params` and `query` kept as two separate keys — never merged into one bag. Declare either or both; a page that only has a dynamic segment can skip `query` entirely, and one that only reads query keys can skip `params`:
 
 ```ts
 export const validation = {
-  params: v.object({ id: v.string().minLength(2) }),
-  query: v.object({ tab: v.string().optional() }),
+  params: v.object({ id: v.int().coerce() }),
+  query: v.object({ tab: v.string().optional() }).stripUnknown(),
 };
 ```
 
-A legacy `{ schema, validating }` shape is still accepted — `schema` a single Seal validator, `validating` any ordered subset of `"body"`, `"query"`, `"params"`, and `"headers"` (defaulting to query + params, with params winning a duplicate key) — but `{ params, query }` is the shape new pages should declare. See [create-a-page](../create-a-page/SKILL.md#validate-the-pages-input--the-validation-export) for the full example.
+**`params` and `query` arrive as strings — coerce numeric ones.** `request.params`/`request.query` come off the URL, so `v.int()` alone rejects `"2"` ("This input accepts only numbers"). Reach for `v.int().coerce()` (or the matching coercing primitive) on every numeric param or query key.
 
-Either shape builds one schema and runs ONE validation pass before loaders. A failure short-circuits with status **400**, never 422 — a page is a document, not an API endpoint. A full page load renders the application's `error.page.tsx` with status 400, exactly as an ordinary loader throw with its own `statusCode` already does; the error it receives carries the validation issues:
+**Seal objects reject unknown keys by default.** A `query` schema without `.stripUnknown()` answers 400 to `?utm_source=newsletter`, `?fbclid=…`, or any other tracking param a real visitor's link carries — that default is not changing. `.stripUnknown()` on the `query` object is the normal spelling for a public page; drop it only when you deliberately want to 400 on any extra key.
+
+A legacy `{ schema, validating }` shape is still accepted — `schema` a single Seal validator, `validating` any ordered subset of `"body"`, `"query"`, `"params"`, and `"headers"` (defaulting to query + params, with params winning a duplicate key) — but it is legacy: `{ params, query }` is the shape every new page should declare. See [create-a-page](../create-a-page/SKILL.md#validate-the-pages-input--the-validation-export) for the full example.
+
+Either shape builds one schema and runs ONE validation pass at the page level's turn: after the app and layout loaders (so a layout redirect still wins, and the error page renders inside layouts that have their data), before the page loader. A failure short-circuits with status **400**, never 422 — a page is a document, not an API endpoint. A full page load renders the application's `error.page.tsx` with status 400, exactly as an ordinary loader throw with its own `statusCode` already does; the error it receives carries the validation issues:
 
 ```tsx title="src/web/error.page.tsx"
 import type { ErrorPageProps } from "@warlock.js/web";
 
 export default function ErrorPage({ error, status }: ErrorPageProps) {
-  const validationErrors = (error as { errors?: { input: string; error: string }[] })?.errors;
+  const validationErrors = (error as { errors?: { input: string; type: string; error: string }[] })
+    ?.errors;
 
   return (
     <main>
@@ -953,6 +980,8 @@ export default function ErrorPage({ error, status }: ErrorPageProps) {
   );
 }
 ```
+
+In production this `errors` array is always the safe issue shape — `{ input, type, error }` — and never the submitted value itself: a bad `email` field reports what rule failed (`type`) and where (`input`), not what the visitor typed.
 
 A client navigation to the same URL still receives that same 400 status, with no document to render — nothing here changes the data representation's contract.
 
@@ -1970,17 +1999,24 @@ return would.
 
 ## Crawlers
 
-A crawler never runs the browser's defer-bootstrap script, so it has no
-chance to observe a chunk that arrives after the shell — streamed to one, a
-`defer()`-ed section would stay missing from whatever it indexes forever.
-Every FULL-DOCUMENT request from a detected crawler therefore skips streaming
-entirely: every deferred value is awaited and inlined into the page data
-before the first byte goes out (the same await-and-inline path a plain data
-request without NDJSON support already gets), and the response waits for
-React's `onAllReady` before anything flushes. A rejection takes the ordinary
-boundary/status escalation path, exactly as an ordinary synchronous loader
-throw would — nothing has flushed yet, so there is no 200 already on the
-wire to contradict.
+A non-JS crawler never runs the browser's defer-bootstrap script, so it has
+no chance to observe a chunk that arrives after the shell — streamed to one,
+a `defer()`-ed section would stay missing from whatever it indexes forever.
+Every FULL-DOCUMENT request from a detected crawler therefore awaits and
+inlines every deferred value into the page data before the first byte goes
+out (the same await-and-inline path a plain data request without NDJSON
+support already gets), and the response waits for React's `onAllReady`
+before anything flushes — so non-JS indexing needs nothing beyond that
+inlined HTML. A rejection takes the ordinary boundary/status escalation
+path, exactly as an ordinary synchronous loader throw would — nothing has
+flushed yet, so there is no 200 already on the wire to contradict.
+
+The document still carries the normal `__WARLOCK_DEFER__` settlement
+scripts for each deferred key, same as any other visitor's document. They're
+inert to a non-JS crawler, but a JS-capable crawler that does execute
+scripts hydrates exactly like a browser: `use(data.key)` reads an
+already-fulfilled thenable, and the settlement script settles it through
+the existing document-scope registry.
 
 Detection is case-insensitive and, by default, matches this built-in list:
 `googlebot`, `bingbot`, `yandex`, `duckduckbot`, `baiduspider`, `slurp`,
