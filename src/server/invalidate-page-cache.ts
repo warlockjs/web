@@ -1,9 +1,16 @@
-import { loadPageCacheDriver } from "./page-cache-driver";
+import { namespacePageCacheTags } from "./page-cache-namespace";
+import { resolvePageCacheStoreDriver } from "./page-cache-store-driver";
 
 /**
  * Evicts every server-side page cache entry stored under any of `tags` —
  * the public API for `route.cache.tags`'s invalidation half
  * (`../routing/route-identity.ts`'s {@link PageCacheOptIn}).
+ *
+ * Request-independent: the page cache's entries and tag index live under a
+ * fixed namespace on its own driver instance (`page-cache-store-driver.ts`),
+ * never the app's request-scoped `globalPrefix` — so a POST with a different
+ * Origin than the GET that stored the page, or a queue job/CLI with no
+ * request in scope at all, reaches the same entries.
  *
  * Cluster reach depends entirely on the configured `@warlock.js/cache`
  * driver: a shared driver (redis/pg) removes the entry for every worker on
@@ -13,7 +20,7 @@ import { loadPageCacheDriver } from "./page-cache-driver";
  * Cross-process pub/sub is out of scope for this release.
  */
 export async function invalidatePageCache(tags: string[]): Promise<void> {
-  const { cache } = await loadPageCacheDriver();
+  const { driver, namespace } = await resolvePageCacheStoreDriver();
 
-  await cache.tags(tags).invalidate();
+  await driver.tags(namespacePageCacheTags(namespace, tags)).invalidate();
 }

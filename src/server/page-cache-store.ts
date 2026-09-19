@@ -1,11 +1,16 @@
 /**
  * Get/set orchestration for the server-side page cache, on top of
- * `@warlock.js/cache`'s tag mechanism (`cache.tags(tags).set/.get/.invalidate`
+ * `@warlock.js/cache`'s tag mechanism (`driver.tags(tags).set/.get/.invalidate`
  * — `cache/src/tagged-cache.ts`). `@warlock.js/cache` itself is reached only
  * through `page-cache-driver.ts`'s lazy loader — this module never imports it
  * statically.
+ *
+ * Every read and write goes through the page cache's own driver instance
+ * (`page-cache-store-driver.ts`) under its fixed namespace
+ * (`page-cache-namespace.ts`), never the app's request-scoped `globalPrefix`.
  */
-import { loadPageCacheDriver } from "./page-cache-driver";
+import { namespacePageCacheKey, namespacePageCacheTags } from "./page-cache-namespace";
+import { resolvePageCacheStoreDriver } from "./page-cache-store-driver";
 
 /** What a stored entry holds — enough to replay a HIT without re-rendering. */
 export type StoredPageCacheEntry = {
@@ -23,8 +28,8 @@ export type StoredPageCacheEntry = {
  * deal with `undefined`.
  */
 export async function getPageCacheEntry(key: string): Promise<StoredPageCacheEntry | undefined> {
-  const { cache } = await loadPageCacheDriver();
-  const value = await cache.get<StoredPageCacheEntry>(key);
+  const { driver, namespace } = await resolvePageCacheStoreDriver();
+  const value = await driver.get<StoredPageCacheEntry>(namespacePageCacheKey(namespace, key));
 
   return value ?? undefined;
 }
@@ -39,7 +44,9 @@ export async function setPageCacheEntry(
   ttl: number,
   tags: string[],
 ): Promise<void> {
-  const { cache } = await loadPageCacheDriver();
+  const { driver, namespace } = await resolvePageCacheStoreDriver();
 
-  await cache.tags(tags).set(key, entry, ttl);
+  await driver
+    .tags(namespacePageCacheTags(namespace, tags))
+    .set(namespacePageCacheKey(namespace, key), entry, ttl);
 }

@@ -4,7 +4,16 @@ All notable changes to `@warlock.js/web` are documented here.
 
 ## 5.16.1 - Unreleased
 
+### Upgrading
+
+- If your cache driver is redis, pg/database or file, and `globalPrefix` in `src/config/cache.ts` is a function, set `pageCache.namespace` to a value unique to each deployment (for example `"shop-production"`). The page cache now refuses to start on a shared backend without a stable deployment namespace. A static `globalPrefix`, or an in-process driver, needs no change.
+
 ### Fixed
+
+- Page-cache invalidation now always reaches the stored pages. Entries and their tag index used to go through your app's cache `globalPrefix`. Apps that derived it from the request (the scaffold used `Origin`) stored pages on GET under one prefix and invalidated them on POST under another, so nothing was evicted. The page cache now uses its own `warlock.page.<deployment>` namespace, with the Host still part of every key. Invalidation from a background job, with no request, works too.
+- A page loader that returns `notFound()` now renders your `404.page.tsx`, with status 404 and noindex, instead of an empty body. Client navigation to such a URL gets the same page.
+- A page or layout middleware that already sent its reply (a redirect, `pageAuth`, `forbidden()`) is no longer sent a second time. Before, every guarded redirect logged a false "already-sent" error.
+- `changeLocaleCode()` and client navigation install the translations that come with the page data. Before, any translation group registered only on the server (every app's auth and validation messages) made the switch abort in development and render raw keys in production.
 
 - `@warlock.js/web/sitemap`: corrected the 5.16.0 entry below — `warlock build` never generates the sitemap. When `web.sitemap` is enabled, generation happens at runtime boot (`web.sitemap.regenerate.onBoot`) or when the app calls `regenerateSitemap()`, never at build time.
 - A detected crawler's inlined deferred value reached `use()` as a raw value instead of a promise, so every page reading it threw "An unsupported type was passed to use()" and crawlers got skeletons instead of content. Inline mode now passes an already-fulfilled thenable that `use()` reads synchronously; the key still stays in the hydration payload with its `__WARLOCK_DEFER__` settlement chunk for JS-capable crawlers. The data-request wire is unaffected. Corrected the 5.12.0 `web.streaming.crawlers` entry below, which claimed crawlers get the resolved document *instead of* deferred chunks — the settlement scripts are retained for JS hydration; only non-JS indexing needs nothing beyond the inlined HTML.

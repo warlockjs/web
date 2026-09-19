@@ -12,6 +12,15 @@
 const IN_PROCESS_DRIVER_NAMES = new Set(["memory", "lru", "memoryExtended"]);
 
 /**
+ * Whether a `@warlock.js/cache` driver (by its `name`) keeps entries in this
+ * process's own heap. Everything else (redis, pg, file, a custom driver) is
+ * treated as a shared/out-of-process backend other processes can see.
+ */
+export function isInProcessCacheDriver(driverName: string | undefined): boolean {
+  return driverName !== undefined && IN_PROCESS_DRIVER_NAMES.has(driverName);
+}
+
+/**
  * Raised when a route declares `serverCache: true` but `@warlock.js/cache`
  * cannot be loaded — names the package explicitly rather than surfacing a
  * bare "Cannot find module" error, per the lead decision to fail loudly.
@@ -65,7 +74,7 @@ function warnIfInProcessDriver(cacheModule: typeof import("@warlock.js/cache")):
 
   const driverName = cacheModule.cache.currentDriver?.name;
 
-  if (driverName === undefined || !IN_PROCESS_DRIVER_NAMES.has(driverName)) return;
+  if (driverName === undefined || !isInProcessCacheDriver(driverName)) return;
 
   warnedAboutInProcessDriver = true;
 

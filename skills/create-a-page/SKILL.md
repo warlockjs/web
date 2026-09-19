@@ -260,6 +260,24 @@ usual `Cache-Control`.
 — 1 MiB) caps one stored entry; an oversized MISS is still served to the
 visitor in full, it just isn't cached.
 
+**Where entries live**: the page cache keeps its entries and tag index in
+its own namespace, `warlock.page.<deployment>`, separate from your app's
+cache `globalPrefix`. That way a GET and the POST that invalidates it always
+see the same entries, even when your `globalPrefix` varies per request. The
+Host is part of every entry key, so two sites never share a page. The
+`<deployment>` part is:
+
+1. `pageCache.namespace` (config key), when set;
+2. otherwise your cache driver's `globalPrefix`, when it is a static string;
+3. otherwise nothing.
+
+Case 3 is fine for an in-process driver (memory/LRU/memory-extended). On a
+shared backend (redis, pg/database, file) it is a startup error the first
+time the page cache is used: two deployments sharing one Redis would
+otherwise read each other's pages. Set `pageCache.namespace` to something
+unique per deployment, such as `"shop-production"` or `"shop-staging"`. The
+app name alone is not enough to tell staging from production.
+
 **Invalidation**:
 
 ```ts

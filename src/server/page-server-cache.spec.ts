@@ -6,10 +6,14 @@
  * `auth-derived-cache-headers.spec.ts`: `renderPageRequest` is mocked,
  * `server.inject()` exercises a real Fastify instance.
  *
- * `@warlock.js/cache` is mocked with a minimal in-memory tagged store —
- * exactly the surface `page-cache-store.ts`/`page-cache-driver.ts` actually
- * use (`cache.get`, `cache.tags(tags).set/get/invalidate`,
- * `cache.currentDriver`). No real cache package is ever touched.
+ * `@warlock.js/cache` is mocked with a minimal in-memory tagged store behind a
+ * real-shaped fake driver instance installed as `cache.currentDriver` —
+ * exactly the surface the page cache actually uses: `page-cache-store-driver.ts`
+ * builds its own instance from `currentDriver`'s class and options
+ * (`new`, `setOptions`, `connect`), then `page-cache-store.ts`/
+ * `invalidate-page-cache.ts` call `get` and `tags(tags).set/get/invalidate`
+ * on it. No real cache driver is ever touched; the store sees keys and tags
+ * under the page cache namespace (`page-cache-namespace.ts`).
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import Fastify, { type FastifyInstance } from "fastify";
@@ -47,7 +51,30 @@ const { renderPageRequest, fakeCache, fakeCacheStore, fakeCacheTagIndex } = vi.h
     fakeCacheStore: store,
     fakeCacheTagIndex: tagIndex,
     fakeCache: {
-      currentDriver: { name: "memory" as string | undefined },
+      // A fresh instance per `new` — every one reads and writes the same
+      // `store`/`tagIndex`, and `get` goes through `fakeCache.get` so a
+      // test can still swap it (see the cache-failure test).
+      currentDriver: new (class FakePageCacheDriver {
+        public name: string | undefined = "memory";
+        public options: Record<string, unknown> = {};
+
+        public setOptions(options: Record<string, unknown>) {
+          this.options = options;
+          return this;
+        }
+
+        public async connect() {}
+
+        public async disconnect() {}
+
+        public get(key: string) {
+          return fakeCache.get(key);
+        }
+
+        public tags(tags: string[]) {
+          return taggedCacheFor(tags);
+        }
+      })(),
       async get(key: string) {
         return store.has(key) ? store.get(key) : null;
       },
@@ -58,19 +85,17 @@ const { renderPageRequest, fakeCache, fakeCacheStore, fakeCacheTagIndex } = vi.h
 
 vi.mock("./render-page", () => ({ renderPageRequest }));
 
-// Only `cache.get`/`cache.tags`/`cache.currentDriver` are overridden, IN
-// PLACE, on the real `CacheManager` singleton `importOriginal` returns —
-// everything else (its prototype methods, `registerDriver`, the classes
-// core's own cache connector statically imports) is untouched, so this test
-// never has to keep its own mock in sync with `@warlock.js/cache`'s full
-// export surface, and no real driver (memory, redis, pg) is ever reached
-// because `get`/`tags` never delegate to `currentDriver`.
+// Only `cache.currentDriver` is overridden, IN PLACE, on the real
+// `CacheManager` singleton `importOriginal` returns — everything else (its
+// prototype methods, `registerDriver`, the classes core's own cache
+// connector statically imports) is untouched, so this test never has to keep
+// its own mock in sync with `@warlock.js/cache`'s full export surface, and
+// no real driver (memory, redis, pg) is ever reached: the page cache clones
+// the fake driver's class, never a real one.
 vi.mock("@warlock.js/cache", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   const realCache = actual.cache as Record<string, unknown>;
 
-  realCache.get = (key: string) => fakeCache.get(key);
-  realCache.tags = fakeCache.tags;
   realCache.currentDriver = fakeCache.currentDriver;
 
   return actual;
