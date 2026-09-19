@@ -303,10 +303,19 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     // from the cache, and this check is cheap — a header/cookie read, no JWT
     // verification, no loader execution — exactly like `looksAuthenticated`'s
     // own doc comment describes.
-    const credentialedRequest =
-      cache?.serverCache === true && request.method === "GET"
+    //
+    // Computed for every GET to an opted-in route, not only when
+    // `serverCache` is on: `applyResponseCacheFloor` below reuses this SAME
+    // result to decide `Cache-Control`, so a route with `cache.public` but no
+    // `serverCache` gets the same protection against a loader that
+    // authenticates straight from the cookie/header without ever touching
+    // `request.locals.authDerived` (`response-cache-floor.ts`).
+    const requestLooksAuthenticated =
+      cache !== undefined && request.method === "GET"
         ? looksAuthenticated(request, resolveAuthCookieName())
         : false;
+
+    const credentialedRequest = cache?.serverCache === true ? requestLooksAuthenticated : false;
 
     let cacheHeaderValue: "hit" | "miss" | "bypass" | undefined;
     let cacheKey: string | undefined;
@@ -478,6 +487,7 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       applyResponseCacheFloor(response, {
         authDerived: authDerivedState,
         cache,
+        requestLooksAuthenticated,
       });
 
       // Emitted at the SAME seam as the floor, right after it, so the two

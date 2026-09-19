@@ -93,12 +93,23 @@ export function carriesSetCookie(response: HeaderReadable): boolean {
  *
  * Precedence, highest wins:
  *
- * 1. `authDerived === true` or a `Set-Cookie` on the response ⇒
- *    `private, no-store`, ALWAYS — this floor beats an explicit `cache`
- *    opt-in on purpose. A `Set-Cookie` held in a shared cache hands the SAME
- *    cookie to every later visitor (session fixation); an auth-derived page
- *    is per-visitor by definition. Neither is safe for a shared cache under
- *    any opt-in.
+ * 1. `authDerived === true`, a `Set-Cookie` on the response, or
+ *    `requestLooksAuthenticated` ⇒ `private, no-store`, ALWAYS — this floor
+ *    beats an explicit `cache` opt-in on purpose. A `Set-Cookie` held in a
+ *    shared cache hands the SAME cookie to every later visitor (session
+ *    fixation); an auth-derived page is per-visitor by definition. Neither is
+ *    safe for a shared cache under any opt-in. `requestLooksAuthenticated` —
+ *    the SAME `looksAuthenticated` predicate the server-cache lookup bypass
+ *    uses (`page-cache-eligibility.ts`: an `Authorization` header or the
+ *    configured auth cookie) — closes a third gap the other two miss: a
+ *    loader that authenticates straight from the incoming cookie/header,
+ *    without ever assigning `request.decodedAccessToken`/`user` (the only
+ *    thing that sets `authDerived`), leaves `authDerived` at `false`
+ *    (provably-not-touched, from this seam's point of view) even though the
+ *    response is personalised. `carriesSetCookie` does not catch this case
+ *    either — an already-authenticated request often gets no NEW `Set-Cookie`
+ *    at all. Reusing the request-level predicate is what lets an opted-in
+ *    `public, max-age` route stay safe under that loader shape.
  * 2. A route that declared `cache: { public: true, maxAge }`
  *    ({@link PageCacheOptIn}, `../routing/route-identity.ts`) AND whose
  *    `authDerived` is `false` (provably not touched, not merely unobserved)
@@ -114,9 +125,24 @@ export function carriesSetCookie(response: HeaderReadable): boolean {
  */
 export function applyResponseCacheFloor(
   response: Response,
-  options: { authDerived: boolean | undefined; cache?: PageCacheOptIn },
+  options: {
+    authDerived: boolean | undefined;
+    cache?: PageCacheOptIn;
+    /**
+     * The request-level `looksAuthenticated` result
+     * (`page-cache-eligibility.ts`) — `undefined`/omitted is treated as
+     * `false`, the same way `carriesSetCookie` treats a response it cannot
+     * observe: "we could not look" must never read as a reason to relax the
+     * floor.
+     */
+    requestLooksAuthenticated?: boolean;
+  },
 ): void {
-  if (options.authDerived === true || carriesSetCookie(response)) {
+  if (
+    options.authDerived === true ||
+    carriesSetCookie(response) ||
+    options.requestLooksAuthenticated === true
+  ) {
     response.header("Cache-Control", "private, no-store");
     return;
   }

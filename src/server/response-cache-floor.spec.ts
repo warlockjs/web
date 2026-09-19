@@ -129,4 +129,40 @@ describe("applyResponseCacheFloor", () => {
 
     expect(response.header).toHaveBeenCalledWith("Cache-Control", "no-store");
   });
+
+  it("sets private, no-store when the request carries the configured auth cookie, even though authDerived is false and the route opted in — a loader that authenticates straight from the cookie never touches authDerived", () => {
+    const response = responseWithHeader(() => undefined);
+
+    applyResponseCacheFloor(response, {
+      authDerived: false,
+      cache: { public: true, maxAge: 60 },
+      requestLooksAuthenticated: true,
+    });
+
+    expect(response.header).toHaveBeenCalledWith("Cache-Control", "private, no-store");
+  });
+
+  it("sets private, no-store when the request carries an Authorization header, even though authDerived is false and the route opted in", () => {
+    const response = responseWithHeader(() => undefined);
+
+    applyResponseCacheFloor(response, {
+      authDerived: false,
+      cache: { public: true, maxAge: 60 },
+      requestLooksAuthenticated: true,
+    });
+
+    expect(response.header).toHaveBeenCalledWith("Cache-Control", "private, no-store");
+  });
+
+  it("still sets public, max-age=<maxAge> for an anonymous request to the same opted-in route — the innocent case is unaffected", () => {
+    const response = responseWithHeader(() => undefined);
+
+    applyResponseCacheFloor(response, {
+      authDerived: false,
+      cache: { public: true, maxAge: 60 },
+      requestLooksAuthenticated: false,
+    });
+
+    expect(response.header).toHaveBeenCalledWith("Cache-Control", "public, max-age=60");
+  });
 });
