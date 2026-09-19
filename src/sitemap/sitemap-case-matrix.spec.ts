@@ -113,7 +113,7 @@ describe("sitemap case matrix", () => {
       ].join("\n"),
     });
 
-    config.set("app", { publicUrl: "https://example.test", locales: ["en", "ar"] });
+    config.set("app", { publicUrl: "https://example.test", localeCodes: ["en", "ar"] });
     config.set("web", {
       sitemap: {
         enabled: true,

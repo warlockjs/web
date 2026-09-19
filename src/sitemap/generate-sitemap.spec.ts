@@ -104,7 +104,7 @@ describe("generateSitemap", () => {
       ].join("\n"),
     });
 
-    config.set("app", { publicUrl: "https://example.test", locales: ["en", "ar"] });
+    config.set("app", { publicUrl: "https://example.test", localeCodes: ["en", "ar"] });
     config.set("web", {
       sitemap: {
         enabled: true,
@@ -134,7 +134,7 @@ describe("generateSitemap", () => {
     });
     const outputDir = path.join(appRoot, "storage", "sitemap");
 
-    config.set("app", { publicUrl: "https://example.test", locales: ["en", "ar"] });
+    config.set("app", { publicUrl: "https://example.test", localeCodes: ["en", "ar"] });
     config.set("web", { sitemap: { enabled: true, outputDir } });
 
     const single = await generateSitemap({ appRoot });
@@ -146,5 +146,34 @@ describe("generateSitemap", () => {
 
     const split = await generateSitemap({ appRoot });
     expect("indexPath" in split).toBe(true);
+  });
+
+  it("picks up app.localeCodes / app.localeCode with no web.sitemap.locales override, and emits en/ar alternates", async () => {
+    const appRoot = makeAppTree({
+      "src/web/about.page.tsx": [
+        'export const route = "/about";',
+        "export default function Page() { return null; }",
+      ].join("\n"),
+    });
+
+    config.set("app", {
+      publicUrl: "https://example.test",
+      localeCodes: ["en", "ar"],
+      localeCode: "en",
+    });
+    config.set("web", {
+      sitemap: { enabled: true, outputDir: path.join(appRoot, "storage", "sitemap") },
+    });
+
+    const result = await generateSitemap({ appRoot });
+
+    expect(result).toMatchObject({ mode: "single" });
+    const xml = fs.readFileSync(path.join(appRoot, "storage", "sitemap", "sitemap.xml"), "utf-8");
+
+    expect(xml).toContain('hreflang="en"');
+    expect(xml).toContain('hreflang="ar"');
+    expect(xml).toContain('hreflang="x-default"');
+    expect(xml).toContain("locale=en");
+    expect(xml).toContain("locale=ar");
   });
 });

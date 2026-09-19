@@ -12,9 +12,13 @@
 import type { ChangeFreq, SitemapOptions } from "@warlock.js/sitemap";
 
 export type SitemapLocaleConfig = {
-  /** Locale codes to expand. Defaults to the app's configured `app.locales`. */
+  /** Locale codes to expand. Defaults to the app's configured `app.localeCodes`. */
   readonly codes?: readonly string[];
-  /** The locale whose URLs are also emitted at `x-default`. Unset emits no `x-default` alternate. */
+  /**
+   * The locale whose URLs are also emitted at `x-default`. Defaults to the
+   * app's configured `app.localeCode`. Unset (and `app.localeCode` unset too)
+   * emits no `x-default` alternate.
+   */
   readonly defaultLocale?: string;
   /** One file per locale, listed in the index. Default `false`. */
   readonly splitByLocale?: boolean;

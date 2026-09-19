@@ -12,6 +12,7 @@ import { resolveSitemapConfig } from "./resolve-sitemap-config";
 
 afterEach(() => {
   config.set("web", {});
+  config.set("app", {});
 });
 
 describe("resolveSitemapConfig — outputDir default", () => {
@@ -40,5 +41,48 @@ describe("resolveSitemapConfig — outputDir default", () => {
     const resolved = resolveSitemapConfig();
 
     expect(resolved.outputDir).toBe("/explicit/dir");
+  });
+});
+
+// `de03cf18`: the app's real locale config lives at `app.localeCodes` /
+// `app.localeCode` — the same keys `Request.cacheLocale()` reads
+// (`core/src/http/request.ts`) and the same keys the scaffold declares.
+// `web.sitemap.locales.codes` fell back to the wrong key (`app.locales`,
+// which nothing else in the framework reads), so an app that never
+// duplicated its locales under `web.sitemap.locales` got no hreflang
+// alternates at all.
+describe("resolveSitemapConfig — locales fall back to app.localeCodes / app.localeCode", () => {
+  it("resolves codes and defaultLocale from app.localeCodes / app.localeCode when web.sitemap.locales is unset", () => {
+    config.set("app", { localeCodes: ["en", "ar"], localeCode: "en" });
+
+    const resolved = resolveSitemapConfig();
+
+    expect(resolved.locales.codes).toEqual(["en", "ar"]);
+    expect(resolved.locales.defaultLocale).toBe("en");
+  });
+
+  it("lets an explicit web.sitemap.locales.codes win over app.localeCodes", () => {
+    config.set("app", { localeCodes: ["en", "ar"], localeCode: "en" });
+    config.set("web", { sitemap: { locales: { codes: ["fr"] } } });
+
+    const resolved = resolveSitemapConfig();
+
+    expect(resolved.locales.codes).toEqual(["fr"]);
+  });
+
+  it("lets an explicit web.sitemap.locales.defaultLocale win over app.localeCode", () => {
+    config.set("app", { localeCodes: ["en", "ar"], localeCode: "en" });
+    config.set("web", { sitemap: { locales: { defaultLocale: "ar" } } });
+
+    const resolved = resolveSitemapConfig();
+
+    expect(resolved.locales.defaultLocale).toBe("ar");
+  });
+
+  it("resolves no codes and no defaultLocale when neither app nor web.sitemap declares locales", () => {
+    const resolved = resolveSitemapConfig();
+
+    expect(resolved.locales.codes).toEqual([]);
+    expect(resolved.locales.defaultLocale).toBeUndefined();
   });
 });

@@ -43,7 +43,15 @@ export function resolveSitemapConfig(): ResolvedSitemapConfig {
 
   const enabled = sitemapConfig?.enabled ?? false;
   const localesConfig = sitemapConfig?.locales;
-  const codes = localesConfig?.codes ?? config.key<string[]>("app.locales", []) ?? [];
+  // `app.localeCodes` is the real app config key — the scaffold and real apps
+  // declare locales there, and `Request.cacheLocale()` reads the same key
+  // (`core/src/http/request.ts`). `web.sitemap.locales.codes` still wins when
+  // an app sets it explicitly.
+  const codes = localesConfig?.codes ?? config.key<string[]>("app.localeCodes", []) ?? [];
+  // Mirrors `resolveLocaleConfiguration()` (`core/src/config/locale-configuration.ts`):
+  // `app.localeCode` is the ONE place the app's default locale is declared.
+  const defaultLocale =
+    localesConfig?.defaultLocale ?? config.key<string>("app.localeCode") ?? undefined;
 
   return {
     enabled,
@@ -63,7 +71,7 @@ export function resolveSitemapConfig(): ResolvedSitemapConfig {
     defaults: sitemapConfig?.defaults,
     locales: {
       codes,
-      defaultLocale: localesConfig?.defaultLocale,
+      defaultLocale,
       splitByLocale: localesConfig?.splitByLocale ?? false,
       localeUrl: sitemapConfig?.localeUrl,
     },
