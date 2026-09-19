@@ -50,7 +50,7 @@ export async function sendPageDataResponse(options: {
   const deferredKeys = rendered.bundle.deferredKeys;
 
   if (wantsNdjson && deferredKeys !== undefined && deferredKeys.length > 0) {
-    await writeDeferredNdjsonResponse(response, rendered.bundle, request.locale, status);
+    await writeDeferredNdjsonResponse(response, rendered.bundle, request.locale, status, request);
 
     return;
   }

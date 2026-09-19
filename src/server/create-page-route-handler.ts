@@ -44,6 +44,7 @@ import { hasCookieRequiringPageCacheBypass } from "./page-cache-cookie-bypass";
 import { type PageCacheVariant } from "./page-cache-key";
 import { pageVaryHeader } from "./page-vary-header";
 import { reportServerError } from "./report-server-error";
+import { pathnameFromRequest } from "./error-reporting-config";
 import { ensureSetCookieCacheFloorHook, markPageResponse } from "./set-cookie-cache-floor-hook";
 import type { BufferedCookie, PageRouteEntry, PageTripleModule } from "./execute-page-request";
 import { renderPageRequest } from "./render-page";
@@ -714,7 +715,15 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       // framework failure here (a module that fails to load, a cache driver
       // that was never initialised) reaches the visitor only through the app's
       // `error.page.tsx`, and the server log stays empty.
-      reportServerError(`page request ${request.method} ${request.path} failed`, thrown);
+      reportServerError(`page request ${request.method} ${request.path} failed`, thrown, {
+        kind: "request-handler",
+        phase: "request-handler",
+        routeName: name,
+        routePath: path,
+        pathname: pathnameFromRequest(request),
+        method: request.method,
+        requestId: request.id,
+      });
 
       // This is outside the page pipeline: loading/registering a module can
       // fail before a triple exists for its authored boundaries to handle.

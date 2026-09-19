@@ -1,12 +1,22 @@
 import { randomUUID } from "node:crypto";
 import { environment, type Response } from "@warlock.js/core";
 import { isVisitorSafePageError } from "./is-visitor-safe-page-error";
+import { reportServerError } from "./report-server-error";
+import type { ServerErrorContext } from "./error-reporting-config";
 import type {
   PageBoundaryDesignation,
   PageErrorRecord,
   PageLevelName,
   PageRouteEntry,
 } from "./execute-page-request.types";
+
+/** Reporting context `buildErrorRecord`'s caller hands over purely for `web.errors.report()` (card 1db238ca). */
+export type BuildErrorRecordReportContext = {
+  routeName?: string;
+  routePath?: string;
+  method?: string;
+  requestId?: string;
+};
 
 export const LEVEL_ORDER: readonly PageLevelName[] = ["app", "layout", "page"];
 
@@ -32,10 +42,25 @@ export function buildErrorRecord(
   boundary: PageBoundaryDesignation,
   requestPath?: string,
   statusCode?: number,
+  reportContext?: BuildErrorRecordReportContext,
 ): PageErrorRecord {
   const digest = randomUUID();
+  const errorContext: ServerErrorContext = {
+    kind: "loader",
+    phase: boundary.throwingLevel,
+    routeName: reportContext?.routeName,
+    routePath: reportContext?.routePath,
+    pathname: requestPath ?? "unknown",
+    method: reportContext?.method ?? "unknown",
+    statusCode,
+    requestId: reportContext?.requestId,
+  };
 
-  console.error("[warlock] page error", digest, ...(requestPath ? [requestPath] : []), thrown);
+  reportServerError(
+    `page error ${digest}${requestPath ? ` (${requestPath})` : ""}`,
+    thrown,
+    errorContext,
+  );
 
   // A visitor-safe error (PublicPageError, PageValidationFailedError) keeps
   // its own content even in production — the

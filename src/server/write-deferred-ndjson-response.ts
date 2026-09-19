@@ -20,11 +20,12 @@
  * function sets the content type and status exactly once, before writing
  * anything, and never again.
  */
-import type { Response } from "@warlock.js/core";
+import type { Request, Response } from "@warlock.js/core";
 import { stringify } from "devalue";
 import { buildHydrationPayload } from "./build-hydration-payload";
 import type { DeferSettlement } from "./defer-settlement";
 import { serializePageError } from "./error-page";
+import { pathnameFromRequest, type ServerErrorContext } from "./error-reporting-config";
 import type { PageDataBundle } from "./execute-page-request";
 import { assertPageDataSerializable } from "./page-data-serialization-error";
 import { reportServerError } from "./report-server-error";
@@ -60,9 +61,20 @@ export async function writeDeferredNdjsonResponse(
   bundle: PageDataBundle,
   locale: string,
   status: number,
+  /** Reporting context only (card 1db238ca) — never read for anything else here. */
+  request?: Request,
 ): Promise<void> {
   const deferredKeys = bundle.deferredKeys ?? [];
   const settlements = bundle.deferredSettlements ?? {};
+  const buildReportContext = (phase: string): ServerErrorContext => ({
+    kind: "defer",
+    phase,
+    routeName: bundle.route.name,
+    routePath: bundle.route.path,
+    pathname: pathnameFromRequest(request),
+    method: request?.method ?? "unknown",
+    requestId: request?.id,
+  });
   // The ONE per-request abort signal (`request-abort-signal.ts`, carried on
   // the bundle by `execute-page-request.ts`) — fires when the client
   // disconnects before this response finished (card a84d0644).
@@ -85,7 +97,11 @@ export async function writeDeferredNdjsonResponse(
     raw.end();
   };
   raw.once("error", (error) => {
-    reportServerError("NDJSON response's destination stream errored", error);
+    reportServerError(
+      "NDJSON response's destination stream errored",
+      error,
+      buildReportContext("destination-stream-error"),
+    );
     endOnce();
   });
 
@@ -133,6 +149,7 @@ export async function writeDeferredNdjsonResponse(
             `deferred value "${key}" failed to serialize for emission` +
               (error.errorCode ? ` (errorCode ${error.errorCode})` : ""),
             thrown,
+            buildReportContext("serialize-failed"),
           );
           line = { defer: key, settlement: stringify(errorSettlement) };
         }

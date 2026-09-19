@@ -76,7 +76,10 @@ export class DefaultErrorBoundary extends Component<
     if (this.reportedSinceSwap) return;
 
     this.reportedSinceSwap = true;
-    reportClientError("an uncaught error reached the default client boundary", error);
+    reportClientError("an uncaught error reached the default client boundary", error, {
+      kind: "boundary",
+      pathname: typeof window === "undefined" ? undefined : window.location.pathname,
+    });
   }
 
   public componentDidUpdate(previousProps: DefaultErrorBoundaryProps): void {

@@ -106,6 +106,13 @@ export { refresh } from "./client/navigation/refresh";
 // `NavigationRoot` connects.
 export { changeLocaleCode } from "./client/navigation/change-locale-code";
 
+// Card 1db238ca: an app-owned callback for a client-side failure (an
+// uncaught `window` error, an unhandled promise rejection, a React
+// hydration error, or a boundary catch), in addition to the unconditional
+// `console.error` floor `web` already writes. See `./client/report-client-error.ts`.
+export { onClientError } from "./client/report-client-error";
+export type { ClientErrorEvent, ClientErrorKind } from "./client/report-client-error";
+
 // The server-side page cache's invalidation half moved to the server-only
 // subpath `@warlock.js/web/page-cache` (`./page-cache.ts`). Its import
 // graph reaches `@warlock.js/cache` (`./server/page-cache-driver.ts`'s

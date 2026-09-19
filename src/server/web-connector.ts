@@ -86,6 +86,7 @@ import {
   createUnregisteredPageReporter,
   type UnregisteredPageReporter,
 } from "./unregistered-pages";
+import { flushPendingServerErrorReports } from "./report-server-error";
 import { WEB_CONNECTOR_PRIORITY } from "./web-connector-factory";
 
 /**
@@ -672,6 +673,15 @@ export class WebConnector extends BaseConnector {
    * that caused the raw writes is the right one to clean up after them.
    */
   public async shutdown(): Promise<void> {
+    // Card 1db238ca: give any `web.errors.report()` calls still in flight a
+    // bounded chance to finish before the process goes away — BEFORE the
+    // `!this.active` guard below, deliberately: `this.active` is only ever
+    // set by the DEV branch of `start()` (see its own doc), so a production
+    // boot (no Vite, `this.active` stays `false` its whole life) would
+    // otherwise skip this flush entirely on every graceful shutdown, which is
+    // exactly the hosting mode this flush matters most for.
+    await flushPendingServerErrorReports();
+
     if (!this.active) return;
 
     if (container.has("http.server")) {

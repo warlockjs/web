@@ -20,7 +20,17 @@
  */
 import { serializePageError } from "./error-page";
 import { reportServerError } from "./report-server-error";
+import type { ServerErrorContext } from "./error-reporting-config";
 import type { SerializedPageError } from "../components/document-context";
+
+/** Request/route context a caller hands `createDeferredSettlement` purely for reporting (card 1db238ca). */
+export type DeferredSettlementReportContext = {
+  routeName?: string;
+  routePath?: string;
+  pathname: string;
+  method: string;
+  requestId?: string;
+};
 
 /** Raised when a deferred value does not settle within `web.streaming.deferTimeout`. */
 export class DeferTimeoutError extends Error {
@@ -64,7 +74,18 @@ export function createDeferredSettlement(
   key: string,
   rawPromise: Promise<unknown>,
   timeoutMs: number,
+  reportContext?: DeferredSettlementReportContext,
 ): DeferredSettlementPair {
+  const buildReportContext = (phase: string): ServerErrorContext => ({
+    kind: "defer",
+    phase,
+    routeName: reportContext?.routeName,
+    routePath: reportContext?.routePath,
+    pathname: reportContext?.pathname ?? "unknown",
+    method: reportContext?.method ?? "unknown",
+    requestId: reportContext?.requestId,
+  });
+
   let settled = false;
 
   let resolveSettlement!: (value: DeferSettlement) => void;
@@ -96,6 +117,7 @@ export function createDeferredSettlement(
       `deferred value "${key}" timed out` +
         (settlementError.error.errorCode ? ` (errorCode ${settlementError.error.errorCode})` : ""),
       timeoutError,
+      buildReportContext("timeout"),
     );
   }, timeoutMs);
 
@@ -129,6 +151,7 @@ export function createDeferredSettlement(
             ? ` (errorCode ${settlementError.error.errorCode})`
             : ""),
         thrown,
+        buildReportContext("rejected"),
       );
     },
   );

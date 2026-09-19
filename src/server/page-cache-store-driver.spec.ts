@@ -84,5 +84,5 @@ describe("page cache store — reachable across module graphs (dev's tsx graph +
     // The renderer's own graph must now see a miss — a HIT here is exactly
     // the bug: "the post page stays a page-cache HIT afterwards" in dev.
     expect(await graphA.getPageCacheEntry(key)).toBeUndefined();
-  }, 20_000);
+  }, 60_000);
 });

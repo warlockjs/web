@@ -241,7 +241,18 @@ export async function executePageRequest<TResult = PageDataBundle>(
         try {
           output = await middleware({ request, response });
         } catch (thrown) {
-          bundle.error = buildErrorRecord(thrown, designateBoundary(level, triple), pathname);
+          bundle.error = buildErrorRecord(
+            thrown,
+            designateBoundary(level, triple),
+            pathname,
+            undefined,
+            {
+              routeName: matched.entry.name,
+              routePath: matched.entry.path,
+              method: request.method,
+              requestId: request.id,
+            },
+          );
           response.setStatusCode(500);
           return finish(bundle);
         }
@@ -445,7 +456,13 @@ export async function executePageRequest<TResult = PageDataBundle>(
 
           for (const key of split.deferredKeys) {
             const rawPromise = split.pageData[key] as Promise<unknown>;
-            const pair = createDeferredSettlement(key, rawPromise, deferTimeoutMs);
+            const pair = createDeferredSettlement(key, rawPromise, deferTimeoutMs, {
+              routeName: matched.entry.name,
+              routePath: matched.entry.path,
+              pathname,
+              method: request.method,
+              requestId: request.id,
+            });
 
             // The component receives the wrapped (timeout-bound) promise —
             // contract rule 4 — never the loader's raw promise, so a
@@ -491,7 +508,12 @@ export async function executePageRequest<TResult = PageDataBundle>(
       // `statusCode` property) carries it through here; an ordinary throw
       // carries none and keeps the pipeline's ordinary answer, 500.
       const ownStatusCode = (signal.thrown as { statusCode?: number } | null)?.statusCode;
-      bundle.error = buildErrorRecord(signal.thrown, boundary, pathname, ownStatusCode);
+      bundle.error = buildErrorRecord(signal.thrown, boundary, pathname, ownStatusCode, {
+        routeName: matched.entry.name,
+        routePath: matched.entry.path,
+        method: request.method,
+        requestId: request.id,
+      });
 
       if (boundary.boundaryLevel === "app") {
         const status = ownStatusCode ?? 500;
@@ -515,6 +537,12 @@ export async function executePageRequest<TResult = PageDataBundle>(
         designateBoundary("page", triple),
         pathname,
         400,
+        {
+          routeName: matched.entry.name,
+          routePath: matched.entry.path,
+          method: request.method,
+          requestId: request.id,
+        },
       );
     } else {
       // Short-circuit: the signalling level's OWN buffer commits too
@@ -563,7 +591,12 @@ export async function executePageRequest<TResult = PageDataBundle>(
 
     if (resolved.thrown !== undefined) {
       const boundary = designateBoundary("page", triple);
-      bundle.error = buildErrorRecord(resolved.thrown, boundary, bundle.route.path);
+      bundle.error = buildErrorRecord(resolved.thrown, boundary, bundle.route.path, undefined, {
+        routeName: matched.entry.name,
+        routePath: matched.entry.path,
+        method: request.method,
+        requestId: request.id,
+      });
 
       if (boundary.boundaryLevel === "app") response.setStatusCode(500);
     }

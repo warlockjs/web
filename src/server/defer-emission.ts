@@ -42,6 +42,7 @@ import { escapePayload } from "../components/document-context";
 import { DEFER_BOOTSTRAP_SOURCE } from "../client/runtime/defer-registry";
 import { serializePageError } from "./error-page";
 import { reportServerError } from "./report-server-error";
+import type { ServerErrorContext } from "./error-reporting-config";
 import type { DeferSettlement } from "./defer-settlement";
 import { assertPageDataSerializable } from "./page-data-serialization-error";
 
@@ -60,6 +61,14 @@ export type WrapPipeableStreamOptions = {
   allReady: Promise<void>;
   /** The matched route's name — carried only for a named `PageDataSerializationError`. */
   routeName: string;
+  /** The matched route's own TEMPLATE path — reporting context only (card 1db238ca). */
+  routePath?: string;
+  /** The request's decoded path, no query — reporting context only (card 1db238ca). */
+  pathname?: string;
+  /** The request's HTTP method — reporting context only (card 1db238ca). */
+  method?: string;
+  /** Core's per-request correlation id — reporting context only (card 1db238ca). */
+  requestId?: string;
   /**
    * The ONE per-request abort signal (`request-abort-signal.ts`, carried on
    * `PageDataBundle.abortSignal`) — fires when the client disconnects before
@@ -116,6 +125,16 @@ export function wrapPipeableStreamForDeferredEmission(
   options: WrapPipeableStreamOptions,
 ): PipeableStream {
   const { pipeableStream, deferred, nonce, allReady, routeName, signal } = options;
+  const { routePath, pathname, method, requestId } = options;
+  const reportContext = (phase: string): ServerErrorContext => ({
+    kind: "defer",
+    phase,
+    routeName,
+    routePath,
+    pathname: pathname ?? "unknown",
+    method: method ?? "unknown",
+    requestId,
+  });
 
   if (deferred.length === 0) return pipeableStream;
 
@@ -177,7 +196,11 @@ export function wrapPipeableStreamForDeferredEmission(
       const shell = new PassThrough();
 
       target.once("error", (error) => {
-        reportServerError("deferred emission's destination stream errored", error);
+        reportServerError(
+          "deferred emission's destination stream errored",
+          error,
+          reportContext("destination-stream-error"),
+        );
         endOnce();
       });
 
@@ -222,6 +245,7 @@ export function wrapPipeableStreamForDeferredEmission(
                   `deferred value "${key}" failed to serialize for emission` +
                     (error.errorCode ? ` (errorCode ${error.errorCode})` : ""),
                   thrown,
+                  reportContext("serialize-failed"),
                 );
                 target.write(scriptTag(nonce, deferCallScript(key, errorSettlement, routeName)));
               }
@@ -231,7 +255,11 @@ export function wrapPipeableStreamForDeferredEmission(
       });
 
       Promise.all([settlementsWritten, allReady]).then(endOnce, (thrown) => {
-        reportServerError("deferred emission failed while writing to the response stream", thrown);
+        reportServerError(
+          "deferred emission failed while writing to the response stream",
+          thrown,
+          reportContext("emission-write-failed"),
+        );
         endOnce();
       });
 

@@ -97,8 +97,9 @@ function deferredPage(reviews: Promise<{ rating: number }>) {
  */
 async function streamWireHtml(
   page: Record<string, unknown>,
-  options: { crawler?: boolean } = {},
+  options: { crawler?: boolean; onFirstChunk?: () => void } = {},
 ): Promise<{ html: string; nonce: string }> {
+  const { onFirstChunk, ...renderOptions } = options;
   const entry = pageEntry("/dashboard", page);
   const http = createCoreHttp({ url: "/dashboard" });
   // `request.nonce` is a lazy getter that generates and caches a fresh value
@@ -109,11 +110,12 @@ async function streamWireHtml(
   const nonce = http.request.nonce;
   const chunks: Buffer[] = [];
   http.reply.raw.on("data", (chunk: Buffer) => chunks.push(chunk));
+  if (onFirstChunk) http.reply.raw.once("data", onFirstChunk);
 
   const rendered = await renderPageRequest("/dashboard", {
     routes: [entry],
     createHttp: () => ({ request: http.request, response: http.response }),
-    ...options,
+    ...renderOptions,
   });
 
   if (rendered instanceof Response) throw new Error("unexpected terminal Response");
@@ -127,11 +129,16 @@ async function streamWireHtml(
 
 describe("card 3926afb3 — React's own inline scripts carry the request's CSP nonce", () => {
   it("a Suspense boundary that resolves AFTER the shell emits React's own $RC reveal script, and every <script> tag on the wire carries the nonce", async () => {
-    const reviews = new Promise<{ rating: number }>((resolve) =>
-      setTimeout(() => resolve({ rating: 5 }), 20),
-    );
+    // Resolved only once the shell is on the wire, so the boundary is
+    // revealed by a later chunk however slow the shell render is.
+    let resolveReviews!: (value: { rating: number }) => void;
+    const reviews = new Promise<{ rating: number }>((resolve) => {
+      resolveReviews = resolve;
+    });
 
-    const { html, nonce } = await streamWireHtml(deferredPage(reviews));
+    const { html, nonce } = await streamWireHtml(deferredPage(reviews), {
+      onFirstChunk: () => setTimeout(() => resolveReviews({ rating: 5 }), 0),
+    });
 
     // Proves the scenario actually reaches React's OWN boundary-reveal
     // script (Fizz's `$RC(...)`), not merely the framework's separate

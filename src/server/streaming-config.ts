@@ -13,6 +13,7 @@ import { config, type Request } from "@warlock.js/core";
 import type { WebSitemapConfig } from "../sitemap/sitemap-config-types";
 import type { RobotsConfig } from "../sitemap/robots-config-types";
 import type { LocaleRoutingStrategy } from "../routing/locale-routing";
+import type { WebErrorReportingConfigurations } from "./error-reporting-config";
 
 /**
  * Customises crawler detection (`detect-crawler.ts`). `userAgents` REPLACES
@@ -71,6 +72,13 @@ export type WebConfigurations = {
    * there is no second locale list here. See `../server/locale-routing/resolve-locale-routing.ts`.
    */
   localeRouting?: { strategy?: LocaleRoutingStrategy };
+  /**
+   * Server-side error reporting (card 1db238ca, audit §1.1-1.2) — an
+   * app-owned `report()` hook, in addition to the unconditional
+   * `console.error` floor every server error path already writes. See
+   * `./error-reporting-config.ts` and `./report-server-error.ts`.
+   */
+  errors?: WebErrorReportingConfigurations;
 };
 
 declare module "@warlock.js/core" {

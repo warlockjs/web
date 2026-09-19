@@ -48,6 +48,8 @@ import {
 } from "./execute-page-request";
 import { PageMiddlewareShortCircuitError } from "./page-middleware-short-circuit-error";
 import { wrapPipeableStreamForDeferredEmission } from "./defer-emission";
+import { reportServerError } from "./report-server-error";
+import { pathnameFromRequest } from "./error-reporting-config";
 import { requestStylesheetSources } from "../request-stylesheets";
 import {
   documentStylesheetUrls,
@@ -535,9 +537,21 @@ function documentSlotsFrom(captured: CapturedHttp | undefined): DocumentSlots {
  * generic boundary was protecting; it only gives the terminal the one line
  * that locates the throw.
  */
-function reportRenderError(route: PageDataBundle["route"], thrown: unknown): void {
+function reportRenderError(
+  route: PageDataBundle["route"],
+  thrown: unknown,
+  request: Request,
+): void {
   const where = route?.path ?? route?.name ?? "an unknown route";
-  console.error(`[warlock:web] SSR render error while rendering ${where}:`, thrown);
+  reportServerError(`SSR render error while rendering ${where}`, thrown, {
+    kind: "render",
+    phase: "render",
+    routeName: route?.name,
+    routePath: route?.path,
+    pathname: pathnameFromRequest(request),
+    method: request.method,
+    requestId: request.id,
+  });
 }
 
 /**
@@ -552,12 +566,21 @@ function reportRenderError(route: PageDataBundle["route"], thrown: unknown): voi
  * never replaces `reportRenderError`: the original error and the error
  * page's own failure are reported separately, since both matter.
  */
-function reportErrorPageFailure(route: PageDataBundle["route"], thrown: unknown): void {
+function reportErrorPageFailure(
+  route: PageDataBundle["route"],
+  thrown: unknown,
+  request: Request,
+): void {
   const where = route?.path ?? route?.name ?? "an unknown route";
-  console.error(
-    `[warlock:web] the application error page itself failed while rendering ${where}:`,
-    thrown,
-  );
+  reportServerError(`the application error page itself failed while rendering ${where}`, thrown, {
+    kind: "error-page",
+    phase: "error-page",
+    routeName: route?.name,
+    routePath: route?.path,
+    pathname: pathnameFromRequest(request),
+    method: request.method,
+    requestId: request.id,
+  });
 }
 
 /**
@@ -598,6 +621,8 @@ async function renderElementToPipeableStream(
    * fix, so a deployment with CSP disabled sees no change.
    */
   nonce: string | undefined,
+  /** Reporting context only (card 1db238ca) — never read for anything else here. */
+  request: Request,
 ): Promise<{ pipeableStream: PipeableStream; allReady: Promise<void> }> {
   const { renderToPipeableStream } = await import("react-dom/server");
 
@@ -619,7 +644,7 @@ async function renderElementToPipeableStream(
         // `reportServerError` — never through here) — report it through the
         // same floor a render-time throw already uses, rather than let it
         // vanish.
-        reportRenderError(route, error);
+        reportRenderError(route, error, request);
       },
     };
 
@@ -764,6 +789,12 @@ async function finishRender(
       boundary,
       bundle.route.path,
       statusCode,
+      {
+        routeName: bundle.route.name,
+        routePath: bundle.route.path,
+        method: request.method,
+        requestId: request.id,
+      },
     );
   }
 
@@ -864,6 +895,12 @@ async function finishRender(
         designateBoundary("page", triple),
         bundle.route.path,
         failure.error.statusCode,
+        {
+          routeName: bundle.route.name,
+          routePath: bundle.route.path,
+          method: request.method,
+          requestId: request.id,
+        },
       );
       bundle.deferredKeys = undefined;
 
@@ -1047,7 +1084,7 @@ async function finishRender(
               currentError.error,
             )) ?? renderFrameworkRoot();
         } catch (errorPageThrown) {
-          reportErrorPageFailure(bundle.route, errorPageThrown);
+          reportErrorPageFailure(bundle.route, errorPageThrown, request);
           body = renderFrameworkAfterErrorPageFailure();
         }
         renderTimeThrow = true;
@@ -1065,7 +1102,7 @@ async function finishRender(
 
       // Floor first: whatever we do next (escalate to a boundary, fall to the
       // framework terminal), the throw must not vanish. See reportRenderError.
-      reportRenderError(bundle.route, thrown);
+      reportRenderError(bundle.route, thrown, request);
 
       if (currentError?.boundary.boundaryLevel === "app") {
         // The floor: the app-level boundary's own render just threw, so
@@ -1078,7 +1115,7 @@ async function finishRender(
         try {
           body = (await renderErrorPage(thrown)) ?? renderFrameworkRoot();
         } catch (errorPageThrown) {
-          reportErrorPageFailure(bundle.route, errorPageThrown);
+          reportErrorPageFailure(bundle.route, errorPageThrown, request);
           body = renderFrameworkAfterErrorPageFailure();
         }
         break;
@@ -1095,7 +1132,18 @@ async function finishRender(
             ? "layout"
             : "page";
 
-      currentError = buildErrorRecord(thrown, designateBoundary(throwingLevel, triple));
+      currentError = buildErrorRecord(
+        thrown,
+        designateBoundary(throwingLevel, triple),
+        bundle.route.path,
+        undefined,
+        {
+          routeName: bundle.route.name,
+          routePath: bundle.route.path,
+          method: request.method,
+          requestId: request.id,
+        },
+      );
     }
   }
 
@@ -1135,6 +1183,7 @@ async function finishRender(
     waitForAll,
     bundle.route,
     documentSlots.nonce,
+    request,
   );
 
   // React's shell is ready to pipe the instant `renderElementToPipeableStream`
@@ -1177,6 +1226,10 @@ async function finishRender(
           nonce: documentSlots.nonce,
           allReady,
           routeName: bundle.route.name,
+          routePath: bundle.route.path,
+          pathname: pathnameFromRequest(request),
+          method: request.method,
+          requestId: request.id,
           signal: bundle.abortSignal,
         });
 
@@ -1267,7 +1320,7 @@ export async function renderPageFailure(options: RenderPageFailureOptions): Prom
       createElement(DefaultApp, { children: errorPageElement(module, ssrProps) }),
     );
   } catch (errorPageThrown) {
-    if (loadErrorPage) reportErrorPageFailure(bundle.route, errorPageThrown);
+    if (loadErrorPage) reportErrorPageFailure(bundle.route, errorPageThrown, request);
     bundle.errorPage = undefined;
     bundle.metadata = ERROR_PAGE_METADATA;
     value = {

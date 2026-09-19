@@ -1,5 +1,5 @@
 import { startTransition, type ReactNode } from "react";
-import { hydrateRoot } from "react-dom/client";
+import { hydrateRoot, type RootOptions } from "react-dom/client";
 import {
   DocumentContext,
   HYDRATION_ROOT_ID,
@@ -7,7 +7,77 @@ import {
 } from "../components/document-context";
 import { readHydrationPayload, type HydrationDocumentPayloadSource } from "../hydration-payload";
 import { hydrateShared } from "../shared";
+import { reportClientError } from "./report-client-error";
 import { installStreamClosedRejection, prepareDeferredPageData } from "./runtime/defer-registry";
+
+/**
+ * Installs the `window`-level floor of card 1db238ca's client error
+ * reporting: an uncaught `window` error and an unhandled promise rejection
+ * each report exactly once through `reportClientError` (console floor plus
+ * the app-owned `onClientError` callback, when registered). Guarded by
+ * {@link windowErrorReportersInstalled} so a second `hydratePage()` call in
+ * the SAME document (a test harness re-invoking it, most notably) never
+ * double-registers the listeners.
+ */
+let windowErrorReportersInstalled = false;
+
+function installWindowErrorReporters(): void {
+  if (windowErrorReportersInstalled) return;
+  if (typeof window === "undefined") return;
+
+  windowErrorReportersInstalled = true;
+
+  window.addEventListener("error", (event: ErrorEvent) => {
+    reportClientError("an uncaught window error", event.error ?? event.message, {
+      kind: "window-error",
+      pathname: window.location.pathname,
+    });
+  });
+
+  window.addEventListener("unhandledrejection", (event: PromiseRejectionEvent) => {
+    reportClientError("an unhandled promise rejection", event.reason, {
+      kind: "unhandled-rejection",
+      pathname: window.location.pathname,
+    });
+  });
+}
+
+/** Test-only: allow a spec to re-install the listeners against a fresh `window`. */
+export function resetWindowErrorReportersForTests(): void {
+  windowErrorReportersInstalled = false;
+}
+
+/**
+ * `hydrateRoot`'s own React 19 error hooks, wired to the SAME reporting seam
+ * (card 1db238ca) — `onRecoverableError` fires for a hydration mismatch React
+ * recovered from by re-rendering client-side; `onCaughtError`/`onUncaughtError`
+ * fire for an error an app boundary caught/failed to catch DURING this
+ * hydration render specifically (framework boundary failures after hydration
+ * go through `DefaultErrorBoundary` instead — see `default-error-boundary.tsx`).
+ */
+const hydrationErrorHooks: Pick<
+  RootOptions,
+  "onRecoverableError" | "onCaughtError" | "onUncaughtError"
+> = {
+  onRecoverableError: (error) => {
+    reportClientError("React recovered from a hydration mismatch", error, {
+      kind: "hydration",
+      pathname: typeof window === "undefined" ? undefined : window.location.pathname,
+    });
+  },
+  onCaughtError: (error) => {
+    reportClientError("an error was caught by a boundary during hydration", error, {
+      kind: "hydration",
+      pathname: typeof window === "undefined" ? undefined : window.location.pathname,
+    });
+  },
+  onUncaughtError: (error) => {
+    reportClientError("an uncaught error reached hydration with no boundary", error, {
+      kind: "hydration",
+      pathname: typeof window === "undefined" ? undefined : window.location.pathname,
+    });
+  },
+};
 
 /**
  * Receives the VALIDATED payload and returns the ReactNode to hydrate. A
@@ -91,6 +161,8 @@ function reportHydrationFailure(error: unknown): void {
  * cleared on any failure path.
  */
 export function hydratePage(buildTree: BuildHydratedTree): void {
+  installWindowErrorReporters();
+
   const payload = readHydrationPayload(document);
 
   // NOT installed here: `installPayloadTranslations` (`install-payload-
@@ -130,6 +202,7 @@ export function hydratePage(buildTree: BuildHydratedTree): void {
       hydrateRoot(
         mountElement,
         <DocumentContext.Provider value={value}>{tree}</DocumentContext.Provider>,
+        hydrationErrorHooks,
       );
     });
   };

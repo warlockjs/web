@@ -802,6 +802,7 @@ describe("createPageRouteHandler — Stage 2 slice S3 (NDJSON client navigation)
       bundle,
       "en",
       200,
+      requestContext.request,
     );
     expect(requestContext.response.send).not.toHaveBeenCalled();
   });
