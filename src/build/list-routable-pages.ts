@@ -41,8 +41,10 @@ export type ListedRoutablePage = {
  *
  * Imports each page module directly (`import()`, not `vite.ssrLoadModule`):
  * unlike the dev route installer, this reads only a module's own exports, not
- * its rendered output, so it needs no Vite instance and works the same way in
- * dev and production.
+ * its rendered output, so it needs no Vite instance. Dev-only in practice —
+ * production reads the built page manifest instead (see
+ * `../sitemap/collect-sitemap-entries.ts`), since a production build carries
+ * no page source files to `import()`.
  */
 export async function listRoutablePages(
   options: DiscoverPagesOptions,

@@ -215,7 +215,7 @@ export function createWebBuildContribution(
       // `web.sitemap.enabled`: that flag cannot be read here (see above), and
       // a silent skip is the exact defect this line replaces.
       console.log(
-        "[warlock:web] sitemap: generated at production boot (web.sitemap.regenerate.onBoot) — not at build time",
+        "[warlock:web] sitemap: `warlock build` never generates the sitemap; when web.sitemap is enabled it is generated at runtime boot (web.sitemap.regenerate.onBoot)",
       );
 
       publicFiles = await collectPublicFiles(path.join(context.appRoot, "public"));

@@ -35,8 +35,9 @@ export async function registerWebHttpRoutes(
   registerSitemapRoutes(router, { path: sitemapConfig.path, warn });
 
   if (sitemapConfig.regenerate.onBoot) {
-    // Awaited: Part 6 rule 1 is "build/start PRODUCES an artifact set", not
-    // "kicks one off". Failure must not fail the boot, though — the app
+    // Awaited: Part 6 rule 1 is "boot PRODUCES an artifact set" (never
+    // `warlock build`), not "kicks one off". Failure must not fail the boot,
+    // though — the app
     // still has to come up and serve everything else; `regenerateSitemap`
     // already reported the error unconditionally, and requests fall to the
     // 503 path (Part 6 rule 5) until a later regeneration succeeds.

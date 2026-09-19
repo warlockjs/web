@@ -1,6 +1,6 @@
 ---
 name: generate-sitemap
-description: 'Serve `/sitemap.xml` and `/robots.txt` from a Warlock web app with the `@warlock.js/web/sitemap` subpath — the `web.sitemap` and `web.robots` keys in `src/config/web.ts`, the page-level `export const sitemap` (opt out, static options, or a supplier for dynamic routes), locale/hreflang expansion, the automatic switch to a sharded `SitemapIndex`, when generation runs (`warlock build`, boot, or `regenerateSitemap()`), the 503-before-first-generation rule, and `MissingPublicUrlError`. Triggers: `web.sitemap`, `web.robots`, `WebSitemapConfig`, `RobotsConfig`, `SitemapPageExport`, `export const sitemap`, `regenerateSitemap`, `generateSitemap`, `MissingPublicUrlError`, `splitByLocale`, `localeUrl`, `referenceSitemap`, `warlock add sitemap`; "add a sitemap to my Warlock site", "dynamic route missing from sitemap.xml", "regenerate the sitemap after publishing a post", "robots.txt", "sitemap returns 503", "hreflang in the sitemap". Skip: the framework-blind builder classes themselves (`Sitemap`, `SitemapIndex`, Express/cron usage) — `@warlock.js/sitemap/sitemap-overview/SKILL.md`; `app.publicUrl` — `@warlock.js/core/configure-app/SKILL.md`; page metadata `robots: noindex` — `@warlock.js/web/create-a-page/SKILL.md`; competing tools `next-sitemap`, `sitemap` npm package direct.'
+description: 'Serve `/sitemap.xml` and `/robots.txt` from a Warlock web app with the `@warlock.js/web/sitemap` subpath — the `web.sitemap` and `web.robots` keys in `src/config/web.ts`, the page-level `export const sitemap` (opt out, static options, or a supplier for dynamic routes), locale/hreflang expansion, the automatic switch to a sharded `SitemapIndex`, when generation runs (runtime boot or `regenerateSitemap()` — never `warlock build`), the 503-before-first-generation rule, and `MissingPublicUrlError`. Triggers: `web.sitemap`, `web.robots`, `WebSitemapConfig`, `RobotsConfig`, `SitemapPageExport`, `export const sitemap`, `regenerateSitemap`, `generateSitemap`, `MissingPublicUrlError`, `splitByLocale`, `localeUrl`, `referenceSitemap`, `warlock add sitemap`; "add a sitemap to my Warlock site", "dynamic route missing from sitemap.xml", "regenerate the sitemap after publishing a post", "robots.txt", "sitemap returns 503", "hreflang in the sitemap". Skip: the framework-blind builder classes themselves (`Sitemap`, `SitemapIndex`, Express/cron usage) — `@warlock.js/sitemap/sitemap-overview/SKILL.md`; `app.publicUrl` — `@warlock.js/core/configure-app/SKILL.md`; page metadata `robots: noindex` — `@warlock.js/web/create-a-page/SKILL.md`; competing tools `next-sitemap`, `sitemap` npm package direct.'
 ---
 
 # Warlock — generate a sitemap and robots.txt
@@ -99,7 +99,7 @@ generation time, not per request.
 
 `warlock build` never generates the sitemap — the build process loads no app
 config and ships no page source files, so it logs
-`[warlock:web] sitemap: generated at production boot (web.sitemap.regenerate.onBoot) — not at build time`
+`[warlock:web] sitemap: \`warlock build\` never generates the sitemap; when web.sitemap is enabled it is generated at runtime boot (web.sitemap.regenerate.onBoot)`
 and leaves generation to boot. Generation happens at boot (dev and
 production) when `regenerate.onBoot` is on, and whenever the app calls
 `regenerateSitemap()`:
@@ -138,7 +138,7 @@ warns that the `Sitemap:` line is then yours to add.
 ## Pitfalls
 
 - **503 on `/sitemap.xml`** — no generation has succeeded yet. Check the
-  build/boot log for `[warlock:web] sitemap regeneration failed`; a missing
+  boot log for `[warlock:web] sitemap regeneration failed`; a missing
   `app.publicUrl` is the usual cause.
 - **A dynamic page is missing** — it has no `export const sitemap` supplier.
   Its route shows up with `count: 0` in the generation result.
