@@ -1,11 +1,12 @@
 import {
   buildTracingContext,
   dispatchPhase,
+  environment,
   isTracingEnabled,
   Response,
   type Request,
 } from "@warlock.js/core";
-import { v } from "@warlock.js/seal";
+import { getSealConfig, v } from "@warlock.js/seal";
 import { enterSharedScope, sealShared } from "../shared";
 import { connectRequestSearch } from "../routing/query-string";
 import { enterAdditionalSharedScope, requireRunner } from "./page-context";
@@ -110,6 +111,16 @@ function wireRequestSearch(): void {
 type PageValidationOutcome = { valid: true } | { valid: false; errors: unknown };
 
 /**
+ * What the `:value` placeholder renders in a production issue message.
+ *
+ * Issue messages reach the SSR document and the hydration payload verbatim, so
+ * `:value` in a translation or an author `errorMessage` must not interpolate
+ * the raw input there. A custom rule that concatenates raw input into its own
+ * message text is not covered. Development keeps the value for diagnostics.
+ */
+const REDACTED_VALUE = "…";
+
+/**
  * Runs the page's top-level `validation` export against the request, and on
  * success stores the validated output where `request.validated()` reads it.
  *
@@ -137,7 +148,15 @@ async function validatePageInput(
   const data = legacyValidation
     ? resolveValidationData(validation.validating, request)
     : resolvePageValidationInput(request, { params: declaresParams, query: declaresQuery });
-  const result = await v.validate(schema, data);
+  // Per-call options replace Seal's global config rather than merging with it,
+  // so the app's translators are passed through alongside the redaction.
+  const result = await v.validate(
+    schema,
+    data,
+    environment() === "production"
+      ? { ...getSealConfig(), redactValue: REDACTED_VALUE }
+      : undefined,
+  );
 
   if (!result.isValid) return { valid: false, errors: result.errors };
 

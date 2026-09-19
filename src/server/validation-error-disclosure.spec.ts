@@ -1,6 +1,13 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { setEnvironment } from "@warlock.js/core";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { Response, setEnvironment, type Request } from "@warlock.js/core";
+import { configureSeal, getSealConfig, v, type TranslateRuleCallback } from "@warlock.js/seal";
 import { serializePageError } from "./error-page";
+import {
+  connectPageContext,
+  executePageRequest,
+  type PageRouteEntry,
+} from "./execute-page-request";
+import type { PageDataBundle } from "./execute-page-request.types";
 import { hydrationErrorPageProps } from "./error-page";
 import { PageValidationFailedError } from "./page-validation-failed-error";
 
@@ -131,5 +138,126 @@ describe("PageValidationFailedError survives the production error record (card 6
 
     expect(record.scrubbed).toBe(true);
     expect(String((record.error as Error).message)).not.toContain("hunter2");
+  });
+});
+
+const HOSTILE = "<script>SECRET-123</script>";
+
+/**
+ * Shaped like the starter's `validation.enum` translation
+ * (create-warlock templates, `locales.ts`): it echoes `:value`, interpolated
+ * from the attributes Seal hands the app's translator. String enums run the
+ * `in` rule, scalar enums the `enum` rule.
+ */
+const starterLikeTranslateRule: TranslateRuleCallback = ({ rule, attributes }) => {
+  if (rule.name !== "enum" && rule.name !== "in") return "";
+
+  return ":input must be one of the following values: :values, given value :value.".replace(
+    /:([a-zA-Z_]+)/g,
+    (match, key: string) => (key in attributes ? String(attributes[key]) : match),
+  );
+};
+
+function hostileRequest(query: Record<string, string>) {
+  const response = new Response();
+  const request = {
+    nonce: undefined,
+    locale: "en",
+    params: {},
+    query,
+    setValidatedData() {},
+    validated() {
+      return {};
+    },
+  } as unknown as Request;
+
+  return { request, response };
+}
+
+/**
+ * Drives the REAL chain a production page-validation 400 takes:
+ * `executePageRequest` (Seal validates) → `buildErrorRecord` → the hydration
+ * payload `hydrationErrorPageProps` builds from that record.
+ */
+async function renderValidationFailure(validation: PageRouteEntry["triple"]["page"]["validation"]) {
+  const query = { status: HOSTILE };
+  const { request, response } = hostileRequest(query);
+
+  const bundle = (await executePageRequest({
+    url: `/posts?${new URLSearchParams(query).toString()}`,
+    routes: [
+      {
+        path: "/posts",
+        name: "posts",
+        triple: { app: {}, layout: {}, page: { route: { path: "/posts" }, validation } },
+      },
+    ],
+    createHttp: () => ({ request, response }),
+  })) as PageDataBundle;
+
+  expect(bundle.error).toBeDefined();
+
+  const record = bundle.error!;
+
+  return hydrationErrorPageProps({ error: record.error, status: 400 }, record.error);
+}
+
+/**
+ * `sanitizeValidationIssues` keeps `issue.error` verbatim, so a translation or
+ * author `errorMessage` using `:value` used to interpolate the raw input into
+ * the SSR document and the hydration payload. Production now redacts what the
+ * `:value` placeholder renders; a custom rule that concatenates raw input into
+ * its own message text is not covered and stays the author's responsibility.
+ */
+describe("page-validation :value placeholder is redacted in production (card 6781c6f3)", () => {
+  let previousTranslateRule: TranslateRuleCallback | undefined;
+
+  beforeEach(() => {
+    connectPageContext({
+      buildStore: (payload) => payload as never,
+      getStore: () => undefined,
+      run: async (_store, callback) => callback(),
+    });
+    previousTranslateRule = getSealConfig().translateRule;
+    configureSeal({ translateRule: starterLikeTranslateRule });
+  });
+
+  afterEach(() => {
+    configureSeal({ translateRule: previousTranslateRule });
+  });
+
+  it("production: a translation's :value renders the redaction, not the input", async () => {
+    setEnvironment("production");
+
+    const props = await renderValidationFailure({
+      query: v.object({ status: v.enum(["draft", "published"]) }),
+    });
+    const [issue] = props.error.errors!;
+
+    expect(issue.error).toContain("given value …");
+    expect(issue.error).toContain("draft, published");
+    expect(JSON.stringify(props.error.errors)).not.toContain("SECRET-123");
+    expect(JSON.stringify(props)).not.toContain("SECRET-123");
+  });
+
+  it("production: an author errorMessage's :value renders the redaction, not the input", async () => {
+    setEnvironment("production");
+
+    const props = await renderValidationFailure({
+      schema: v.object({ status: v.enum(["draft", "published"], "Bad status :value") }),
+    });
+
+    expect(props.error.errors).toEqual([{ input: "status", type: "in", error: "Bad status …" }]);
+    expect(JSON.stringify(props)).not.toContain("SECRET-123");
+  });
+
+  it("development: keeps full diagnostics, so :value still renders the input", async () => {
+    setEnvironment("development");
+
+    const props = await renderValidationFailure({
+      query: v.object({ status: v.enum(["draft", "published"]) }),
+    });
+
+    expect(props.error.errors![0].error).toContain(`given value ${HOSTILE}`);
   });
 });
