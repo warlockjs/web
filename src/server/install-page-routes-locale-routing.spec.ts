@@ -8,6 +8,7 @@ import * as createPageRouteHandlerModule from "./create-page-route-handler";
 import type { PageRouteHandler, PageRouteHandlerOptions } from "./create-page-route-handler";
 import { installPageRoutes, type InstallPageRoutesOptions } from "./install-page-routes";
 import { NOT_FOUND_ROUTE_PATH } from "./not-found-page";
+import { LocaleParamRoutingConflictError } from "./locale-routing/locale-param-routing-conflict";
 
 /**
  * Card A of `releases/v5.17-locale-routing-design-note.md` — `web.localeRouting`.
@@ -120,6 +121,32 @@ function fakeResponse() {
 /** `path` is Fastify's raw `request.url` shape: `pathname` plus `?search`, verbatim. */
 function fakeRequest(requestPath = "/") {
   return { locale: "", path: requestPath };
+}
+
+/** Same shape as `fakeRequest`, plus the matched route `params` a `:locale` handler reads. */
+function fakeRequestWithParams(params: Record<string, string>, requestPath = "/") {
+  return { locale: "", path: requestPath, params };
+}
+
+/**
+ * Stubs `createPageRouteHandler` with a per-page-file tracking mock, keyed by
+ * `options.pageFile` — distinct from `stubPageRouteHandler()` above because
+ * card C's specs need to tell "the page's own handler ran" apart from "the
+ * application's 404 page ran", which a single shared no-op cannot do.
+ */
+function stubTrackingPageRouteHandler(): Map<string, PageRouteHandler> {
+  const handlersByPageFile = new Map<string, PageRouteHandler>();
+
+  vi.spyOn(createPageRouteHandlerModule, "createPageRouteHandler").mockImplementation(
+    (options: PageRouteHandlerOptions): PageRouteHandler => {
+      const handler = vi.fn(async () => undefined);
+      handlersByPageFile.set(options.pageFile, handler);
+
+      return handler;
+    },
+  );
+
+  return handlersByPageFile;
 }
 
 describe("installPageRoutes — locale routing, prefix-except-default", () => {
@@ -366,5 +393,108 @@ describe("installPageRoutes — locale routing, none (the innocent case)", () =>
 
     expect(registered.map((route) => route.path)).toEqual(["/posts"]);
     expect(registered[0]?.options.name).toBeDefined();
+  });
+});
+
+describe("installPageRoutes — locale routing, [locale] folder (card C)", () => {
+  it("registers /:locale/posts whose handler pins request.locale to ar for a configured code", async () => {
+    config.set("app", { localeCodes: ["en", "ar"], localeCode: "en" });
+
+    const appRoot = makeAppTree({ "src/web/[locale]/posts.page.tsx": "" });
+    const appSrcRoot = path.join(appRoot, "src");
+    const postsFile = path.join(appSrcRoot, "web", "[locale]", "posts.page.tsx");
+    const vite = fakeVite({ [postsFile]: {} });
+    const handlersByPageFile = stubTrackingPageRouteHandler();
+
+    const { run, registered } = install(appSrcRoot, vite);
+    await run();
+
+    const route = registered.find((entry) => entry.path === "/:locale/posts");
+    expect(route).toBeDefined();
+
+    const postsHandler = handlersByPageFile.get(postsFile);
+    expect(postsHandler).toBeDefined();
+
+    const request = fakeRequestWithParams({ locale: "ar" });
+    await route?.handler({ request, response: fakeResponse() } as unknown as HttpContext);
+
+    expect(request.locale).toBe("ar");
+    expect(postsHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the app's own 404 for an unconfigured locale value, never calling the page handler", async () => {
+    config.set("app", { localeCodes: ["en", "ar"], localeCode: "en" });
+
+    const appRoot = makeAppTree({
+      "src/web/[locale]/posts.page.tsx": "",
+      "src/web/404.page.tsx": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+    const postsFile = path.join(appSrcRoot, "web", "[locale]", "posts.page.tsx");
+    const notFoundFile = path.join(appSrcRoot, "web", "404.page.tsx");
+    const vite = fakeVite({ [postsFile]: {}, [notFoundFile]: {} });
+    const handlersByPageFile = stubTrackingPageRouteHandler();
+
+    const { run, registered } = install(appSrcRoot, vite);
+    await run();
+
+    const route = registered.find((entry) => entry.path === "/:locale/posts");
+    expect(route).toBeDefined();
+
+    const postsHandler = handlersByPageFile.get(postsFile);
+    const notFoundHandler = handlersByPageFile.get(notFoundFile);
+    expect(postsHandler).toBeDefined();
+    expect(notFoundHandler).toBeDefined();
+
+    const context = { request: fakeRequestWithParams({ locale: "fr" }), response: fakeResponse() };
+    await route?.handler(context as unknown as HttpContext);
+
+    expect(notFoundHandler).toHaveBeenCalledTimes(1);
+    expect(notFoundHandler).toHaveBeenCalledWith(context);
+    expect(postsHandler).not.toHaveBeenCalled();
+  });
+
+  it("leaves a deeper :locale param untouched — an ordinary param, not locale-routed", async () => {
+    config.set("app", { localeCodes: ["en", "ar"], localeCode: "en" });
+
+    const appRoot = makeAppTree({ "src/web/posts/[locale].page.tsx": "" });
+    const appSrcRoot = path.join(appRoot, "src");
+    const pageFile = path.join(appSrcRoot, "web", "posts", "[locale].page.tsx");
+    const vite = fakeVite({ [pageFile]: {} });
+    const handlersByPageFile = stubTrackingPageRouteHandler();
+
+    const { run, registered } = install(appSrcRoot, vite);
+    await run();
+
+    const route = registered.find((entry) => entry.path === "/posts/:locale");
+    expect(route).toBeDefined();
+
+    const pageHandler = handlersByPageFile.get(pageFile);
+    expect(pageHandler).toBeDefined();
+    // The registered handler is the page's own handler, unwrapped — no
+    // locale-code validation runs against a deeper `:locale` param.
+    expect(route?.handler).toBe(pageHandler);
+
+    const request = fakeRequestWithParams({ locale: "zz" });
+    await route?.handler({ request, response: fakeResponse() } as unknown as HttpContext);
+
+    expect(pageHandler).toHaveBeenCalledTimes(1);
+    expect(request.locale).toBe("");
+  });
+
+  it("refuses to boot when a config strategy is active alongside a [locale] page, naming the file", async () => {
+    config.set("web", { localeRouting: { strategy: "prefix-except-default" } });
+    config.set("app", { localeCodes: ["en", "ar"], localeCode: "en" });
+    stubPageRouteHandler();
+
+    const appRoot = makeAppTree({ "src/web/[locale]/posts.page.tsx": "" });
+    const appSrcRoot = path.join(appRoot, "src");
+    const postsFile = path.join(appSrcRoot, "web", "[locale]", "posts.page.tsx");
+    const vite = fakeVite({ [postsFile]: {} });
+
+    const { run } = install(appSrcRoot, vite);
+
+    await expect(run()).rejects.toThrow(LocaleParamRoutingConflictError);
+    await expect(run()).rejects.toThrow(postsFile);
   });
 });

@@ -1,5 +1,5 @@
 import config from "@mongez/config";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HttpContext } from "@warlock.js/core";
 import {
   installPageRoutesFromManifest,
@@ -8,6 +8,7 @@ import {
 import type { PageRouteHandler, PageRouteHandlerOptions } from "./create-page-route-handler";
 import type { PageManifest, PageManifestPageEntry } from "./page-manifest";
 import { NOT_FOUND_ROUTE_PATH } from "./not-found-page";
+import { LocaleParamRoutingConflictError } from "./locale-routing/locale-param-routing-conflict";
 
 /**
  * Card A of `releases/v5.17-locale-routing-design-note.md` — `web.localeRouting`.
@@ -78,6 +79,26 @@ const docsPage: PageManifestPageEntry = {
   layouts: [],
 };
 
+/** Card C: a `[locale]`-folder page, expressed here as an explicit `route`. */
+const localePostsPage: PageManifestPageEntry = {
+  module: { default: () => null, route: "/:locale/posts" },
+  sourceFile: "src/app/main/web/[locale]/posts.page.tsx",
+  layouts: [],
+};
+
+/** A `:locale` param NOT in the first segment — an ordinary param (card C.1). */
+const deepLocaleParamPage: PageManifestPageEntry = {
+  module: { default: () => null, route: "/posts/:locale" },
+  sourceFile: "src/app/main/web/posts/locale-page.page.tsx",
+  layouts: [],
+};
+
+const notFoundPage: PageManifestPageEntry = {
+  module: { default: () => null },
+  sourceFile: "src/app/main/web/404.page.tsx",
+  layouts: [],
+};
+
 /** A minimal `Response` double that records what it was asked to do. */
 function fakeResponse() {
   const calls: { redirect?: [string, number]; permanentRedirect?: string } = {};
@@ -100,6 +121,30 @@ function fakeResponse() {
 /** A minimal `Request` double: a settable `locale`, and `path` — Fastify's raw `url` (`pathname` + `?search`, verbatim). */
 function fakeRequest(requestPath = "/") {
   return { locale: "", path: requestPath };
+}
+
+/** Same shape as `fakeRequest`, plus the matched route `params` a `:locale` handler reads. */
+function fakeRequestWithParams(params: Record<string, string>, requestPath = "/") {
+  return { locale: "", path: requestPath, params };
+}
+
+/**
+ * A `createHandler` factory that tracks one mock per `options.pageFile` —
+ * distinct from `recordingHandlerFactory()` above because card C's specs need
+ * to tell "the page's own handler ran" apart from "the application's 404 page
+ * ran", which a single shared no-op cannot do.
+ */
+function trackingHandlerFactory() {
+  const handlersByPageFile = new Map<string, PageRouteHandler>();
+
+  const createHandler = (options: PageRouteHandlerOptions): PageRouteHandler => {
+    const handler = vi.fn(async () => undefined);
+    handlersByPageFile.set(options.pageFile, handler);
+
+    return handler;
+  };
+
+  return { createHandler, handlersByPageFile };
 }
 
 afterEach(() => {
@@ -327,5 +372,111 @@ describe("installPageRoutesFromManifest — locale routing, none", () => {
 
     expect(registered.map((route) => route.path)).toEqual(["/posts"]);
     expect(registered[0]?.options.name).toBeDefined();
+  });
+});
+
+describe("installPageRoutesFromManifest — locale routing, [locale] folder (card C)", () => {
+  it("registers /:locale/posts whose handler pins request.locale to ar for a configured code", async () => {
+    config.set("app", { localeCodes: ["en", "ar"], localeCode: "en" });
+
+    const { router, registered } = recordingRouter();
+    const { createHandler, handlersByPageFile } = trackingHandlerFactory();
+
+    installPageRoutesFromManifest({
+      router,
+      manifest: manifestOf([localePostsPage]),
+      createHandler,
+    });
+
+    const route = registered.find((entry) => entry.path === "/:locale/posts");
+    expect(route).toBeDefined();
+
+    const postsHandler = handlersByPageFile.get(localePostsPage.sourceFile);
+    expect(postsHandler).toBeDefined();
+
+    const request = fakeRequestWithParams({ locale: "ar" });
+    await route?.handler({ request, response: fakeResponse() } as unknown as HttpContext);
+
+    expect(request.locale).toBe("ar");
+    expect(postsHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the app's own 404 for an unconfigured locale value, never calling the page handler", async () => {
+    config.set("app", { localeCodes: ["en", "ar"], localeCode: "en" });
+
+    const { router, registered } = recordingRouter();
+    const { createHandler, handlersByPageFile } = trackingHandlerFactory();
+
+    installPageRoutesFromManifest({
+      router,
+      manifest: manifestOf([localePostsPage, notFoundPage]),
+      createHandler,
+    });
+
+    const route = registered.find((entry) => entry.path === "/:locale/posts");
+    expect(route).toBeDefined();
+
+    const postsHandler = handlersByPageFile.get(localePostsPage.sourceFile);
+    const notFoundHandler = handlersByPageFile.get(notFoundPage.sourceFile);
+    expect(postsHandler).toBeDefined();
+    expect(notFoundHandler).toBeDefined();
+
+    const context = { request: fakeRequestWithParams({ locale: "fr" }), response: fakeResponse() };
+    await route?.handler(context as unknown as HttpContext);
+
+    expect(notFoundHandler).toHaveBeenCalledTimes(1);
+    expect(notFoundHandler).toHaveBeenCalledWith(context);
+    expect(postsHandler).not.toHaveBeenCalled();
+  });
+
+  it("leaves a deeper :locale param untouched — an ordinary param, not locale-routed", async () => {
+    config.set("app", { localeCodes: ["en", "ar"], localeCode: "en" });
+
+    const { router, registered } = recordingRouter();
+    const { createHandler, handlersByPageFile } = trackingHandlerFactory();
+
+    installPageRoutesFromManifest({
+      router,
+      manifest: manifestOf([deepLocaleParamPage]),
+      createHandler,
+    });
+
+    const route = registered.find((entry) => entry.path === "/posts/:locale");
+    expect(route).toBeDefined();
+
+    const pageHandler = handlersByPageFile.get(deepLocaleParamPage.sourceFile);
+    expect(pageHandler).toBeDefined();
+    // The registered handler is the page's own handler, unwrapped — no
+    // locale-code validation runs against a deeper `:locale` param.
+    expect(route?.handler).toBe(pageHandler);
+
+    const request = fakeRequestWithParams({ locale: "zz" });
+    await route?.handler({ request, response: fakeResponse() } as unknown as HttpContext);
+
+    expect(pageHandler).toHaveBeenCalledTimes(1);
+    expect(request.locale).toBe("");
+  });
+
+  it("refuses to boot when a config strategy is active alongside a [locale] page, naming the file", () => {
+    config.set("web", { localeRouting: { strategy: "prefix-except-default" } });
+    config.set("app", { localeCodes: ["en", "ar"], localeCode: "en" });
+
+    const { router } = recordingRouter();
+    const { createHandler } = recordingHandlerFactory();
+
+    expect(() =>
+      installPageRoutesFromManifest({
+        router,
+        manifest: manifestOf([localePostsPage]),
+        createHandler,
+      }),
+    ).toThrow(LocaleParamRoutingConflictError);
+    expect(() =>
+      installPageRoutesFromManifest({
+        router,
+        manifest: manifestOf([localePostsPage]),
+        createHandler,
+      }),
+    ).toThrow(localePostsPage.sourceFile);
   });
 });

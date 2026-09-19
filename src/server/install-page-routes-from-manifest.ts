@@ -460,6 +460,7 @@ export function installPageRoutesFromManifest(
       name,
       pageHandler,
       localeRouting,
+      { pageFile: page.sourceFile, renderNotFound },
     )) {
       router.get(
         registration.path,

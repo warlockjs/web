@@ -603,6 +603,7 @@ export async function installPageRoutes(
         name,
         pageHandler,
         localeRouting,
+        { pageFile, renderNotFound },
       )) {
         router.get(
           registration.path,
