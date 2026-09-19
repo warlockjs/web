@@ -7,7 +7,14 @@ import type { ServerErrorPageProps } from "../props";
 import { PublicPageError } from "./public-page-error";
 import { PageValidationFailedError } from "./page-validation-failed-error";
 
-/** One sanitized Seal validation issue — never the submitted value. */
+/**
+ * One sanitized Seal validation issue: strips every field but
+ * `{ input, type, error }`. In production, the `:value` placeholder in
+ * page-validation messages renders `…` instead of the submitted value. A
+ * custom rule or translation that builds its message from raw input without
+ * `:value` isn't covered, so keep submitted values out of custom message
+ * text.
+ */
 type SafeValidationIssue = {
   readonly input: string;
   readonly type: string;
@@ -54,7 +61,10 @@ export const GENERIC_PRODUCTION_ERROR_MESSAGE = "An unexpected error occurred.";
  * exposes its own `message`, and a `PageValidationFailedError` (a visitor's
  * malformed input, never a server fault) exposes its own stable message plus
  * `errors` — the field name, rule type and translated rule message for each
- * failed Seal rule, NEVER the submitted value; every other thrown value
+ * failed Seal rule. In production, the `:value` placeholder in that message
+ * renders `…` instead of the submitted value; a custom rule or translation
+ * that builds its message from raw input without `:value` isn't covered, so
+ * keep submitted values out of custom message text. Every other thrown value
  * serializes to the same generic message plus an opaque `errorCode` an
  * operator can join against the unconditional server-side report line
  * (`reportServerError`/`reportRenderError`). `stack` never crosses this

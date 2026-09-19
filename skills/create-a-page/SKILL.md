@@ -137,7 +137,7 @@ export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
 
 `request.params`/`request.query` arrive as strings, so a numeric `id` or `tab` needs `v.int().coerce()` (or the matching coercing primitive), not `v.int()` alone. `query` objects are strict by default — an unrecognized key such as `?utm_source=…` 400s unless the schema calls `.stripUnknown()`, the normal spelling for a public page's query.
 
-Rejected input never reaches the page loader — validation runs after the app and layout loaders and before the page's own. A full page load renders the application's `error.page.tsx` boundary at status 400, and the error it receives carries the validation issues (read them off `(error as { errors?: unknown }).errors` — see [load-page-data](../load-page-data/SKILL.md#validation) for the full shape) — a page is a document, not an API endpoint, so invalid input never gets a raw JSON body. Those issues are always the safe `{ input, type, error }` shape, never the submitted value. A client navigation to the same URL gets the same 400 status, with no document to render.
+Rejected input never reaches the page loader — validation runs after the app and layout loaders and before the page's own. A full page load renders the application's `error.page.tsx` boundary at status 400, and the error it receives carries the validation issues (read them off `(error as { errors?: unknown }).errors` — see [load-page-data](../load-page-data/SKILL.md#validation) for the full shape) — a page is a document, not an API endpoint, so invalid input never gets a raw JSON body. Those issues are always the safe `{ input, type, error }` shape. In production, the `:value` placeholder in page-validation messages renders `…` instead of the submitted value. A custom rule or translation that builds its message from raw input without `:value` isn't covered, so keep submitted values out of custom message text. A client navigation to the same URL gets the same 400 status, with no document to render.
 
 ### `middleware` — a page's own guard, run last
 
@@ -224,7 +224,7 @@ export const route = {
   its absence is a boot-time `InvalidPageCacheOptInError`.
 - `tags` is a static list, or a function `(data, { shared }) => string[]` of the
   resolved page data and the request's sealed `shared` payload, evaluated right
-  before the entry is stored — e.g. `` [`theme:${shared.theme}`] ``.
+  before the entry is stored — e.g. ``[`theme:${shared.theme}`]``.
 - `ttl` is the server cache's own freshness window in seconds, independent of
   the CDN-facing `maxAge`; omit it to reuse `maxAge`.
 - `varyBy?: (request) => string` adds a request-derived component to the key,

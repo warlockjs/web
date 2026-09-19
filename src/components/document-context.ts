@@ -29,7 +29,11 @@ export type SerializedPageError = {
    * Present only for a `PageValidationFailedError` (a failed page-level
    * `validation` export). Each entry is the Seal validation result's
    * `{ input, type, error }` — the field name, the failing rule's type, and
-   * its (translated) message — and NOTHING else: never the submitted value.
+   * its (translated) message — and nothing else. In production, the
+   * `:value` placeholder in page-validation messages renders `…` instead of
+   * the submitted value. A custom rule or translation that builds its
+   * message from raw input without `:value` isn't covered, so keep
+   * submitted values out of custom message text.
    * See `serializePageError` (`web/src/server/error-page.ts`).
    */
   readonly errors?: readonly {

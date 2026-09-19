@@ -202,7 +202,7 @@ export const loader = (async ({ signal }) => {
 }) satisfies PageLoader;
 ```
 
-**Honest limitation:** a loader that never checks `signal` runs to completion anyway — the framework only stops the pipeline *between* levels (app → layout → page), never inside a loader already running.
+**Honest limitation:** a loader that never checks `signal` runs to completion anyway — the framework only stops the pipeline _between_ levels (app → layout → page), never inside a loader already running.
 
 ## Validation
 
@@ -244,7 +244,7 @@ export default function ErrorPage({ error, status }: ErrorPageProps) {
 }
 ```
 
-In production this `errors` array is always the safe issue shape — `{ input, type, error }` — and never the submitted value itself: a bad `email` field reports what rule failed (`type`) and where (`input`), not what the visitor typed.
+In production this `errors` array is always the safe issue shape — `{ input, type, error }` — where `input`/`type` are the field name and failing rule, never the submitted value. In production, the `:value` placeholder in page-validation messages renders `…` instead of the submitted value. A custom rule or translation that builds its message from raw input without `:value` isn't covered, so keep submitted values out of custom message text.
 
 A client navigation to the same URL still receives that same 400 status, with no document to render — nothing here changes the data representation's contract.
 
