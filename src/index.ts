@@ -167,6 +167,21 @@ export { ClientOnly } from "./components/client-only";
 export type { ClientOnlyProps, ClientOnlyChildren } from "./components/client-only";
 export { useIsClient } from "./components/use-is-client";
 
+// The universal image component: renders `srcSet`/`src`/`<picture>` from a
+// plain, serializable descriptor. It never runs Sharp, inspects a file or
+// imports server-only code, so this
+// barrel's graph stays clean of the build-time image pipeline.
+export { Image } from "./image/image";
+export { warlockImageLoader } from "./image/warlock-image-loader";
+export type {
+  ImageFormat,
+  ImageVariantDescriptor,
+  ImageDescriptor,
+  ImageLoaderInput,
+  ImageLoader,
+  ImageProps,
+} from "./image/types";
+
 // The build→runtime handoff surface (page manifest, build contribution) is
 // NOT re-exported here: this barrel's graph reaches React, and a config file
 // that merely constructs a connector must not. It lives at `@warlock.js/web/connector` — `src/connector/index.ts`.
