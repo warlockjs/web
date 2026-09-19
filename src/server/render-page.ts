@@ -597,6 +597,15 @@ async function renderElementToPipeableStream(
     };
 
     if (waitForAll) {
+      // Nothing is written before `onAllReady`, so every boundary is complete
+      // when the document flushes — but React Fizz still OUTLINES a completed
+      // boundary (fallback + `<!--$?-->`, content in `<div hidden id="S:n">`,
+      // swapped by `$RC`) once the bytes flushed so far plus its own exceed
+      // `progressiveChunkSize` (12 800 by default). On a long page that turns
+      // the last deferred sections into client-side swaps a non-JS crawler
+      // never runs (canon cf11ec62, card e4db45bb). An unbounded budget keeps
+      // every completed boundary inline.
+      options.progressiveChunkSize = Number.POSITIVE_INFINITY;
       options.onAllReady = () => {
         resolveAllReady();
         resolve(stream);

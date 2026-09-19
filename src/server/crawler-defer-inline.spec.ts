@@ -159,6 +159,97 @@ describe("renderPageRequest — awaitDeferredForDataRequest (item c: the data pa
   });
 });
 
+/**
+ * e4db45bb follow-up — the live blog's crawler HTML still carried ONE pending
+ * boundary (`<!--$?-->` + `<div hidden id="S:0">` + `$RC`) for its SECOND
+ * deferred section, although every key had settled and the render waited
+ * for `onAllReady`. Not timing: React Fizz (19.3, `flushSegment`) outlines a
+ * COMPLETED boundary once the bytes already flushed plus the boundary's own
+ * exceed `progressiveChunkSize` (12 800 by default) — a page with more than
+ * ~12.8 KB of markup before its last `<Suspense>` gets that boundary as a
+ * client-side swap, invisible to a non-JS indexer. The fixture reproduces
+ * that shape with ~16 KB of article text between the two boundaries.
+ */
+describe("crawler document — every deferred boundary is inline, however far down the page (e4db45bb follow-up)", () => {
+  const ARTICLE = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(300);
+  const SECTION_BODY = " Read next: a related article summary.".repeat(30);
+
+  function Section({ value, label }: { value: Promise<{ text: string }>; label: string }) {
+    const resolved = use(value);
+    // Over 500 bytes of content: React only outlines a boundary above that
+    // size (`isEligibleForOutlining`) — the blog's related rail is ~3.7 KB.
+    return createElement("section", null, `${label}:${resolved.text}`, SECTION_BODY);
+  }
+
+  function longPage(comments: Promise<{ text: string }>, related: Promise<{ text: string }>) {
+    return {
+      loader: async () => defer({ comments, related }),
+      default: ({
+        data,
+      }: {
+        data: { comments: Promise<{ text: string }>; related: Promise<{ text: string }> };
+      }) =>
+        createElement(
+          "main",
+          null,
+          createElement(
+            Suspense,
+            { fallback: "COMMENTS_FALLBACK" },
+            createElement(Section, { value: data.comments, label: "comments" }),
+          ),
+          createElement("article", null, ARTICLE),
+          createElement(
+            Suspense,
+            { fallback: "RELATED_FALLBACK" },
+            createElement(Section, { value: data.related, label: "related" }),
+          ),
+        ),
+    };
+  }
+
+  async function crawlerWireHtml(page: Record<string, unknown>): Promise<string> {
+    const entry = pageEntry("/long", page);
+    const http = createCoreHttp({ url: "/long", headers: { "user-agent": "Googlebot/2.1" } });
+    const chunks: Buffer[] = [];
+    http.reply.raw.on("data", (chunk: Buffer) => chunks.push(chunk));
+
+    const rendered = await renderPageRequest("/long", {
+      routes: [entry],
+      createHttp: () => ({ request: http.request, response: http.response }),
+      crawler: true,
+    });
+
+    if (rendered instanceof Response) throw new Error("unexpected terminal Response");
+
+    http.response.setContentType("text/html");
+    http.response.setStatusCode(rendered.status);
+    await http.response.streamReact(rendered.pipeableStream!);
+
+    return Buffer.concat(chunks).toString("utf8");
+  }
+
+  it("two staggered keys around ~16 KB of markup: both values inline, no pending boundary, no hidden segment, no fallback", async () => {
+    // Red control: drop `progressiveChunkSize` from `render-page.ts`'s
+    // `waitForAll` render options — the second boundary comes back as
+    // `<!--$?-->` + `hidden id="S:0"` + RELATED_FALLBACK, exactly the live shape.
+    const comments = new Promise<{ text: string }>((resolve) =>
+      setTimeout(() => resolve({ text: "first" }), 5),
+    );
+    const related = new Promise<{ text: string }>((resolve) =>
+      setTimeout(() => resolve({ text: "second" }), 40),
+    );
+
+    const wireHtml = await crawlerWireHtml(longPage(comments, related));
+
+    expect(wireHtml).toContain("comments:first");
+    expect(wireHtml).toContain("related:second");
+    expect(wireHtml).not.toContain("COMMENTS_FALLBACK");
+    expect(wireHtml).not.toContain("RELATED_FALLBACK");
+    expect(wireHtml).not.toContain("<!--$?-->");
+    expect(wireHtml).not.toMatch(/hidden id="S:/);
+  });
+});
+
 describe("crawler document — hydration reuses the document-scope deferred registry (item b)", () => {
   type WarlockWindow = typeof globalThis & {
     __WARLOCK_DEFER__?: (key: string, raw: string) => void;
