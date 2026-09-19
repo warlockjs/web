@@ -23,6 +23,7 @@ import {
   setPageCacheEntry,
   type StoredPageCacheEntry,
 } from "./page-cache-store";
+import { resetPageCacheStoreStateForTests } from "./page-cache-store-driver";
 
 /** What the app's `globalPrefix` function currently returns — or throws, for "no request in scope". */
 let requestPrefix: () => string = () => "store";
@@ -53,6 +54,7 @@ describe("page cache namespace (independent of the app's request-scoped globalPr
     await cache.init();
 
     resetPageCacheDriverStateForTests();
+    resetPageCacheStoreStateForTests();
   });
 
   afterEach(() => {
@@ -182,6 +184,7 @@ describe("page cache deployment namespace (shared backends)", () => {
     for (const key of Object.keys(sharedBackend)) delete sharedBackend[key];
 
     resetPageCacheDriverStateForTests();
+    resetPageCacheStoreStateForTests();
   });
 
   afterEach(() => {

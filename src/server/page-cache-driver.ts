@@ -37,8 +37,40 @@ class PageCacheDependencyMissingError extends Error {
   }
 }
 
-let cacheModulePromise: Promise<typeof import("@warlock.js/cache")> | undefined;
-let warnedAboutInProcessDriver = false;
+/**
+ * ── WHY THESE LIVE ON `globalThis` AND NOT IN MODULE BINDINGS ────────────────
+ *
+ * Same mechanism as `page-cache-store-driver.ts`'s slot (see its comment for
+ * the full account): dev runs `@warlock.js/web` as two separate module-graph
+ * instances (tsx/Node for HTTP routes and installers, Vite's SSR runner for
+ * the render path), so a module-level `let` here is two different bindings.
+ * `@warlock.js/cache` itself is externalised from Vite's SSR graph and so is
+ * NOT duplicated — both graphs' `await import("@warlock.js/cache")` resolve
+ * the same Node module — but memoising the PROMISE and the warn-once flag in
+ * a module binding still means each graph does its own import and prints its
+ * own copy of the one-time in-process-driver warning. Moving them to the
+ * shared slot makes the memoisation and the warning actually process-wide,
+ * matching their doc comments below.
+ */
+const PAGE_CACHE_DRIVER_MODULE_SLOT = Symbol.for("warlock.web.pageCacheDriverModule");
+
+type PageCacheDriverModuleState = {
+  cacheModulePromise: Promise<typeof import("@warlock.js/cache")> | undefined;
+  warnedAboutInProcessDriver: boolean;
+};
+
+type PageCacheDriverModuleHost = typeof globalThis & {
+  [PAGE_CACHE_DRIVER_MODULE_SLOT]?: PageCacheDriverModuleState;
+};
+
+function driverModuleState(): PageCacheDriverModuleState {
+  const host = globalThis as PageCacheDriverModuleHost;
+
+  return (host[PAGE_CACHE_DRIVER_MODULE_SLOT] ??= {
+    cacheModulePromise: undefined,
+    warnedAboutInProcessDriver: false,
+  });
+}
 
 /**
  * Lazily loads `@warlock.js/cache`, memoizing the promise so the dynamic
@@ -46,16 +78,18 @@ let warnedAboutInProcessDriver = false;
  * with `serverCache: true` actually needs the store.
  */
 export async function loadPageCacheDriver(): Promise<typeof import("@warlock.js/cache")> {
-  if (cacheModulePromise === undefined) {
-    cacheModulePromise = import("@warlock.js/cache").catch((cause: unknown) => {
+  const state = driverModuleState();
+
+  if (state.cacheModulePromise === undefined) {
+    state.cacheModulePromise = import("@warlock.js/cache").catch((cause: unknown) => {
       // Reset so a later call (a different process state, a retried boot) can
       // try again instead of replaying the same rejected promise forever.
-      cacheModulePromise = undefined;
+      state.cacheModulePromise = undefined;
       throw new PageCacheDependencyMissingError(cause);
     });
   }
 
-  const cacheModule = await cacheModulePromise;
+  const cacheModule = await state.cacheModulePromise;
 
   warnIfInProcessDriver(cacheModule);
 
@@ -70,13 +104,15 @@ export async function loadPageCacheDriver(): Promise<typeof import("@warlock.js/
  * driver (redis/pg) does not have this gap, so it never warns.
  */
 function warnIfInProcessDriver(cacheModule: typeof import("@warlock.js/cache")): void {
-  if (warnedAboutInProcessDriver) return;
+  const state = driverModuleState();
+
+  if (state.warnedAboutInProcessDriver) return;
 
   const driverName = cacheModule.cache.currentDriver?.name;
 
   if (driverName === undefined || !isInProcessCacheDriver(driverName)) return;
 
-  warnedAboutInProcessDriver = true;
+  state.warnedAboutInProcessDriver = true;
 
   console.warn(
     `[warlock:web] route.cache.serverCache is enabled with the "${driverName}" cache driver, which ` +
@@ -88,6 +124,8 @@ function warnIfInProcessDriver(cacheModule: typeof import("@warlock.js/cache")):
 
 /** Test-only: resets the memoized module promise and warning flag between spec files. */
 export function resetPageCacheDriverStateForTests(): void {
-  cacheModulePromise = undefined;
-  warnedAboutInProcessDriver = false;
+  const state = driverModuleState();
+
+  state.cacheModulePromise = undefined;
+  state.warnedAboutInProcessDriver = false;
 }

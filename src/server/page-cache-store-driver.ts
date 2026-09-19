@@ -22,6 +22,36 @@
  *
  * Lifecycle: exactly one instance per process at a time, never one per
  * request. A replaced instance (the app switched drivers) is disconnected.
+ *
+ * ── WHY THIS LIVES ON `globalThis` AND NOT IN A MODULE BINDING ───────────────
+ *
+ * A plain module-level `let` does not work in dev, for the same reason
+ * `route-table.ts` documents at length and measured first: in dev the
+ * process runs TWO module graphs over the same files. HTTP routes (a blog's
+ * `POST /comments` calling `invalidatePageCache`) load via tsx/Node, while
+ * `@warlock.js/web` itself is one of the few family packages Vite's dev SSR
+ * config deliberately keeps INSIDE its own SSR module runner rather than
+ * externalising (`dev-server-config.ts`'s `WARLOCK_FAMILY_INLINE_PACKAGES`,
+ * needed there for `<Head/>`'s document context) — its own registry, its own
+ * instance of this module. A module-level `let state` is therefore two
+ * different bindings: the HTTP route's `invalidatePageCache()` resolves one
+ * driver instance, the page renderer's `getPageCacheEntry()` resolves
+ * another. For the in-process memory driver that is two different heaps, so
+ * the invalidating write never reaches the entry the render stored — the
+ * page keeps answering a page-cache HIT after the app evicted it. (Any
+ * shared out-of-process backend — redis, pg — does not have this gap: both
+ * graphs' clones point at the same external store.)
+ *
+ * `@warlock.js/cache` itself is NOT duplicated this way — it is deliberately
+ * externalised from Vite's SSR graph instead (`dev-server-config.ts`'s
+ * `WEB_OPTIONAL_PEERS`), specifically so `cache.currentDriver` stays the
+ * SAME object in both graphs and the `source` identity check below stays
+ * meaningful. Only the CLONE this module builds from it — and memoises —
+ * needs to move.
+ *
+ * `Symbol.for` resolves through the per-ISOLATE symbol registry, which both
+ * graphs share because they are the same isolate, so there is one state no
+ * matter which graph reaches it first.
  */
 import type { CacheDriver, DriverClass } from "@warlock.js/cache";
 
@@ -41,14 +71,26 @@ type PageCacheStoreState = {
   store: Promise<PageCacheStore>;
 };
 
-let state: PageCacheStoreState | undefined;
+const PAGE_CACHE_STORE_SLOT = Symbol.for("warlock.web.pageCacheStore");
+
+type PageCacheStoreHost = typeof globalThis & {
+  [PAGE_CACHE_STORE_SLOT]?: PageCacheStoreState;
+};
+
+function readState(): PageCacheStoreState | undefined {
+  return (globalThis as PageCacheStoreHost)[PAGE_CACHE_STORE_SLOT];
+}
+
+function writeState(next: PageCacheStoreState | undefined): void {
+  (globalThis as PageCacheStoreHost)[PAGE_CACHE_STORE_SLOT] = next;
+}
 
 /**
  * Returns the page cache's driver instance and namespace, building them on
  * first use and memoising them per process — so lookup, store and
  * `invalidatePageCache` all hit the SAME instance (for the memory driver, the
- * same heap). Rebuilt only when the app's current driver itself changes
- * (`cache.use()`).
+ * same heap), across BOTH dev module graphs, not just within one of them.
+ * Rebuilt only when the app's current driver itself changes (`cache.use()`).
  */
 export async function resolvePageCacheStoreDriver(): Promise<PageCacheStore> {
   const { cache } = await loadPageCacheDriver();
@@ -61,23 +103,35 @@ export async function resolvePageCacheStoreDriver(): Promise<PageCacheStore> {
     );
   }
 
+  const state = readState();
+
   if (state?.source !== source) {
     const previous = state;
     const store = createPageCacheStore(source).catch((cause: unknown) => {
       // Forget a failed build so the next request retries instead of
       // replaying the same rejected promise forever.
-      if (state?.store === store) state = undefined;
+      if (readState()?.store === store) writeState(undefined);
 
       throw cause;
     });
 
-    state = { source, store };
+    writeState({ source, store });
 
     // The superseded instance holds its own connection/timers — release them.
     previous?.store.then((stale) => stale.driver.disconnect()).catch(() => {});
   }
 
-  return state.store;
+  return readState()!.store;
+}
+
+/**
+ * Test-only: drops the memoised store/driver instance, mirroring
+ * `route-table.ts`'s `resetRouteTable()`. The slot is process-global, so a
+ * suite that built one would otherwise leak it into every later test in the
+ * same worker.
+ */
+export function resetPageCacheStoreStateForTests(): void {
+  writeState(undefined);
 }
 
 /**
