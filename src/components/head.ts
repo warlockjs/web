@@ -38,12 +38,27 @@ function renderDescriptor(descriptor: MetadataDescriptor): ReactElement {
  * rather than by two hand-kept lists of fallback rules.
  */
 export function Head(): ReactElement {
-  const { metadata, stylesheetUrls, localeAlternates, localeRouting } = useDocumentContext("Head");
+  const {
+    metadata,
+    stylesheetUrls,
+    localeAlternates,
+    localeRouting,
+    hydrationClientModulePreloadUrls,
+  } = useDocumentContext("Head");
 
   return createElement(
     Fragment,
     null,
     createElement("meta", { charSet: "utf-8" }),
+    // `modulepreload` for the hydration entry's own statically imported
+    // chunks (card 53f8647e — `vendor-react`, most of all). Placed ahead of
+    // everything else in `<head>` so the browser discovers and fetches it in
+    // parallel with the entry's own `<script type="module">` (`<Scripts/>`)
+    // rather than only after parsing that script far enough to see its
+    // `import` statement. See `DocumentContextValue.hydrationClientModulePreloadUrls`.
+    ...(hydrationClientModulePreloadUrls ?? []).map((url) =>
+      createElement("link", { key: `modulepreload-${url}`, rel: "modulepreload", href: url }),
+    ),
     ...resolveMetadataDescriptors(metadata).map(renderDescriptor),
     // Design note §D.2 — framework-owned, not a `MetadataDescriptor`: these
     // are derived from the request/route, never from a page's own

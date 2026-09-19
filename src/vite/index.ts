@@ -17,7 +17,11 @@ import { clientPageRegistry, type ClientPageRegistryPluginOptions } from "./page
 import { projection } from "./projection";
 import { clientEnvironmentOnly, type SsrBoundaryState } from "./ssr-client-view";
 
-export { buildHydrationClient } from "./build-client";
+export {
+  buildHydrationClient,
+  VENDOR_REACT_CHUNK_NAME,
+  warlockHydrationManualChunks,
+} from "./build-client";
 export type {
   BuildHydrationClientOptions,
   BuildHydrationClientResult,

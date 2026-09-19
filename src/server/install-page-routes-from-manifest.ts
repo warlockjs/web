@@ -92,6 +92,8 @@ export type InstallPageRoutesFromManifestOptions = {
   manifest: PageManifest;
   /** Browser module loaded after the server-rendered application and payload. */
   hydrationClientModuleUrl?: string;
+  /** `modulepreload` URLs for the entry's own static imports (card 53f8647e). */
+  hydrationClientModulePreloadUrls?: readonly string[];
   /**
    * Where the client build wrote its output — `productionStylesheetUrls`'s own
    * `clientDir` argument, forwarded here rather than pre-read into a flat list:
@@ -267,6 +269,7 @@ export function installPageRoutesFromManifest(
     router,
     manifest,
     hydrationClientModuleUrl,
+    hydrationClientModulePreloadUrls,
     clientDir,
     createHandler = createPageRouteHandler,
   } = options;
@@ -348,6 +351,7 @@ export function installPageRoutesFromManifest(
             pageFile: notFoundPage.sourceFile,
             loadModule,
             hydrationClientModuleUrl,
+            hydrationClientModulePreloadUrls,
             loadErrorPage,
             // NO LAYOUT means no layout CSS either — just root and the
             // not-found page's own stylesheets, same reasoning as the
@@ -443,6 +447,7 @@ export function installPageRoutesFromManifest(
                 : loadModule(moduleId),
       loadRegistrationLayouts: () => Promise.resolve(page.layouts.map((layout) => layout.module)),
       hydrationClientModuleUrl,
+      hydrationClientModulePreloadUrls,
       loadErrorPage,
       stylesheetUrls,
       resolveRequestStylesheetUrls,

@@ -42,6 +42,8 @@ export type NotFoundPageHandlerInput = {
   pageFile: string;
   loadModule: PageModuleLoader;
   hydrationClientModuleUrl?: string;
+  /** `modulepreload` URLs for the entry's own static imports (card 53f8647e). */
+  hydrationClientModulePreloadUrls?: readonly string[];
   loadErrorPage?: ErrorPageModuleLoader;
   /** Already resolved by the caller — see this module's header for why. */
   stylesheetUrls: readonly string[];
@@ -67,6 +69,7 @@ export function notFoundPageHandlerOptions(
     layoutFile: undefined,
     loadModule: input.loadModule,
     hydrationClientModuleUrl: input.hydrationClientModuleUrl,
+    hydrationClientModulePreloadUrls: input.hydrationClientModulePreloadUrls,
     loadErrorPage: input.loadErrorPage,
     // NO LAYOUT means no layout CSS either — just root and the not-found
     // page's own stylesheets.

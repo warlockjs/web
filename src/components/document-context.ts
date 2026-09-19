@@ -238,6 +238,21 @@ export type DocumentContextValue = {
    */
   hydrationClientModuleUrl?: string;
   /**
+   * `modulepreload` URLs for the hydration entry's own STATICALLY imported
+   * chunks (card 53f8647e) — the `vendor-react` chunk
+   * `../vite/build-client.ts`'s `warlockHydrationManualChunks` splits
+   * React/ReactDOM/scheduler into, most of all. Rendered by `<Head/>` as
+   * `<link rel="modulepreload">` tags, ALONGSIDE {@link hydrationClientModuleUrl}'s
+   * own `<script type="module">`, so the browser fetches the vendor chunk in
+   * parallel with the entry instead of discovering it only after parsing the
+   * entry's own `import` statement — one extra sequential round trip the
+   * split must not cost. Absent or empty means the entry has no static
+   * imports worth preloading (dev, or a manifest with none), never a failed
+   * resolution — see `resolveHydrationClientModulePreloadUrls`
+   * (`../server/hydration-client-url.ts`), which never throws.
+   */
+  hydrationClientModulePreloadUrls?: readonly string[];
+  /**
    * The `<link rel="alternate" hreflang>` set for THIS request — design note
    * §D.2, built by `server/resolve-locale-alternates.ts` and rendered
    * verbatim by `<Head/>`. `undefined` for a page that is not locale-routed

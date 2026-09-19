@@ -8,6 +8,7 @@ import type { Plugin } from "vite";
 import { describe, expect, it } from "vitest";
 import {
   buildWarlockHydrationClient,
+  VENDOR_REACT_CHUNK_NAME,
   warlockClientBoundary,
   type WarlockClientBoundaryOptions,
 } from "./index";
@@ -347,6 +348,86 @@ describe("buildWarlockHydrationClient — configured plugin parity", () => {
       expect(asset && "source" in asset ? asset.source : undefined).toContain(
         ".generated-by-tailwind-style",
       );
+    } finally {
+      fs.rmSync(outDir, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * Card 53f8647e — build-output-level proof, over a REAL `buildWarlockHydrationClient()`
+ * run (not a mocked manifest), that React/ReactDOM/scheduler land in their
+ * own `vendor-react` chunk, separate from the entry, and that the entry's
+ * manifest `imports` records it (what `resolveHydrationClientModulePreloadUrls`,
+ * `../server/hydration-client-url.ts`, reads to emit `modulepreload`).
+ *
+ * RED CONTROL: run against the pre-split build (no `manualChunks` in
+ * `build-client.ts`'s `rollupOptions.output`), the "separate chunk" and
+ * "entry.imports names it" assertions below both fail — every chunk id that
+ * matches `react`/`react-dom`/`scheduler` is the SAME chunk as the entry
+ * itself (`hydration-*.js`), so `vendorChunk` is `undefined`.
+ */
+describe("buildWarlockHydrationClient — vendor-react chunk split (card 53f8647e)", () => {
+  it("splits react/react-dom/scheduler into one vendor-react chunk the entry statically imports and preloads", async () => {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "warlock-vendor-react-build-"));
+
+    try {
+      await buildWarlockHydrationClient({
+        appRoot: FIXTURE_ROOT,
+        webRoot: WEB_ROOT,
+        outDir,
+        resolveAliases: [{ find: "web", replacement: WEB_ROOT }],
+      });
+
+      const manifest = JSON.parse(
+        fs.readFileSync(path.join(outDir, ".vite", "manifest.json"), "utf-8"),
+      ) as Record<
+        string,
+        { name?: string; file?: string; isEntry?: boolean; imports?: string[] } | undefined
+      >;
+
+      const entryKey = Object.keys(manifest).find(
+        (key) => manifest[key]?.isEntry === true && manifest[key]?.name === "hydration",
+      );
+      expect(entryKey, "expected the hydration entry in the manifest").toBeDefined();
+
+      const entry = manifest[entryKey!]!;
+      const vendorKey = (entry.imports ?? []).find((importedKey) =>
+        manifest[importedKey]?.file?.includes(`${VENDOR_REACT_CHUNK_NAME}-`),
+      );
+      expect(
+        vendorKey,
+        "expected the entry to statically import a vendor-react-<hash>.js chunk",
+      ).toBeDefined();
+
+      const vendorFile = manifest[vendorKey!]!.file!;
+
+      // Separate file from the entry — the whole point of the split.
+      expect(vendorFile).not.toBe(entry.file);
+
+      // The runtime reader this build feeds: `resolveHydrationClientModulePreloadUrls`
+      // must find this exact vendor chunk from the same manifest, unmocked.
+      const { resolveHydrationClientModulePreloadUrls } =
+        await import("../server/hydration-client-url");
+      const preloadUrls = resolveHydrationClientModulePreloadUrls({ clientDir: outDir });
+      expect(preloadUrls).toContain(`/${vendorFile}`);
+
+      // The vendor chunk's own SOURCE actually carries React — a real,
+      // sizeable chunk, not an empty one that merely happens to be named
+      // right (the fixture's build logged this chunk at ~389 kB raw).
+      const vendorSource = fs.readFileSync(path.join(outDir, vendorFile), "utf-8");
+      expect(vendorSource.length).toBeGreaterThan(10_000);
+      expect(vendorSource).toContain("useState");
+
+      // The entry itself shrank to the Warlock runtime alone — it no longer
+      // carries React/ReactDOM/scheduler's own weight (the "single 278KB-raw
+      // hydration-*.js" the card names), even though the app still imports
+      // `createElement` and friends from it at the source level: the entry
+      // chunk is now a small fraction of the vendor chunk's size, not
+      // comparable to or larger than it.
+      const entrySize = fs.statSync(path.join(outDir, entry.file!)).size;
+      const vendorSize = fs.statSync(path.join(outDir, vendorFile)).size;
+      expect(entrySize).toBeLessThan(vendorSize / 2);
     } finally {
       fs.rmSync(outDir, { recursive: true, force: true });
     }

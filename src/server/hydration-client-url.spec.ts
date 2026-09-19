@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { HYDRATION_CLIENT_ENTRY_NAME } from "../vite/hydration-entries";
 import { CLIENT_ASSET_URL_PREFIX } from "./client-asset-url-prefix";
 import {
+  resolveHydrationClientModulePreloadUrls,
   resolveHydrationClientUrl,
   WebClientAssetPrefixViolationError,
   WebClientManifestEntryMissingError,
@@ -174,5 +175,135 @@ describe("resolveHydrationClientUrl", () => {
     );
 
     expect(resolveHydrationClientUrl({ clientDir }).startsWith(CLIENT_ASSET_URL_PREFIX)).toBe(true);
+  });
+});
+
+/**
+ * Card 53f8647e — modulepreload emission for the hydration entry's own
+ * statically imported chunks (`vendor-react`, most of all).
+ *
+ * RED CONTROL: "an entry with no `imports` field yields an empty array"
+ * fails a naive implementation that assumes `imports` is always present and
+ * crashes on `undefined.filter`, and it would also fail an implementation
+ * that (wrongly) walked `dynamicImports` — the not-yet-written baseline this
+ * suite was built against returned `undefined` outright, so the very first
+ * assertion below (an array, not a throw) was the first thing that failed.
+ */
+describe("resolveHydrationClientModulePreloadUrls", () => {
+  it("returns the entry's statically imported chunk as a modulepreload URL", () => {
+    const clientDir = makeClientDir(
+      JSON.stringify({
+        "src/entry/index.ts": {
+          name: HYDRATION_CLIENT_ENTRY_NAME,
+          file: "assets/hydration-abc123.js",
+          isEntry: true,
+          imports: ["_vendor-react-shared.js"],
+        },
+        "_vendor-react-shared.js": {
+          file: "assets/vendor-react-def456.js",
+        },
+      }),
+    );
+
+    expect(resolveHydrationClientModulePreloadUrls({ clientDir })).toEqual([
+      "/assets/vendor-react-def456.js",
+    ]);
+  });
+
+  it("walks static imports transitively, in encounter order, deduped", () => {
+    const clientDir = makeClientDir(
+      JSON.stringify({
+        "src/entry/index.ts": {
+          name: HYDRATION_CLIENT_ENTRY_NAME,
+          file: "assets/hydration-abc123.js",
+          isEntry: true,
+          imports: ["_vendor-react-shared.js", "_warlock-runtime-shared.js"],
+        },
+        "_vendor-react-shared.js": {
+          file: "assets/vendor-react-def456.js",
+          imports: ["_scheduler-shared.js"],
+        },
+        "_scheduler-shared.js": {
+          file: "assets/scheduler-ghi789.js",
+        },
+        "_warlock-runtime-shared.js": {
+          file: "assets/vendor-react-def456.js",
+        },
+      }),
+    );
+
+    expect(resolveHydrationClientModulePreloadUrls({ clientDir })).toEqual([
+      "/assets/vendor-react-def456.js",
+      "/assets/scheduler-ghi789.js",
+    ]);
+  });
+
+  it("never walks dynamicImports — a page chunk must not be preloaded eagerly", () => {
+    const clientDir = makeClientDir(
+      JSON.stringify({
+        "src/entry/index.ts": {
+          name: HYDRATION_CLIENT_ENTRY_NAME,
+          file: "assets/hydration-abc123.js",
+          isEntry: true,
+          dynamicImports: ["src/pages/home.page.tsx"],
+        },
+        "src/pages/home.page.tsx": {
+          file: "assets/home.page-zzz999.js",
+          isEntry: true,
+        },
+      }),
+    );
+
+    expect(resolveHydrationClientModulePreloadUrls({ clientDir })).toEqual([]);
+  });
+
+  it("drops an imported chunk file outside the served client-asset prefix", () => {
+    const clientDir = makeClientDir(
+      JSON.stringify({
+        "src/entry/index.ts": {
+          name: HYDRATION_CLIENT_ENTRY_NAME,
+          file: "assets/hydration-abc123.js",
+          isEntry: true,
+          imports: ["_outside.js"],
+        },
+        "_outside.js": {
+          file: "vendor-react-def456.js",
+        },
+      }),
+    );
+
+    expect(resolveHydrationClientModulePreloadUrls({ clientDir })).toEqual([]);
+  });
+
+  it("returns an empty array (never throws) when the entry has no imports field", () => {
+    const clientDir = makeClientDir(
+      JSON.stringify({
+        "src/entry/index.ts": {
+          name: HYDRATION_CLIENT_ENTRY_NAME,
+          file: "assets/hydration-abc123.js",
+          isEntry: true,
+        },
+      }),
+    );
+
+    expect(resolveHydrationClientModulePreloadUrls({ clientDir })).toEqual([]);
+  });
+
+  it("returns an empty array, never throws, when the manifest is missing", () => {
+    const clientDir = makeClientDir();
+
+    expect(resolveHydrationClientModulePreloadUrls({ clientDir })).toEqual([]);
+  });
+
+  it("returns an empty array, never throws, on malformed JSON", () => {
+    const clientDir = makeClientDir("{ not json");
+
+    expect(resolveHydrationClientModulePreloadUrls({ clientDir })).toEqual([]);
+  });
+
+  it("returns an empty array, never throws, when the hydration entry itself is missing", () => {
+    const clientDir = makeClientDir(JSON.stringify({ "some-other-entry": { file: "a.js" } }));
+
+    expect(resolveHydrationClientModulePreloadUrls({ clientDir })).toEqual([]);
   });
 });

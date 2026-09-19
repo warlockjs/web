@@ -61,7 +61,10 @@ import { createHydrationClientEntry, invalidateClientPageRegistry } from "../vit
 import { createWebConnectorViteConfig } from "../vite/dev-server-config";
 import { CLIENT_ASSET_URL_PREFIX } from "./client-asset-url-prefix";
 import { devErrorTransportPlugin, sendCapturedDevError } from "./dev-error-transport";
-import { resolveHydrationClientUrl } from "./hydration-client-url";
+import {
+  resolveHydrationClientModulePreloadUrls as readHydrationClientModulePreloadUrls,
+  resolveHydrationClientUrl,
+} from "./hydration-client-url";
 import type { InstalledPageRoute } from "./install-page-routes";
 import { installProductionPageRoutes } from "./install-production-page-routes";
 import {
@@ -407,6 +410,8 @@ export class WebConnector extends BaseConnector {
         // The URL is resolved lazily, by the production path, only if there are
         // pages to hydrate — see the option's own note.
         resolveHydrationClientModuleUrl: () => this.resolveHydrationClientModuleUrl(),
+        resolveHydrationClientModulePreloadUrls: () =>
+          this.resolveHydrationClientModulePreloadUrls(),
         // The stylesheets are read from the manifest in this directory, by the
         // installer itself — it already imports the barrel that owns that
         // reader, and production has one module graph, so resolving there
@@ -582,6 +587,22 @@ export class WebConnector extends BaseConnector {
     }
 
     return createHydrationClientEntry(webRoot ?? "").devUrl;
+  }
+
+  /**
+   * `modulepreload` URLs for the hydration entry's own static imports (card
+   * 53f8647e — the `vendor-react` chunk `warlockHydrationManualChunks`
+   * splits out of it). PRODUCTION ONLY: dev serves the entry through Vite's
+   * `/@fs/` module graph, which resolves and fetches its imports on demand —
+   * there is no manifest to read a static import list off, and nothing to
+   * preload against a server that would just re-transform the request
+   * anyway. `resolveHydrationClientModulePreloadUrls` itself never throws
+   * (see its own doc), so this never needs to either.
+   */
+  protected resolveHydrationClientModulePreloadUrls(): readonly string[] {
+    if (!isProductionRuntime()) return [];
+
+    return readHydrationClientModulePreloadUrls({ clientDir: this.resolveClientDir() });
   }
 
   /**

@@ -35,6 +35,7 @@ export type {
 export { CLIENT_ASSET_URL_PREFIX } from "../server/client-asset-url-prefix";
 
 export {
+  resolveHydrationClientModulePreloadUrls,
   resolveHydrationClientUrl,
   WebClientAssetPrefixViolationError,
   WebClientManifestEntryMissingError,

@@ -136,6 +136,8 @@ export type PageRouteHandlerOptions = {
   loadRegistrationLayouts?: () => Promise<readonly RegisterableModuleNamespace[]>;
   /** Browser module appended after the server-rendered document. */
   hydrationClientModuleUrl?: string;
+  /** `modulepreload` URLs for the entry's own static imports (card 53f8647e). */
+  hydrationClientModulePreloadUrls?: readonly string[];
   /**
    * Stylesheet URLs for this page, emitted into `<head>` so the FIRST paint is
    * styled. Absent or empty means the application has no CSS — it never means
@@ -264,6 +266,7 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     loadErrorPage,
     loadRegistrationLayouts,
     hydrationClientModuleUrl,
+    hydrationClientModulePreloadUrls,
     stylesheetUrls,
     resolveRequestStylesheetUrls,
     matchPath,
@@ -461,6 +464,7 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         stylesheetUrls,
         resolveRequestStylesheetUrls,
         hydrationClientModuleUrl,
+        hydrationClientModulePreloadUrls,
         // A detected crawler forces `onAllReady` on its own (`render-page.ts`'s
         // `finishRender`) — `waitForAll` here stays `false` for every request
         // this handler serves; nothing else in this framework needs it set.

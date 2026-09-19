@@ -133,6 +133,8 @@ export type RenderPageRequestOptions = {
   stylesheetUrls?: readonly string[];
   /** The hydration client entry module URL — carried onto `DocumentContextValue.hydrationClientModuleUrl`, same reasoning. */
   hydrationClientModuleUrl?: string;
+  /** `modulepreload` URLs for the entry's own static imports — carried onto `DocumentContextValue.hydrationClientModulePreloadUrls`, same reasoning (card 53f8647e). */
+  hydrationClientModulePreloadUrls?: readonly string[];
   /**
    * Turns the source ids THIS request declared through `linkStylesheetsFor()`
    * into stylesheet URLs (manifest in production, module graph in dev). Called
@@ -662,6 +664,7 @@ async function finishRender(
   streamOptions: {
     stylesheetUrls: readonly string[] | undefined;
     hydrationClientModuleUrl: string | undefined;
+    hydrationClientModulePreloadUrls?: readonly string[];
     resolveRequestStylesheetUrls?: RequestStylesheetUrlResolver;
     waitForAll: boolean;
     awaitDeferredForDataRequest?: boolean;
@@ -941,6 +944,7 @@ async function finishRender(
       streamOptions.resolveRequestStylesheetUrls,
     ),
     hydrationClientModuleUrl: streamOptions.hydrationClientModuleUrl,
+    hydrationClientModulePreloadUrls: streamOptions.hydrationClientModulePreloadUrls,
     localeAlternates,
     localeRouting,
   };
@@ -1325,6 +1329,7 @@ export async function renderPageRequest(
         {
           stylesheetUrls: options.stylesheetUrls,
           hydrationClientModuleUrl: options.hydrationClientModuleUrl,
+          hydrationClientModulePreloadUrls: options.hydrationClientModulePreloadUrls,
           resolveRequestStylesheetUrls: options.resolveRequestStylesheetUrls,
           waitForAll: options.waitForAll ?? false,
           awaitDeferredForDataRequest: options.awaitDeferredForDataRequest,

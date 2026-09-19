@@ -46,6 +46,16 @@ export type InstallProductionPageRoutesOptions = {
    */
   resolveHydrationClientModuleUrl: () => string;
   /**
+   * `modulepreload` URLs for the hydration entry's own static imports (card
+   * 53f8647e — the `vendor-react` chunk, most of all). Same lazy-thunk
+   * reasoning as {@link resolveHydrationClientModuleUrl}: a page-free build
+   * has no manifest entry to read imports off either. `undefined` when the
+   * caller has none to offer (kept optional rather than defaulted to an
+   * empty thunk, so a caller that never resolves preload URLs at all — a
+   * test, or a future non-manifest boot path — costs nothing).
+   */
+  resolveHydrationClientModulePreloadUrls?: () => readonly string[];
+  /**
    * Where the client build wrote its output. Forwarded to
    * `installPageRoutesFromManifest`, never read here: every registered
    * handler needs its OWN stylesheet chain
@@ -72,8 +82,15 @@ export type InstallProductionPageRoutesOptions = {
 export async function installProductionPageRoutes(
   options: InstallProductionPageRoutesOptions,
 ): Promise<InstalledManifestPageRoute[]> {
-  const { router, manifest, pageContext, sharedStore, resolveHydrationClientModuleUrl, clientDir } =
-    options;
+  const {
+    router,
+    manifest,
+    pageContext,
+    sharedStore,
+    resolveHydrationClientModuleUrl,
+    resolveHydrationClientModulePreloadUrls,
+    clientDir,
+  } = options;
 
   if (manifest.pages.length === 0) return [];
 
@@ -92,6 +109,7 @@ export async function installProductionPageRoutes(
     router,
     manifest,
     hydrationClientModuleUrl: resolveHydrationClientModuleUrl(),
+    hydrationClientModulePreloadUrls: resolveHydrationClientModulePreloadUrls?.(),
     clientDir,
   });
 }

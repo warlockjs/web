@@ -79,7 +79,12 @@ export class WebClientAssetPrefixViolationError extends Error {
   }
 }
 
-type ManifestEntry = { file?: unknown; name?: unknown; isEntry?: unknown };
+type ManifestEntry = {
+  file?: unknown;
+  name?: unknown;
+  isEntry?: unknown;
+  imports?: unknown;
+};
 
 /**
  * Find the hydration entry in a parsed Vite manifest.
@@ -157,4 +162,93 @@ export function resolveHydrationClientUrl(options: ResolveHydrationClientUrlOpti
   // construction — which is exactly what the static-file route mounting
   // `<clientDir>/assets` at that same imported symbol relies on.
   return url;
+}
+
+/**
+ * The hydration entry's own STATICALLY imported chunks (`vendor-react`, most
+ * of all — see `../vite/build-client.ts`'s `warlockHydrationManualChunks`),
+ * as `modulepreload` URLs — card 53f8647e.
+ *
+ * WHY THIS EXISTS. Splitting React/ReactDOM/scheduler into their own chunk
+ * (for a stable, deploy-independent cache key) means the browser now
+ * discovers `vendor-react-<hash>.js` only after it has already fetched and
+ * PARSED `hydration-<hash>.js` far enough to see the `import` statement —
+ * one extra sequential round trip on every cold load, exactly the waterfall
+ * the split must not cost. `<link rel="modulepreload">` fetches it in
+ * parallel with the entry instead, so the split is a pure win, not the split
+ * plus a round trip.
+ *
+ * WALKS `imports` ONLY, never `dynamicImports` — the same rule
+ * `../server/stylesheet-urls.ts`'s `manifestStylesheetGraph` documents: a
+ * STATIC import loads unconditionally alongside its importer, so preloading
+ * it is always correct; a page's chunk is reached through a `dynamicImports`
+ * entry (`page-registry-plugin.ts`'s per-page `import()`), and eagerly
+ * preloading every page in the app on every request is the opposite of what
+ * code-splitting bought.
+ *
+ * NEVER THROWS, unlike {@link resolveHydrationClientUrl}. A missing or
+ * malformed manifest, or an entry with no `imports`, all mean "nothing extra
+ * to preload" — the hydration script tag itself still loads the browser to
+ * the entry correctly, so a preload-resolution failure must never be the
+ * reason a page fails to render. `resolveHydrationClientUrl` already fails
+ * loudly on exactly those manifest conditions, from the same boot path, and
+ * runs first.
+ */
+export function resolveHydrationClientModulePreloadUrls(
+  options: ResolveHydrationClientUrlOptions,
+): string[] {
+  const manifestPath = path.join(options.clientDir, ".vite", "manifest.json");
+
+  let manifest: Record<string, ManifestEntry | undefined>;
+
+  try {
+    const raw = readFileSync(manifestPath, "utf-8");
+    const parsed = JSON.parse(raw) as unknown;
+
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return [];
+
+    manifest = parsed as Record<string, ManifestEntry | undefined>;
+  } catch {
+    return [];
+  }
+
+  const entry = findHydrationEntry(manifest);
+  if (entry === undefined) return [];
+
+  const importedKeys = Array.isArray(entry.imports)
+    ? entry.imports.filter((id): id is string => typeof id === "string")
+    : [];
+
+  const urls: string[] = [];
+  const visited = new Set<string>();
+
+  const visit = (key: string) => {
+    if (visited.has(key)) return;
+    visited.add(key);
+
+    const node = manifest[key];
+    if (node === undefined) return;
+
+    if (typeof node.file === "string") {
+      const url = `/${node.file}`;
+
+      // Same servability rule as the entry URL itself and as
+      // `stylesheet-urls.ts`'s `servableStylesheetUrls`: a preload target
+      // outside the one directory the asset route mounts would 404, so it is
+      // dropped rather than emitted.
+      if (url.startsWith(`${CLIENT_ASSET_URL_PREFIX}/`) && !urls.includes(url)) {
+        urls.push(url);
+      }
+    }
+
+    if (Array.isArray(node.imports)) {
+      for (const imported of node.imports) {
+        if (typeof imported === "string") visit(imported);
+      }
+    }
+  };
+
+  for (const key of importedKeys) visit(key);
+
+  return urls;
 }
