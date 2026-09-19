@@ -1,8 +1,8 @@
 /**
  * Projection — the compile-time AST transform that strips a page module's
- * six server exports before the CLIENT graph forms.
+ * seven server exports before the CLIENT graph forms.
  *
- * Removes `export const route/middleware/validation/loader/metadata/prefix = ...`
+ * Removes `export const route/middleware/validation/loader/metadata/prefix/sitemap = ...`
  * (const-arrow form) and `export async function loader(...) {...}`
  * (function-declaration form — a page declares these as separate named
  * exports, not one fused object, so both forms are real), plus any import
@@ -54,6 +54,7 @@ export const SERVER_EXPORT_NAMES = new Set([
   "loader",
   "metadata",
   "prefix",
+  "sitemap",
 ]);
 
 /**
@@ -71,7 +72,7 @@ const ASSET_EXTENSION_RE =
 /**
  * Top-level statement types that need no ambiguity check and are never
  * touched by removal: import declarations are handled by their own
- * survives/orphaned logic below, and every export (other than the 6 server
+ * survives/orphaned logic below, and every export (other than the 7 server
  * names) plus type-only declarations survive unconditionally — projection
  * classifies by FILE, not by the data an export touches.
  *
@@ -166,7 +167,7 @@ function isServerExportDeclaration(stmt: any): boolean {
  * Generic duck-typed AST walk (no `@babel/traverse` dependency — this
  * package only needs `@babel/parser` + `@babel/types`-shaped nodes).
  * Collects every `Identifier`/`JSXIdentifier` name reachable from `node`,
- * used to decide whether an import binding still has a reader once the 6
+ * used to decide whether an import binding still has a reader once the 7
  * server exports are gone. Over-collecting (e.g. counting an object
  * property key as a "use") only ever biases toward KEEPING an import, never
  * toward dropping one that is still needed — the safe direction for a
@@ -339,7 +340,7 @@ function statementSnippet(code: string, node: any): string {
 }
 
 /**
- * The transform itself: parse, remove the 6 server exports and every import
+ * The transform itself: parse, remove the 7 server exports and every import
  * orphaned only by that removal, fail closed on anything attribution-
  * ambiguous. `filePath` is only used for error messages — a fence error
  * must name the file.
@@ -378,7 +379,7 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
       // Projection classifies by file and never opens a
       // second file to resolve what a re-export actually forwards — doing so
       // would mean parsing and walking the source module too, i.e. a second
-      // parser. Whether the source exports one of the 6 server names is
+      // parser. Whether the source exports one of the 7 server names is
       // therefore unknowable here, so this is attribution-ambiguous the same
       // way an unrecognized top-level statement is, and gets the same
       // refusal rather than an assumption that it is safe.
@@ -386,7 +387,7 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
         filePath,
         statementSnippet(code, stmt),
         stmt.loc.start.line,
-        `a star re-export forwards every name the source module exports, including possibly one of the 6 known server exports (route, middleware, validation, loader, metadata, prefix) — projection cannot inspect the source module's exports without parsing a second file, so it can't tell whether this leaks a server-only binding into the client bundle`,
+        `a star re-export forwards every name the source module exports, including possibly one of the 7 known server exports (route, middleware, validation, loader, metadata, prefix, sitemap) — projection cannot inspect the source module's exports without parsing a second file, so it can't tell whether this leaks a server-only binding into the client bundle`,
         `replace the star re-export with explicit named re-exports (export { ComponentA, ComponentB } from "./source"), listing only the client-safe names`,
       );
     }
@@ -407,7 +408,7 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
       continue;
     }
 
-    // Attribution-IMPOSSIBLE: not an import, not one of the 6 known server
+    // Attribution-IMPOSSIBLE: not an import, not one of the 7 known server
     // exports, not another export, not a type-only declaration, and it binds
     // no name for a reader to point at. Fail closed rather than guess which
     // side of the fence it belongs on.
@@ -415,8 +416,8 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
       filePath,
       statementSnippet(code, stmt),
       stmt.loc.start.line,
-      `top-level executable code that declares nothing — outside the 6 known server exports (route, middleware, validation, loader, metadata, prefix), and binding no name, so projection has no reader to attribute it by and can't tell whether it belongs to the server or the client`,
-      `move universal static declarations and their imports into export function register(), or mark the code with an explicit .server/.client file; server-only work can instead move inside one of the 6 declared server exports`,
+      `top-level executable code that declares nothing — outside the 7 known server exports (route, middleware, validation, loader, metadata, prefix, sitemap), and binding no name, so projection has no reader to attribute it by and can't tell whether it belongs to the server or the client`,
+      `move universal static declarations and their imports into export function register(), or mark the code with an explicit .server/.client file; server-only work can instead move inside one of the 7 declared server exports`,
     );
   }
 
@@ -512,7 +513,7 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
         statementSnippet(code, decl),
         decl.loc.start.line,
         `a bare side-effect import with no recognized client-safe asset extension — projection can't tell if it belongs only to the server exports being removed or must ship to the client`,
-        `move universal static declarations and their imports into export function register(), or mark it with an explicit .server/.client file; server-only work can instead move inside one of the 6 declared server exports`,
+        `move universal static declarations and their imports into export function register(), or mark it with an explicit .server/.client file; server-only work can instead move inside one of the 7 declared server exports`,
       );
     }
 

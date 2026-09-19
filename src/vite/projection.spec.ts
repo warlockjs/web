@@ -78,7 +78,7 @@ async function refusalMessage(source: string, baseName: string): Promise<string>
   throw new Error(`expected ${baseName} to be refused, but it transformed cleanly`);
 }
 
-describe("projection — strip the 6 server exports (real transform hook, real output)", () => {
+describe("projection — strip the 7 server exports (real transform hook, real output)", () => {
   it("case 1: a shared import between loader and the component survives; all 5 declared server exports are gone", async () => {
     const code = await transformedCode("case1-shared-import.page.tsx");
 
@@ -132,7 +132,7 @@ describe("projection — strip the 6 server exports (real transform hook, real o
     expect(code).toContain("export default function BlogPage");
   });
 
-  it("skips the SSR build entirely — the server still needs all 6 exports intact", async () => {
+  it("skips the SSR build entirely — the server still needs all 7 exports intact", async () => {
     const { result } = await runTransform("case1-shared-import.page.tsx", { ssr: true });
     expect(result).toBeNull();
   });
@@ -164,14 +164,14 @@ describe("projection — strip the 6 server exports (real transform hook, real o
     expect(code).toContain("export default function App");
   });
 
-  it("does NOT strip `revalidate` — the seventh server export projection does not know about", () => {
+  it("does NOT strip `revalidate` — the eighth server export projection does not know about", () => {
     /*
       A CHARACTERIZATION TEST: this asserts what the code does today, not what
       it ought to do, and it is here so the gap is visible in the suite instead
       of only in a card.
 
-      Projection strips six exports — route, middleware, validation, loader,
-      metadata, prefix. The page contract documents `revalidate` as a SERVER export too,
+      Projection strips seven exports — route, middleware, validation, loader,
+      metadata, prefix, sitemap. The page contract documents `revalidate` as a SERVER export too,
       and the reference app's root says so in as many words ("The SIXTH server
       export, and it is documented as one"). Projection has never been told.
 
@@ -212,7 +212,7 @@ describe("projection — strip the 6 server exports (real transform hook, real o
  * every other export form — but unlike a NAMED export, a star re-export
  * forwards whatever the source module exports, sight unseen. A page that
  * re-exports `* from "./shared-loaders"` would leak `loader`/`middleware`/
- * etc. straight past the 6-name check below it, since projection never opens
+ * etc. straight past the 7-name check below it, since projection never opens
  * the source file to see what it actually exports (`304fcc57`). It is now
  * refused the same way any other attribution-ambiguous statement is —
  * through `ProjectionAmbiguityError`, not a second resolution path.
@@ -251,7 +251,7 @@ describe("projection — refuses a star re-export rather than assuming it is saf
     expect(message).toContain("server-only binding");
   });
 
-  it("still strips the 6 named server exports declared directly, unaffected by the star-reexport refusal", async () => {
+  it("still strips the 7 named server exports declared directly, unaffected by the star-reexport refusal", async () => {
     const code = await transformedCode("case1-shared-import.page.tsx");
 
     expect(code).not.toMatch(/export const route/);
@@ -632,6 +632,58 @@ describe("projection — strips the `prefix` server export", () => {
     expect(code).not.toMatch(/export const prefix/);
     expect(code).not.toMatch(/from ["']\.\/server-only-helper["']/);
     expect(code).toContain('from "./helper"');
+  });
+});
+
+/**
+ * `sitemap` joined `route`/`middleware`/`validation`/`loader`/`metadata`/
+ * `prefix` as a 7th server export (`4344e32a`): a page's per-page sitemap
+ * supplier (`export const sitemap = async () => [...]`, web skill
+ * generate-sitemap) is documented as server-only — it commonly imports a
+ * model that itself imports server-only infrastructure (a decorated
+ * `@warlock.js/cascade` model in the reference app) — but until now it
+ * survived projection unread, dragging that import into the client graph and
+ * crashing Gate B's parser rather than being stripped like the other 6.
+ */
+describe("projection — strips the `sitemap` server export", () => {
+  it("removes `export const sitemap` and does not attribute it as a survivor", async () => {
+    const code = await transformSource(
+      [
+        `export const sitemap = async () => [{ url: "/products" }];`,
+        ``,
+        `export default function ProductsPage() {`,
+        `  return <main />;`,
+        `}`,
+      ].join("\n"),
+      "products.page.tsx",
+    );
+
+    expect(code).not.toMatch(/export const sitemap/);
+    expect(code).toContain("export default function ProductsPage");
+  });
+
+  it("removes an import held alive only by `sitemap`, including its server model, same as the other 6 server exports", async () => {
+    const code = await transformSource(
+      [
+        `import { Post } from "./models/post/post.model";`,
+        `import { formatTitle } from "./helper";`,
+        ``,
+        `export const sitemap = async () => {`,
+        `  const posts = await Post.list();`,
+        `  return posts.map(post => ({ url: post.slug }));`,
+        `};`,
+        ``,
+        `export default function BlogPage({ data }) {`,
+        `  return <h1>{formatTitle(data.title)}</h1>;`,
+        `}`,
+      ].join("\n"),
+      "blog.page.tsx",
+    );
+
+    expect(code).not.toMatch(/export const sitemap/);
+    expect(code).not.toMatch(/from ["']\.\/models\/post\/post\.model["']/);
+    expect(code).toContain('from "./helper"');
+    expect(code).toContain("export default function BlogPage");
   });
 });
 

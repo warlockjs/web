@@ -647,7 +647,30 @@ export function gateBSecrets(gateBOptions: { tracker?: PublicEnvTracker } = {}):
       if (!isJsModule(id)) return null;
       if (isNodeModulesFile(id)) return null;
 
-      const ast = parse(code, { sourceType: "module", plugins: ["typescript", "jsx"] });
+      let ast: t.File | null = null;
+      try {
+        ast = parse(code, {
+          sourceType: "module",
+          // `decorators-legacy` matches how the rest of the client pipeline
+          // parses TS (`build/generate-pages-barrel.ts`) — a server module
+          // that leaks into the client graph (e.g. a `@warlock.js/cascade`
+          // decorated model reached through an unstripped page export) must
+          // be judged by THIS gate's own boundary/secrets rule, not crash the
+          // parser before the gate ever runs.
+          plugins: ["typescript", "jsx", "decorators-legacy"],
+        });
+      } catch (error) {
+        this.error(
+          [
+            `Gate B could not parse a module reached from the client graph.`,
+            ``,
+            `File: ${id}`,
+            `Cause: ${(error as Error).message}`,
+            `Fix: this file was pulled into the client build by an import chain from a page/layout/root module — if it is server-only code, keep it behind a server export (route/middleware/validation/loader/metadata/prefix/sitemap) or a *.server.ts boundary so it is never reached from the client graph; otherwise fix its syntax.`,
+          ].join("\n"),
+        );
+      }
+      if (!ast) return null;
 
       const violation = findViolation(code, ast, (key) => tracker.referencedKeys.add(key));
       if (violation) {

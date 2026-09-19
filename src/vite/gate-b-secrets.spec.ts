@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { transformSync } from "esbuild";
+import type { Plugin } from "vite";
 import { build } from "vite";
 import { describe, expect, it } from "vitest";
 import { WEB_ESBUILD_PATCH } from "../build/generate-pages-barrel";
@@ -39,6 +40,36 @@ async function buildEntry(fileName: string) {
       },
     },
   });
+}
+
+/**
+ * Invokes the REAL `transform` hook directly, source supplied inline instead
+ * of from a fixture file on disk. Used ONLY for case 40 below: a genuinely
+ * unparseable module can't be committed as an on-disk fixture without
+ * breaking the repo's own formatting gate on that file (the whole point of
+ * the case is that no formatter can parse it either), so this mirrors
+ * `projection.spec.ts`'s `transformSource` helper instead of `buildEntry`'s
+ * real-Vite-build convention used everywhere else in this file.
+ */
+async function transformSource(code: string, baseName: string): Promise<never> {
+  const id = path.join(FIXTURE_ROOT, baseName);
+  const plugin: Plugin = gateBSecrets();
+  const hook = plugin.transform as (
+    this: { error(message: string): never },
+    code: string,
+    id: string,
+    options?: { ssr?: boolean },
+  ) => unknown;
+  hook.call(
+    {
+      error: (message: string): never => {
+        throw new Error(message);
+      },
+    },
+    code,
+    id,
+  );
+  throw new Error(`expected ${baseName} to be refused, but it transformed cleanly`);
 }
 
 function firstChunkCode(result: Awaited<ReturnType<typeof buildEntry>>): string {
@@ -410,6 +441,55 @@ describe("gateBSecrets — Gate B inline-secret transform gate (real Vite builds
       const result = await buildEntry("case38-type-only-process.tsx");
       const code = firstChunkCode(result);
       expect(code).toContain("Case38Component");
+    });
+
+    it("case 39: a decorated class parses without crashing Gate B's own parser (`4344e32a`)", async () => {
+      const result = await buildEntry("case39-decorated-class.tsx");
+      const code = firstChunkCode(result);
+      expect(code).toContain("Case39Component");
+    });
+  });
+
+  /**
+   * `4344e32a`: a page's per-page `sitemap` export commonly imports a model
+   * built with TS decorators (`@warlock.js/cascade`). Before Gate B's own
+   * parser accepted decorator syntax, that model crashed `@babel/parser`
+   * with a bare "requires enabling ... decorators-legacy" message instead of
+   * Gate B's own boundary/secrets refusal — a Babel parser crash standing in
+   * for a boundary error. Case 39 above pins the fix for the innocent shape;
+   * this describe pins the two remaining diagnostic requirements: a module
+   * that genuinely leaks a secret is still caught (not silently let through
+   * once decorators parse), and a module that still can't be parsed at all
+   * gets a message naming the file and the client graph, not a raw Babel one.
+   */
+  describe("Gate B's own parser matches the rest of the client pipeline (`4344e32a`)", () => {
+    it("case 39b: a decorated class that genuinely reads a secret is still refused by Gate B's own rule, not silently allowed once decorators parse", async () => {
+      try {
+        await buildEntry("case39b-decorated-class-with-secret.tsx");
+        expect.unreachable("expected the build to fail");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B refused a module");
+        expect(message).toContain("case39b-decorated-class-with-secret.tsx:");
+        expect(message).toContain("Expression: process.env.SECRET_KEY");
+      }
+    });
+
+    it("case 40: a genuinely unparseable module names the file and says it was reached from the client graph, not a bare Babel message", async () => {
+      try {
+        await transformSource(
+          "export default function Case40() {\n  return <div>{;\n}",
+          "case40-unparseable-syntax.tsx",
+        );
+        expect.unreachable("expected the transform to throw");
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("Gate B could not parse a module reached from the client graph");
+        expect(message).toContain("File: ");
+        expect(message).toContain("case40-unparseable-syntax.tsx");
+        expect(message).toContain("Cause:");
+        expect(message).toContain("Fix:");
+      }
     });
   });
 
