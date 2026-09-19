@@ -53,7 +53,7 @@ import {
 import { publishRouteTable } from "../routing/route-table";
 import { type FastifyInstance, type Router } from "@warlock.js/core";
 import { composeLayoutModules } from "./compose-layout-modules";
-import { createPageRouteHandler } from "./create-page-route-handler";
+import { createPageRouteHandler, type PageRouteHandler } from "./create-page-route-handler";
 import type { ErrorPageModule } from "./error-page";
 import type { PipelineLoader, PipelineMiddleware } from "./execute-page-request";
 import { layoutPrefixesByDirectory } from "./layout-prefixes";
@@ -460,6 +460,15 @@ export async function installPageRoutes(
     throw new DuplicateNotFoundPageError(notFoundPageFiles.map((page) => page.pageFile));
   }
 
+  // The not-found page's handler, handed to every page below as a GETTER: a
+  // page whose loader answers `notFound()` renders this same document. It is
+  // assigned in the catch-all block after the loop — its CSS chain is read
+  // off the module graph the loop warms — and read per request, so each
+  // install's pages see the handler THAT install built, including none once
+  // `404.page.tsx` is deleted.
+  let notFoundPageHandler: PageRouteHandler | undefined;
+  const renderNotFound = () => notFoundPageHandler;
+
   const installed: InstalledPageRoute[] = [];
   const fileByPath = new Map<string, string>();
 
@@ -576,6 +585,7 @@ export async function installPageRoutes(
           stylesheetUrls,
           resolveRequestStylesheetUrls,
           cache,
+          renderNotFound,
           ...httpServerOption,
         }),
         // `isPage` marks this route as SSR-served. Pages and API routes share one
@@ -619,32 +629,34 @@ export async function installPageRoutes(
       }
     }
 
+    // Built ONCE and shared: the catch-all renders it for an unmatched URL,
+    // and every page above reaches it through `renderNotFound` for a loader
+    // `notFound()`.
+    notFoundPageHandler =
+      notFoundPageFile === undefined
+        ? undefined
+        : createPageRouteHandler({
+            ...notFoundPageHandlerOptions({
+              appFile,
+              pageFile: notFoundPageFile,
+              loadModule: (moduleId) => vite.ssrLoadModule(moduleId),
+              hydrationClientModuleUrl,
+              loadErrorPage,
+              // NO LAYOUT means no layout CSS either — just root and the
+              // not-found page's own stylesheets, same reasoning as the
+              // shared helper's own header comment.
+              stylesheetUrls: devHandlerStylesheetUrls(
+                stylesheetRoot,
+                [appFile, notFoundPageFile],
+                vite.moduleGraph,
+              ),
+              resolveRequestStylesheetUrls,
+            }),
+            ...httpServerOption,
+          });
+
     const registerNotFoundRoute = () =>
-      registerNotFoundPageRoute({
-        router,
-        renderPage:
-          notFoundPageFile === undefined
-            ? undefined
-            : createPageRouteHandler({
-                ...notFoundPageHandlerOptions({
-                  appFile,
-                  pageFile: notFoundPageFile,
-                  loadModule: (moduleId) => vite.ssrLoadModule(moduleId),
-                  hydrationClientModuleUrl,
-                  loadErrorPage,
-                  // NO LAYOUT means no layout CSS either — just root and the
-                  // not-found page's own stylesheets, same reasoning as the
-                  // shared helper's own header comment.
-                  stylesheetUrls: devHandlerStylesheetUrls(
-                    stylesheetRoot,
-                    [appFile, notFoundPageFile],
-                    vite.moduleGraph,
-                  ),
-                  resolveRequestStylesheetUrls,
-                }),
-                ...httpServerOption,
-              }),
-      });
+      registerNotFoundPageRoute({ router, renderPage: notFoundPageHandler });
 
     if (notFoundPageFile === undefined) {
       await router.withSourceFile(FRAMEWORK_DEFAULT_NOT_FOUND_SOURCE_FILE, registerNotFoundRoute);

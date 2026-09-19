@@ -180,6 +180,15 @@ export type RenderPageRequestOptions = {
    * as before.
    */
   crawler?: boolean;
+  /**
+   * Forces `robots: "noindex"` onto the rendered document's metadata, whatever
+   * the page declared. Set only for the not-found route
+   * (`not-found-handler-options.ts`): a 404 document describes a URL with no
+   * page behind it, and the framework fallback it stands in for
+   * (`frameworkDefaultNotFoundDocument`) already says noindex. Defaults to
+   * `false`, so every other page keeps exactly the metadata it resolved.
+   */
+  noindex?: boolean;
 };
 
 export type RenderedPage = {
@@ -642,6 +651,8 @@ async function finishRender(
     awaitDeferredForDataRequest?: boolean;
     /** See `RenderPageRequestOptions.crawler`. */
     crawler?: boolean;
+    /** See `RenderPageRequestOptions.noindex`. */
+    noindex?: boolean;
   },
 ): Promise<RenderedPage> {
   // Read from the stage 7 commit, never live off `response` — this function
@@ -870,6 +881,13 @@ async function finishRender(
   // The payload comes from `buildHydrationPayload` rather than being assembled
   // here, so that this document and the `_loader` route hand the browser the
   // SAME object. See that module for why the two must not drift.
+  // Stage 8 already resolved the page's own metadata; this overrides only
+  // `robots`, and only for the route that asked (the not-found page). Every
+  // error path below replaces `bundle.metadata` with its own noindex answer.
+  if (streamOptions.noindex === true) {
+    bundle.metadata = { ...bundle.metadata, robots: "noindex" };
+  }
+
   let documentValue: DocumentContextValue = {
     metadata: bundle.metadata,
     payload: buildHydrationPayload(bundle, documentSlots.locale),
@@ -1262,6 +1280,7 @@ export async function renderPageRequest(
           waitForAll: options.waitForAll ?? false,
           awaitDeferredForDataRequest: options.awaitDeferredForDataRequest,
           crawler: options.crawler,
+          noindex: options.noindex,
         },
       ),
   });

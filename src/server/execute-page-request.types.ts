@@ -128,7 +128,22 @@ export type PageShortCircuit =
        */
       responseSent?: boolean;
     }
-  | { stage: "validation"; status: number; errors: unknown };
+  | { stage: "validation"; status: number; errors: unknown }
+  | {
+      /**
+       * An app, layout or page LOADER returned `response.redirect()`,
+       * `permanentRedirect()` or `notFound()`. Recorded at stage 6 and never
+       * sent by the loader itself: the handler writes the answer — the
+       * redirect's `Location`, or the not-found document on a full-document
+       * request (`create-page-route-handler.ts`).
+       */
+      stage: "loaders";
+      level: PageLevelName;
+      kind: "redirect" | "notFound";
+      statusCode: number;
+      url?: string;
+      body?: unknown;
+    };
 
 export type PageErrorRecord = {
   /** Never serialized; preserves the actual thrown value for server error.page.tsx. */

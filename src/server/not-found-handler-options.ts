@@ -8,7 +8,8 @@
  * comments for why a guard-bearing chain must never run on the miss path),
  * the catch-all's `matchPath` trick (`requestPath => requestPath`, so `*`
  * matches the URL that actually missed), the `404` override for a settled
- * `200`, and `skipPageLoader` (a miss must not run application data work).
+ * `200`, `skipPageLoader` (a miss must not run application data work), and
+ * `noindex` (a 404 document is never indexable).
  *
  * WHAT STAYS WITH EACH CALLER, because it is the one thing that legitimately
  * differs between the two installers and losing that seam would blur what
@@ -75,5 +76,8 @@ export function notFoundPageHandlerOptions(
     matchPath: (requestPath) => requestPath,
     statusForRenderedOk: 404,
     skipPageLoader: true,
+    // A 404 document is never indexable — the same `robots` answer the
+    // framework fallback (`frameworkDefaultNotFoundDocument`) already gives.
+    noindex: true,
   };
 }

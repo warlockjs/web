@@ -327,6 +327,32 @@ export function installPageRoutesFromManifest(
     throw new NotFoundPageDeclaresRouteError(notFoundPage.sourceFile);
   }
 
+  // Built ONCE, before the loop, and shared: the catch-all below renders it
+  // for an unmatched URL, and every page reaches it through `renderNotFound`
+  // for a loader `notFound()`. A production manifest never changes under a
+  // running process, so the getter always returns this one handler.
+  const notFoundPageHandler =
+    notFoundPage === undefined
+      ? undefined
+      : createHandler(
+          notFoundPageHandlerOptions({
+            appFile: app.sourceFile,
+            pageFile: notFoundPage.sourceFile,
+            loadModule,
+            hydrationClientModuleUrl,
+            loadErrorPage,
+            // NO LAYOUT means no layout CSS either — just root and the
+            // not-found page's own stylesheets, same reasoning as the
+            // shared helper's own header comment.
+            stylesheetUrls:
+              clientDir === undefined
+                ? []
+                : productionStylesheetUrls(clientDir, [app.sourceFile, notFoundPage.sourceFile]),
+            resolveRequestStylesheetUrls,
+          }),
+        );
+  const renderNotFound = () => notFoundPageHandler;
+
   const installed: InstalledManifestPageRoute[] = [];
   const fileByPath = new Map<string, string>();
 
@@ -415,6 +441,7 @@ export function installPageRoutesFromManifest(
         stylesheetUrls,
         resolveRequestStylesheetUrls,
         cache,
+        renderNotFound,
       }),
       // `isPage` marks this route as SSR-served. Pages and API routes share one
       // router and one route-name namespace, so the router's duplicate-name
@@ -437,29 +464,7 @@ export function installPageRoutesFromManifest(
     the build carried no `404.page.tsx`, so a production deployment answers 404
     with the right STATUS whether or not anyone has designed the page yet.
   */
-  registerNotFoundPageRoute({
-    router,
-    renderPage:
-      notFoundPage === undefined
-        ? undefined
-        : createHandler(
-            notFoundPageHandlerOptions({
-              appFile: app.sourceFile,
-              pageFile: notFoundPage.sourceFile,
-              loadModule,
-              hydrationClientModuleUrl,
-              loadErrorPage,
-              // NO LAYOUT means no layout CSS either — just root and the
-              // not-found page's own stylesheets, same reasoning as the
-              // shared helper's own header comment.
-              stylesheetUrls:
-                clientDir === undefined
-                  ? []
-                  : productionStylesheetUrls(clientDir, [app.sourceFile, notFoundPage.sourceFile]),
-              resolveRequestStylesheetUrls,
-            }),
-          ),
-  });
+  registerNotFoundPageRoute({ router, renderPage: notFoundPageHandler });
   // `isPage` for the same reason the dev installer carries it — the router's
   // duplicate-name error reads the flag to say which claimant is the page.
 

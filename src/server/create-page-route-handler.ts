@@ -38,6 +38,7 @@ import { applyResponseCacheFloor } from "./response-cache-floor";
 import type { PageCacheOptIn } from "../routing/route-identity";
 import type { RequestStylesheetUrlResolver } from "./document-stylesheet-urls";
 import { resolveAuthCookieName } from "./auth-cookie-name";
+import { frameworkDefaultNotFoundDocument } from "./not-found-page";
 import { looksAuthenticated } from "./page-cache-eligibility";
 import { type PageCacheVariant } from "./page-cache-key";
 import { pageVaryHeader } from "./page-vary-header";
@@ -182,6 +183,32 @@ export type PageRouteHandlerOptions = {
    */
   skipPageLoader?: boolean;
   /**
+   * Forces `robots: "noindex"` onto the rendered document — see
+   * `RenderPageRequestOptions.noindex`. Set only by
+   * `notFoundPageHandlerOptions`.
+   */
+  noindex?: boolean;
+  /**
+   * The not-found route's OWN page handler (`notFoundPageHandlerOptions` →
+   * `createPageRouteHandler`), which a FULL-DOCUMENT request hands itself to
+   * when a page, layout or app loader answers `response.notFound()`. The
+   * visitor then gets the exact document an unmatched URL gets — the
+   * application's `404.page.tsx`, its stylesheets and head, status 404 — not a
+   * second rendering of it built here.
+   *
+   * A getter, read per request, so dev hands over whatever not-found handler
+   * its CURRENT install built — adding or deleting `404.page.tsx` is picked
+   * up with the rest of the route graph. Production's getter returns the one
+   * handler it built at boot.
+   *
+   * Absent, or returning `undefined` when the application ships no
+   * `404.page.tsx`: the loader `notFound()` then answers with the framework
+   * fallback (`frameworkDefaultNotFoundDocument`), again exactly as the
+   * unmatched route does. Never consulted for a data request, whose 404 wire
+   * is the client's cue to load the URL in full.
+   */
+  renderNotFound?: () => PageRouteHandler | undefined;
+  /**
    * Replays one committed cookie through core's `Response.cookie()`. Defaults
    * to doing exactly that (`defaultApplyBufferedCookie`, above); injectable so
    * a caller with a different `Response` shape (or a test) can observe/replace
@@ -241,6 +268,8 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     matchPath,
     statusForRenderedOk,
     skipPageLoader = false,
+    noindex = false,
+    renderNotFound,
     applyBufferedCookie = defaultApplyBufferedCookie,
     cache,
   } = options;
@@ -273,7 +302,9 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     ensureSetCookieCacheFloorHook(httpServer);
   }
 
-  return async ({ request, response }: HttpContext) => {
+  return async (context: HttpContext) => {
+    const { request, response } = context;
+
     const wantsData = isDataRequest(request.header(WARLOCK_DATA_REQUEST_HEADER, undefined));
 
     // Stage 2 slice S3 (contract rule 10): a client navigation that can read
@@ -431,9 +462,20 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         // always the fully resolved document — never a shell with deferred
         // chunks a HIT would have no live stream to append to.
         crawler: attemptStorageAfterRender && !wantsData ? true : crawler,
+        noindex,
       });
 
       if (rendered instanceof Response) return rendered;
+
+      const shortCircuit = rendered.bundle?.shortCircuit;
+
+      // A page/layout middleware that already SENT the reply itself (a
+      // `pageAuth` redirect, `response.forbidden()`) is the whole answer, for
+      // the document and the data representation alike. Anything written
+      // after it — a data payload, the empty buffered document, a page-cache
+      // entry — would only trip core's already-sent guard and log a
+      // middleware bug that is not there.
+      if (shortCircuit?.stage === "middleware" && shortCircuit.responseSent) return;
 
       // See `statusForRenderedOk`: a settled 200 is the only status this route is
       // allowed to restate, and both the document and the data branch below must
@@ -483,6 +525,30 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       // only reports what it actually knows.
       const authDerivedState =
         request.locals === undefined ? undefined : request.locals.authDerived === true;
+
+      // A loader `notFound()` on a FULL-DOCUMENT request answers with the
+      // not-found route's own document — the one an unmatched URL gets —
+      // instead of the empty body `finishRender` leaves for every loader
+      // short-circuit. Delegated rather than rendered here so the 404 page's
+      // composition, stylesheets, head and `Cache-Control` have exactly one
+      // implementation. Decided before this route's cache floor: a 404 must
+      // never inherit a `public, max-age` opt-in, and the delegated handler
+      // applies its own. The data wire is untouched — its 404 is what sends
+      // the client to a full load of this same URL.
+      if (!wantsData && shortCircuit?.stage === "loaders" && shortCircuit.kind === "notFound") {
+        const notFoundHandler = renderNotFound?.();
+
+        if (notFoundHandler !== undefined) return notFoundHandler(context);
+
+        applyResponseCacheFloor(response, {
+          authDerived: authDerivedState,
+          requestLooksAuthenticated,
+        });
+
+        await response.html(frameworkDefaultNotFoundDocument(request.locale), 404);
+
+        return;
+      }
 
       applyResponseCacheFloor(response, {
         authDerived: authDerivedState,
@@ -562,8 +628,6 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       // A page middleware that returned 2xx content without writing the reply
       // replaces the page: its value is the body, so there is no document to
       // decorate with stylesheets or the hydration module.
-      const shortCircuit = rendered.bundle?.shortCircuit;
-
       if (shortCircuit?.stage === "middleware" && !shortCircuit.responseSent && status < 400) {
         if (typeof shortCircuit.value !== "string") {
           response.setContentType("application/json; charset=utf-8");
