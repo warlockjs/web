@@ -29,7 +29,7 @@ import {
 import { ERROR_PAGE_METADATA } from "./resolve-page-metadata";
 import { registerModules, type RegisterableModuleNamespace } from "../register-modules";
 import { markNonHydrating } from "./page-render-bundle";
-import { resolveLocaleAlternates } from "./resolve-locale-alternates";
+import { resolveDocumentLocaleRouting, resolveLocaleAlternates } from "./resolve-locale-alternates";
 import { readLocaleRouting } from "../routing/locale-routing";
 import type { ServerErrorPageProps } from "../props";
 import {
@@ -895,12 +895,17 @@ async function finishRender(
   // page's own `metadata.canonical`. A localized page is canonical to itself
   // and still lists its hreflang siblings; `localizedPath()` builds that
   // self-canonical (see `DocumentContextValue.localeAlternates`).
+  const activeLocaleRouting = readLocaleRouting();
   const localeAlternates = resolveLocaleAlternates(
     request.path,
     bundle.route.path,
-    readLocaleRouting(),
+    activeLocaleRouting,
     getPublicUrl(),
   );
+  // RELEASE BLOCKER fix: the runtime table the browser must hydrate with,
+  // not the build-time `virtual:warlock/pages` guess — see
+  // `DocumentContextValue.localeRouting`.
+  const localeRouting = resolveDocumentLocaleRouting(bundle.route.path, activeLocaleRouting);
 
   let documentValue: DocumentContextValue = {
     metadata: bundle.metadata,
@@ -914,6 +919,7 @@ async function finishRender(
     ),
     hydrationClientModuleUrl: streamOptions.hydrationClientModuleUrl,
     localeAlternates,
+    localeRouting,
   };
 
   const wrapWithContext = (element: ReactNode): ReactNode =>
@@ -1197,6 +1203,10 @@ export async function renderPageFailure(options: RenderPageFailureOptions): Prom
     lang: slots.locale,
     stylesheetUrls: options.stylesheetUrls,
     hydrationClientModuleUrl: options.hydrationClientModuleUrl,
+    // Same reasoning as `finishRender` — a module-load/registration failure
+    // still owes the browser the runtime routing table, not the build-time
+    // guess, or `<Link>`/`changeLocaleCode` go dead on this document too.
+    localeRouting: resolveDocumentLocaleRouting(path, readLocaleRouting()),
   };
   const renderWithContext = (element: ReactNode): string =>
     renderToString(

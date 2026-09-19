@@ -135,6 +135,56 @@ describe("<head> alternates — strategy none, no :locale route", () => {
   });
 });
 
+describe("<head> warlock-locale-routing meta — release blocker fix", () => {
+  it("carries the runtime routing table verbatim under prefix-except-default", async () => {
+    publishLocaleRouting({
+      strategy: "prefix-except-default",
+      codes: ["en", "ar"],
+      defaultLocale: "en",
+    });
+
+    const { html } = await renderRequest("/posts/x");
+
+    // React HTML-escapes the JSON content's own double quotes (`&quot;`) when
+    // it renders the attribute — that escaping is what item 1's "React
+    // attribute escaping is enough" refers to, so the raw string on the wire
+    // is escaped, not the literal JSON.
+    expect(html).toContain(
+      '<meta name="warlock-locale-routing" content="{' +
+        "&quot;strategy&quot;:&quot;prefix-except-default&quot;," +
+        "&quot;codes&quot;:[&quot;en&quot;,&quot;ar&quot;]," +
+        '&quot;defaultLocale&quot;:&quot;en&quot;}"/>',
+    );
+  });
+
+  it("carries the runtime routing table under strategy prefix", async () => {
+    publishLocaleRouting({ strategy: "prefix", codes: ["en", "ar"], defaultLocale: "en" });
+
+    const { html } = await renderRequest("/ar/posts/x");
+
+    expect(html).toContain("&quot;strategy&quot;:&quot;prefix&quot;");
+    expect(html).toContain("&quot;codes&quot;:[&quot;en&quot;,&quot;ar&quot;]");
+    expect(html).toContain("&quot;defaultLocale&quot;:&quot;en&quot;");
+  });
+
+  it("emits no meta tag under strategy none with no :locale route", async () => {
+    publishLocaleRouting({ strategy: "none", codes: ["en", "ar"], defaultLocale: "en" });
+
+    const { html } = await renderRequest("/posts/x");
+
+    expect(html).not.toContain("warlock-locale-routing");
+  });
+
+  it("emits the meta tag for a :locale-folder route even under strategy none", async () => {
+    publishLocaleRouting({ strategy: "none", codes: ["en", "ar"], defaultLocale: "en" });
+
+    const { html } = await renderRequest("/en/about");
+
+    expect(html).toContain("warlock-locale-routing");
+    expect(html).toContain("&quot;strategy&quot;:&quot;none&quot;");
+  });
+});
+
 describe("<head> alternates — a :locale route, strategy none", () => {
   beforeEach(() => {
     publishLocaleRouting({ strategy: "none", codes: ["en", "ar"], defaultLocale: "en" });

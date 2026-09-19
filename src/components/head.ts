@@ -4,6 +4,7 @@ import {
   type MetadataDescriptor,
 } from "../metadata/metadata-descriptors";
 import { useDocumentContext } from "./document-context";
+import { LOCALE_ROUTING_META_NAME } from "../routing/locale-routing-meta-name";
 
 function renderDescriptor(descriptor: MetadataDescriptor): ReactElement {
   switch (descriptor.kind) {
@@ -37,7 +38,7 @@ function renderDescriptor(descriptor: MetadataDescriptor): ReactElement {
  * rather than by two hand-kept lists of fallback rules.
  */
 export function Head(): ReactElement {
-  const { metadata, stylesheetUrls, localeAlternates } = useDocumentContext("Head");
+  const { metadata, stylesheetUrls, localeAlternates, localeRouting } = useDocumentContext("Head");
 
   return createElement(
     Fragment,
@@ -56,6 +57,22 @@ export function Head(): ReactElement {
         href: alternate.href,
       }),
     ),
+    // RELEASE BLOCKER fix: carries the SERVER's runtime `LocaleRouting`
+    // across the document boundary so the browser stops relying on the
+    // build-time `virtual:warlock/pages` guess. `JSON.stringify` produces
+    // the `content` attribute VALUE; React (not string concatenation) does
+    // the HTML-attribute escaping when it renders this element, so there is
+    // no manual escaping here. See `DocumentContextValue.localeRouting` and
+    // `entry/publish-document-locale-routing.ts` (the reader).
+    ...(localeRouting
+      ? [
+          createElement("meta", {
+            key: "locale-routing",
+            name: LOCALE_ROUTING_META_NAME,
+            content: JSON.stringify(localeRouting),
+          }),
+        ]
+      : []),
     // Rendered last, mirroring where the framework's old post-render splice
     // inserted them (right before `</head>`, after everything else the
     // document already put there) — see `stylesheetUrls` on

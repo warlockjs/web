@@ -1,6 +1,7 @@
 import type { Keywords } from "@mongez/localization";
 import { createContext, useContext } from "react";
 import type { MetadataOutput } from "../metadata";
+import type { LocaleRouting } from "../routing/locale-routing";
 
 /**
  * The JSON-safe error shape carried from the server document to browser
@@ -233,6 +234,28 @@ export type DocumentContextValue = {
    * duplicate").
    */
   localeAlternates?: readonly { readonly hreflang: string; readonly href: string }[];
+  /**
+   * The runtime locale-routing table for THIS request — released blocker fix:
+   * a PRODUCTION browser build resolves `web.localeRouting` at BUILD time
+   * (`vite/page-registry-plugin.ts` + `build/generate-locale-routing.ts`,
+   * exported as `virtual:warlock/pages`'s `localeRouting`), which is wrong
+   * whenever the app config wasn't loaded at build time or differs per
+   * environment — the browser then hydrates with `{ strategy: "none" }` even
+   * though the server is actively locale-routing, and `<Link>`
+   * prefixing/`changeLocaleCode` go dead in prod.
+   *
+   * The fix: the SERVER document carries the table it actually resolved.
+   * `<Head/>` (`components/head.ts`) renders it as a
+   * `<meta name="warlock-locale-routing">` tag; the hydration entry
+   * (`entry/publish-document-locale-routing.ts`) reads that meta BEFORE
+   * mount and publishes it, falling back to the build-time
+   * `virtual:warlock/pages` value only when the meta is absent or malformed.
+   * Set by `resolveDocumentLocaleRouting()` (`server/resolve-locale-alternates.ts`)
+   * from `readLocaleRouting()` — the SAME published table `localeAlternates`
+   * above is built from — under the identical strategy-none/`:locale`-route
+   * gate, so `undefined` here means the page is not locale-routed at all.
+   */
+  localeRouting?: LocaleRouting;
 };
 
 export const DocumentContext = createContext<DocumentContextValue | undefined>(undefined);

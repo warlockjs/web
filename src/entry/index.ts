@@ -15,8 +15,8 @@ import { localeRouting, pages } from "virtual:warlock/pages";
 import { buildHydratedTree } from "../client/build-hydrated-tree";
 import { hydratePage } from "../client/hydrate-page";
 import { NavigationRoot } from "../client/navigation/navigation-root";
-import { publishLocaleRouting } from "../routing/locale-routing";
 import { publishRouteTable } from "../routing/route-table";
+import { publishDocumentLocaleRouting } from "./publish-document-locale-routing";
 
 /*
   BEFORE the mount, not after: `<Link>` resolves its URL through the route table
@@ -35,12 +35,17 @@ publishRouteTable(pages, "hydration client entry");
   locale-prefixing (`components/link.ts`) and the deprecated client matcher's
   prefix-stripping (`client/runtime/matcher.ts`) both read the published
   table via `readLocaleRouting()`, and the first render is the hydration
-  render. `localeRouting` is resolved by the SAME `resolveLocaleRouting()`
-  the server installers call (`vite/page-registry-plugin.ts`'s `load` hook),
-  out of the same config read — never guessed: strategy `"none"` when
-  `web.localeRouting` is absent.
+  render.
+
+  RELEASE BLOCKER fix: `localeRouting` here is the BUILD-TIME guess
+  (`resolveLocaleRouting()` resolved at build by `vite/page-registry-plugin.ts`'s
+  `load` hook) — wrong whenever the app config wasn't loaded at build time or
+  differs per environment. `publishDocumentLocaleRouting` prefers the SERVER
+  document's own `warlock-locale-routing` meta tag (the routing table THIS
+  request actually resolved, rendered by `<Head/>`) and falls back to this
+  build-time value only when that meta is absent or malformed.
 */
-publishLocaleRouting(localeRouting);
+publishDocumentLocaleRouting(localeRouting);
 
 /*
   The hydrated tree is wrapped in `NavigationRoot` so the page can be REPLACED

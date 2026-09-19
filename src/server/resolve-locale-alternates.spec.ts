@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LocaleRouting } from "../routing/locale-routing";
-import { resolveLocaleAlternates } from "./resolve-locale-alternates";
+import { resolveDocumentLocaleRouting, resolveLocaleAlternates } from "./resolve-locale-alternates";
 
 const ORIGIN = "https://app.test";
 
@@ -109,5 +109,30 @@ describe("resolveLocaleAlternates — missing origin", () => {
     );
 
     expect(alternates).toBeUndefined();
+  });
+});
+
+describe("resolveDocumentLocaleRouting", () => {
+  it("returns the routing table as-is under an active strategy", () => {
+    expect(resolveDocumentLocaleRouting("/posts/:id", prefixExceptDefault)).toEqual(
+      prefixExceptDefault,
+    );
+    expect(resolveDocumentLocaleRouting("/posts/:id", prefix)).toEqual(prefix);
+  });
+
+  it("returns undefined for strategy none on a non-:locale route", () => {
+    expect(resolveDocumentLocaleRouting("/posts/:id", none)).toBeUndefined();
+    expect(resolveDocumentLocaleRouting("/posts/:id", noneWithCodes)).toBeUndefined();
+  });
+
+  it("returns the routing table for strategy none on a :locale-folder route", () => {
+    expect(resolveDocumentLocaleRouting("/:locale/about", noneWithCodes)).toEqual(noneWithCodes);
+    expect(resolveDocumentLocaleRouting("/:locale", noneWithCodes)).toEqual(noneWithCodes);
+  });
+
+  it("needs no origin, unlike resolveLocaleAlternates", () => {
+    expect(resolveDocumentLocaleRouting("/posts/:id", prefixExceptDefault)).toEqual(
+      prefixExceptDefault,
+    );
   });
 });

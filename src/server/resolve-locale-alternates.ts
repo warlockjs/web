@@ -24,8 +24,30 @@ export type LocaleAlternate = {
 };
 
 /** True for a route pattern whose first segment is the `:locale` param (design note §C.1). */
-function isLocaleFolderRoute(routeEntryPath: string): boolean {
+export function isLocaleFolderRoute(routeEntryPath: string): boolean {
   return routeEntryPath === "/:locale" || routeEntryPath.startsWith("/:locale/");
+}
+
+/**
+ * The RUNTIME routing table to carry onto `DocumentContextValue.localeRouting`
+ * for THIS request — `undefined` under the exact same gate
+ * {@link resolveLocaleAlternates} already applies (strategy `"none"` and not a
+ * `:locale` route): a page that is not locale-routed at all has nothing for
+ * the browser's `<Link>`/`changeLocaleCode` to prefix against, so `<Head/>`
+ * emits no `warlock-locale-routing` meta for it either.
+ *
+ * Unlike {@link resolveLocaleAlternates}, this needs no origin and no
+ * configured codes — it is the routing table itself, not a set of absolute
+ * URLs built from it — so it is `undefined` only on the strategy/route gate,
+ * never on a missing `getPublicUrl()`.
+ */
+export function resolveDocumentLocaleRouting(
+  routeEntryPath: string,
+  routing: LocaleRouting,
+): LocaleRouting | undefined {
+  if (routing.strategy === "none" && !isLocaleFolderRoute(routeEntryPath)) return undefined;
+
+  return routing;
 }
 
 /**
