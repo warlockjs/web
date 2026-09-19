@@ -209,6 +209,17 @@ const HASHED_ASSET_CACHE_MAX_AGE_MS = 31536000 * 1000;
  * Exported so a test can assert the real options this connector hands
  * `router.directory` — the same object `boot()` uses below, not a copy a spec
  * could drift from unnoticed.
+ *
+ * `preCompressed: true` (card `011315ae`) is `@fastify/static`'s own
+ * negotiation: for each request it tries the brotli sibling, then gzip, then
+ * the original file — `<file>.br` / `<file>.gz` next to `<file>`, exactly the
+ * layout `../build/precompress-assets.ts` writes at build time. It also
+ * resolves `Content-Type` from the ORIGINAL filename regardless of which
+ * sibling was sent, and `send`'s own `etag` is computed per file actually
+ * streamed, so `.br`/`.gz`/identity responses each get a distinct ETag for
+ * free. The one thing it does NOT set is `Vary: Accept-Encoding` — added here
+ * via `setHeaders` on every response (identity included, since the response
+ * still varies on the header even when the negotiation picks the original).
  */
 export function productionAssetsDirectoryOptions(clientDir: string) {
   return {
@@ -216,6 +227,15 @@ export function productionAssetsDirectoryOptions(clientDir: string) {
     prefix: `${CLIENT_ASSET_URL_PREFIX}/`,
     maxAge: HASHED_ASSET_CACHE_MAX_AGE_MS,
     immutable: true,
+    preCompressed: true,
+    // Typed structurally against `@fastify/static`'s own `setHeaders` shape
+    // (`res.setHeader`) rather than importing its type: `web` has no direct
+    // dependency on `@fastify/static` (only `core` does, and hands these
+    // options through untyped via `router.directory`), so importing from it
+    // here would be a phantom dependency.
+    setHeaders(response: { setHeader(name: string, value: string): void }) {
+      response.setHeader("Vary", "Accept-Encoding");
+    },
   };
 }
 

@@ -74,6 +74,7 @@ All notable changes to `@warlock.js/web` are documented here.
 - SSR and client navigation now fall back the same way for missing metadata fields.
 - The dev client page registry keeps a custom `appSrcRoot`.
 - In development, page discovery for unmatched requests is cached until a page file changes.
+- Production hashed assets (`/assets/*.js`, `.css`, …) are now served precompressed instead of raw: `warlock build` writes `.br`/`.gz` siblings for eligible text assets ≥1KB, and `warlock start` negotiates `Accept-Encoding` (brotli, then gzip, then identity) via `@fastify/static`'s `preCompressed` option, with `Vary: Accept-Encoding` on every response.
 
 ## 5.15.0 - 2026-09-18
 

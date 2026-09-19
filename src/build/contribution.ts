@@ -274,6 +274,14 @@ export function createWebBuildContribution(
           external: options.external,
           plugins: connectorPlugins,
         });
+
+        // Precompressed siblings for the hashed client bundle (card `011315ae`)
+        // — production's `preCompressed: true` static serving
+        // (`../server/web-connector.ts`, `productionAssetsDirectoryOptions`)
+        // reads exactly this `<file>.br` / `<file>.gz` layout. Must run AFTER
+        // the client build writes `assets/`, and only when it did.
+        const { precompressAssets } = await import("./precompress-assets");
+        await precompressAssets(path.join(resolveClientOutDir(context), "assets"));
       }
 
       if (publicFiles.length > 0) {
