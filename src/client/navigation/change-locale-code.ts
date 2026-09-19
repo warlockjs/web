@@ -7,6 +7,7 @@ import { routerEvents, type NavigationMode } from "../../routing/router-events";
 import { hydrateShared } from "../../shared";
 import { fetchPageData } from "./fetch-page-data";
 import type { RefreshRuntime } from "./refresh";
+import { syncDocumentLocale } from "./sync-document-locale";
 
 /**
  * Switch the active locale for the current route without a full page reload.
@@ -260,6 +261,17 @@ export function createLocaleChanger(runtime: RefreshRuntime): LocaleChanger {
     // navigation and a refresh do it.
     hydrateShared(result.payload.shared);
 
+    // Corrected HERE, synchronously, rather than left to `NavigationRoot`'s
+    // own `current.payload.locale`-keyed effect (`navigation-root.tsx`):
+    // that effect only runs on React's NEXT commit, after this function's
+    // own promise has already resolved, so a caller reading
+    // `document.documentElement` right after `await changeLocaleCode(...)`
+    // would still see the OLD locale. `NavigationRoot`'s effect still runs
+    // afterwards — its own write is a no-op once this one has already made
+    // `documentElement` agree (`syncDocumentLocale` skips a write that is
+    // already correct) — so the two never fight, this one just wins the race.
+    syncDocumentLocale(document, result.payload.locale);
+
     const previous = runtime.readCurrent();
     const sameEntry = result.payload.name === previous.payload.name;
 
@@ -332,11 +344,15 @@ export function connectLocaleChanger(next: LocaleChanger | undefined): LocaleCha
  * only, then swaps the rendered page in — `useLocale()` and `useTextDirection()`
  * follow from the new payload's `locale` in the same render. `root.tsx` sits
  * outside the hydrated subtree (`skills/write-the-root/SKILL.md`), so no
- * client render can reach it directly; `NavigationRoot` corrects
- * `document.documentElement`'s `lang`/`dir` imperatively instead, in an effect
- * keyed on the payload's `locale` (`navigation-root.tsx`, via
- * `sync-document-locale.ts`) — the same shape it already uses to correct
- * `<head>` after a swap. The server persists the choice (the framework's
+ * client render can reach it directly; this function corrects
+ * `document.documentElement`'s `lang`/`dir` imperatively itself
+ * (`sync-document-locale.ts`), synchronously, before its own promise
+ * resolves — `NavigationRoot` also corrects it, in an effect keyed on the
+ * payload's `locale` (`navigation-root.tsx`), the same shape it already uses
+ * to correct `<head>` after a swap, but that effect only runs on React's
+ * NEXT commit, after this function has already returned; a caller checking
+ * `document.documentElement` right after `await changeLocaleCode(...)` must
+ * not see the OLD locale. The server persists the choice (the framework's
  * `locale` cookie) on that same request, so the next full load agrees.
  *
  * Calling it with the locale already active is a no-op: no request is made.

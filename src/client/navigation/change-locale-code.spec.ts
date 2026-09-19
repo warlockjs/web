@@ -62,15 +62,30 @@ type Browser = {
   replaceState: ReturnType<typeof vi.fn>;
   pushState: ReturnType<typeof vi.fn>;
   assign: ReturnType<typeof vi.fn>;
+  /** `document.documentElement`, seeded `lang="en" dir="ltr"` — the state a
+   * real full load in English leaves it in, the same seed
+   * `navigation-root-document.spec.ts` uses. */
+  documentElement: { lang: string; dir: string };
 };
 
 function stubBrowser(href = HREF): Browser {
-  const browser: Browser = { replaceState: vi.fn(), pushState: vi.fn(), assign: vi.fn() };
+  const documentElement = { lang: "en", dir: "ltr" };
+  const browser: Browser = {
+    replaceState: vi.fn(),
+    pushState: vi.fn(),
+    assign: vi.fn(),
+    documentElement,
+  };
 
   vi.stubGlobal("window", {
     location: { href, assign: browser.assign },
     history: { replaceState: browser.replaceState, pushState: browser.pushState },
   });
+  // `syncDocumentLocale` reads/writes `document.documentElement` directly —
+  // the environment is `"node"` (no real DOM), so this is the same kind of
+  // bare stand-in `window` already gets above, just enough surface for
+  // `syncDocumentLocale` to operate on.
+  vi.stubGlobal("document", { documentElement });
 
   return browser;
 }
@@ -422,6 +437,39 @@ describe("changeLocaleCode — locale routing (design note §B.3)", () => {
 
     expect(scenario.writes).toHaveLength(1);
     expect(scenario.onScreen().payload.locale).toBe("ar");
+  });
+});
+
+describe("changeLocaleCode — documentElement lang/dir (root.tsx is outside the hydrated subtree)", () => {
+  it("en→ar under prefix-except-default leaves documentElement lang=ar dir=rtl", async () => {
+    publishLocaleRouting({
+      strategy: "prefix-except-default",
+      codes: ["en", "ar"],
+      defaultLocale: "en",
+    });
+
+    const browser = stubBrowser("https://app.test/products");
+    respondWith(payloadOf("products.list", "ar"));
+
+    const scenario = harness(pageOf(payloadOf("products.list", "en")));
+
+    await createLocaleChanger(scenario.runtime)("ar");
+
+    expect(browser.documentElement.lang).toBe("ar");
+    expect(browser.documentElement.dir).toBe("rtl");
+  });
+
+  it("strategy none (the ?locale= path) still syncs documentElement — the innocent case", async () => {
+    const browser = stubBrowser();
+
+    respondWith(payloadOf("products.list", "ar"));
+
+    const scenario = harness(pageOf(payloadOf("products.list", "en")));
+
+    await createLocaleChanger(scenario.runtime)("ar");
+
+    expect(browser.documentElement.lang).toBe("ar");
+    expect(browser.documentElement.dir).toBe("rtl");
   });
 });
 
