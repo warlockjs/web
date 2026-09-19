@@ -94,7 +94,12 @@ export function parseCookieHeaderStrict(rawHeader: string): Map<string, string> 
 export function hasCookieRequiringPageCacheBypass(request: CredentialReadableRequest): boolean {
   const rawCookieHeader = request.header("cookie", undefined);
 
-  if (typeof rawCookieHeader !== "string") return false;
+  // Only an ABSENT header is cookie-free. A present header in any other
+  // shape (an array from a duplicated Cookie header, an object) can't be
+  // accounted for, so it fails closed like a malformed string.
+  if (rawCookieHeader === undefined || rawCookieHeader === null) return false;
+
+  if (typeof rawCookieHeader !== "string") return true;
 
   const cookies = parseCookieHeaderStrict(rawCookieHeader);
 
