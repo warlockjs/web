@@ -117,3 +117,80 @@ describe("scroll-positions — a failing sessionStorage never breaks the feature
     expect(getScrollPosition("entry-1")).toBeUndefined();
   });
 });
+
+describe("scroll-positions — capped at 50 entries with LRU eviction", () => {
+  it("keeps only the newest 50 of 60 saves, evicting the oldest 10", () => {
+    for (let i = 0; i < 60; i++) {
+      saveScrollPosition(`entry-${i}`, { x: 0, y: i });
+    }
+
+    for (let i = 0; i < 10; i++) {
+      expect(getScrollPosition(`entry-${i}`)).toBeUndefined();
+    }
+
+    for (let i = 10; i < 60; i++) {
+      expect(getScrollPosition(`entry-${i}`)).toEqual({ x: 0, y: i });
+    }
+  });
+
+  it("a touched old entry survives eviction", () => {
+    for (let i = 0; i < 49; i++) {
+      saveScrollPosition(`entry-${i}`, { x: 0, y: i });
+    }
+
+    // entry-0 is the oldest so far; touch it via a read so it becomes
+    // most-recently-used before the map is pushed past capacity.
+    expect(getScrollPosition("entry-0")).toEqual({ x: 0, y: 0 });
+
+    for (let i = 49; i < 60; i++) {
+      saveScrollPosition(`entry-${i}`, { x: 0, y: i });
+    }
+
+    expect(getScrollPosition("entry-0")).toEqual({ x: 0, y: 0 });
+  });
+
+  it("keeps sessionStorage at at most 50 entries", () => {
+    for (let i = 0; i < 60; i++) {
+      saveScrollPosition(`entry-${i}`, { x: 0, y: i });
+    }
+
+    const raw = window.sessionStorage.getItem("warlock:scroll-positions");
+
+    expect(raw).not.toBeNull();
+
+    const parsed = JSON.parse(raw as string) as Record<string, unknown>;
+
+    expect(Object.keys(parsed)).toHaveLength(50);
+  });
+
+  it("reads an oversized legacy sessionStorage value, and trims it on the next write", () => {
+    const legacy: Record<string, { x: number; y: number }> = {};
+
+    for (let i = 0; i < 80; i++) {
+      legacy[`entry-${i}`] = { x: 0, y: i };
+    }
+
+    window.sessionStorage.setItem("warlock:scroll-positions", JSON.stringify(legacy));
+
+    expect(() => hydrateScrollPositions()).not.toThrow();
+
+    // Reading works: the most recently written legacy entries are there.
+    expect(getScrollPosition("entry-79")).toEqual({ x: 0, y: 79 });
+
+    // sessionStorage itself still holds the untouched legacy blob until the
+    // next write.
+    const beforeWrite = JSON.parse(
+      window.sessionStorage.getItem("warlock:scroll-positions") as string,
+    ) as Record<string, unknown>;
+
+    expect(Object.keys(beforeWrite)).toHaveLength(80);
+
+    saveScrollPosition("entry-new", { x: 0, y: 999 });
+
+    const afterWrite = JSON.parse(
+      window.sessionStorage.getItem("warlock:scroll-positions") as string,
+    ) as Record<string, unknown>;
+
+    expect(Object.keys(afterWrite)).toHaveLength(50);
+  });
+});

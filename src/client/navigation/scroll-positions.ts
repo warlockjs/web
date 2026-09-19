@@ -26,13 +26,28 @@
  * wrapped in `try`/`catch`: a private-browsing tab can make the `sessionStorage`
  * property itself throw on read, not just the calls on it, and this feature
  * must degrade to "positions do not survive a reload" rather than to a crash.
+ *
+ * ## Capped, so a long-lived tab does not grow this without bound
+ *
+ * A dashboard or admin tool left open across many client navigations over
+ * hours/days would otherwise grow both the in-memory map and the
+ * `sessionStorage` blob re-serialized on every save forever. The eviction
+ * policy itself — cap at N, evict least-recently-used — lives in
+ * `scroll-position-lru.ts`; touching an entry on either a save or a restore
+ * (a `get`) counts as "used". A `sessionStorage` value written by an older,
+ * uncapped version of this module still reads back fine (see
+ * `hydrateScrollPositions`) — it is simply trimmed down to the cap the next
+ * time anything is saved, since `persist()` always re-serializes the
+ * (already-capped) in-memory map.
  */
+
+import { createLruCap } from "./scroll-position-lru";
 
 export type ScrollPosition = { readonly x: number; readonly y: number };
 
 const STORAGE_KEY = "warlock:scroll-positions";
 
-const positions = new Map<string, ScrollPosition>();
+const positions = createLruCap<ScrollPosition>();
 
 let hydrated = false;
 
@@ -61,7 +76,7 @@ function readSessionStorage(): Storage | undefined {
 function toRecord(): Record<string, ScrollPosition> {
   const record: Record<string, ScrollPosition> = {};
 
-  for (const [key, value] of positions) record[key] = value;
+  for (const [key, value] of positions.entries()) record[key] = value;
 
   return record;
 }
