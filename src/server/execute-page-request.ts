@@ -18,7 +18,8 @@ import { resolvePageValidationInput } from "./resolve-route-validation-input";
 import { PageValidationFailedError } from "./page-validation-failed-error";
 import { DeferredInNonPageLoaderError, isDeferred, splitDeferredPageData } from "../loaders/defer";
 import { createDeferredSettlement, type DeferSettlement } from "./defer-settlement";
-import { resolveDeferTimeoutMs } from "./streaming-config";
+import { resolveDeferTimeoutMs, resolveLoaderTimeoutMs } from "./streaming-config";
+import { PageLoaderTimeoutError } from "./page-loader-timeout-error";
 import {
   buildErrorRecord,
   commitBuffers,
@@ -295,6 +296,36 @@ export async function executePageRequest<TResult = PageDataBundle>(
         };
     let signal: LoaderSignal | undefined;
 
+    // Card `904a04eb`, audit §5.1: the whole non-deferred loader chain below
+    // (app → layout → page loaders, plus the page's own `validation`
+    // export) is bounded by ONE request-level timer, not one per loader —
+    // `web.loaderTimeout` is a bound on the CHAIN. Never a `defer()`-ed
+    // value (its own race lives in `defer-settlement.ts`) and never the
+    // render that follows this loop.
+    const loaderTimeoutMs = resolveLoaderTimeoutMs();
+    let loaderTimedOut = false;
+    let loaderTimeoutTimer: ReturnType<typeof setTimeout> | undefined;
+    // Settles (by rejecting) AT MOST ONCE, so every await below can safely
+    // race the SAME promise object as many times as the loop needs — a
+    // settled promise stays settled. `0` leaves it permanently pending,
+    // which is exactly "no timeout" under `Promise.race`.
+    const loaderTimeoutSignal: Promise<never> = new Promise((_resolve, reject) => {
+      if (loaderTimeoutMs <= 0) return;
+
+      loaderTimeoutTimer = setTimeout(() => {
+        loaderTimedOut = true;
+        // Stops a loader that honours cancellation (a DB query, a fetch
+        // with a plumbed-through `signal`) — the same signal already passed
+        // into every loader call below.
+        requestAbortController.abort();
+        reject(new PageLoaderTimeoutError(loaderTimeoutMs));
+      }, loaderTimeoutMs);
+      loaderTimeoutTimer.unref?.();
+    });
+    // Never an unhandled rejection even if the chain finishes (or the loop
+    // breaks for an unrelated reason) before anything ever races this.
+    loaderTimeoutSignal.catch(() => undefined);
+
     // One "loader" phase per level that actually ran
     // (a level with no loader export is skipped below and reports nothing).
     // Resolved ONCE, outside the loop, so a disabled app pays exactly one
@@ -305,7 +336,21 @@ export async function executePageRequest<TResult = PageDataBundle>(
       // Level boundary: an abandoned request does not START the next level.
       // A level already running is left alone — the framework only stops
       // BETWEEN levels (see `PipelineLoaderContext.signal`'s JSDoc).
-      if (requestAbortController.signal.aborted) break;
+      if (requestAbortController.signal.aborted) {
+        // The synchronous window between two loader awaits where the timer
+        // could in principle fire with nothing racing it yet — still a
+        // proper timeout, not a silently abandoned request.
+        if (loaderTimedOut && !signal) {
+          signal = {
+            kind: "throw",
+            index,
+            level,
+            thrown: new PageLoaderTimeoutError(loaderTimeoutMs),
+          };
+        }
+
+        break;
+      }
 
       // The page's top-level `validation` export runs HERE, at the front of
       // the page level's own turn (card 5056fb56): app and layout loaders
@@ -318,10 +363,20 @@ export async function executePageRequest<TResult = PageDataBundle>(
       // for a page with no loader: `request.validated()` is still the
       // page's to read.
       if (level === "page" && triple.page.validation) {
-        const outcome = await validatePageInput(triple.page.validation, request);
+        try {
+          const outcome = await Promise.race([
+            validatePageInput(triple.page.validation, request),
+            loaderTimeoutSignal,
+          ]);
 
-        if (!outcome.valid) {
-          signal = { kind: "validation", index, errors: outcome.errors };
+          if (!outcome.valid) {
+            signal = { kind: "validation", index, errors: outcome.errors };
+            break;
+          }
+        } catch (thrown) {
+          if (!(thrown instanceof PageLoaderTimeoutError)) throw thrown;
+
+          signal = { kind: "throw", index, level, thrown };
           break;
         }
       }
@@ -334,12 +389,15 @@ export async function executePageRequest<TResult = PageDataBundle>(
       const loaderStartedAt = tracingEnabled ? performance.now() : 0;
 
       try {
-        value = await loader({
-          request,
-          response: createBufferedResponse(buffers[level]),
-          shared: sealedShared,
-          signal: requestAbortController.signal,
-        });
+        value = await Promise.race([
+          loader({
+            request,
+            response: createBufferedResponse(buffers[level]),
+            shared: sealedShared,
+            signal: requestAbortController.signal,
+          }),
+          loaderTimeoutSignal,
+        ]);
       } catch (thrown) {
         signal = { kind: "throw", index, level, thrown };
         break;
@@ -408,13 +466,19 @@ export async function executePageRequest<TResult = PageDataBundle>(
       bundle[dataKeys[level]] = value;
     }
 
+    if (loaderTimeoutTimer) clearTimeout(loaderTimeoutTimer);
+
     let committedLevels: PageLevelName[];
     /** Set only when a THROW escalated to the app boundary — forces 500. */
     let forcedStatusCode: number | undefined;
     // Nothing is committed for an abandoned request — every buffered
     // mutation (cookies, headers, the forced-status write below) is
-    // discarded, no matter which level queued it.
-    const discarded = requestAbortController.signal.aborted;
+    // discarded, no matter which level queued it. A request WE aborted for
+    // our own loader-timeout bound is not abandoned — the client is still
+    // there and still needs the 504 error page — so that case is excluded
+    // here, deliberately, and handled entirely through the ordinary "throw"
+    // signal below instead.
+    const discarded = requestAbortController.signal.aborted && !loaderTimedOut;
 
     if (!signal) {
       committedLevels = [...LEVEL_ORDER];

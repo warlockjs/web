@@ -1,3 +1,4 @@
+import config from "@mongez/config";
 import { Response, setEnvironment, type Request } from "@warlock.js/core";
 import { v } from "@warlock.js/seal";
 import { parse } from "devalue";
@@ -541,6 +542,69 @@ describe("finishRender — failed page validation on a full-document request (de
     const errors = (rendered.bundle?.shortCircuit as { errors: { input: string }[] }).errors;
     expect(errors.some((issue) => issue.input.includes("page"))).toBe(true);
   });
+});
+
+function hangingLoaderEntry(): PageRouteEntry {
+  return {
+    path: "/slow",
+    name: "slow",
+    triple: {
+      app: {},
+      layout: {},
+      page: {
+        default: () => createElement("main", {}, "should not render"),
+        loader: () => new Promise(() => undefined),
+      },
+    },
+  };
+}
+
+/**
+ * Card `904a04eb`, audit §5.1: a page whose loader never resolves used to
+ * hold the SSR request open forever. `web.loaderTimeout` bounds the whole
+ * non-deferred loader chain and fails the request with
+ * `PageLoaderTimeoutError` (504), on both the full document and the data
+ * wire — the same throw-signal/boundary machinery an ordinary loader throw
+ * already takes (`execute-page-request.ts`), so neither representation needs
+ * a second error shape.
+ */
+describe("finishRender — a hung non-deferred loader times out (card 904a04eb)", () => {
+  afterEach(() => {
+    config.set("web", {});
+  });
+
+  it("renders the app error.page.tsx with status 504 on a full-document request", async () => {
+    config.set("web", { loaderTimeout: 50 });
+    const { request, response } = createHttp();
+
+    const rendered = await renderPageRequest("/slow", {
+      routes: [hangingLoaderEntry()],
+      createHttp: () => ({ request, response }),
+      loadErrorPage: async () => fakeErrorPageModule(),
+    });
+
+    if (rendered instanceof Response) throw new Error("unexpected terminal Response");
+
+    expect(rendered.status).toBe(504);
+    expect(rendered.html).toContain("Sorry about that.");
+  }, 2000);
+
+  it("on the data wire, answers 504 with the error record carrying statusCode 504", async () => {
+    config.set("web", { loaderTimeout: 50 });
+    const { request, response } = createHttp();
+
+    const rendered = await renderPageRequest("/slow", {
+      routes: [hangingLoaderEntry()],
+      createHttp: () => ({ request, response }),
+      loadErrorPage: async () => fakeErrorPageModule(),
+      dataRequest: true,
+    });
+
+    if (rendered instanceof Response) throw new Error("unexpected terminal Response");
+
+    expect(rendered.status).toBe(504);
+    expect(rendered.bundle?.error?.statusCode).toBe(504);
+  }, 2000);
 });
 
 describe("finishRender ordinary page props", () => {

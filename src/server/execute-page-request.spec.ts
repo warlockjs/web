@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
+import config from "@mongez/config";
 import { Request, Response } from "@warlock.js/core";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { resolvePageMetadata } = vi.hoisted(() => ({
   resolvePageMetadata: vi.fn(() => ({ metadata: {} })),
@@ -17,6 +18,7 @@ import {
   executePageRequest,
   type PageRouteEntry,
 } from "./execute-page-request";
+import { PageLoaderTimeoutError } from "./page-loader-timeout-error";
 
 const request = {
   setValidatedData: vi.fn(),
@@ -220,5 +222,92 @@ describe("executePageRequest ctx.signal", () => {
     expect((result as { commit?: { cookies: unknown[] } }).commit?.cookies).toEqual([
       { name: "session", value: "abc", options: undefined },
     ]);
+  });
+});
+
+/**
+ * Card `904a04eb`, audit §5.1: a non-deferred loader that never resolves
+ * used to hold the request open forever. `web.loaderTimeout` bounds the
+ * whole non-deferred loader chain (app → layout → page loaders, plus
+ * `validation`) — never a `defer()`-ed value, never the render.
+ */
+describe("executePageRequest — web.loaderTimeout (card 904a04eb)", () => {
+  afterEach(() => {
+    config.set("web", {});
+  });
+
+  it("fails a hung page loader with PageLoaderTimeoutError (statusCode 504) within a few hundred ms", async () => {
+    config.set("web", { loaderTimeout: 50 });
+    const entry = route({
+      page: () => new Promise(() => undefined),
+    });
+
+    const startedAt = Date.now();
+    const result = await executePageRequest({
+      url: "/account",
+      routes: [entry],
+      createHttp: () => ({ request, response: new Response() }),
+    });
+    const elapsedMs = Date.now() - startedAt;
+
+    expect(elapsedMs).toBeLessThan(1000);
+
+    const bundle = result as { error?: { error: unknown; statusCode?: number } };
+    expect(bundle.error?.error).toBeInstanceOf(PageLoaderTimeoutError);
+    expect(bundle.error?.statusCode).toBe(504);
+  }, 2000);
+
+  it("aborts the request's ctx.signal once the loader timeout fires", async () => {
+    config.set("web", { loaderTimeout: 50 });
+    let capturedSignal: AbortSignal | undefined;
+    const entry = route({
+      page: ({ signal }) => {
+        capturedSignal = signal;
+        return new Promise(() => undefined);
+      },
+    });
+
+    await executePageRequest({
+      url: "/account",
+      routes: [entry],
+      createHttp: () => ({ request, response: new Response() }),
+    });
+
+    expect(capturedSignal?.aborted).toBe(true);
+  }, 2000);
+
+  it("loaderTimeout: 0 disables the bound — a loader resolving at 100ms still returns its data", async () => {
+    config.set("web", { loaderTimeout: 0 });
+    const entry = route({
+      page: () =>
+        new Promise((resolve) => {
+          setTimeout(() => resolve({ ok: true }), 100);
+        }),
+    });
+
+    const result = await executePageRequest({
+      url: "/account",
+      routes: [entry],
+      createHttp: () => ({ request, response: new Response() }),
+    });
+
+    expect((result as { pageData?: unknown }).pageData).toEqual({ ok: true });
+    expect((result as { error?: unknown }).error).toBeUndefined();
+  }, 2000);
+
+  it("does not affect an ordinary fast loader", async () => {
+    config.set("web", { loaderTimeout: 50 });
+    const entry = route({
+      page: () => ({ fast: true }),
+    });
+
+    const result = await executePageRequest({
+      url: "/account",
+      routes: [entry],
+      createHttp: () => ({ request, response: new Response() }),
+    });
+
+    expect((result as { pageData?: unknown }).pageData).toEqual({ fast: true });
+    expect((result as { error?: unknown }).error).toBeUndefined();
   });
 });

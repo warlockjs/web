@@ -44,6 +44,15 @@ export type WebStreamingConfigurations = {
 export type WebConfigurations = {
   streaming?: WebStreamingConfigurations;
   /**
+   * Milliseconds the non-deferred loader chain of ONE page request (app →
+   * layout → page loaders, plus the page's own `validation` export) may run
+   * before the request fails with `PageLoaderTimeoutError` (504) — card
+   * `904a04eb`, audit §5.1. Never bounds a `defer()`-ed value (see
+   * `streaming.deferTimeout` above) or the render that follows the loader
+   * chain. `0` disables the bound entirely. Default 15000.
+   */
+  loaderTimeout?: number;
+  /**
    * Sitemap generation policy. There is deliberately no `sitemap.baseUrl`
    * key — the origin is `app.publicUrl`, the single application origin, so
    * generation refuses rather than derives one when it is unset. See
@@ -78,6 +87,37 @@ export function resolveDeferTimeoutMs(): number {
   const web = config.get("web", {});
 
   return web.streaming?.deferTimeout ?? DEFAULT_DEFER_TIMEOUT_MS;
+}
+
+/** Card `904a04eb`'s stated default. */
+const DEFAULT_LOADER_TIMEOUT_MS = 15_000;
+
+/** Raised at request time when `web.loaderTimeout` is misconfigured. */
+export class LoaderTimeoutConfigError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "LoaderTimeoutConfigError";
+  }
+}
+
+/**
+ * Read `web.loaderTimeout`, falling back to the documented default, and
+ * validate it — a non-negative integer, or `0` to disable the bound
+ * entirely. Called once per request (`execute-page-request.ts`), same as
+ * {@link resolveDeferTimeoutMs}, so a misconfigured value fails the request
+ * loudly rather than silently picking a nonsensical bound.
+ */
+export function resolveLoaderTimeoutMs(): number {
+  const web = config.get("web", {});
+  const value = web.loaderTimeout ?? DEFAULT_LOADER_TIMEOUT_MS;
+
+  if (!Number.isInteger(value) || value < 0) {
+    throw new LoaderTimeoutConfigError(
+      `web.loaderTimeout must be a non-negative integer (milliseconds); received ${JSON.stringify(value)}.`,
+    );
+  }
+
+  return value;
 }
 
 /**
