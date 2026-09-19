@@ -95,3 +95,41 @@ describe("PageValidationFailedError disclosure (card 6781c6f3)", () => {
     expect(serialized.stack).toBe(error.stack);
   });
 });
+
+/**
+ * The real production path goes through `buildErrorRecord` FIRST: it scrubs
+ * every non-public error into a generic surrogate before the error page ever
+ * serializes it. Calling `serializePageError` directly (above) never saw that
+ * scrub — live, a production `/posts?page=abc` showed "An unexpected error
+ * occurred." with no issues. These pin the whole chain.
+ */
+describe("PageValidationFailedError survives the production error record (card 6781c6f3)", () => {
+  it("buildErrorRecord keeps the validation error itself, so the error page props carry the issues", async () => {
+    setEnvironment("production");
+    const { buildErrorRecord } = await import("./settle-page-response");
+    const error = new PageValidationFailedError([
+      { input: "query.page", type: "number", error: "This input accepts only numbers" },
+    ]);
+
+    const record = buildErrorRecord(error, { boundaryLevel: "page" } as never);
+    const props = hydrationErrorPageProps({ error: record.error, status: 400 }, record.error);
+
+    expect(record.scrubbed).toBe(false);
+    expect(props.error.message).toBe("Page validation failed.");
+    expect(props.error.errors).toEqual([
+      { input: "query.page", type: "number", error: "This input accepts only numbers" },
+    ]);
+  });
+
+  it("buildErrorRecord still scrubs an ordinary error in production", async () => {
+    setEnvironment("production");
+    const { buildErrorRecord } = await import("./settle-page-response");
+
+    const record = buildErrorRecord(new Error("db password is hunter2"), {
+      boundaryLevel: "page",
+    } as never);
+
+    expect(record.scrubbed).toBe(true);
+    expect(String((record.error as Error).message)).not.toContain("hunter2");
+  });
+});
