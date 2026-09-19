@@ -18,6 +18,7 @@ import { collectSitemapEntries } from "./collect-sitemap-entries";
 import type { CollectedEntry } from "./expand-locale-entries";
 import { requireSitemapOrigin, resolveSitemapConfig } from "./resolve-sitemap-config";
 import type { SitemapResult } from "./sitemap-result-types";
+import type { SitemapPageSource } from "./sitemap-page-source";
 
 /** The sitemaps.org ceiling `@warlock.js/sitemap` enforces; mirrored here only to decide WHICH class to build into, never to re-validate it. */
 const MAX_URLS_PER_FILE = 50_000;
@@ -26,6 +27,8 @@ export type GenerateSitemapOptions = {
   /** Absolute path to the application root. Defaults to `process.cwd()` via `rootPath()`. */
   readonly appRoot?: string;
   readonly srcDir?: string;
+  /** Injected page source — forwarded to `collectSitemapEntries`. Primarily for tests; production picks up its own source automatically. */
+  readonly pageSource?: SitemapPageSource;
 };
 
 function mergeDeclaredRoutes(
@@ -56,6 +59,7 @@ export async function generateSitemap(
     appRoot,
     srcDir: options.srcDir,
     locales: config.locales,
+    pageSource: options.pageSource,
   });
 
   const useIndex = items.length > MAX_URLS_PER_FILE || config.locales.splitByLocale;

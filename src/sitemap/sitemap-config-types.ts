@@ -60,7 +60,13 @@ export type WebSitemapConfig = {
  * generate automatically at all.
  */
 export type RegeneratePolicy = {
-  /** Generate once at `warlock build` and again at production boot. Default `true`. */
+  /**
+   * Generate at boot — dev and production. Default `true`. `warlock build`
+   * never generates: it cannot read app config, and a built bundle carries no
+   * page source files to read (`../build/contribution.ts`); production boot
+   * reads the page manifest instead, once, before this connector's routes are
+   * scanned.
+   */
   readonly onBoot?: boolean;
 };
 

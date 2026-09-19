@@ -1,10 +1,13 @@
 /**
  * Discovery + exclusion + dynamic suppliers (contract Part 4, "What the
  * adapter owns" 1–3) — the one place that turns the application's page
- * graph into plain `@warlock.js/sitemap` entries. Reads
- * `listRoutablePages` from `../build/list-routable-pages` directly (a
- * relative import within this package; `@warlock.js/web/build` is the
- * published subpath the same module resolves through from outside).
+ * graph into plain `@warlock.js/sitemap` entries. Reads pages through an
+ * injected {@link SitemapPageSource}: an explicit `options.pageSource` wins,
+ * otherwise the production source registered by `WebConnector.boot()`
+ * (`./production-sitemap-page-source.ts`) is used when present, and dev
+ * falls back to `listRoutablePages` (`../build/list-routable-pages`), which
+ * `import()`s each page's SOURCE file — never reachable in a production
+ * build, which is why production always registers its own source first.
  */
 import type { DiscoverPagesOptions } from "../build/discover-pages";
 import { listRoutablePages } from "../build/list-routable-pages";
@@ -14,10 +17,14 @@ import {
   type CollectedEntry,
   type LocaleMatrix,
 } from "./expand-locale-entries";
+import { getProductionSitemapPageSource } from "./production-sitemap-page-source";
 import type { SitemapPageExport, SitemapPageOptions, SitemapPageUrl } from "./sitemap-page-export";
+import type { SitemapPageSource } from "./sitemap-page-source";
 
 export type CollectSitemapEntriesOptions = DiscoverPagesOptions & {
   readonly locales: LocaleMatrix;
+  /** Injected page source — bypasses both the production registry and `listRoutablePages`. Primarily for tests. */
+  readonly pageSource?: SitemapPageSource;
 };
 
 export type CollectedSitemapEntries = {
@@ -51,7 +58,9 @@ function toPageUrl(routePath: string, options: SitemapPageOptions): SitemapPageU
 export async function collectSitemapEntries(
   options: CollectSitemapEntriesOptions,
 ): Promise<CollectedSitemapEntries> {
-  const pages = await listRoutablePages(options);
+  const pageSource =
+    options.pageSource ?? getProductionSitemapPageSource() ?? (() => listRoutablePages(options));
+  const pages = await pageSource();
   const items: CollectedEntry[] = [];
   const declaredRoutes = new Set<string>();
 

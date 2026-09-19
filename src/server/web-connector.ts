@@ -76,6 +76,8 @@ import {
 } from "./page-route-reload";
 import { consumePageManifest, type PageManifest } from "./page-manifest";
 import { registerProductionPublicFiles } from "./register-production-public-files";
+import { createManifestSitemapPageSource } from "../sitemap/manifest-sitemap-page-source";
+import { setProductionSitemapPageSource } from "../sitemap/production-sitemap-page-source";
 import { registerWebHttpRoutes } from "../sitemap/register-web-http-routes";
 import {
   createUnregisteredPageReporter,
@@ -417,6 +419,15 @@ export class WebConnector extends BaseConnector {
       if (this.pageManifest.pages.length > 0) {
         router.directory(productionAssetsDirectoryOptions(this.resolveClientDir()));
       }
+
+      // Sitemap page source (v5.16 defect fix): production has no `app/`
+      // tree beside the bundle and no Vite, so `listRoutablePages`'s
+      // `import()` of each page's SOURCE file — dev's own source — cannot
+      // work here. Registering the manifest-derived source BEFORE
+      // `registerWebHttpRoutes` runs its boot-time generation (below) is
+      // what lets both that call and every later `regenerateSitemap()` read
+      // pages from the already-imported manifest instead.
+      setProductionSitemapPageSource(createManifestSitemapPageSource(this.pageManifest));
 
       // Sitemap Part B (v5.16 contract Part 6 rule 1): production boot
       // produces the artifact set that `/sitemap.xml` and `/robots.txt` will

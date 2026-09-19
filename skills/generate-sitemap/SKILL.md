@@ -59,7 +59,7 @@ reaches page discovery, which a page's own graph must never pull in.
 | `locales.defaultLocale` | — | Also emitted as `x-default`. Unset: no `x-default`. |
 | `locales.splitByLocale` | `false` | One shard per locale, listed in an index. |
 | `localeUrl` | `path?locale=<code>` | Override how a path becomes a locale URL — only when the app implements its own prefix routing. A page's `localePaths` still wins. |
-| `regenerate.onBoot` | `true` | Generate at boot (dev and production). `warlock build` generates whenever the sitemap is enabled, regardless of this key. |
+| `regenerate.onBoot` | `true` | Generate at boot (dev and production). `warlock build` never generates — see below. |
 
 Above 50,000 URLs (or with `splitByLocale`) web switches from a single
 `Sitemap` to a sharded `SitemapIndex` automatically; `path` then serves the
@@ -97,8 +97,12 @@ generation time, not per request.
 
 ## When it runs — never on a request
 
-Generation happens at `warlock build` (whenever enabled), at boot (dev and production) when
-`regenerate.onBoot` is on, and whenever the app calls `regenerateSitemap()`:
+`warlock build` never generates the sitemap — the build process loads no app
+config and ships no page source files, so it logs
+`[warlock:web] sitemap: generated at production boot (web.sitemap.regenerate.onBoot) — not at build time`
+and leaves generation to boot. Generation happens at boot (dev and
+production) when `regenerate.onBoot` is on, and whenever the app calls
+`regenerateSitemap()`:
 
 ```ts
 import { regenerateSitemap } from "@warlock.js/web/sitemap";
