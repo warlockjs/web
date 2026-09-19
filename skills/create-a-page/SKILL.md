@@ -104,7 +104,7 @@ The build reads `route` without executing application code. Declare it directly 
 
 ### Validate the page's input — the `validation` export
 
-Declare `validation` as its own top-level export: a [Seal](https://www.npmjs.com/package/@warlock.js/seal) schema per source, `params` and `query` kept as two separate keys — never merged into one bag, so a `:id` path segment and a `?id=` query key can never collide or silently shadow one another:
+Declare `validation` as its own top-level export: a [Seal](https://www.npmjs.com/package/@warlock.js/seal) schema per source, `params` and `query` kept as two separate keys — never merged into one bag, so a `:id` path segment and a `?id=` query key can never collide or silently shadow one another. A page may declare only `params`, only `query`, or both:
 
 > **Withdrawn after 5.6.0: `route.validate`.** A page that still declares it does not silently lose its validation — the app **refuses to boot** and names the file. Move the schema to the `validation` export shown below; the shape and the 400 are unchanged.
 
@@ -119,7 +119,7 @@ export const route = {
 
 export const validation = {
   params: v.object({ id: v.string().minLength(2) }),
-  query: v.object({ tab: v.string().optional() }),
+  query: v.object({ tab: v.string().optional() }).stripUnknown(),
 };
 
 export const loader = (async ({ request }) => {
@@ -133,9 +133,11 @@ export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
 }
 ```
 
-`request.validated()` types `params` and `query` from the schema — never a flattened merge of the two. There is exactly ONE validation surface on a page; see [load-page-data](../load-page-data/SKILL.md) for how the validated data reaches the loader.
+`request.validated()` types `params` and `query` from the schema — never a flattened merge of the two — and only includes the key(s) actually declared, so a page validating just `params` gets `{ params }` back, not `{ params, query: undefined }`. There is exactly ONE validation surface on a page; see [load-page-data](../load-page-data/SKILL.md) for how the validated data reaches the loader.
 
-Rejected input never reaches the loader. A full page load renders the application's `error.page.tsx` boundary at status 400, and the error it receives carries the validation issues (read them off `(error as { errors?: unknown }).errors` — see [load-page-data](../load-page-data/SKILL.md#validation) for the full shape) — a page is a document, not an API endpoint, so invalid input never gets a raw JSON body. A client navigation to the same URL gets the same 400 status, with no document to render.
+`request.params`/`request.query` arrive as strings, so a numeric `id` or `tab` needs `v.int().coerce()` (or the matching coercing primitive), not `v.int()` alone. `query` objects are strict by default — an unrecognized key such as `?utm_source=…` 400s unless the schema calls `.stripUnknown()`, the normal spelling for a public page's query.
+
+Rejected input never reaches the page loader — validation runs after the app and layout loaders and before the page's own. A full page load renders the application's `error.page.tsx` boundary at status 400, and the error it receives carries the validation issues (read them off `(error as { errors?: unknown }).errors` — see [load-page-data](../load-page-data/SKILL.md#validation) for the full shape) — a page is a document, not an API endpoint, so invalid input never gets a raw JSON body. Those issues are always the safe `{ input, type, error }` shape, never the submitted value. A client navigation to the same URL gets the same 400 status, with no document to render.
 
 ### `middleware` — a page's own guard, run last
 

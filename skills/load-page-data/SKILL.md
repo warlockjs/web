@@ -104,14 +104,12 @@ export const route = {
 } as const;
 
 export const validation = {
-  schema: v.object({
-    id: v.string().minLength(2),
-  }),
-  validating: ["params"],
+  params: v.object({ id: v.string().minLength(2) }),
 } as const;
 
 export const loader = (async ({ request, response, shared }) => {
-  const { id } = request.validated();
+  const { params } = request.validated();
+  const { id } = params;
 
   if (id === "missing") {
     return response.notFound();
@@ -208,24 +206,29 @@ export const loader = (async ({ signal }) => {
 
 ## Validation
 
-A page's `validation` export declares a [Seal](https://www.npmjs.com/package/@warlock.js/seal) schema per source, `params` and `query` kept as two separate keys — never merged into one bag:
+A page's `validation` export declares a [Seal](https://www.npmjs.com/package/@warlock.js/seal) schema per source, `params` and `query` kept as two separate keys — never merged into one bag. Declare either or both; a page that only has a dynamic segment can skip `query` entirely, and one that only reads query keys can skip `params`:
 
 ```ts
 export const validation = {
-  params: v.object({ id: v.string().minLength(2) }),
-  query: v.object({ tab: v.string().optional() }),
+  params: v.object({ id: v.int().coerce() }),
+  query: v.object({ tab: v.string().optional() }).stripUnknown(),
 };
 ```
 
-A legacy `{ schema, validating }` shape is still accepted — `schema` a single Seal validator, `validating` any ordered subset of `"body"`, `"query"`, `"params"`, and `"headers"` (defaulting to query + params, with params winning a duplicate key) — but `{ params, query }` is the shape new pages should declare. See [create-a-page](../create-a-page/SKILL.md#validate-the-pages-input--the-validation-export) for the full example.
+**`params` and `query` arrive as strings — coerce numeric ones.** `request.params`/`request.query` come off the URL, so `v.int()` alone rejects `"2"` ("This input accepts only numbers"). Reach for `v.int().coerce()` (or the matching coercing primitive) on every numeric param or query key.
 
-Either shape builds one schema and runs ONE validation pass before loaders. A failure short-circuits with status **400**, never 422 — a page is a document, not an API endpoint. A full page load renders the application's `error.page.tsx` with status 400, exactly as an ordinary loader throw with its own `statusCode` already does; the error it receives carries the validation issues:
+**Seal objects reject unknown keys by default.** A `query` schema without `.stripUnknown()` answers 400 to `?utm_source=newsletter`, `?fbclid=…`, or any other tracking param a real visitor's link carries — that default is not changing. `.stripUnknown()` on the `query` object is the normal spelling for a public page; drop it only when you deliberately want to 400 on any extra key.
+
+A legacy `{ schema, validating }` shape is still accepted — `schema` a single Seal validator, `validating` any ordered subset of `"body"`, `"query"`, `"params"`, and `"headers"` (defaulting to query + params, with params winning a duplicate key) — but it is legacy: `{ params, query }` is the shape every new page should declare. See [create-a-page](../create-a-page/SKILL.md#validate-the-pages-input--the-validation-export) for the full example.
+
+Either shape builds one schema and runs ONE validation pass at the page level's turn: after the app and layout loaders (so a layout redirect still wins, and the error page renders inside layouts that have their data), before the page loader. A failure short-circuits with status **400**, never 422 — a page is a document, not an API endpoint. A full page load renders the application's `error.page.tsx` with status 400, exactly as an ordinary loader throw with its own `statusCode` already does; the error it receives carries the validation issues:
 
 ```tsx title="src/web/error.page.tsx"
 import type { ErrorPageProps } from "@warlock.js/web";
 
 export default function ErrorPage({ error, status }: ErrorPageProps) {
-  const validationErrors = (error as { errors?: { input: string; error: string }[] })?.errors;
+  const validationErrors = (error as { errors?: { input: string; type: string; error: string }[] })
+    ?.errors;
 
   return (
     <main>
@@ -240,6 +243,8 @@ export default function ErrorPage({ error, status }: ErrorPageProps) {
   );
 }
 ```
+
+In production this `errors` array is always the safe issue shape — `{ input, type, error }` — and never the submitted value itself: a bad `email` field reports what rule failed (`type`) and where (`input`), not what the visitor typed.
 
 A client navigation to the same URL still receives that same 400 status, with no document to render — nothing here changes the data representation's contract.
 
