@@ -47,6 +47,7 @@ import {
   type PageTripleModule,
 } from "./execute-page-request";
 import { PageMiddlewareShortCircuitError } from "./page-middleware-short-circuit-error";
+import { ClientDisconnectedError } from "./client-disconnected-error";
 import { wrapPipeableStreamForDeferredEmission } from "./defer-emission";
 import { reportServerError } from "./report-server-error";
 import { pathnameFromRequest } from "./error-reporting-config";
@@ -637,6 +638,19 @@ async function renderElementToPipeableStream(
       nonce,
       onShellError: (error) => reject(error),
       onError: (error) => {
+        // A client disconnect aborts this SAME stream with
+        // `ClientDisconnectedError` as its reason (below, and
+        // `defer-emission.ts`'s `onClientDisconnect`) — expected, not a
+        // render failure, so it never reaches `reportServerError`/the app's
+        // `web.errors.report()` hook (card 0d43c0d6). One quiet debug line
+        // is enough to see it happened at all.
+        if (error instanceof ClientDisconnectedError) {
+          console.debug(
+            `[warlock:web] client disconnected while rendering ${route?.path ?? route?.name ?? "an unknown route"}`,
+          );
+          return;
+        }
+
         // Stage 1 renders no Suspense boundaries of its own, so this firing
         // after the shell is ready is unexpected rather than a normal
         // deferred-content rejection (Stage 2's `defer()` settlements are
@@ -1212,6 +1226,36 @@ async function finishRender(
   // `onAllReady` has fired (contract rules 5, 6, 9). A page with none gets
   // `renderedStream` back completely untouched — see `defer-emission.ts`.
   const deferredKeys = bundle.deferredKeys ?? [];
+
+  // A page with no deferred keys skips `wrapPipeableStreamForDeferredEmission`
+  // entirely (below), so it never gets that wrapper's own client-disconnect
+  // wiring — without this, only `@warlock.js/core`'s own raw-socket listener
+  // (`stream-react-response.ts`) would ever abort this stream, and it calls
+  // `abort()` with no reason, which is exactly the "aborted ... without a
+  // reason" SSR-error report card 0d43c0d6 closes. Aborting HERE, on the
+  // SAME per-request signal, fires first (this listener is attached before
+  // `response.streamReact` ever runs) and stamps the recognisable reason —
+  // React clears its abortable-task set on the first `abort()` call, so
+  // core's later, reasonless `abort()` becomes a no-op and never re-fires
+  // `onError`.
+  //
+  // Deliberately NOT checked for "already aborted" at this point: this same
+  // signal also doubles as the loader-chain's own cancellation switch
+  // (`execute-page-request.ts`'s `requestAbortController.abort()` on a
+  // `web.loaderTimeout` breach) and can already be aborted here for THAT
+  // reason by the time an error page reaches this render call — mislabelling
+  // and killing that render would be a regression, not a fix. A loader
+  // timeout always fires before this render call starts, so a genuinely NEW
+  // `"abort"` event from this point on can only be the real-disconnect
+  // listener (`request-abort-signal.ts`) firing during streaming.
+  if (deferredKeys.length === 0 && bundle.abortSignal !== undefined) {
+    bundle.abortSignal.addEventListener(
+      "abort",
+      () => renderedStream.abort(new ClientDisconnectedError()),
+      { once: true },
+    );
+  }
+
   const pipeableStream =
     deferredKeys.length === 0
       ? renderedStream

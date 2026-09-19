@@ -45,6 +45,7 @@ import { reportServerError } from "./report-server-error";
 import type { ServerErrorContext } from "./error-reporting-config";
 import type { DeferSettlement } from "./defer-settlement";
 import { assertPageDataSerializable } from "./page-data-serialization-error";
+import { ClientDisconnectedError } from "./client-disconnected-error";
 
 /** One deferred key paired with its (never-rejecting) wire-shape settlement. */
 export type DeferredEmissionEntry = {
@@ -165,7 +166,13 @@ export function wrapPipeableStreamForDeferredEmission(
   };
 
   const onClientDisconnect = (): void => {
-    abortOnce();
+    // A recognisable reason, not a bare `abortOnce()` — React's own fallback
+    // for a reasonless `abort()` ("The render was aborted by the server
+    // without a reason.") is indistinguishable from a genuine render
+    // failure once it reaches `render-page.ts`'s `onError`. Stamping
+    // `ClientDisconnectedError` here lets that callback recognise "the
+    // client is gone" and skip the SSR-render-error report (card 0d43c0d6).
+    abortOnce(new ClientDisconnectedError());
     endOnce();
   };
 
