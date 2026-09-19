@@ -11,10 +11,11 @@
  * therefore testable without a bundler.
  */
 import { createElement } from "react";
-import { pages } from "virtual:warlock/pages";
+import { localeRouting, pages } from "virtual:warlock/pages";
 import { buildHydratedTree } from "../client/build-hydrated-tree";
 import { hydratePage } from "../client/hydrate-page";
 import { NavigationRoot } from "../client/navigation/navigation-root";
+import { publishLocaleRouting } from "../routing/locale-routing";
 import { publishRouteTable } from "../routing/route-table";
 
 /*
@@ -28,6 +29,18 @@ import { publishRouteTable } from "../routing/route-table";
   from different page graphs, which hydration already refuses.
 */
 publishRouteTable(pages, "hydration client entry");
+
+/*
+  Beside the route table, for the same reason: `<Link>`/`href()`'s
+  locale-prefixing (`components/link.ts`) and the deprecated client matcher's
+  prefix-stripping (`client/runtime/matcher.ts`) both read the published
+  table via `readLocaleRouting()`, and the first render is the hydration
+  render. `localeRouting` is resolved by the SAME `resolveLocaleRouting()`
+  the server installers call (`vite/page-registry-plugin.ts`'s `load` hook),
+  out of the same config read — never guessed: strategy `"none"` when
+  `web.localeRouting` is absent.
+*/
+publishLocaleRouting(localeRouting);
 
 /*
   The hydrated tree is wrapped in `NavigationRoot` so the page can be REPLACED

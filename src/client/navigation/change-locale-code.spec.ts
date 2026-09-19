@@ -1,6 +1,7 @@
 import { stringify } from "devalue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HydrationDocumentPayloadSource } from "../../hydration-payload";
+import { publishLocaleRouting } from "../../routing/locale-routing";
 import { routerEvents } from "../../routing/router-events";
 import {
   changeLocaleCode,
@@ -133,6 +134,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   connectLocaleChanger(undefined);
+  publishLocaleRouting({ strategy: "none", codes: [], defaultLocale: "" });
 });
 
 describe("changeLocaleCode — the seam", () => {
@@ -334,5 +336,90 @@ describe("changeLocaleCode — a failure leaves the page and locale unchanged", 
     expect(scenario.onScreen()).toBe(onScreenBefore);
     expect(browser.assign).not.toHaveBeenCalled();
     expect(events.failed).toHaveLength(1);
+  });
+});
+
+describe("changeLocaleCode — locale routing (design note §B.3)", () => {
+  it("en→ar pushes the re-prefixed URL and fetches it directly, no ?locale=", async () => {
+    publishLocaleRouting({
+      strategy: "prefix-except-default",
+      codes: ["en", "ar"],
+      defaultLocale: "en",
+    });
+
+    const browser = stubBrowser("https://app.test/products?page=2#reviews");
+    const fetchMock = respondWith(payloadOf("products.list", "ar"));
+
+    const scenario = harness(pageOf(payloadOf("products.list", "en")));
+
+    await createLocaleChanger(scenario.runtime)("ar");
+
+    const [requestedUrl] = fetchMock.mock.calls[0] as [string];
+
+    expect(requestedUrl).toBe("https://app.test/ar/products?page=2#reviews");
+    expect(browser.pushState).toHaveBeenCalledWith(
+      null,
+      "",
+      "https://app.test/ar/products?page=2#reviews",
+    );
+    expect(browser.replaceState).not.toHaveBeenCalled();
+  });
+
+  it("ar→en under prefix-except-default produces the bare path", async () => {
+    publishLocaleRouting({
+      strategy: "prefix-except-default",
+      codes: ["en", "ar"],
+      defaultLocale: "en",
+    });
+
+    const browser = stubBrowser("https://app.test/ar/products?page=2#reviews");
+    const fetchMock = respondWith(payloadOf("products.list", "en"));
+
+    const scenario = harness(pageOf(payloadOf("products.list", "ar")));
+
+    await createLocaleChanger(scenario.runtime)("en");
+
+    const [requestedUrl] = fetchMock.mock.calls[0] as [string];
+
+    expect(requestedUrl).toBe("https://app.test/products?page=2#reviews");
+    expect(browser.pushState).toHaveBeenCalledWith(
+      null,
+      "",
+      "https://app.test/products?page=2#reviews",
+    );
+  });
+
+  it("announces itself with mode push, so a progress bar sees a real navigation", async () => {
+    publishLocaleRouting({ strategy: "prefix", codes: ["en", "ar"], defaultLocale: "en" });
+
+    stubBrowser("https://app.test/en/products");
+    respondWith(payloadOf("products.list", "ar"));
+
+    const scenario = harness(pageOf(payloadOf("products.list", "en")));
+
+    await createLocaleChanger(scenario.runtime)("ar");
+
+    expect(events.navigating).toEqual([{ url: "https://app.test/en/products", mode: "push" }]);
+    expect(events.navigated).toEqual([
+      {
+        url: "https://app.test/en/products",
+        resolvedUrl: "https://app.test/ar/products",
+        mode: "push",
+      },
+    ]);
+  });
+
+  it("swaps in the fresh page so the rendered locale changes", async () => {
+    publishLocaleRouting({ strategy: "prefix", codes: ["en", "ar"], defaultLocale: "en" });
+
+    stubBrowser("https://app.test/en/products");
+    respondWith(payloadOf("products.list", "ar"));
+
+    const scenario = harness(pageOf(payloadOf("products.list", "en")));
+
+    await createLocaleChanger(scenario.runtime)("ar");
+
+    expect(scenario.writes).toHaveLength(1);
+    expect(scenario.onScreen().payload.locale).toBe("ar");
   });
 });

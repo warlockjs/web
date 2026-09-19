@@ -32,3 +32,15 @@ type WarlockClientRegistryExportName =
 type WarlockAssertRegistryExportName<Name extends WarlockClientRegistryExportName> = Name;
 
 type _WarlockVirtualPagesExportNameCheck = WarlockAssertRegistryExportName<"pages">;
+
+// The exported member name `localeRouting` in virtual-pages.d.ts must match
+// the generator's own `CLIENT_LOCALE_ROUTING_EXPORT_NAME`, since
+// `generateLocaleRoutingSource` emits `export const
+// ${CLIENT_LOCALE_ROUTING_EXPORT_NAME}`.
+type WarlockClientLocaleRoutingExportName =
+  typeof import("../build/generate-locale-routing").CLIENT_LOCALE_ROUTING_EXPORT_NAME;
+
+type WarlockAssertLocaleRoutingExportName<Name extends WarlockClientLocaleRoutingExportName> = Name;
+
+type _WarlockVirtualLocaleRoutingExportNameCheck =
+  WarlockAssertLocaleRoutingExportName<"localeRouting">;

@@ -7,6 +7,9 @@ import type {
   ReactElement,
 } from "react";
 import { prefetchPageData } from "../client/navigation/prefetch";
+import { readCurrentLocale } from "../routing/current-locale";
+import { withLocalePrefix } from "../routing/locale-prefixed-paths";
+import { isPrefixedLocale, readLocaleRouting } from "../routing/locale-routing";
 import { currentNavigator } from "../routing/navigator";
 import { href, knownRouteNames } from "../routing/route-table";
 
@@ -275,6 +278,35 @@ function assertNotARouteName(url: string): void {
   if (knownRouteNames().includes(url)) throw new RouteNameShapeCollisionError(url);
 }
 
+/**
+ * Prefixes an IN-APP url for the active locale, under an active
+ * `web.localeRouting.strategy` (design note §B.2).
+ *
+ * A no-op in every case that is not "an active strategy, a known current
+ * locale, and a url not already carrying one": strategy `"none"` (the
+ * default), no `LocaleProvider` on the tree yet (`readCurrentLocale()`
+ * undefined — a caller outside the page pipeline, or a test that renders
+ * `<Link>` bare), the current locale being the default under
+ * `prefix-except-default` (which stays bare), and a literal url that already
+ * begins with SOME routed code — never double-prefixed, whether or not that
+ * code is the active one.
+ */
+function prefixForActiveLocale(url: string): string {
+  const routing = readLocaleRouting();
+
+  if (routing.strategy === "none") return url;
+
+  const locale = readCurrentLocale();
+
+  if (locale === undefined || !isPrefixedLocale(routing, locale)) return url;
+
+  const firstSegment = url.slice(1).split("/")[0] ?? "";
+
+  if (isPrefixedLocale(routing, firstSegment)) return url;
+
+  return withLocalePrefix(url, locale);
+}
+
 const ROUTE_ARGUMENT_PROPS = ["params", "query"] as const;
 
 function resolveDestination(props: LinkDestinationProps): Destination {
@@ -305,7 +337,9 @@ function resolveDestination(props: LinkDestinationProps): Destination {
 
     assertNotARouteName(destination);
 
-    return { url: destination, isInApp: addressesThisApp(destination) };
+    const isInApp = addressesThisApp(destination);
+
+    return { url: isInApp ? prefixForActiveLocale(destination) : destination, isInApp };
   }
 
   /*
@@ -315,7 +349,10 @@ function resolveDestination(props: LinkDestinationProps): Destination {
     page in the application threw — the map was the limit on what could be
     linked, and nothing said so at the call site.
   */
-  return { url: href(destination, props.params, props.query), isInApp: true };
+  return {
+    url: prefixForActiveLocale(href(destination, props.params, props.query)),
+    isInApp: true,
+  };
 }
 
 /**

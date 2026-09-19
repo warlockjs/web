@@ -9,6 +9,7 @@ export {
 export { DeferredStreamClosedError } from "./deferred-stream-closed-error";
 export { DeferredValueError } from "./deferred-value-error";
 export { loadClientRouteComposition, validateClientRouteManifest } from "./manifest";
+export type { LocaleRouting, LocaleRoutingStrategy } from "../../routing/locale-routing";
 // @deprecated — see matcher.ts:221 for replacement and deletion condition
 export { matchClientRoute } from "./matcher";
 // Projected page/layout/root modules use this same guard for HMR replacement

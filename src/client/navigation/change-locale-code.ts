@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
-import { routerEvents } from "../../routing/router-events";
+import { withLocalePrefix } from "../../routing/locale-prefixed-paths";
+import { isPrefixedLocale, readLocaleRouting } from "../../routing/locale-routing";
+import { routerEvents, type NavigationMode } from "../../routing/router-events";
 import { hydrateShared } from "../../shared";
 import { fetchPageData } from "./fetch-page-data";
 import type { RefreshRuntime } from "./refresh";
@@ -23,6 +25,21 @@ import type { RefreshRuntime } from "./refresh";
  * visible address bar is left alone, except that a `locale` param already
  * sitting in it is stripped — left in place it would keep outranking the
  * cookie the server just persisted, undoing the change on the next reload.
+ *
+ * ## Locale ROUTING changes the shape of the above (design note §B.3)
+ *
+ * Everything in this section is unique to an active
+ * `web.localeRouting.strategy` (`routing/locale-routing.ts`). Under
+ * `"none"` — still the default, and every case above — nothing here applies.
+ *
+ * Under `prefix`/`prefix-except-default` the locale lives in the URL PATH,
+ * not a query param the server resolves, so persisting the choice is a
+ * REAL URL change: this re-prefixes the current path for the new code,
+ * preserving the query and the hash, and `pushState`s to it — a normal
+ * (unmarked) page-data fetch against that same URL, not `?locale=`. The
+ * server never has a cookie to persist in this mode (§A.2: the path
+ * outranks the cookie), so there is nothing to strip from the address bar
+ * either.
  *
  * ## Same runtime as `refresh()`, different question
  *
@@ -70,6 +87,38 @@ function withoutLocaleParam(href: string): string | undefined {
 }
 
 /**
+ * `href`'s PATH re-prefixed for `code`, under an active
+ * `web.localeRouting.strategy` (design note §B.3) — the query and hash are
+ * carried over untouched, and an existing routed-locale prefix on the
+ * current path is stripped first so this never double-prefixes.
+ *
+ * `undefined` is a legal `nextLocale`-shaped segment too: `isPrefixedLocale`
+ * already answers "not a prefix" for the default locale under
+ * `"prefix-except-default"`, so re-prefixing FOR the default naturally
+ * produces the bare path, and re-prefixing FROM it is a no-op strip (the
+ * default was never in the URL to begin with).
+ */
+function reprefixedUrl(href: string, code: string): string {
+  const url = new URL(href);
+  const routing = readLocaleRouting();
+  const slashIndex = url.pathname.indexOf("/", 1);
+  const firstSegment =
+    slashIndex === -1 ? url.pathname.slice(1) : url.pathname.slice(1, slashIndex);
+  const strippedPath =
+    firstSegment !== "" && isPrefixedLocale(routing, firstSegment)
+      ? slashIndex === -1
+        ? "/"
+        : url.pathname.slice(slashIndex)
+      : url.pathname;
+
+  url.pathname = isPrefixedLocale(routing, code)
+    ? withLocalePrefix(strippedPath, code)
+    : strippedPath;
+
+  return url.toString();
+}
+
+/**
  * Build the runtime's locale changer.
  *
  * Called by `NavigationRoot`, which connects the result with
@@ -89,10 +138,22 @@ export function createLocaleChanger(runtime: RefreshRuntime): LocaleChanger {
     if (runtime.readCurrent().payload.locale === code) return;
 
     const url = window.location.href;
-    const fetchUrl = withLocaleParam(url, code);
+
+    // Under an active strategy the locale lives in the PATH, so the switch is
+    // a real URL change — pushState, and a normal (unmarked) page-data fetch
+    // against the re-prefixed URL — instead of the `?locale=` fetch-only
+    // param this module used exclusively before locale routing existed
+    // (design note §B.3). Strategy `"none"` keeps that exact original
+    // behaviour: there is no prefix to move, so the address bar is left
+    // alone and the choice travels to the server as a query param instead.
+    const routing = readLocaleRouting();
+    const usesLocaleRouting = routing.strategy !== "none";
+    const targetUrl = usesLocaleRouting ? reprefixedUrl(url, code) : url;
+    const fetchUrl = usesLocaleRouting ? targetUrl : withLocaleParam(url, code);
+    const mode: NavigationMode = usesLocaleRouting ? "push" : CHANGE_LOCALE_MODE;
     const { isCurrent, signal } = runtime.claimTicket();
 
-    routerEvents.emitNavigating({ url, mode: CHANGE_LOCALE_MODE });
+    routerEvents.emitNavigating({ url, mode });
 
     const result = await fetchPageData(fetchUrl, signal);
 
@@ -106,7 +167,7 @@ export function createLocaleChanger(runtime: RefreshRuntime): LocaleChanger {
       const error = new Error(`Warlock changeLocaleCode failed: ${result.reason}`);
 
       console.warn("Warlock changeLocaleCode could not re-fetch the current page:", result.reason);
-      routerEvents.emitNavigationError({ url, mode: CHANGE_LOCALE_MODE, error });
+      routerEvents.emitNavigationError({ url, mode, error });
 
       throw error;
     }
@@ -117,7 +178,7 @@ export function createLocaleChanger(runtime: RefreshRuntime): LocaleChanger {
       tree = await runtime.buildTree(result.payload);
     } catch (error) {
       console.warn("Warlock changeLocaleCode could not build the page tree:", error);
-      routerEvents.emitNavigationError({ url, mode: CHANGE_LOCALE_MODE, error });
+      routerEvents.emitNavigationError({ url, mode, error });
 
       throw error;
     }
@@ -131,14 +192,21 @@ export function createLocaleChanger(runtime: RefreshRuntime): LocaleChanger {
     const previous = runtime.readCurrent();
     const sameEntry = result.payload.name === previous.payload.name;
 
-    // The visible URL is left alone UNLESS it already carried a `locale`
-    // query param — left in place, that param would outrank the cookie the
-    // server just persisted (`request.ts:352-360`) and silently revert the
-    // locale on the next reload.
-    const cleanedUrl = withoutLocaleParam(url);
+    if (usesLocaleRouting) {
+      // A REAL URL change: the new prefix is the address for this page now,
+      // not a fetch-only marker to clean up — `pushState`, same as a plain
+      // navigation, so Back returns to the previous locale's URL.
+      window.history.pushState(null, "", targetUrl);
+    } else {
+      // The visible URL is left alone UNLESS it already carried a `locale`
+      // query param — left in place, that param would outrank the cookie the
+      // server just persisted (`request.ts:352-360`) and silently revert the
+      // locale on the next reload.
+      const cleanedUrl = withoutLocaleParam(url);
 
-    if (cleanedUrl !== undefined) {
-      window.history.replaceState(null, "", cleanedUrl);
+      if (cleanedUrl !== undefined) {
+        window.history.replaceState(null, "", cleanedUrl);
+      }
     }
 
     // This is not a move: the route the user is looking at did not change,
@@ -151,14 +219,18 @@ export function createLocaleChanger(runtime: RefreshRuntime): LocaleChanger {
       routeSource: sameEntry ? previous.routeSource : result.payload,
     });
 
-    // `result.url` is the FETCH URL the response actually came from, which
-    // always carries the `?locale=` this module added — reporting it verbatim
-    // would announce a URL that was never, and is never meant to be, on the
-    // address bar. Strip it back off so listeners (a progress bar included)
-    // see the same URL shape a navigation or a refresh would report.
-    const resolvedUrl = withoutLocaleParam(result.url) ?? result.url;
+    // `result.url` is the URL the response actually came from. Under the
+    // `"none"` path it is the FETCH url, which always carries the `?locale=`
+    // this module added — reporting it verbatim would announce a URL that
+    // was never, and is never meant to be, on the address bar, so it is
+    // stripped back off. Under an active strategy the fetch URL IS the
+    // visible URL (no marker was ever added), so `result.url` is reported
+    // as-is.
+    const resolvedUrl = usesLocaleRouting
+      ? result.url
+      : (withoutLocaleParam(result.url) ?? result.url);
 
-    routerEvents.emitNavigated({ url, resolvedUrl, mode: CHANGE_LOCALE_MODE });
+    routerEvents.emitNavigated({ url, resolvedUrl, mode });
   };
 }
 

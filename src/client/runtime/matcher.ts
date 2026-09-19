@@ -1,3 +1,4 @@
+import { isPrefixedLocale, readLocaleRouting } from "../../routing/locale-routing";
 import type { ClientPageEntry, ClientRouteMatch } from "./types";
 
 type RouteToken =
@@ -218,6 +219,40 @@ function compileRoutes(entries: readonly ClientPageEntry[]): readonly CompiledRo
 }
 
 /**
+ * The sanitized path, with a routed locale prefix removed, and which locale
+ * that was — design note §B.1: "if the first segment is a routed code,
+ * strip it and match the rest, and the navigation's locale is that code."
+ *
+ * Under `"prefix-except-default"`, the default locale is never itself a
+ * prefix (`isPrefixedLocale` says so), so a BARE path still reports the
+ * default as its locale — design note §B.1's own example, `/en/posts` is not
+ * stripped and `/posts` means `en`. Under `"none"` this never strips
+ * anything and never reports a locale, which is what keeps every existing
+ * caller of {@link matchClientRoute} — none of which expects a `locale` on
+ * its result — unaffected.
+ */
+function stripLocalePrefix(path: string): { path: string; locale: string | undefined } {
+  const routing = readLocaleRouting();
+
+  if (routing.strategy === "none") return { path, locale: undefined };
+
+  const slashIndex = path.indexOf("/", 1);
+  const firstSegment = slashIndex === -1 ? path.slice(1) : path.slice(1, slashIndex);
+
+  if (firstSegment !== "" && isPrefixedLocale(routing, firstSegment)) {
+    const rest = slashIndex === -1 ? "/" : path.slice(slashIndex);
+
+    return { path: rest, locale: firstSegment };
+  }
+
+  if (routing.strategy === "prefix-except-default") {
+    return { path, locale: routing.defaultLocale };
+  }
+
+  return { path, locale: undefined };
+}
+
+/**
  * @deprecated Do not adopt for new code. This client-side matcher duplicates the
  * route grammar the server already evaluates, and divergence between the two is
  * silent (wrong page, not an error). It is superseded by navigation consuming the
@@ -237,8 +272,10 @@ export function matchClientRoute(
   const sanitized = sanitizePathname(pathname);
   if (!sanitized) return null;
 
+  const { path, locale } = stripLocalePrefix(sanitized.path);
+
   for (const route of routes) {
-    const match = route.expression.exec(sanitized.path);
+    const match = route.expression.exec(path);
     if (!match) continue;
 
     const params: Record<string, string> = {};
@@ -248,7 +285,9 @@ export function matchClientRoute(
         ? decodeParameter(value)
         : value;
     }
-    return { entry: route.entry, params };
+    return locale === undefined
+      ? { entry: route.entry, params }
+      : { entry: route.entry, params, locale };
   }
 
   return null;

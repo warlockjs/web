@@ -1,5 +1,6 @@
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
 import { type RequestHandler, type Route, RouteRegistry } from "@warlock.js/core";
+import { publishLocaleRouting } from "../../routing/locale-routing";
 import { matchClientRoute } from "./index";
 import type { ClientPageEntry, ClientRouteMatch, ClientRouteParams } from "./types";
 
@@ -271,5 +272,63 @@ describe("matchClientRoute", () => {
     [entry("first", "/users"), entry("second", "/users/")],
   ])("rejects routes that collide under server matching", (first, second) => {
     expect(() => matchClientRoute([first, second], "/users/42")).toThrow();
+  });
+});
+
+describe("matchClientRoute — locale routing (design note §B.1)", () => {
+  afterEach(() => {
+    publishLocaleRouting({ strategy: "none", codes: [], defaultLocale: "" });
+  });
+
+  it.each(["prefix", "prefix-except-default"] as const)(
+    "strips a routed locale prefix under %s and reports its code",
+    (strategy) => {
+      publishLocaleRouting({ strategy, codes: ["en", "ar"], defaultLocale: "en" });
+
+      const entries = [pages.usersCatchAll];
+      const match = matchClientRoute(entries, "/ar/users/a/b");
+
+      expect(match).toEqual({
+        entry: pages.usersCatchAll,
+        params: { "*": "a/b" },
+        locale: "ar",
+      });
+    },
+  );
+
+  it("does not strip the default locale's own bare prefix under prefix-except-default", () => {
+    publishLocaleRouting({
+      strategy: "prefix-except-default",
+      codes: ["en", "ar"],
+      defaultLocale: "en",
+    });
+
+    // "en" is the default and is never itself a URL prefix under this
+    // strategy, so `/en/posts` is a literal (unmatched) path, not
+    // `en` + `/posts`.
+    const entries = [entry("posts", "/posts")];
+
+    expect(matchClientRoute(entries, "/en/posts")).toBeNull();
+  });
+
+  it("gives a bare path the default locale under prefix-except-default", () => {
+    publishLocaleRouting({
+      strategy: "prefix-except-default",
+      codes: ["en", "ar"],
+      defaultLocale: "en",
+    });
+
+    const match = matchClientRoute([pages.usersStatic], "/users/me");
+
+    expect(match).toEqual({ entry: pages.usersStatic, params: {}, locale: "en" });
+  });
+
+  it("leaves matching untouched under strategy none, the innocent case", () => {
+    publishLocaleRouting({ strategy: "none", codes: [], defaultLocale: "" });
+
+    const match = matchClientRoute([pages.usersStatic], "/users/me");
+
+    expect(match).toEqual({ entry: pages.usersStatic, params: {} });
+    expect(match).not.toHaveProperty("locale");
   });
 });

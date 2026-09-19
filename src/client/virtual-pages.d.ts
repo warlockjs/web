@@ -25,4 +25,12 @@ declare module "virtual:warlock/pages" {
    * page is the one being hydrated or navigated to.
    */
   export const pages: readonly import("./runtime/types").ClientPageEntry[];
+  /**
+   * The locale routing table resolved at build/dev time, the same way the
+   * server resolves it (`web.localeRouting.strategy`, `app.localeCodes`,
+   * `app.localeCode`) — see `../vite/page-registry-plugin.ts`'s `load` hook
+   * and `../routing/locale-routing.ts`. `entry/index.ts` publishes this
+   * before mount, beside `publishRouteTable(pages, ...)`.
+   */
+  export const localeRouting: import("../routing/locale-routing").LocaleRouting;
 }

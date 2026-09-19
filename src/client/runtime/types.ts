@@ -33,4 +33,11 @@ export type ClientRouteParams = Readonly<Record<string, string>>;
 export type ClientRouteMatch = {
   readonly entry: ClientPageEntry;
   readonly params: ClientRouteParams;
+  /**
+   * The locale the matched path carried, under an active
+   * `web.localeRouting.strategy` — the stripped prefix code, or the default
+   * locale for a bare path under `"prefix-except-default"`. `undefined`
+   * under strategy `"none"`, which is every caller before this field existed.
+   */
+  readonly locale?: string;
 };

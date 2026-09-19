@@ -12,6 +12,7 @@ All notable changes to `@warlock.js/web` are documented here.
 ### Features
 
 - Locale URL routing (`web.localeRouting.strategy`). Set it to `"prefix-except-default"` (the default locale stays bare, e.g. `/posts`, every other locale is prefixed, e.g. `/ar/posts`) or `"prefix"` (every locale, including the default, is prefixed) to route locales in the URL instead of `?locale=`. Codes come from `app.localeCodes`, the default from `app.localeCode`; the previously-bare or previously-default URL 301/302-redirects to its prefixed counterpart, with the query string preserved.
+- With locale URL routing active, the browser now follows it too: `<Link>`/`href()` prefix an in-app destination with the current locale (skipping the default locale under `"prefix-except-default"`, and never double-prefixing a literal URL that already begins with a routed code), and `changeLocaleCode()` navigates to the current path re-prefixed for the new locale — a real URL change (`pushState`), preserving the query string and hash — instead of the `?locale=` fetch param. Strategy `"none"` (the default) keeps every existing behavior unchanged.
 
 ### Security
 

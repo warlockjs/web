@@ -1,6 +1,7 @@
 import { transFrom, type Converter, type Translatable } from "@mongez/localization";
 import { createContext, useCallback, useContext, type ReactNode } from "react";
 import type { TranslationKey } from "./index";
+import { recordCurrentLocale } from "./routing/current-locale";
 
 export type LocaleProviderProps = {
   readonly locale: string;
@@ -15,8 +16,20 @@ export type Translate = (
 
 const LocaleContext = createContext<string | undefined>(undefined);
 
-/** Bind translations to the request locale carried by the hydration payload. */
+/**
+ * Bind translations to the request locale carried by the hydration payload.
+ *
+ * Also records `locale` for `<Link>`'s locale-prefixing seam
+ * (`routing/current-locale.ts`) — see that module's header for why this is
+ * the one place that recording belongs, rather than a hook `<Link>` would
+ * have to call. `recordCurrentLocale` is a no-op on the server: the server
+ * reads the REQUEST's locale off the per-request ALS store instead, never a
+ * value this component wrote, because two concurrent requests both
+ * rendering a `LocaleProvider` must never share one process-wide slot.
+ */
 export function LocaleProvider({ locale, children }: LocaleProviderProps) {
+  recordCurrentLocale(locale);
+
   return <LocaleContext.Provider value={locale}>{children}</LocaleContext.Provider>;
 }
 

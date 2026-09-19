@@ -17,6 +17,8 @@ import path from "node:path";
 import type { Plugin, ViteDevServer } from "vite";
 import { discoverPages } from "../build/discover-pages";
 import { generateClientRegistry } from "../build/generate-client-registry";
+import { generateLocaleRoutingSource } from "../build/generate-locale-routing";
+import { resolveLocaleRouting } from "../server/locale-routing/resolve-locale-routing";
 import { toPosix } from "../shared/to-posix";
 import { isProjectableFile, SERVER_EXPORT_NAMES } from "./projection";
 
@@ -439,8 +441,22 @@ export function clientPageRegistry(options: ClientPageRegistryPluginOptions = {}
       if (id !== RESOLVED_CLIENT_PAGE_REGISTRY_ID) return undefined;
 
       const pages = discoverPages({ appRoot, srcDir: options.srcDir });
+      // Read the SAME way the server installers will (design note §Config):
+      // `web.localeRouting.strategy`, `app.localeCodes`, `app.localeCode` —
+      // via `resolveLocaleRouting`, the one function both sides call, so a
+      // page graph and its locale routing can never be resolved from two
+      // different config reads. Safe to reach from here: this plugin is
+      // constructed and its `load` hook runs in the SAME module graph as the
+      // server installers (the process that calls `createServer`/`build`),
+      // never Vite's SSR module runner — see `routing/locale-routing.ts`'s
+      // own header for why that graph split matters at all.
+      const localeRouting = resolveLocaleRouting();
+      const source = [
+        generateClientRegistry({ pages, toImportSpecifier }),
+        generateLocaleRoutingSource(localeRouting),
+      ].join("\n");
 
-      return eraseTypes(generateClientRegistry({ pages, toImportSpecifier }));
+      return eraseTypes(source);
     },
     /**
      * Capture-only spy. Records the SKELETON of every server page module the

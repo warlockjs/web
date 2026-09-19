@@ -101,6 +101,41 @@ export function connectSharedStore(
   return previous;
 }
 
+/**
+ * The CURRENT request's resolved locale, read off the SAME ALS-backed store
+ * `shared` uses (`resolveSharedStore`, connected once at boot by
+ * `connectSharedStore(() => requestContext.getStore())`) — never a second
+ * `AsyncLocalStorage`, so this can never name a different request than
+ * `shared` itself is scoped to.
+ *
+ * `undefined` outside a request (module load, a background job, or the
+ * browser — `connectSharedStore` is a server-boot call, never made in the
+ * browser bundle) rather than falling back to a process-wide value: that
+ * fallback is exactly the cross-request leak this accessor exists to avoid.
+ *
+ * Exported for `routing/current-locale.ts`'s SERVER read (design note §B.2,
+ * card B): `<Link>`'s locale-prefixing needs the locale of THIS request —
+ * including a prefixed registration's path locale (`request.locale = code`,
+ * design note §A.2) — never a process-wide value two concurrent streaming
+ * SSR requests could otherwise interleave on and leak into each other's
+ * rendered (and possibly page-cached) markup.
+ *
+ * `store` is read as `{ request?: { locale? } }` rather than through
+ * `SharedStore` (which only names `response`, the one member `sealShared`
+ * needs): the real object core's `requestContext.getStore()` returns is
+ * `RequestContextStore` (`{ request, response }`,
+ * `core/src/http/context/request-context.ts:10-13`) — this file does not
+ * import core as a value (see this file's header), so the shape is read
+ * structurally instead of by importing that type.
+ */
+export function currentRequestLocale(): string | undefined {
+  const store = resolveSharedStore?.() as
+    (SharedStore & { request?: { locale?: unknown } }) | undefined;
+  const locale = store?.request?.locale;
+
+  return typeof locale === "string" && locale.length > 0 ? locale : undefined;
+}
+
 function currentStore(access: string): SharedStore {
   if (!resolveSharedStore) {
     throw new Error(

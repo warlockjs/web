@@ -1,7 +1,11 @@
 import type { FocusEvent, MouseEvent } from "react";
+import { requestContext } from "@warlock.js/core";
 import { stringify } from "devalue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetPrefetchCache, takePrefetchedPageData } from "../client/navigation/prefetch";
+import { connectSharedStore } from "../shared";
+import { recordCurrentLocale, resetCurrentLocale } from "../routing/current-locale";
+import { publishLocaleRouting } from "../routing/locale-routing";
 import { connectNavigator, type Navigator } from "../routing/navigator";
 import { publishRouteTable, resetRouteTable } from "../routing/route-table";
 import {
@@ -78,6 +82,8 @@ beforeEach(() => {
 afterEach(() => {
   connectNavigator(undefined);
   resetRouteTable();
+  resetCurrentLocale();
+  publishLocaleRouting({ strategy: "none", codes: [], defaultLocale: "" });
 });
 
 describe("Link — the existing route-name surface", () => {
@@ -334,6 +340,178 @@ describe("Link — literal URLs and paths", () => {
     publishRouteTable([{ name: "/pricing", path: "/plans" }], "link.spec");
 
     expect(() => render({ href: "/pricing" })).toThrow(RouteNameShapeCollisionError);
+  });
+});
+
+describe("Link — locale routing (design note §B.2)", () => {
+  /*
+    This suite runs in `node` (see the file header), so `typeof window ===
+    "undefined"` and `readCurrentLocale()` always takes the SERVER branch —
+    the per-request ALS store, never `recordCurrentLocale`'s browser-only
+    slot (which is a no-op here; see `routing/current-locale.ts`'s header
+    for why). `withLocale` opens that same per-request context the way a
+    real request would, via `requestContext.run()`.
+  */
+  beforeEach(() => {
+    connectSharedStore(() => requestContext.getStore());
+  });
+
+  afterEach(() => {
+    connectSharedStore(undefined);
+  });
+
+  function withLocale<T>(locale: string, fn: () => T): T {
+    // `Context.run`'s type expects an async callback (`() => Promise<T>`),
+    // but `AsyncLocalStorage.run` at runtime just calls `fn()` and returns
+    // whatever it gets back — a synchronous callback works exactly the same
+    // as it would called directly, ALS scope and all. Cast rather than
+    // wrapping `fn` in a real `async () => fn()`, which would make every
+    // call site `await`, including the synchronous ones below.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return requestContext.run(
+      { request: { locale }, response: {} } as any,
+      fn as unknown as () => Promise<T>,
+    ) as unknown as T;
+  }
+
+  it("prefixes a route-name destination with the active non-default locale", () => {
+    publishLocaleRouting({
+      strategy: "prefix-except-default",
+      codes: ["en", "ar"],
+      defaultLocale: "en",
+    });
+
+    const href = withLocale(
+      "ar",
+      () => render({ to: "products.details", params: { id: 7 } }).props.href,
+    );
+
+    expect(href).toBe("/ar/products/7");
+  });
+
+  it("skips the prefix for the default locale under prefix-except-default", () => {
+    publishLocaleRouting({
+      strategy: "prefix-except-default",
+      codes: ["en", "ar"],
+      defaultLocale: "en",
+    });
+
+    const href = withLocale(
+      "en",
+      () => render({ to: "products.details", params: { id: 7 } }).props.href,
+    );
+
+    expect(href).toBe("/products/7");
+  });
+
+  it("prefixes a literal in-app URL the same way", () => {
+    publishLocaleRouting({ strategy: "prefix", codes: ["en", "ar"], defaultLocale: "en" });
+
+    const href = withLocale("ar", () => render({ href: "/pricing" }).props.href);
+
+    expect(href).toBe("/ar/pricing");
+  });
+
+  it("does not double-prefix a literal URL that already begins with a routed code", () => {
+    publishLocaleRouting({ strategy: "prefix", codes: ["en", "ar"], defaultLocale: "en" });
+
+    withLocale("ar", () => {
+      expect(render({ href: "/ar/pricing" }).props.href).toBe("/ar/pricing");
+      // Not the active locale, but still a routed code — still not prefixed.
+      expect(render({ href: "/en/pricing" }).props.href).toBe("/en/pricing");
+    });
+  });
+
+  it("never prefixes an external URL or a mailto:", () => {
+    publishLocaleRouting({ strategy: "prefix", codes: ["en", "ar"], defaultLocale: "en" });
+
+    withLocale("ar", () => {
+      expect(render({ href: "https://stripe.com/pricing" }).props.href).toBe(
+        "https://stripe.com/pricing",
+      );
+      expect(render({ email: "sales@example.com" }).props.href).toBe("mailto:sales@example.com");
+    });
+  });
+
+  it("leaves every URL untouched under strategy none, the innocent case", () => {
+    publishLocaleRouting({ strategy: "none", codes: [], defaultLocale: "" });
+
+    withLocale("ar", () => {
+      expect(render({ to: "products.details", params: { id: 7 } }).props.href).toBe("/products/7");
+      expect(render({ href: "/pricing" }).props.href).toBe("/pricing");
+    });
+  });
+
+  it("leaves every URL untouched when no request context is open", () => {
+    publishLocaleRouting({
+      strategy: "prefix-except-default",
+      codes: ["en", "ar"],
+      defaultLocale: "en",
+    });
+    // No `withLocale` — no `LocaleProvider`, and on the server no open request either.
+
+    expect(render({ to: "products.details", params: { id: 7 } }).props.href).toBe("/products/7");
+  });
+
+  it("recordCurrentLocale (the browser seam) is a no-op here, on the server", () => {
+    publishLocaleRouting({
+      strategy: "prefix-except-default",
+      codes: ["en", "ar"],
+      defaultLocale: "en",
+    });
+    recordCurrentLocale("ar");
+
+    expect(render({ to: "products.details", params: { id: 7 } }).props.href).toBe("/products/7");
+  });
+});
+
+describe("Link — locale routing never leaks across concurrent SSR requests", () => {
+  /*
+    THE CASE the coordinator flagged: `typeof window === "undefined"` in this
+    suite (it runs in `node`), so `readCurrentLocale()` takes the SERVER
+    branch — `currentRequestLocale()` (`../shared.ts`), resolved off the
+    per-request `AsyncLocalStorage` store `requestContext` owns — never a
+    process-wide slot. Two "requests" are opened with `requestContext.run()`,
+    each carrying its own locale, and interleaved across a real `await` gap
+    (the shorter delay resolves first, while the longer one is still
+    pending) — exactly the interleave Stage 2 streaming SSR produces between
+    two Suspense-boundary resumes of two different requests.
+  */
+  beforeEach(() => {
+    publishLocaleRouting({
+      strategy: "prefix-except-default",
+      codes: ["en", "ar"],
+      defaultLocale: "en",
+    });
+    connectSharedStore(() => requestContext.getStore());
+  });
+
+  afterEach(() => {
+    connectSharedStore(undefined);
+  });
+
+  async function renderFor(locale: string, delayMs: number): Promise<string> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return requestContext.run({ request: { locale }, response: {} } as any, async () => {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+
+      return render({ to: "products.details", params: { id: 7 } }).props.href as string;
+    });
+  }
+
+  it("renders each request's <Link> with ITS OWN locale, not the other request's", async () => {
+    // "ar" resolves FIRST (0ms) while "en" (20ms) is still suspended.
+    const [en, ar] = await Promise.all([renderFor("en", 20), renderFor("ar", 0)]);
+
+    expect(en).toBe("/products/7");
+    expect(ar).toBe("/ar/products/7");
+  });
+
+  it("holds under the reverse interleave too", async () => {
+    const [ar, en] = await Promise.all([renderFor("ar", 20), renderFor("en", 0)]);
+
+    expect(ar).toBe("/ar/products/7");
+    expect(en).toBe("/products/7");
   });
 });
 
