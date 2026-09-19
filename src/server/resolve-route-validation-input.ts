@@ -11,6 +11,13 @@
  * `:id` path segment and a `?id=` query key that nobody asked for and that a
  * schema author cannot see coming from reading their own schema.
  *
+ * ONLY the sources the page declared are handed over (card 7d891485). The
+ * combined schema is built from the declared keys alone, and a Seal object
+ * rejects unknown keys by default — feeding an undeclared `params` to a
+ * query-only page answered EVERY request with a 400 (`unknownKeys: params`).
+ * The author's own inner schemas keep their strict default; only the outer
+ * envelope, which the framework builds, is shaped to match.
+ *
  * History: this mirrors what a now-withdrawn `route.validate` schema used to
  * be handed before the 5.9.0 validation collapse folded that into the
  * page-level `validation` export.
@@ -21,11 +28,23 @@ export type PageValidationRequest = {
   query?: Record<string, unknown>;
 };
 
-export type PageValidationInput = {
-  params: Record<string, unknown>;
-  query: Record<string, unknown>;
+/** Which of the two sources the page's `validation` export declared a schema for. */
+export type PageValidationSources = {
+  params: boolean;
+  query: boolean;
 };
 
-export function resolvePageValidationInput(request: PageValidationRequest): PageValidationInput {
-  return { params: request.params ?? {}, query: request.query ?? {} };
+export type PageValidationInput = {
+  params?: Record<string, unknown>;
+  query?: Record<string, unknown>;
+};
+
+export function resolvePageValidationInput(
+  request: PageValidationRequest,
+  sources: PageValidationSources,
+): PageValidationInput {
+  return {
+    ...(sources.params ? { params: request.params ?? {} } : {}),
+    ...(sources.query ? { query: request.query ?? {} } : {}),
+  };
 }

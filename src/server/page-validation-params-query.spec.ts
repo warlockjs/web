@@ -124,3 +124,88 @@ describe("page validation — params + query, one schema, one pass", () => {
     expect(paramsError).toBeUndefined();
   });
 });
+
+/**
+ * Card 7d891485: a page that declares only ONE of the two sources must be
+ * validated against that source alone. The combined schema is built from the
+ * declared keys only, and Seal objects reject unknown keys by default — so
+ * feeding the undeclared source too answered every request with a 400
+ * (`unknownKeys: params`). The author's own inner schemas stay strict; only
+ * the input the framework hands them changes.
+ */
+function singleSourceEntry(
+  validation: NonNullable<PageRouteEntry["triple"]["page"]["validation"]>,
+  loaderSpy: (validated: unknown) => void,
+): PageRouteEntry {
+  return {
+    path: "/orders/:id",
+    name: "orders.details",
+    triple: {
+      app: {},
+      layout: {},
+      page: {
+        route: { path: "/orders/:id" },
+        validation,
+        loader: ({ request }) => {
+          const validated = request.validated();
+          loaderSpy(validated);
+          return validated;
+        },
+      },
+    },
+  };
+}
+
+async function runSingleSource(
+  validation: NonNullable<PageRouteEntry["triple"]["page"]["validation"]>,
+  params: Record<string, string>,
+  query: Record<string, string>,
+) {
+  const loaderSpy: unknown[] = [];
+  const { request, response } = createHttp(params, query);
+
+  const bundle = (await executePageRequest({
+    url: `/orders/${params.id ?? ""}?${new URLSearchParams(query).toString()}`,
+    routes: [singleSourceEntry(validation, (validated) => loaderSpy.push(validated))],
+    createHttp: () => ({ request, response }),
+  })) as PageDataBundle;
+
+  return { bundle, loaderSpy };
+}
+
+describe("page validation — only the declared sources are validated (7d891485)", () => {
+  it("query-only: ?page=2 passes and the loader receives { query: { page: 2 } }", async () => {
+    const { bundle, loaderSpy } = await runSingleSource(
+      { query: v.object({ page: v.int().coerce() }) },
+      { id: "42" },
+      { page: "2" },
+    );
+
+    expect(bundle.shortCircuit).toBeUndefined();
+    expect(loaderSpy).toHaveLength(1);
+    expect(loaderSpy[0]).toEqual({ query: { page: 2 } });
+  });
+
+  it("params-only: the route param passes and the loader receives { params: { id: 42 } }", async () => {
+    const { bundle, loaderSpy } = await runSingleSource(
+      { params: v.object({ id: v.int().coerce() }) },
+      { id: "42" },
+      { page: "2" },
+    );
+
+    expect(bundle.shortCircuit).toBeUndefined();
+    expect(loaderSpy).toHaveLength(1);
+    expect(loaderSpy[0]).toEqual({ params: { id: 42 } });
+  });
+
+  it("query-only still rejects an unknown key inside the declared query schema (strict default kept)", async () => {
+    const { bundle, loaderSpy } = await runSingleSource(
+      { query: v.object({ page: v.int().coerce() }) },
+      { id: "42" },
+      { page: "2", extra: "x" },
+    );
+
+    expect(loaderSpy).toHaveLength(0);
+    expect(bundle.shortCircuit).toMatchObject({ stage: "validation", status: 400 });
+  });
+});

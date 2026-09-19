@@ -172,7 +172,10 @@ describe("executePageRequest — middleware short-circuit", () => {
 });
 
 describe("executePageRequest — validation failure (400 designation)", () => {
-  it("fixture page: a 1-char id fails { schema, validating } and stops before the seal", async () => {
+  // Canon 27916e7a: page validation runs in the PAGE level's own turn — after
+  // the app and layout loaders (their data survives, so the error page renders
+  // inside a working layout) and before the page loader, which never runs.
+  it("fixture page: a 1-char id fails { schema, validating } after the ancestors, before the page loader", async () => {
     const bundle = await executePageRequest({
       url: "/products/x",
       routes,
@@ -183,15 +186,14 @@ describe("executePageRequest — validation failure (400 designation)", () => {
     expect(bundle!.shortCircuit).toMatchObject({ stage: "validation", status: 400 });
     expect((bundle!.shortCircuit as any).errors).toBeInstanceOf(Array);
     expect((bundle!.shortCircuit as any).errors.length).toBeGreaterThan(0);
-    // Stopped before stage 5 (seal) and stage 6 (loaders):
-    expect(bundle!.shared).toBeUndefined();
-    expect(bundle!.appData).toBeUndefined();
-    expect(bundle!.layoutData).toBeUndefined();
+    // Ancestors ran (seal + app/layout loaders); the page level stopped:
+    expect(bundle!.shared).toBeDefined();
+    expect(bundle!.appData).toBeDefined();
+    expect(bundle!.layoutData).toBeDefined();
     expect(bundle!.pageData).toBeUndefined();
-    expect(bundle!.metadata).toBeUndefined();
   });
 
-  it("no loader runs after a validation failure (spy proof)", async () => {
+  it("the ancestor loaders run and the page loader does not after a validation failure (spy proof)", async () => {
     const appLoader = vi.fn(async () => ({ fromApp: true }));
     const layoutLoader = vi.fn(async () => ({ fromLayout: true }));
     const pageLoader = vi.fn(async () => ({ fromPage: true }));
@@ -206,9 +208,11 @@ describe("executePageRequest — validation failure (400 designation)", () => {
     });
 
     expect(bundle!.shortCircuit).toMatchObject({ stage: "validation", status: 400 });
-    expect(appLoader).not.toHaveBeenCalled();
-    expect(layoutLoader).not.toHaveBeenCalled();
+    expect(appLoader).toHaveBeenCalledTimes(1);
+    expect(layoutLoader).toHaveBeenCalledTimes(1);
     expect(pageLoader).not.toHaveBeenCalled();
+    expect(bundle!.appData).toEqual({ fromApp: true });
+    expect(bundle!.layoutData).toEqual({ fromLayout: true });
   });
 });
 

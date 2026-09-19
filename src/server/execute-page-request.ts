@@ -1,4 +1,10 @@
-import { buildTracingContext, dispatchPhase, isTracingEnabled, Response } from "@warlock.js/core";
+import {
+  buildTracingContext,
+  dispatchPhase,
+  isTracingEnabled,
+  Response,
+  type Request,
+} from "@warlock.js/core";
 import { v } from "@warlock.js/seal";
 import { enterSharedScope, sealShared } from "../shared";
 import { connectRequestSearch } from "../routing/query-string";
@@ -28,6 +34,7 @@ import type {
   PageDataBundle,
   PageLevelName,
   PageRouteMatch,
+  PageTripleModule,
   PipelineStore,
 } from "./execute-page-request.types";
 
@@ -98,6 +105,45 @@ function wireRequestSearch(): void {
 
   requestSearchWired = true;
   connectRequestSearch(() => requireRunner().getStore()?.request.url);
+}
+
+type PageValidationOutcome = { valid: true } | { valid: false; errors: unknown };
+
+/**
+ * Runs the page's top-level `validation` export against the request, and on
+ * success stores the validated output where `request.validated()` reads it.
+ *
+ * The `{ params, query }` shape builds one outer envelope from the DECLARED
+ * keys only and is fed exactly those sources (`resolvePageValidationInput`,
+ * card 7d891485); the legacy `{ schema, validating }` shape keeps its own
+ * input resolver. A validation export with nothing to validate passes.
+ */
+async function validatePageInput(
+  validation: NonNullable<PageTripleModule["validation"]>,
+  request: Request,
+): Promise<PageValidationOutcome> {
+  const legacyValidation = "schema" in validation || "validating" in validation;
+  const declaresParams = !legacyValidation && validation.params !== undefined;
+  const declaresQuery = !legacyValidation && validation.query !== undefined;
+  const schema = legacyValidation
+    ? validation.schema
+    : v.object({
+        ...(declaresParams ? { params: validation.params } : {}),
+        ...(declaresQuery ? { query: validation.query } : {}),
+      });
+
+  if (!schema) return { valid: true };
+
+  const data = legacyValidation
+    ? resolveValidationData(validation.validating, request)
+    : resolvePageValidationInput(request, { params: declaresParams, query: declaresQuery });
+  const result = await v.validate(schema, data);
+
+  if (!result.isValid) return { valid: false, errors: result.errors };
+
+  if (result.data) request.setValidatedData(result.data);
+
+  return { valid: true };
 }
 
 export async function executePageRequest<TResult = PageDataBundle>(
@@ -196,48 +242,6 @@ export async function executePageRequest<TResult = PageDataBundle>(
       }
     }
 
-    const validation = triple.page.validation;
-
-    if (validation) {
-      const legacyValidation = "schema" in validation || "validating" in validation;
-      const schema = legacyValidation
-        ? validation.schema
-        : v.object({
-            ...(validation.params === undefined ? {} : { params: validation.params }),
-            ...(validation.query === undefined ? {} : { query: validation.query }),
-          });
-
-      if (schema) {
-        const data = legacyValidation
-          ? resolveValidationData(validation.validating, request)
-          : resolvePageValidationInput(request);
-        const result = await v.validate(schema, data);
-
-        if (result.isValid && result.data) {
-          request.setValidatedData(result.data);
-        }
-
-        if (!result.isValid) {
-          // Two things are recorded for the SAME failure, read by two different
-          // consumers: `shortCircuit` is what the DATA representation's JSON
-          // contract has always carried (unchanged here — see
-          // `page-validation-params-query.spec.ts`); `error` is new — it lets a
-          // FULL-DOCUMENT render (`render-page.ts`'s `finishRender`) go through
-          // the ordinary boundary/`error.page.tsx` pipeline instead of emitting
-          // an empty document, exactly as an ordinary loader throw with its own
-          // `statusCode` already does.
-          bundle.shortCircuit = { stage: "validation", status: 400, errors: result.errors };
-          bundle.error = buildErrorRecord(
-            new PageValidationFailedError(result.errors),
-            designateBoundary("page", triple),
-            pathname,
-            400,
-          );
-          return finish(bundle);
-        }
-      }
-    }
-
     const sealedShared = await sealShared(store);
     bundle.shared = sealedShared;
 
@@ -258,6 +262,7 @@ export async function executePageRequest<TResult = PageDataBundle>(
 
     type LoaderSignal =
       | { kind: "throw"; index: number; level: PageLevelName; thrown: unknown }
+      | { kind: "validation"; index: number; errors: unknown }
       | {
           kind: "shortCircuit";
           index: number;
@@ -283,17 +288,25 @@ export async function executePageRequest<TResult = PageDataBundle>(
       // BETWEEN levels (see `PipelineLoaderContext.signal`'s JSDoc).
       if (requestAbortController.signal.aborted) break;
 
-      // `route.validate` — the PAGE's own declared schema, over `{ params,
-      // query }` kept as two separate keys (canon `b79c4f55`, point 1). Runs
-      // HERE, at the front of the page level's own turn: app and layout
-      // loaders have already run (their data survives a rejection, exactly
-      // as an ordinary page-level throw leaves them untouched) and the
-      // page's OWN loader has not (mirrors the top-level `validation`
-      // export's "before the loader" contract). A failure is folded into the
-      // ordinary THROW signal below rather than given a fourth code path: it
-      // designates a boundary and renders the application's error
-      // page/boundary with status 400 (point 2) — a page is a document, not
-      // an API endpoint, so this must never answer a raw JSON body.
+      // The page's top-level `validation` export runs HERE, at the front of
+      // the page level's own turn (card 5056fb56): app and layout loaders
+      // have already run, so their data survives a rejection exactly as it
+      // survives an ordinary page-loader throw — the error page renders
+      // inside a layout that still has the `data` it reads — and the page's
+      // OWN loader has not (the "before the loader" contract). A layout that
+      // short-circuited or threw has already broken out above, so validation
+      // never runs for a request that ancestor already stopped. It runs even
+      // for a page with no loader: `request.validated()` is still the
+      // page's to read.
+      if (level === "page" && triple.page.validation) {
+        const outcome = await validatePageInput(triple.page.validation, request);
+
+        if (!outcome.valid) {
+          signal = { kind: "validation", index, errors: outcome.errors };
+          break;
+        }
+      }
+
       const loader = triple[level].loader;
 
       if (!loader) continue;
@@ -402,6 +415,24 @@ export async function executePageRequest<TResult = PageDataBundle>(
         if (!discarded) response.setStatusCode(status);
         forcedStatusCode = status;
       }
+    } else if (signal.kind === "validation") {
+      // The page level's buffer is discarded (its loader never ran); app and
+      // layout commit, exactly as for a page-loader throw. Two things are
+      // recorded for the SAME failure, read by two different consumers:
+      // `shortCircuit` is what the DATA representation's JSON contract has
+      // always carried (see `page-validation-params-query.spec.ts`); `error`
+      // lets a FULL-DOCUMENT render (`render-page.ts`'s `finishRender`) go
+      // through the ordinary boundary/`error.page.tsx` pipeline with its own
+      // 400, instead of emitting an empty document.
+      committedLevels = LEVEL_ORDER.slice(0, signal.index);
+
+      bundle.shortCircuit = { stage: "validation", status: 400, errors: signal.errors };
+      bundle.error = buildErrorRecord(
+        new PageValidationFailedError(signal.errors),
+        designateBoundary("page", triple),
+        pathname,
+        400,
+      );
     } else {
       // Short-circuit: the signalling level's OWN buffer commits too
       // (inclusive); lower levels never ran.
