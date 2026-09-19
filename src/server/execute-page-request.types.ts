@@ -191,6 +191,23 @@ export type PageDataBundle = {
    */
   deferredKeys?: string[];
   /**
+   * Top-level PAGE loader keys that WERE deferred but have already been
+   * awaited and inlined back into `pageData` as plain, resolved values — set
+   * by `render-page.ts`'s data-request/crawler await-and-inline path
+   * (`restoreInlineDeferredForDataWire`) once `deferredKeys` itself is
+   * cleared, so the two fields are never simultaneously non-empty for the
+   * same bundle. `build-hydration-payload.ts` reads this ALONGSIDE
+   * `deferredKeys` to build the wire's `deferred` list: unlike a genuinely
+   * streamed key, an inlined key's `pageData[key]` is a real, JSON-safe value
+   * and must stay on the wire — only the marker is needed, so the client
+   * (`fetch-page-data.ts`'s plain-JSON path) knows to wrap it in an
+   * already-fulfilled thenable before `use()` ever sees it (RELEASE
+   * BLOCKER — a resolved deferred value on a serverCache route's JSON
+   * representation used to reach `use()` as a bare value, "Minified React
+   * error #438").
+   */
+  inlinedDeferredKeys?: string[];
+  /**
    * INTERNAL ONLY — one settlement promise per deferred key, keyed by name.
    * Never read by `build-hydration-payload.ts` (it is not JSON-safe: it is a
    * live `Promise`, not wire data) — `render-page.ts`'s `finishRender` reads

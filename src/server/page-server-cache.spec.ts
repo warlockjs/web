@@ -16,6 +16,7 @@
  * under the page cache namespace (`page-cache-namespace.ts`).
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { parse as devalueParse } from "devalue";
 import Fastify, { type FastifyInstance } from "fastify";
 import { registerHttpPlugins, router, setConfig, type Request } from "@warlock.js/core";
 import { WARLOCK_DATA_REQUEST_HEADER, WARLOCK_DATA_REQUEST_VALUE } from "../routing/data-request";
@@ -137,6 +138,14 @@ function renderedJson(
     usesDefer?: boolean;
     data?: unknown;
     deferredKeys?: string[];
+    /**
+     * Mirrors real production output for a `serverCache` route's JSON
+     * representation: `render-page.ts`'s await-and-inline path clears
+     * `deferredKeys` but sets THIS instead, once the deferred value has been
+     * awaited and put back into `pageData` as a plain, resolved value — see
+     * `PageDataBundle.inlinedDeferredKeys`.
+     */
+    inlinedDeferredKeys?: string[];
   } = {},
 ) {
   const data = overrides.data ?? { id: 1 };
@@ -154,6 +163,7 @@ function renderedJson(
       shared: undefined,
       route: { name: "route", params: {} },
       deferredKeys: overrides.deferredKeys,
+      inlinedDeferredKeys: overrides.inlinedDeferredKeys,
     },
     usesDefer: overrides.usesDefer ?? false,
   };
@@ -691,6 +701,50 @@ describe("server-side page cache (route.cache.serverCache)", () => {
       awaitDeferredForDataRequest?: boolean;
     };
     expect(jsonCallOptions.awaitDeferredForDataRequest).toBe(true);
+  });
+
+  // RELEASE BLOCKER (5.17): a serverCache route's JSON representation never
+  // streams (docs, "page-caching.mdx"), so a deferred loader value reaches
+  // the wire already resolved — but it must still be MARKED deferred, so
+  // `fetch-page-data.ts`'s client navigation wraps it in an already-fulfilled
+  // thenable before the page's `use(data.related)` ever sees it. Before this
+  // fix, `render-page.ts`'s await-and-inline path cleared `deferredKeys`
+  // entirely, `build-hydration-payload.ts` then omitted `deferred` from the
+  // wire, and a real client navigation's `use()` threw "an unsupported type
+  // was passed to use()" (minified #438) with the deferred section never
+  // rendering — on BOTH the MISS that stored the entry and every HIT that
+  // replayed it verbatim.
+  it("a deferred key survives on the wire as `deferred` + its resolved value, on both the storing MISS and the replaying HIT", async () => {
+    renderPageRequest.mockImplementation(async () =>
+      renderedJson({
+        data: { title: "Post", related: { slug: "next-post" } },
+        inlinedDeferredKeys: ["related"],
+      }),
+    );
+
+    const miss = await server.inject({
+      method: "GET",
+      url: "/__scache-locale",
+      headers: { [WARLOCK_DATA_REQUEST_HEADER]: WARLOCK_DATA_REQUEST_VALUE },
+    });
+    expect(miss.headers["x-warlock-cache"]).toBe("miss");
+
+    const hit = await server.inject({
+      method: "GET",
+      url: "/__scache-locale",
+      headers: { [WARLOCK_DATA_REQUEST_HEADER]: WARLOCK_DATA_REQUEST_VALUE },
+    });
+    expect(hit.headers["x-warlock-cache"]).toBe("hit");
+    expect(renderPageRequest).toHaveBeenCalledTimes(1);
+
+    for (const response of [miss, hit]) {
+      const payload = devalueParse(response.body) as { deferred?: string[]; pageData: unknown };
+
+      expect(payload.deferred).toEqual(["related"]);
+      expect(payload.pageData).toEqual({ title: "Post", related: { slug: "next-post" } });
+    }
+
+    expect(hit.body).toBe(miss.body);
   });
 
   it("a HIT never re-invokes the render pipeline — the stored body is byte-identical to the MISS", async () => {

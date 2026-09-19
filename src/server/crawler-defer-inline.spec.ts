@@ -148,13 +148,20 @@ describe("renderPageRequest — awaitDeferredForDataRequest (item c: the data pa
     expect(rendered.status).toBe(200);
     expect(rendered.bundle?.error).toBeUndefined();
 
-    // A data response has no hydration to feed — its own wire keeps inlining
-    // the plain resolved value exactly as `defer-data-request.spec.ts`
-    // already locks in; the settled-thenable shape above is transient, used
-    // only while the page tree renders, never part of what this path
-    // returns.
+    // RELEASE BLOCKER fix (5.17): a data response has no hydration to feed,
+    // so its own wire keeps inlining the plain resolved value — but it MUST
+    // still say the key was deferred. Before this fix `payload.deferred` came
+    // back `undefined` here, and a page's own `use(data.reviews)` on a
+    // CLIENT NAVIGATION (never exercised by this spec — see
+    // `fetch-page-data-inlined-defer.spec.ts`) received that bare
+    // `{ rating: 5 }` object instead of a thenable, throwing React's
+    // "unsupported type was passed to use()" (minified #438). The
+    // settled-thenable shape from the render above is transient, used only
+    // while the page tree renders; what survives onto THIS wire is the plain
+    // value plus the `inlinedDeferredKeys` marker
+    // (`PageDataBundle.inlinedDeferredKeys`).
     const payload = buildHydrationPayload(rendered.bundle!, "en");
-    expect(payload.deferred).toBeUndefined();
+    expect(payload.deferred).toEqual(["reviews"]);
     expect(payload.pageData).toEqual({ greeting: "hi", reviews: { rating: 5 } });
   });
 });

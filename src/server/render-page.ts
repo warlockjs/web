@@ -819,6 +819,16 @@ async function finishRender(
             pageDataRecord[key] = (settled[index] as { ok: true; value: unknown }).value;
           });
           bundle.deferredKeys = undefined;
+          // RELEASE BLOCKER fix: keep the key list on the bundle, under a
+          // separate name, so `buildHydrationPayload` can still mark these
+          // keys `deferred` on the wire even though the value sitting in
+          // `pageData` is now a plain, resolved one rather than a live
+          // Promise — `wirePageData` must not delete it (it is JSON-safe and
+          // is the actual answer), but the client still needs to know it was
+          // deferred, so it wraps it in an already-fulfilled thenable before
+          // `use()` reads it (`fetch-page-data.ts`). See
+          // `PageDataBundle.inlinedDeferredKeys`'s own doc.
+          bundle.inlinedDeferredKeys = deferredKeys;
         };
       }
     } else {

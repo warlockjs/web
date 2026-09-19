@@ -63,6 +63,15 @@ export function buildHydrationPayload(
   const appData = serializableData(bundle.appData);
   const layoutData = serializableData(bundle.layoutData);
   const pageData = wirePageData(bundle.pageData, bundle.deferredKeys);
+  // `deferredKeys` (streamed, value removed from the wire) and
+  // `inlinedDeferredKeys` (already awaited, value stays on the wire — see
+  // `PageDataBundle.inlinedDeferredKeys`) are never both non-empty for the
+  // same bundle, but both mean the same thing to the client: wrap this key
+  // before handing it to `use()`.
+  const deferredMarkerKeys = [
+    ...(bundle.deferredKeys ?? []),
+    ...(bundle.inlinedDeferredKeys ?? []),
+  ];
 
   // devalue is the wire format for every one of these (the ruling this file's
   // header already enforces for SHAPE now also covers SERIALIZABILITY): a
@@ -110,8 +119,6 @@ export function buildHydrationPayload(
     translations: getKeywordsListOf(locale) ?? {},
     // Same optional/never-empty rule as `metadata`/`errorPage` above — see
     // `HydrationDocumentPayloadSource.deferred`'s own doc comment.
-    ...(bundle.deferredKeys === undefined || bundle.deferredKeys.length === 0
-      ? {}
-      : { deferred: bundle.deferredKeys }),
+    ...(deferredMarkerKeys.length === 0 ? {} : { deferred: deferredMarkerKeys }),
   };
 }

@@ -137,11 +137,26 @@ export type HydrationDocumentPayloadSource = {
    */
   readonly errorPage?: SerializedErrorPageProps;
   /**
-   * Top-level `pageData` key names, in declaration order, whose value is a
-   * deferred (`defer()`) promise rather than a resolved value (Stage 2
-   * implementation contract, rule 3). Omitted — not `[]` — when nothing is
-   * deferred, so the hard-navigate completeness check keeps seeing the same
-   * six required keys either way.
+   * Top-level `pageData` key names, in declaration order, that a `defer()`
+   * call produced (Stage 2 implementation contract, rule 3) — a page
+   * component reads each with `use()` and must NOT be handed a bare value.
+   * Omitted — not `[]` — when nothing is deferred, so the hard-navigate
+   * completeness check keeps seeing the same six required keys either way.
+   *
+   * Two wire shapes share this one marker, and the client tells them apart by
+   * whether the key is still present on `pageData`:
+   *
+   *   - STREAMED (the document, and NDJSON navigations): the key is REMOVED
+   *     from `pageData` — its value is a live Promise, not JSON-safe — and
+   *     settles later through a `__WARLOCK_DEFER__` chunk/line
+   *     (`defer-registry.ts`'s `prepareDeferredPageData`).
+   *   - INLINED (a `serverCache` route's JSON representation, which never
+   *     streams — see `build-hydration-payload.ts`'s `inlinedDeferredKeys`):
+   *     the key STAYS on `pageData`, already resolved. The client wraps it in
+   *     an already-fulfilled thenable (`fetch-page-data.ts`'s
+   *     `reviveInlinedDeferredValues`) so `use()` reads it synchronously —
+   *     RELEASE BLOCKER fix, a bare resolved value used to reach `use()`
+   *     unwrapped ("Minified React error #438").
    */
   readonly deferred?: readonly string[];
 };

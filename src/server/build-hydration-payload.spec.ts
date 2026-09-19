@@ -99,3 +99,50 @@ describe("buildHydrationPayload — unserializable loader values", () => {
     expect(() => buildHydrationPayload(bundle, "en")).not.toThrow();
   });
 });
+
+/**
+ * RELEASE BLOCKER fix (5.17): `inlinedDeferredKeys` — the marker
+ * `render-page.ts`'s data-request/crawler await-and-inline path sets once a
+ * deferred key's value has already been awaited and put back into `pageData`
+ * as a plain, resolved value (`PageDataBundle.inlinedDeferredKeys`'s own
+ * doc). Unlike a genuinely streamed `deferredKeys` entry, the wire keeps the
+ * VALUE (it is JSON-safe and IS the answer) — only the marker is added, so
+ * the client still knows to wrap it in an already-fulfilled thenable before
+ * `use()` reads it.
+ */
+describe("buildHydrationPayload — inlinedDeferredKeys (a serverCache route's JSON representation)", () => {
+  it("marks an inlined key `deferred` on the wire WITHOUT deleting its resolved value", () => {
+    const bundle = bundleOf({
+      pageData: { title: "Post", related: { slug: "next-post" } },
+      inlinedDeferredKeys: ["related"],
+    });
+
+    const payload = buildHydrationPayload(bundle, "en");
+
+    expect(payload.deferred).toEqual(["related"]);
+    expect(payload.pageData).toEqual({ title: "Post", related: { slug: "next-post" } });
+  });
+
+  it("combines a genuinely streamed key and an inlined key in declaration order", () => {
+    const bundle = bundleOf({
+      pageData: { comments: "STREAMED — deleted below", related: { slug: "next-post" } },
+      deferredKeys: ["comments"],
+      inlinedDeferredKeys: ["related"],
+    });
+
+    const payload = buildHydrationPayload(bundle, "en");
+
+    expect(payload.deferred).toEqual(["comments", "related"]);
+    // The streamed key is removed (a live Promise is not JSON-safe and
+    // settles separately); the inlined key's plain value stays.
+    expect(payload.pageData).toEqual({ related: { slug: "next-post" } });
+  });
+
+  it("omits `deferred` entirely when neither list is present — unchanged for an ordinary page", () => {
+    const bundle = bundleOf({ pageData: { title: "Post" } });
+
+    const payload = buildHydrationPayload(bundle, "en");
+
+    expect(payload.deferred).toBeUndefined();
+  });
+});

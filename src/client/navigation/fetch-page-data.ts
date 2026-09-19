@@ -34,6 +34,7 @@ import {
   settleDeferredValue,
   type DeferredSettlement,
 } from "../runtime/defer-registry";
+import { createSettledThenable } from "../../loaders/settled-thenable";
 
 /**
  * The wire content type of the streaming (deferred-values) representation.
@@ -99,6 +100,47 @@ function isNdjsonResponse(response: Response): boolean {
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * RELEASE BLOCKER fix: a `serverCache` route's JSON (non-NDJSON) data
+ * representation never streams (docs, "page-caching.mdx") — every deferred
+ * key the loader returned as a promise has already been awaited on the
+ * server and put back on the wire as its plain, resolved value
+ * (`render-page.ts`'s `restoreInlineDeferredForDataWire`,
+ * `build-hydration-payload.ts`'s `inlinedDeferredKeys`). The page component
+ * still calls `use(data.thatKey)` unconditionally, and React's `use()`
+ * throws ("An unsupported type was passed to use()", minified #438) on
+ * anything that is not a thenable — a bare value included.
+ *
+ * This is the client-side half of that fix: for every key `payload.deferred`
+ * lists AND that is still present on `payload.pageData` (the NDJSON path
+ * deletes it instead — see `readNdjsonPageData`, which never calls this),
+ * wrap the already-known value in the SAME already-fulfilled thenable shape
+ * `createSettledThenable` builds for the server's own inline paths (crawler
+ * documents, `render-page.ts`), so `use()` reads it synchronously with no
+ * suspend. Mutates `payload.pageData` in place, same convention as
+ * `prepareDeferredPageData`.
+ *
+ * A rejected deferred key never reaches this function: the server's
+ * await-and-inline path escalates a rejection to the page-level error
+ * boundary instead of inlining a per-key failure (`render-page.ts`), so the
+ * wire never encodes one here — there is nothing for this function to turn
+ * into a rejected thenable.
+ */
+function reviveInlinedDeferredValues(payload: HydrationDocumentPayloadSource): void {
+  const deferredKeys = payload.deferred;
+
+  if (deferredKeys === undefined || deferredKeys.length === 0) return;
+  if (!isPlainRecord(payload.pageData)) return;
+
+  const pageData = payload.pageData;
+
+  for (const key of deferredKeys) {
+    if (!Object.prototype.hasOwnProperty.call(pageData, key)) continue;
+
+    pageData[key] = createSettledThenable(pageData[key]);
+  }
 }
 
 /**
@@ -367,6 +409,12 @@ export async function fetchPageData(url: string, signal?: AbortSignal): Promise<
       reason: "payload is malformed",
     };
   }
+
+  // See `reviveInlinedDeferredValues`'s own doc: a `serverCache` route's JSON
+  // representation carries deferred keys as already-resolved plain values, so
+  // they must become already-fulfilled thenables before a page's `use()`
+  // reads them.
+  reviveInlinedDeferredValues(parsed);
 
   // `response.url` is absolute and reflects any redirect that was followed.
   // Falling back to the requested URL keeps this working under test doubles
