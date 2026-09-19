@@ -256,7 +256,7 @@ Loaders run **sequentially, root to leaf, each one awaited before the next start
 
 **The first core `Response` a loader returns is terminal.** Returning a `Response` object stops the pipeline immediately: no lower loader starts, `metadata` is not resolved, and that response is sent as-is. It is more terminal than a short-circuit — because the response is returned whole, the buffered header/cookie writes made at that same level are discarded along with everything below it. Use `response.redirect()` / `response.notFound()` (which produce a `LoaderShortCircuit`, committing that level's buffer inclusively) when you want your buffered writes to survive; return a raw `Response` only when you mean "this exact response, nothing else."
 
-A loader that **throws** is also terminal: it stops lower loaders, discards its own level's buffer, and commits only the levels above it.
+A loader that **throws** is also terminal: it stops lower loaders, discards its own level's buffer, and commits only the levels above it. A thrown `@warlock.js/core` `HttpError` (`ResourceNotFoundError`, `ForbiddenError`, `BadRequestError`, `ConflictError`, …) keeps its own status: a 404 renders your `404.page.tsx` exactly like `response.notFound()`, and any other 4xx renders `error.page.tsx` with that status and its own message, without reaching `web.errors.report()`; a plain throw (or a resolved 5xx) still renders `error.page.tsx` with the generic 500.
 
 ## Loader response surface
 

@@ -20,6 +20,7 @@
  */
 import { serializePageError } from "./error-page";
 import { reportServerError } from "./report-server-error";
+import { resolveThrownHttpStatus } from "./resolve-thrown-http-status";
 import type { ServerErrorContext } from "./error-reporting-config";
 import type { SerializedPageError } from "../components/document-context";
 
@@ -47,7 +48,10 @@ export type DeferSettlement =
 
 function toSettlementError(thrown: unknown): DeferSettlement & { ok: false } {
   const serialized = serializePageError(thrown);
-  const statusCode = (thrown as { statusCode?: number } | null)?.statusCode;
+  // Card `f2b8953d`: a deferred value that rejects with a core `HttpError`
+  // (thrown from a page loader's own deferred promise) carries its status
+  // the same way a synchronously-thrown one does.
+  const statusCode = resolveThrownHttpStatus(thrown);
 
   return {
     ok: false,

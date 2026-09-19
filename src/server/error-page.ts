@@ -4,8 +4,8 @@ import type { SerializedErrorPageProps, SerializedPageError } from "../component
 import { ERROR_PAGE_METADATA } from "./resolve-page-metadata";
 import type { MetadataOutput } from "../metadata";
 import type { ServerErrorPageProps } from "../props";
-import { PublicPageError } from "./public-page-error";
 import { PageValidationFailedError } from "./page-validation-failed-error";
+import { isVisitorSafePageError } from "./is-visitor-safe-page-error";
 
 /**
  * One sanitized Seal validation issue: strips every field but
@@ -90,7 +90,12 @@ export function serializePageError(thrown: unknown, requestId?: string): Seriali
   }
 
   if (environment() === "production") {
-    if (thrown instanceof PublicPageError) {
+    // A `PublicPageError` and a thrown value that resolves to a 4xx status
+    // (a core `HttpError` such as `ForbiddenError`/`BadRequestError`) both
+    // keep their own message — `isVisitorSafePageError` is the single answer
+    // to "is this the visitor's own affair", shared with `buildErrorRecord`
+    // so the two scrub points never disagree.
+    if (isVisitorSafePageError(thrown) && thrown instanceof Error) {
       return { name: thrown.name || "Error", message: thrown.message };
     }
 

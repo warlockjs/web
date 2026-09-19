@@ -43,6 +43,7 @@ export function buildErrorRecord(
   requestPath?: string,
   statusCode?: number,
   reportContext?: BuildErrorRecordReportContext,
+  report: boolean = true,
 ): PageErrorRecord {
   const digest = randomUUID();
   const errorContext: ServerErrorContext = {
@@ -56,11 +57,21 @@ export function buildErrorRecord(
     requestId: reportContext?.requestId,
   };
 
-  reportServerError(
-    `page error ${digest}${requestPath ? ` (${requestPath})` : ""}`,
-    thrown,
-    errorContext,
-  );
+  // A resolved 4xx (card f2b8953d) is the visitor's own affair, not a server
+  // fault — it skips both the stderr floor and `web.errors.report()` that
+  // `reportServerError` always drives, and gets at most a debug breadcrumb.
+  if (report) {
+    reportServerError(
+      `page error ${digest}${requestPath ? ` (${requestPath})` : ""}`,
+      thrown,
+      errorContext,
+    );
+  } else {
+    console.debug(
+      `[warlock:web] page error ${digest}${requestPath ? ` (${requestPath})` : ""}:`,
+      thrown,
+    );
+  }
 
   // A visitor-safe error (PublicPageError, PageValidationFailedError) keeps
   // its own content even in production — the

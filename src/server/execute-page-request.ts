@@ -16,6 +16,7 @@ import { resolvePageMetadata } from "./resolve-page-metadata";
 import { resolveValidationData } from "./resolve-validation-data";
 import { resolvePageValidationInput } from "./resolve-route-validation-input";
 import { PageValidationFailedError } from "./page-validation-failed-error";
+import { resolveThrownHttpStatus } from "./resolve-thrown-http-status";
 import { DeferredInNonPageLoaderError, isDeferred, splitDeferredPageData } from "../loaders/defer";
 import { createDeferredSettlement, type DeferSettlement } from "./defer-settlement";
 import { resolveDeferTimeoutMs, resolveLoaderTimeoutMs } from "./streaming-config";
@@ -500,25 +501,56 @@ export async function executePageRequest<TResult = PageDataBundle>(
     if (!signal) {
       committedLevels = [...LEVEL_ORDER];
     } else if (signal.kind === "throw") {
-      // The throwing level's buffer is discarded; lower levels never ran.
-      committedLevels = LEVEL_ORDER.slice(0, signal.index);
+      // A failure that OWNS its own status — a framework error carrying its
+      // own `statusCode`, or a thrown core `@warlock.js/core` `HttpError`
+      // (`ResourceNotFoundError`, `ForbiddenError`, `BadRequestError`, …) —
+      // carries it through here; an ordinary throw resolves to `undefined`
+      // and keeps the pipeline's ordinary answer, 500 (card `f2b8953d`).
+      const resolvedStatus = resolveThrownHttpStatus(signal.thrown);
 
-      const boundary = designateBoundary(signal.level, triple);
-      // A failure that OWNS its own status (an error thrown with a
-      // `statusCode` property) carries it through here; an ordinary throw
-      // carries none and keeps the pipeline's ordinary answer, 500.
-      const ownStatusCode = (signal.thrown as { statusCode?: number } | null)?.statusCode;
-      bundle.error = buildErrorRecord(signal.thrown, boundary, pathname, ownStatusCode, {
-        routeName: matched.entry.name,
-        routePath: matched.entry.path,
-        method: request.method,
-        requestId: request.id,
-      });
+      if (resolvedStatus === 404) {
+        // Same path a loader's own `response.notFound()` already takes —
+        // the throwing level's buffer commits inclusively, exactly like an
+        // explicit short-circuit, and the 404 page renders with no
+        // `bundle.error` at all: never a parallel notFound implementation.
+        committedLevels = LEVEL_ORDER.slice(0, signal.index + 1);
+        bundle.shortCircuit = {
+          stage: "loaders",
+          level: signal.level,
+          kind: "notFound",
+          statusCode: 404,
+          url: undefined,
+          body: undefined,
+        };
+      } else {
+        // The throwing level's buffer is discarded; lower levels never ran.
+        committedLevels = LEVEL_ORDER.slice(0, signal.index);
 
-      if (boundary.boundaryLevel === "app") {
-        const status = ownStatusCode ?? 500;
-        if (!discarded) response.setStatusCode(status);
-        forcedStatusCode = status;
+        const boundary = designateBoundary(signal.level, triple);
+        // A resolved 4xx is the visitor's own affair, not a server fault —
+        // it never reaches `web.errors.report()`/the stderr floor, only a
+        // debug breadcrumb (`buildErrorRecord`'s `report` argument).
+        const isClientError = resolvedStatus !== undefined && resolvedStatus < 500;
+
+        bundle.error = buildErrorRecord(
+          signal.thrown,
+          boundary,
+          pathname,
+          resolvedStatus,
+          {
+            routeName: matched.entry.name,
+            routePath: matched.entry.path,
+            method: request.method,
+            requestId: request.id,
+          },
+          !isClientError,
+        );
+
+        if (boundary.boundaryLevel === "app") {
+          const status = resolvedStatus ?? 500;
+          if (!discarded) response.setStatusCode(status);
+          forcedStatusCode = status;
+        }
       }
     } else if (signal.kind === "validation") {
       // The page level's buffer is discarded (its loader never ran); app and
