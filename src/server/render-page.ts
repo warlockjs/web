@@ -161,17 +161,21 @@ export type RenderPageRequestOptions = {
   /**
    * Crawler mode: a FULL-DOCUMENT request from a detected crawler
    * (`detect-crawler.ts`) must
-   * receive the fully resolved document, never the streamed shell plus
-   * deferred chunks — a crawler has no chance to observe a later chunk the
-   * way a browser does. When true on a document request (`dataRequest`
-   * false) with deferred keys, `finishRender` reuses the SAME
-   * await-and-inline path `awaitDeferredForDataRequest` drives for a data
-   * request — every deferred value settles and is inlined into `pageData`
-   * before render, a rejection escalates through the ordinary boundary chain
-   * with its real status, and the render additionally waits for
-   * `onAllReady` (see `waitForAll`, forced on below) before the first byte,
-   * since nothing has flushed yet. Ignored for a data request — that
-   * representation is governed by `awaitDeferredForDataRequest` alone.
+   * receive every `defer()`-ed value already resolved and inlined in the
+   * HTML before the first byte — a non-JS crawler has no chance to observe
+   * a later chunk the way a browser does, so indexing needs nothing else.
+   * When true on a document request (`dataRequest` false) with deferred
+   * keys, `finishRender` reuses the SAME await-and-inline path
+   * `awaitDeferredForDataRequest` drives for a data request — every
+   * deferred value settles and is inlined into `pageData` before render, a
+   * rejection escalates through the ordinary boundary chain with its real
+   * status, and the render additionally waits for `onAllReady` (see
+   * `waitForAll`, forced on below) before the first byte, since nothing has
+   * flushed yet. The document still keeps `deferredKeys`/`deferredSettlements`
+   * on the bundle so the ordinary `__WARLOCK_DEFER__` settlement chunks
+   * still emit — a JS-capable crawler hydrates `use(data.key)` through the
+   * existing registry exactly like a browser. Ignored for a data request —
+   * that representation is governed by `awaitDeferredForDataRequest` alone.
    * Defaults to `false`, so every existing document caller streams exactly
    * as before.
    */
@@ -218,8 +222,10 @@ export type RenderedPage = {
   pipeableStream?: PipeableStream;
   /**
    * True when this page called `defer()` at all — set once, before crawler
-   * mode may have already awaited and inlined every deferred value and
-   * cleared `bundle.deferredKeys`. `create-page-route-handler.ts` reads this
+   * mode may have already awaited and inlined every deferred value into
+   * `pageData` (`bundle.deferredKeys` stays put on a crawler document so its
+   * ordinary `__WARLOCK_DEFER__` settlement chunks still emit).
+   * `create-page-route-handler.ts` reads this
    * to decide the `Vary: User-Agent` header (rule 4): a page with no
    * `defer()` renders identically for every user agent and must never carry
    * it, while a page that defers renders differently for a detected crawler
@@ -635,8 +641,9 @@ async function finishRender(
   const headers = committedHeaders(bundle);
   const cookies = committedCookies(bundle);
 
-  // Captured before anything below may await-and-inline and clear
-  // `bundle.deferredKeys` for crawler mode — see `RenderedPage.usesDefer`.
+  // Captured before anything below may await-and-inline the deferred values
+  // (crawler mode leaves `bundle.deferredKeys` itself in place; the data-request
+  // wire clears it) — see `RenderedPage.usesDefer`.
   const usesDefer = (bundle.deferredKeys?.length ?? 0) > 0;
 
   // Set only by a successful `awaitAndInlineDeferred` pass for a DATA

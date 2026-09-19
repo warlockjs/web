@@ -3,11 +3,14 @@
  * of `web.streaming.crawlers` (`streaming-config.ts` merely declares the
  * shape and reads it off `config.get`).
  *
- * A search/social crawler that never executes the defer-bootstrap script
- * would index the shell forever with the deferred sections missing — it has
- * no chance to observe a later chunk the way a browser does. Detecting it and
- * switching to the await-and-inline path (`render-page.ts`'s `finishRender`)
- * is what lets it see the SAME content a human eventually would.
+ * A non-JS search/social crawler never executes the defer-bootstrap script,
+ * so it would index the shell forever with the deferred sections missing —
+ * it has no chance to observe a later chunk the way a browser does.
+ * Detecting it and switching to the await-and-inline path (`render-page.ts`'s
+ * `finishRender`) inlines that content into the HTML before the first byte,
+ * so indexing needs nothing else. The document still carries the normal
+ * `__WARLOCK_DEFER__` settlement scripts, so a JS-capable crawler hydrates
+ * the same as a browser would.
  */
 import type { Request } from "@warlock.js/core";
 import { resolveCrawlersConfig } from "./streaming-config";
@@ -37,8 +40,9 @@ export const DEFAULT_CRAWLER_USER_AGENTS: readonly RegExp[] = [
 ];
 
 /**
- * True when `request` should receive the fully resolved document instead of
- * the streamed shell + deferred chunks.
+ * True when `request` should receive every deferred value already resolved
+ * and inlined into the document before the first byte, rather than streamed
+ * after the shell.
  *
  * Precedence, per the lead's fixed decisions: `web.streaming.crawlers ===
  * false` always answers `false` (detection is off, full stop — a configured

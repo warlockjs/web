@@ -244,17 +244,24 @@ return would.
 
 ## Crawlers
 
-A crawler never runs the browser's defer-bootstrap script, so it has no
-chance to observe a chunk that arrives after the shell — streamed to one, a
-`defer()`-ed section would stay missing from whatever it indexes forever.
-Every FULL-DOCUMENT request from a detected crawler therefore skips streaming
-entirely: every deferred value is awaited and inlined into the page data
-before the first byte goes out (the same await-and-inline path a plain data
-request without NDJSON support already gets), and the response waits for
-React's `onAllReady` before anything flushes. A rejection takes the ordinary
-boundary/status escalation path, exactly as an ordinary synchronous loader
-throw would — nothing has flushed yet, so there is no 200 already on the
-wire to contradict.
+A non-JS crawler never runs the browser's defer-bootstrap script, so it has
+no chance to observe a chunk that arrives after the shell — streamed to one,
+a `defer()`-ed section would stay missing from whatever it indexes forever.
+Every FULL-DOCUMENT request from a detected crawler therefore awaits and
+inlines every deferred value into the page data before the first byte goes
+out (the same await-and-inline path a plain data request without NDJSON
+support already gets), and the response waits for React's `onAllReady`
+before anything flushes — so non-JS indexing needs nothing beyond that
+inlined HTML. A rejection takes the ordinary boundary/status escalation
+path, exactly as an ordinary synchronous loader throw would — nothing has
+flushed yet, so there is no 200 already on the wire to contradict.
+
+The document still carries the normal `__WARLOCK_DEFER__` settlement
+scripts for each deferred key, same as any other visitor's document. They're
+inert to a non-JS crawler, but a JS-capable crawler that does execute
+scripts hydrates exactly like a browser: `use(data.key)` reads an
+already-fulfilled thenable, and the settlement script settles it through
+the existing document-scope registry.
 
 Detection is case-insensitive and, by default, matches this built-in list:
 `googlebot`, `bingbot`, `yandex`, `duckduckbot`, `baiduspider`, `slurp`,
