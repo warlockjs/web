@@ -60,6 +60,7 @@ export type { TextDirection } from "./text-direction";
 export { useTextDirection } from "./use-text-direction";
 export { href } from "./routing/route-table";
 export type { RouteParameters, RouteQuery } from "./routing/route-table";
+export { localizedPath } from "./routing/localized-path";
 export { Link } from "./components/link";
 
 // The navigation verbs carry `@mongez/react-router`'s NAMES on purpose (canon

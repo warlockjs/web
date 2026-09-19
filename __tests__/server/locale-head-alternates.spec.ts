@@ -20,7 +20,17 @@ import * as App from "./fixtures/root";
 import * as contactPage from "./fixtures/contact.page";
 import * as layout from "./fixtures/layout";
 
+const canonicalPage = {
+  ...contactPage,
+  metadata: { canonical: "https://app.test/ar/posts/x" },
+};
+
 const routes: PageRouteEntry[] = [
+  {
+    path: "/ar/canonical/:id",
+    name: "canonical",
+    triple: { app: App, layout, page: canonicalPage },
+  },
   { path: "/posts/:id", name: "posts.details", triple: { app: App, layout, page: contactPage } },
   {
     path: "/ar/posts/:id",
@@ -92,6 +102,24 @@ describe("<head> alternates — prefix-except-default", () => {
     expect(html).toContain(
       '<link rel="alternate" hrefLang="ar" href="https://app.test/ar/posts/x"/>',
     );
+  });
+});
+
+describe("<head> alternates — a page with its own canonical", () => {
+  beforeEach(() => {
+    publishLocaleRouting({
+      strategy: "prefix-except-default",
+      codes: ["en", "ar"],
+      defaultLocale: "en",
+    });
+  });
+
+  it("keeps the page canonical and still emits the hreflang alternates", async () => {
+    const { html } = await renderRequest("/ar/canonical/x");
+
+    expect(html).toContain("https://app.test/ar/posts/x");
+    expect(html).toContain('rel="alternate" hrefLang="ar"');
+    expect(html).toContain('rel="alternate" hrefLang="x-default"');
   });
 });
 

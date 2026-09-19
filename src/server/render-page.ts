@@ -891,19 +891,16 @@ async function finishRender(
     bundle.metadata = { ...bundle.metadata, robots: "noindex" };
   }
 
-  // Design note §D.2: skipped entirely when the page already declared its
-  // own `metadata.canonical` — that page owns its own alternates too, and
-  // the framework never adds a second, possibly-conflicting set (see
-  // `DocumentContextValue.localeAlternates`).
-  const localeAlternates =
-    bundle.metadata?.canonical === undefined
-      ? resolveLocaleAlternates(
-          request.path,
-          bundle.route.path,
-          readLocaleRouting(),
-          getPublicUrl(),
-        )
-      : undefined;
+  // Design note §D.2: emitted on every locale-routed page, independent of the
+  // page's own `metadata.canonical`. A localized page is canonical to itself
+  // and still lists its hreflang siblings; `localizedPath()` builds that
+  // self-canonical (see `DocumentContextValue.localeAlternates`).
+  const localeAlternates = resolveLocaleAlternates(
+    request.path,
+    bundle.route.path,
+    readLocaleRouting(),
+    getPublicUrl(),
+  );
 
   let documentValue: DocumentContextValue = {
     metadata: bundle.metadata,
