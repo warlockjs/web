@@ -20,11 +20,19 @@
  * UNAFFECTED by this — every call site's own message still logs every time,
  * exactly as it did before this card; only the app hook dispatch is deduped.
  *
- * QUEUE: calls to the app hook are bounded at {@link MAX_PENDING_REPORTS}
- * in flight. A report that would exceed the bound drops the OLDEST pending
- * report (never the new one) and counts the drop. Nothing here is ever
- * awaited by a caller on the response path — see `create-page-route-handler.ts`
- * and friends, none of which `await reportServerError(...)`.
+ * QUEUE: `./bounded-task-queue.ts`'s `BoundedTaskQueue` bounds this on TWO
+ * axes, not one — at most {@link REPORT_CONCURRENCY} calls to the app hook
+ * are ever ACTUALLY IN FLIGHT at once, and at most {@link MAX_QUEUED_REPORTS}
+ * more NOT-YET-STARTED reports may wait their turn behind those. A report
+ * that would overflow the queue drops the OLDEST QUEUED (never-started, never
+ * an already-active) report and counts the drop; as each in-flight call
+ * settles, the next queued report is dequeued and started. This is what
+ * keeps the number of ACTIVE reporter calls bounded even when far more than
+ * {@link MAX_QUEUED_REPORTS} reports arrive — the earlier "drop from the
+ * active set, then start a new call anyway" shape let active calls grow
+ * without bound. Nothing here is ever awaited by a caller on the response
+ * path — see `create-page-route-handler.ts` and friends, none of which
+ * `await reportServerError(...)`.
  *
  * ISOLATION: a reporter that throws synchronously or returns a rejected
  * promise is caught exactly once, logged once via `console.error`, and never
@@ -37,16 +45,36 @@
  * the process exiting mid-flight and dropping them silently.
  */
 import { config } from "@warlock.js/core";
+import { BoundedTaskQueue } from "./bounded-task-queue";
 import type { ServerErrorContext } from "./error-reporting-config";
 
-/** Bounded queue size (Aria's ruling: "e.g. max 100 pending"). */
-const MAX_PENDING_REPORTS = 100;
+/** Concurrency limit — at most this many app-hook calls are ever ACTIVE at once. */
+const REPORT_CONCURRENCY = 10;
+
+/** Bounded queue size for NOT-yet-started reports (Aria's ruling: "e.g. max 100 pending"). */
+const MAX_QUEUED_REPORTS = 100;
 
 /** Stamped onto an already-reported error object — see the file header's DEDUPE note. */
 const REPORTED_TO_APP_HOOK = Symbol.for("warlock.web.errorReportedToAppHook");
 
-let pendingReports = new Set<Promise<void>>();
 let droppedReportCount = 0;
+
+function createReportQueue(): BoundedTaskQueue {
+  return new BoundedTaskQueue({
+    concurrency: REPORT_CONCURRENCY,
+    maxQueued: MAX_QUEUED_REPORTS,
+    onDrop: () => {
+      droppedReportCount += 1;
+
+      console.error(
+        `[warlock:web] error report queue is full (${MAX_QUEUED_REPORTS} pending); dropped the ` +
+          `oldest pending report (${droppedReportCount} dropped in total this process).`,
+      );
+    },
+  });
+}
+
+let reportQueue = createReportQueue();
 
 /**
  * `true` when `thrown` already carries the dedupe marker; stamps it
@@ -69,51 +97,32 @@ function alreadyReportedToAppHook(thrown: unknown): boolean {
   }
 }
 
-function dropOldestPendingReport(): void {
-  const oldest = pendingReports.values().next().value;
-  if (oldest === undefined) return;
-
-  pendingReports.delete(oldest);
-  droppedReportCount += 1;
-
-  console.error(
-    `[warlock:web] error report queue is full (${MAX_PENDING_REPORTS} pending); dropped the ` +
-      `oldest pending report (${droppedReportCount} dropped in total this process).`,
-  );
-}
-
 /**
  * Fire-and-forget dispatch to the configured `web.errors.report()` hook.
  * Never throws, never rejects, never returns anything a caller could await
  * into the response path — the whole point of this function is that nothing
- * calls it with `await`.
+ * calls it with `await`. The actual bounding — concurrency AND queue size —
+ * lives in {@link reportQueue}; this function only builds the lazy task and
+ * hands it over.
  */
 function enqueueAppHookReport(thrown: unknown, context: ServerErrorContext): void {
   const report = config.get("web", {}).errors?.report;
   if (report === undefined) return;
   if (alreadyReportedToAppHook(thrown)) return;
 
-  if (pendingReports.size >= MAX_PENDING_REPORTS) {
-    dropOldestPendingReport();
-  }
-
-  let settled!: Promise<void>;
-  settled = Promise.resolve()
-    .then(() => report(thrown, context))
-    .catch((reporterError) => {
-      // ISOLATION: logged once, directly, via `console.error` — never routed
-      // back through `reportServerError`/the app hook for THIS failure, so a
-      // reporter that always throws can never recurse into itself.
-      console.error(
-        "[warlock:web] web.errors.report() threw or rejected; the report was not retried:",
-        reporterError,
-      );
-    })
-    .finally(() => {
-      pendingReports.delete(settled);
-    });
-
-  pendingReports.add(settled);
+  reportQueue.push(() =>
+    Promise.resolve()
+      .then(() => report(thrown, context))
+      .catch((reporterError) => {
+        // ISOLATION: logged once, directly, via `console.error` — never routed
+        // back through `reportServerError`/the app hook for THIS failure, so a
+        // reporter that always throws can never recurse into itself.
+        console.error(
+          "[warlock:web] web.errors.report() threw or rejected; the report was not retried:",
+          reporterError,
+        );
+      }),
+  );
 }
 
 /**
@@ -148,20 +157,24 @@ export function reportServerError(
  * failure is already isolated and logged by {@link enqueueAppHookReport}.
  */
 export async function flushPendingServerErrorReports(timeoutMs = 2000): Promise<void> {
-  if (pendingReports.size === 0) return;
+  if (reportQueue.activeCount === 0 && reportQueue.queuedCount === 0) return;
 
-  const settleEverything = Promise.allSettled([...pendingReports]).then(() => undefined);
-  const cap = new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, timeoutMs);
-    timer.unref?.();
-  });
-
-  await Promise.race([settleEverything, cap]);
+  await reportQueue.drain(timeoutMs);
 }
 
-/** Test-only: how many `web.errors.report()` calls are still in flight. */
+/** Test-only: how many `web.errors.report()` calls are still pending, active + queued. */
 export function pendingServerErrorReportCount(): number {
-  return pendingReports.size;
+  return reportQueue.activeCount + reportQueue.queuedCount;
+}
+
+/** Test-only: how many `web.errors.report()` calls are ACTUALLY in flight right now. */
+export function activeServerErrorReportCallCount(): number {
+  return reportQueue.activeCount;
+}
+
+/** Test-only: how many reports are queued, not yet started. */
+export function queuedServerErrorReportCount(): number {
+  return reportQueue.queuedCount;
 }
 
 /** Test-only: how many pending reports have been dropped for exceeding the bound. */
@@ -171,6 +184,7 @@ export function droppedServerErrorReportCount(): number {
 
 /** Test-only: reset queue/drop-count state between specs. */
 export function resetServerErrorReportingStateForTests(): void {
-  pendingReports = new Set();
+  reportQueue.reset();
+  reportQueue = createReportQueue();
   droppedReportCount = 0;
 }

@@ -1,9 +1,11 @@
 import config from "@mongez/config";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  activeServerErrorReportCallCount,
   droppedServerErrorReportCount,
   flushPendingServerErrorReports,
   pendingServerErrorReportCount,
+  queuedServerErrorReportCount,
   reportServerError,
   resetServerErrorReportingStateForTests,
 } from "./report-server-error";
@@ -168,9 +170,9 @@ describe("reportServerError()", () => {
     );
   });
 
-  it("bounds the queue and drops the OLDEST pending report when full", () => {
+  it("bounds ACTIVE calls at the concurrency limit and the queue at its own bound, dropping the OLDEST QUEUED (not-yet-started) report when full", () => {
     // Every reporter call here hangs forever, so nothing self-removes from
-    // the pending set — the exact condition under which the bound matters.
+    // the active set — the exact condition under which the bound matters.
     const pendingPromises: Array<() => void> = [];
     const report = vi.fn(
       () =>
@@ -180,20 +182,46 @@ describe("reportServerError()", () => {
     );
     setReporter(report);
 
-    for (let index = 0; index < 100; index++) {
+    // 10 start immediately (the concurrency limit); the next 100 fill the
+    // queue exactly to its bound — no drop yet.
+    for (let index = 0; index < 110; index++) {
       reportServerError(`failure ${index}`, new Error(`failure ${index}`), baseContext);
     }
 
-    expect(pendingServerErrorReportCount()).toBe(100);
+    expect(activeServerErrorReportCallCount()).toBe(10);
+    expect(queuedServerErrorReportCount()).toBe(100);
     expect(droppedServerErrorReportCount()).toBe(0);
 
-    // The 101st report must drop the OLDEST, never the newest, and count it.
-    reportServerError("failure 100", new Error("failure 100"), baseContext);
+    // The 111th report must drop the OLDEST QUEUED task — never an
+    // already-ACTIVE one, and never by starting an 11th active call — and
+    // count the drop. Active/queued sizes stay exactly at their bounds.
+    reportServerError("failure 110", new Error("failure 110"), baseContext);
 
-    expect(pendingServerErrorReportCount()).toBe(100);
+    expect(activeServerErrorReportCallCount()).toBe(10);
+    expect(queuedServerErrorReportCount()).toBe(100);
     expect(droppedServerErrorReportCount()).toBe(1);
 
     for (const resolve of pendingPromises) resolve();
+  });
+
+  it("red spec: 150 distinct errors with a reporter that never settles never exceeds the concurrency limit or the queue bound", () => {
+    // Card 1db238ca blocker 2: the old "drop oldest from the pending set,
+    // then start a new call anyway" shape let ACTIVE calls grow without
+    // bound as more reports kept arriving. With 150 distinct errors and a
+    // reporter that never settles, active calls must never exceed the
+    // concurrency limit, and the queue must never exceed its own bound.
+    const report = vi.fn(() => new Promise<void>(() => undefined));
+    setReporter(report);
+
+    for (let index = 0; index < 150; index++) {
+      reportServerError(`failure ${index}`, new Error(`failure ${index}`), baseContext);
+
+      expect(activeServerErrorReportCallCount()).toBeLessThanOrEqual(10);
+      expect(queuedServerErrorReportCount()).toBeLessThanOrEqual(100);
+    }
+
+    expect(activeServerErrorReportCallCount()).toBe(10);
+    expect(queuedServerErrorReportCount()).toBe(100);
   });
 
   it("shutdown flush awaits every pending report", async () => {

@@ -43,8 +43,26 @@ export type ClientErrorEvent = {
  * `src/web/root.tsx` or hydration entry). A throw or a rejection from this
  * callback is caught once, logged once, and never fed back into itself (no
  * recursion) — see {@link reportClientError}.
+ *
+ * Typed `void | Promise<void>`, not just `void`: an async reporter is a
+ * `Promise<void>`-returning function, which is assignable to a `void`-typed
+ * signature — TypeScript would happily accept it, but nothing would ever
+ * observe its rejection. Naming the promise here is what lets
+ * {@link reportClientError} attach a rejection handler instead of letting an
+ * async reporter's rejection escape as a NEW `unhandledrejection`, which
+ * `hydrate-page.tsx`'s window listener would report as a fresh failure and
+ * call this same (broken) reporter again — an unbounded loop.
  */
-export type ClientErrorReporter = (event: ClientErrorEvent) => void;
+export type ClientErrorReporter = (event: ClientErrorEvent) => void | Promise<void>;
+
+/** `true` when `value` is thenable — covers a real `Promise` and any promise-like. */
+function isThenable(value: unknown): value is PromiseLike<void> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
+}
 
 const REPORTED_TO_APP_CALLBACK = Symbol.for("warlock.web.clientErrorReportedToAppCallback");
 
@@ -100,11 +118,28 @@ export function reportClientError(
   if (alreadyReportedToAppCallback(thrown)) return;
 
   try {
-    registeredReporter({ error: thrown, ...event });
+    const result = registeredReporter({ error: thrown, ...event });
+
+    if (isThenable(result)) {
+      // ISOLATION for the ASYNC case: attach the rejection handler right
+      // here, synchronously, so a rejected promise from an async reporter
+      // never reaches the engine as an unhandled rejection — see the
+      // `ClientErrorReporter` doc comment. Logged once, directly, and never
+      // routed back through `reportClientError`/`onClientError` for this
+      // failure, so a reporter that always rejects can never recurse into
+      // itself via `hydrate-page.tsx`'s `unhandledrejection` listener.
+      result.then(undefined, (reporterError: unknown) => {
+        console.error(
+          "[warlock:web] the registered client error callback rejected:",
+          reporterError,
+        );
+      });
+    }
   } catch (reporterError) {
-    // ISOLATION: logged once, directly — never routed back through
-    // `reportClientError`/the registered callback for THIS failure, so a
-    // callback that always throws can never recurse into itself.
+    // ISOLATION for the SYNCHRONOUS case: logged once, directly — never
+    // routed back through `reportClientError`/the registered callback for
+    // THIS failure, so a callback that always throws can never recurse into
+    // itself.
     console.error("[warlock:web] the registered client error callback threw:", reporterError);
   }
 }

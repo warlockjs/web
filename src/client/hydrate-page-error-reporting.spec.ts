@@ -121,6 +121,48 @@ describe("hydratePage — window-level error reporting", () => {
   });
 });
 
+describe("hydratePage — an async reporter that rejects never loops back through itself", () => {
+  it("runs the async reporter exactly once and never lets its rejection reach the real unhandledrejection listener", async () => {
+    installFakeDocument();
+
+    // The real `window.addEventListener("unhandledrejection", ...)` — a
+    // SEPARATE listener from `hydrate-page.tsx`'s own internal one — proves
+    // whether the reporter's rejected promise ever escapes as a genuine
+    // unhandled rejection, not just whether our own code "thinks" it handled
+    // it.
+    const realUnhandledRejectionListener = vi.fn();
+    window.addEventListener("unhandledrejection", realUnhandledRejectionListener);
+
+    let callCount = 0;
+    onClientError(() => {
+      callCount += 1;
+      return Promise.reject(new Error("async reporter is broken"));
+    });
+
+    hydratePage(() => "tree");
+
+    // A single, independent trigger — a `window` error, NOT an unhandled
+    // rejection itself — is enough to reach the async reporter once. If its
+    // rejection escaped, `hydrate-page.tsx`'s OWN internal
+    // `unhandledrejection` listener would call `reportClientError` again
+    // with `kind: "unhandled-rejection"`, which would call this same broken
+    // reporter a second time — the unbounded loop this spec guards against.
+    window.dispatchEvent(new ErrorEvent("error", { error: new Error("window boom") }));
+
+    // Give the engine's real promise-rejection tracking every chance to
+    // surface a genuine `unhandledrejection` event before asserting it
+    // never did — a plain `await Promise.resolve()` is not enough headroom
+    // for that.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(callCount).toBe(1);
+    expect(realUnhandledRejectionListener).not.toHaveBeenCalled();
+
+    window.removeEventListener("unhandledrejection", realUnhandledRejectionListener);
+  });
+});
+
 describe("hydratePage — hydration error hooks handed to hydrateRoot", () => {
   it("wires onRecoverableError/onCaughtError/onUncaughtError, each reporting once", () => {
     installFakeDocument();
