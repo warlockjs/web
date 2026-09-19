@@ -2,7 +2,7 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
-## 5.16.1 - Unreleased
+## 5.17.0 - Unreleased
 
 ### Upgrading
 
@@ -14,7 +14,6 @@ All notable changes to `@warlock.js/web` are documented here.
 - A page loader that returns `notFound()` now renders your `404.page.tsx`, with status 404 and noindex, instead of an empty body. Client navigation to such a URL gets the same page.
 - A page or layout middleware that already sent its reply (a redirect, `pageAuth`, `forbidden()`) is no longer sent a second time. Before, every guarded redirect logged a false "already-sent" error.
 - `changeLocaleCode()` and client navigation install the translations that come with the page data. Before, any translation group registered only on the server (every app's auth and validation messages) made the switch abort in development and render raw keys in production.
-
 - `@warlock.js/web/sitemap`: corrected the 5.16.0 entry below — `warlock build` never generates the sitemap. When `web.sitemap` is enabled, generation happens at runtime boot (`web.sitemap.regenerate.onBoot`) or when the app calls `regenerateSitemap()`, never at build time.
 - A detected crawler's inlined deferred value reached `use()` as a raw value instead of a promise, so every page reading it threw "An unsupported type was passed to use()" and crawlers got skeletons instead of content. Inline mode now passes an already-fulfilled thenable that `use()` reads synchronously; the key still stays in the hydration payload with its `__WARLOCK_DEFER__` settlement chunk for JS-capable crawlers. The data-request wire is unaffected. Corrected the 5.12.0 `web.streaming.crawlers` entry below, which claimed crawlers get the resolved document *instead of* deferred chunks — the settlement scripts are retained for JS hydration; only non-JS indexing needs nothing beyond the inlined HTML.
 - Crawler documents no longer carry a pending Suspense boundary for deferred sections far down a long page. React outlines a completed boundary (fallback in the HTML, content in a hidden segment swapped in by script) once the page passes about 12.8 KB. Renders that wait for everything to be ready now inline every completed boundary, so non-JS indexers see the content.
@@ -32,7 +31,7 @@ All notable changes to `@warlock.js/web` are documented here.
 
 ### Added
 
-- `@warlock.js/web/sitemap`: `sitemap.xml` and `robots.txt` for web apps. Configure them under `web.sitemap` and `web.robots` in `src/config/web.ts`. Pages control their own listing with `export const sitemap` (`false`, static options, or a function that supplies URLs for dynamic routes). Locales expand into hreflang alternates, and web switches to a sharded `SitemapIndex` above 50,000 URLs. The sitemap is generated at runtime boot (`web.sitemap.regenerate.onBoot`) or when the app calls `regenerateSitemap()` — never at `warlock build` and never while serving a request. See 5.16.1.
+- `@warlock.js/web/sitemap`: `sitemap.xml` and `robots.txt` for web apps. Configure them under `web.sitemap` and `web.robots` in `src/config/web.ts`. Pages control their own listing with `export const sitemap` (`false`, static options, or a function that supplies URLs for dynamic routes). Locales expand into hreflang alternates, and web switches to a sharded `SitemapIndex` above 50,000 URLs. The sitemap is generated at runtime boot (`web.sitemap.regenerate.onBoot`) or when the app calls `regenerateSitemap()` — never at `warlock build` and never while serving a request. See 5.17.0.
 - Web now wraps every page in a default client error boundary. A rejected `defer()` value with no app boundary renders the app's error page, or a built-in fallback, instead of unmounting the tree. The boundary resets on every navigation, refresh and locale change.
 - `PublicPageError`: throw it, or reject a deferred value with it, when its `message` is meant for visitors. In production, only a `PublicPageError` message reaches the browser.
 - Loaders receive `signal`, an `AbortSignal` that fires when the client disconnects.
