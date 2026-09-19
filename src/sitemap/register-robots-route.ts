@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Router } from "@warlock.js/core";
+import { resolveLocaleRouting } from "../server/locale-routing/resolve-locale-routing";
 import { buildRobotsTxt } from "./build-robots-txt";
 import { resolveRobotsConfig, resolveSitemapReferenceUrl } from "./resolve-robots-config";
 
@@ -37,8 +38,13 @@ export function registerRobotsRoute(router: Router, options: RegisterRobotsRoute
   if (!robotsConfig.enabled) return;
 
   const sitemapUrl = resolveSitemapReferenceUrl();
+  // `resolveLocaleRouting()`, not `readLocaleRouting()`: this route can be
+  // registered standalone (e.g. directly in tests), before either page-route
+  // installer has run `publishLocaleRouting()`. Reading `web.localeRouting`
+  // straight from config works regardless of installer order.
+  const localeRouting = resolveLocaleRouting();
 
   router.get("/robots.txt", ({ response }) => {
-    return response.text(buildRobotsTxt(robotsConfig, sitemapUrl));
+    return response.text(buildRobotsTxt(robotsConfig, sitemapUrl, localeRouting));
   });
 }

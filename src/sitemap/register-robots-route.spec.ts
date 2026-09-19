@@ -84,6 +84,41 @@ describe("registerRobotsRoute", () => {
     expect(response.text).toHaveBeenCalledWith("User-agent: *\n");
   });
 
+  it("expands disallow rules for every prefixed locale under an active strategy", async () => {
+    config.set("app", { localeCode: "en", localeCodes: ["en", "ar"] });
+    config.set("web", {
+      robots: { enabled: true, groups: [{ userAgent: "*", disallow: ["/admin"] }] },
+      sitemap: { enabled: false },
+      localeRouting: { strategy: "prefix-except-default" },
+    });
+
+    const { router, routes } = capturingRouter();
+    registerRobotsRoute(router, { publicDir: publicDir() });
+
+    const response = { text: vi.fn() };
+    await routes.get("/robots.txt")!({ request: {} as never, response: response as never });
+
+    expect(response.text).toHaveBeenCalledWith(
+      "User-agent: *\nDisallow: /admin\nDisallow: /ar/admin\n",
+    );
+  });
+
+  it("does not expand disallow rules when localeRouting is unset (strategy none)", async () => {
+    config.set("app", { localeCode: "en", localeCodes: ["en", "ar"] });
+    config.set("web", {
+      robots: { enabled: true, groups: [{ userAgent: "*", disallow: ["/admin"] }] },
+      sitemap: { enabled: false },
+    });
+
+    const { router, routes } = capturingRouter();
+    registerRobotsRoute(router, { publicDir: publicDir() });
+
+    const response = { text: vi.fn() };
+    await routes.get("/robots.txt")!({ request: {} as never, response: response as never });
+
+    expect(response.text).toHaveBeenCalledWith("User-agent: *\nDisallow: /admin\n");
+  });
+
   it("defers to an app-shipped public/robots.txt and registers no route", () => {
     config.set("web", { robots: { enabled: true, groups: [{ userAgent: "*" }] } });
     const warn = vi.fn();
