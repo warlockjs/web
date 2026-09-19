@@ -51,6 +51,7 @@ import {
   type RequestStylesheetUrlResolver,
 } from "./document-stylesheet-urls";
 import type { DeferSettlement } from "./defer-settlement";
+import { createSettledThenable } from "../loaders/settled-thenable";
 
 export { escapePayload, PAYLOAD_SCRIPT_ID };
 export type { BufferedCookie };
@@ -638,6 +639,19 @@ async function finishRender(
   // `bundle.deferredKeys` for crawler mode — see `RenderedPage.usesDefer`.
   const usesDefer = (bundle.deferredKeys?.length ?? 0) > 0;
 
+  // Set only by a successful `awaitAndInlineDeferred` pass for a DATA
+  // request (never a crawler's document — see that block). Its `data` prop
+  // (`bundle.pageData`) still needs the settled-thenable shape while the
+  // page tree actually renders below, so `use()` in a `<Suspense>` reads it
+  // synchronously the same way a crawler's document does; but a data
+  // response has no hydration to feed the way a document's embedded
+  // `#__WARLOCK_DATA__` does, so its OWN wire keeps inlining the plain
+  // resolved value exactly as before this fix
+  // (`__tests__/server/defer-data-request.spec.ts`). Deferred to run AFTER
+  // the render below has read the thenable, not inline in that block, which
+  // runs before the page tree is ever built.
+  let restoreInlineDeferredForDataWire: (() => void) | undefined;
+
   // A page middleware short-circuit that (a) is a FULL-DOCUMENT request and
   // (b) never wrote the real HTTP reply itself gets handled below instead of
   // the empty-body branch — see the two cases right after this block. Every
@@ -744,12 +758,39 @@ async function finishRender(
     if (rejectedIndex === -1) {
       const pageDataRecord = (bundle.pageData ?? {}) as Record<string, unknown>;
 
+      // A settled-but-not-yet-tracked value would still make `use()` suspend
+      // once before reading it — `createSettledThenable` is what lets the
+      // page tree below read it synchronously, with no fallback ever
+      // rendered, in EITHER trigger of this branch (a crawler's document or
+      // a data request's own escalation-loop render, which runs regardless
+      // of `dataRequest` to prove the tree safe before streaming/returning
+      // it).
       deferredKeys.forEach((key, index) => {
-        pageDataRecord[key] = (settled[index] as { ok: true; value: unknown }).value;
+        pageDataRecord[key] = createSettledThenable(
+          (settled[index] as { ok: true; value: unknown }).value,
+        );
       });
 
       bundle.pageData = pageDataRecord;
-      bundle.deferredKeys = undefined;
+
+      // Crawler document ONLY: `deferredKeys`/`deferredSettlements` stay
+      // exactly as an ordinary streamed `defer()` page leaves them, so the
+      // SAME downstream stops that already serve that page —
+      // `buildHydrationPayload`'s `deferred` list and
+      // `wrapPipeableStreamForDeferredEmission`'s `__WARLOCK_DEFER__`
+      // chunk, both below — settle these keys through the document-scope
+      // registry (`client/runtime/defer-registry.ts`) a second time, this
+      // time for the client. A JS-executing crawler's hydration then reads
+      // an already-fulfilled promise instead of the raw value `use()`
+      // cannot accept — no second mechanism, the one streaming already has.
+      if (dataRequest) {
+        restoreInlineDeferredForDataWire = () => {
+          deferredKeys.forEach((key, index) => {
+            pageDataRecord[key] = (settled[index] as { ok: true; value: unknown }).value;
+          });
+          bundle.deferredKeys = undefined;
+        };
+      }
     } else {
       // Reconstruct a throwable from the wire-shape settlement error so this
       // reaches `buildErrorRecord` exactly the way an ordinary page-loader
@@ -1023,6 +1064,15 @@ async function finishRender(
       durationMs: performance.now() - renderShellStartedAt,
     });
   }
+
+  // The data-request inline path's own wire restore (see where it is set,
+  // above): both render passes above (the escalation loop's synchronous
+  // proof pass, and the streaming pass just above) have already read
+  // `bundle.pageData` — with the settled thenable in place, neither ever
+  // suspended on it — so it is safe to put the plain value back now, before
+  // anything downstream builds the actual JSON body this request answers
+  // with.
+  restoreInlineDeferredForDataWire?.();
 
   // Stage 2: a page with deferred keys gets its stream wrapped so each
   // settlement writes a `__WARLOCK_DEFER__` chunk after the shell has

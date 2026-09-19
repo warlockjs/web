@@ -67,16 +67,42 @@ async function flushAsyncWork(rounds = 5): Promise<void> {
 }
 
 describe("renderPageRequest — crawler: true (a detected crawler's document request)", () => {
-  it("inlines the resolved deferred value, writes no bytes before it settles, and carries no defer wire-shape", async () => {
-    let releaseReviews!: (value: unknown) => void;
-    const reviews = new Promise((resolve) => {
+  it("inlines the deferred value as an already-settled thenable use() reads with no fallback, and still settles the same key for hydration", async () => {
+    let releaseReviews!: (value: { id: number; rating: number }) => void;
+    const reviews = new Promise<{ id: number; rating: number }>((resolve) => {
       releaseReviews = resolve;
     });
 
+    // The stream-deferred-data skill contract: a page reads a deferred key
+    // through `use()` inside `<Suspense>`, exactly like the ordinary
+    // streaming case — this component is what the pre-fix bug made throw
+    // "An unsupported type was passed to use()" during crawler SSR.
+    function Reviews({
+      reviews: reviewsData,
+    }: {
+      reviews: Promise<{ id: number; rating: number }>;
+    }) {
+      const value = use(reviewsData);
+      return createElement("span", null, `rating:${value.rating}`);
+    }
+
     const page = {
       loader: async () => defer({ greeting: "Hello crawler", reviews }),
-      default: ({ data }: { data: { greeting: string } }) =>
-        createElement("main", null, createElement("h1", null, data.greeting)),
+      default: ({
+        data,
+      }: {
+        data: { greeting: string; reviews: Promise<{ id: number; rating: number }> };
+      }) =>
+        createElement(
+          "main",
+          null,
+          createElement("h1", null, data.greeting),
+          createElement(
+            Suspense,
+            { fallback: "LOADING" },
+            createElement(Reviews, { reviews: data.reviews }),
+          ),
+        ),
     };
     const entry = pageEntry("/dashboard", page);
     const http = createCoreHttp({ url: "/dashboard", headers: { "user-agent": "Googlebot/2.1" } });
@@ -108,14 +134,23 @@ describe("renderPageRequest — crawler: true (a detected crawler's document req
 
     const wireHtml = Buffer.concat(chunks).toString("utf8");
 
+    // `use()` read the already-settled value synchronously — the fallback
+    // never rendered, and the resolved content is already in the shell.
     expect(wireHtml).toContain("Hello crawler");
-    expect(wireHtml).not.toContain("__WARLOCK_DEFER__");
-    expect(wireHtml).not.toContain("DEFER_BOOTSTRAP");
+    expect(wireHtml).toContain("rating:5");
+    expect(wireHtml).not.toContain("LOADING");
+
+    // The same document is what a JS-executing crawler (Googlebot) hydrates:
+    // its `use(data.reviews)` needs a promise-shaped value too, so the
+    // document-scope registry's `__WARLOCK_DEFER__` chunk settles this same
+    // key for the client — no second mechanism, the one an ordinary streamed
+    // `defer()` page already has.
+    expect(wireHtml).toContain("__WARLOCK_DEFER__");
+    expect(wireHtml).toContain("__WARLOCK_DEFERRED__");
 
     const payload = buildHydrationPayload(rendered.bundle!, "en");
-    expect(payload.deferred).toBeUndefined();
-    expect(payload.pageData).toEqual({ greeting: "Hello crawler", reviews: { id: 1, rating: 5 } });
-    expect(JSON.stringify(payload)).not.toContain("__WARLOCK_DEFER__");
+    expect(payload.deferred).toEqual(["reviews"]);
+    expect(payload.pageData).toEqual({ greeting: "Hello crawler" });
   });
 
   it("renders the error page with the failure's real status when a deferred value rejects", async () => {
@@ -208,7 +243,7 @@ describe("createPageRouteHandler — crawler wiring end to end", () => {
     };
   }
 
-  it("Googlebot on a defer() page receives the fully resolved document and Vary: User-Agent", async () => {
+  it("Googlebot on a defer() page receives the fully resolved document, still settled via the same __WARLOCK_DEFER__ chunk a browser gets, and Vary: User-Agent", async () => {
     const handler = handlerFor(deferPage());
     const http = createCoreHttp({
       url: "/dashboard",
@@ -221,7 +256,11 @@ describe("createPageRouteHandler — crawler wiring end to end", () => {
 
     const wireHtml = Buffer.concat(chunks).toString("utf8");
     expect(wireHtml).toContain("Hello streaming");
-    expect(wireHtml).not.toContain("__WARLOCK_DEFER__");
+    // The resolved content is already in the shell (no wait for a chunk to
+    // see it) — but a JS-executing crawler still hydrates this document, and
+    // its own `use(data.reviews)` needs the same promise-shaped value the
+    // server read: the document-scope registry's chunk, not a raw value.
+    expect(wireHtml).toContain("__WARLOCK_DEFER__");
     expect(http.reply.appliedHeaders["vary"]).toBe("User-Agent");
   });
 
@@ -276,7 +315,7 @@ describe("createPageRouteHandler — crawler wiring end to end", () => {
 
     const wireHtml = Buffer.concat(chunks).toString("utf8");
     expect(wireHtml).toContain("Hello streaming");
-    expect(wireHtml).not.toContain("__WARLOCK_DEFER__");
+    expect(wireHtml).toContain("__WARLOCK_DEFER__");
   });
 
   it("a plain page (no defer()) never carries Vary, for any user agent", async () => {
