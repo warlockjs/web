@@ -101,10 +101,19 @@ export { refresh } from "./client/navigation/refresh";
 // for the current route with `?locale=<code>` on the FETCH URL only (the
 // server persists the choice into its `locale` cookie on that same request —
 // see `change-locale-code.ts`'s header for why the client never writes one
-// itself), then the same tree-swap `refresh()` uses. No hook is exported: like
-// `refresh()`, it needs no React context, only the module-level runtime
-// `NavigationRoot` connects.
+// itself), then the same tree-swap `refresh()` uses. It needs no React
+// context, only the module-level runtime `NavigationRoot` connects, so it
+// stays callable from anywhere.
+//
+// `useChangeLocaleCode()` adds the one thing a component cannot get from the
+// function: whether ITS switch is in flight. A picker with no pending state is
+// one a user clicks twice. The state is per-hook-instance on purpose — two
+// pickers on a page should not both light up when one is used.
 export { changeLocaleCode } from "./client/navigation/change-locale-code";
+export {
+  useChangeLocaleCode,
+  type UseChangeLocaleCode,
+} from "./client/navigation/use-change-locale-code";
 
 // Card 1db238ca: an app-owned callback for a client-side failure (an
 // uncaught `window` error, an unhandled promise rejection, a React
