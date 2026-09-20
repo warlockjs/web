@@ -25,15 +25,19 @@
  */
 import { foldLayoutLoaders } from "./fold-layout-loaders";
 import type { LayoutModuleShape } from "./page-module-shapes";
+import { resolveLayoutRobots } from "./resolve-layout-robots";
 
 export function composeLayoutModules(
   modules: readonly LayoutModuleShape[],
   hostIndex: number,
+  sourceFiles?: readonly string[],
 ): LayoutModuleShape {
   const host = modules[hostIndex];
+  const robots = resolveLayoutRobots(modules, sourceFiles);
 
   return {
     ...host,
+    ...(robots === undefined ? {} : { metadata: { robots } }),
     middleware: modules.flatMap((layoutModule) => [...(layoutModule.middleware ?? [])]),
     loader: foldLayoutLoaders(
       modules.map((layoutModule) => layoutModule.loader),

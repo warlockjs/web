@@ -35,10 +35,20 @@ describe("resolvePageMetadata — the success path", () => {
     expect(resolve()).toEqual({ metadata: undefined });
   });
 
+  it("uses static layout robots when the page exports no metadata", () => {
+    expect(resolve({ layoutRobots: "noindex" })).toEqual({ metadata: { robots: "noindex" } });
+  });
+
   it("returns the object form as-is", () => {
     const metadata = { title: "Contact us" };
 
     expect(resolve({ metadata })).toEqual({ metadata });
+  });
+
+  it("keeps layout robots for a static title-only page object", () => {
+    expect(resolve({ metadata: { title: "Contact us" }, layoutRobots: "noindex" })).toEqual({
+      metadata: { title: "Contact us", robots: "noindex" },
+    });
   });
 
   it("calls the function form with the loader's data and no error", () => {
@@ -47,6 +57,26 @@ describe("resolvePageMetadata — the success path", () => {
 
     expect(resolve({ metadata, data })).toEqual({ metadata: { title: "Home" } });
     expect(metadata).toHaveBeenCalledWith({ data, shared });
+  });
+
+  it("keeps layout robots for a title-only metadata function", () => {
+    const metadata = vi.fn(() => ({ title: "Home" })) as unknown as PageMetadata<PipelineLoader>;
+
+    expect(resolve({ metadata, data: {}, layoutRobots: "noindex" })).toEqual({
+      metadata: { title: "Home", robots: "noindex" },
+    });
+  });
+
+  it("keeps layout robots when a page explicitly leaves robots undefined", () => {
+    expect(
+      resolve({ metadata: { title: "Home", robots: undefined }, layoutRobots: "noindex" }),
+    ).toEqual({ metadata: { title: "Home", robots: "noindex" } });
+  });
+
+  it("lets a concrete page robots value override the layout default", () => {
+    expect(resolve({ metadata: { robots: "index, follow" }, layoutRobots: "noindex" })).toEqual({
+      metadata: { robots: "index, follow" },
+    });
   });
 });
 
@@ -86,6 +116,17 @@ describe("resolvePageMetadata — the error path", () => {
     expect(ERROR_PAGE_METADATA.robots).toBe("noindex");
   });
 
+  it("never lets inherited index robots replace error noindex", () => {
+    expect(
+      resolve({
+        metadata: { title: "Home" },
+        layoutRobots: "index, follow",
+        failed: true,
+        error: new Error("loader failed"),
+      }),
+    ).toEqual({ metadata: ERROR_PAGE_METADATA });
+  });
+
   it("skips the object form too — a failed page is not 'Sign in'", () => {
     expect(
       resolve({ metadata: { title: "Sign in" }, failed: true, error: new Error("x") }),
@@ -118,7 +159,8 @@ describe("resolvePageMetadata — Stage 2 deferred keys (contract rule 11)", () 
       pagePath: "/products/1",
     });
 
-    expect(result.metadata).toBeUndefined();
+    expect(result.metadata).toBe(ERROR_PAGE_METADATA);
+    expect(result.metadata?.robots).toBe("noindex");
     expect(result.thrown).toBeInstanceOf(DeferredKeyInMetadataError);
     expect((result.thrown as DeferredKeyInMetadataError).key).toBe("reviews");
     expect((result.thrown as DeferredKeyInMetadataError).pagePath).toBe("/products/1");
@@ -141,7 +183,10 @@ describe("resolvePageMetadata — a metadata function that throws", () => {
 
     // Reported, not thrown: the caller turns it into an error record so the
     // boundary renders and the framework still owns the status.
-    expect(resolve({ metadata, data: {} })).toEqual({ metadata: undefined, thrown: boom });
+    expect(resolve({ metadata, data: {}, layoutRobots: "index, follow" })).toEqual({
+      metadata: ERROR_PAGE_METADATA,
+      thrown: boom,
+    });
   });
 
   it("never reports a throw on the error path — there is nothing left to run", () => {

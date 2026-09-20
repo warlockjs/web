@@ -337,7 +337,7 @@ async function composeLayoutLevel(
   const modules = await Promise.all(level.chain.map(loadLayout));
   const hostIndex = level.chain.indexOf(level.layoutFile);
 
-  return composeLayoutModules(modules, hostIndex);
+  return composeLayoutModules(modules, hostIndex, level.chain);
 }
 
 export type InstallPageRoutesOptions = {
@@ -568,11 +568,10 @@ export async function installPageRoutes(
       pageFile,
       layoutFile,
       // The layout slot's id resolves to the COMPOSED level — every layout's
-      // middleware, in chain order — and every other id goes straight to
-      // Vite. A one-layout chain has nothing to compose, so it is left to
-      // resolve as the exact module Vite hands back, untouched.
+      // middleware, in chain order, and its validated static metadata — while
+      // every other id goes straight to Vite.
       loadModule:
-        layoutLevel.chain.length > 1 && layoutFile !== undefined
+        layoutFile !== undefined
           ? (moduleId) =>
               moduleId === layoutFile
                 ? composeLayoutLevel({ ...layoutLevel, layoutFile }, loadLayout)

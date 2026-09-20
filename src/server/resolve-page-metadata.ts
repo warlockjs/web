@@ -71,6 +71,8 @@ export const ERROR_PAGE_METADATA: MetadataOutput = Object.freeze({
 export type ResolvePageMetadataInput = {
   /** The page module's `metadata` export — absent, object, or function. */
   metadata: PageMetadata<PipelineLoader> | undefined;
+  /** The composed layout's static metadata.robots, when it has one. */
+  layoutRobots?: string;
   /** `bundle.pageData`. Read only when `failed` is false. */
   data: unknown;
   /** The value an earlier stage already recorded. Diagnostics only. */
@@ -110,6 +112,12 @@ export type ResolvedPageMetadata = {
 /** The function arm of `PageMetadata`, for the one call this module makes. */
 type PageMetadataFunction = Extract<PageMetadata<PipelineLoader>, (...args: never) => unknown>;
 
+function withLayoutRobots(metadata: MetadataOutput | undefined, layoutRobots: string | undefined) {
+  if (layoutRobots === undefined || metadata?.robots !== undefined) return metadata;
+
+  return { ...metadata, robots: layoutRobots };
+}
+
 export function resolvePageMetadata(input: ResolvePageMetadataInput): ResolvedPageMetadata {
   if (input.failed) {
     return { metadata: ERROR_PAGE_METADATA };
@@ -118,7 +126,7 @@ export function resolvePageMetadata(input: ResolvePageMetadataInput): ResolvedPa
   const { metadata } = input;
 
   if (typeof metadata !== "function") {
-    return { metadata };
+    return { metadata: withLayoutRobots(metadata, input.layoutRobots) };
   }
 
   try {
@@ -129,12 +137,15 @@ export function resolvePageMetadata(input: ResolvePageMetadataInput): ResolvedPa
     );
 
     return {
-      metadata: (metadata as PageMetadataFunction)({
-        data: guardedData as Parameters<PageMetadataFunction>[0]["data"],
-        shared: input.shared,
-      }),
+      metadata: withLayoutRobots(
+        (metadata as PageMetadataFunction)({
+          data: guardedData as Parameters<PageMetadataFunction>[0]["data"],
+          shared: input.shared,
+        }),
+        input.layoutRobots,
+      ),
     };
   } catch (thrown) {
-    return { metadata: undefined, thrown };
+    return { metadata: ERROR_PAGE_METADATA, thrown };
   }
 }

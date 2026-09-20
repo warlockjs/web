@@ -5,8 +5,7 @@ import { resolveSitemapDeclaration } from "./resolve-layout-sitemap";
 
 /**
  * The precedence rule, exercised directly. It lives in one function so dev and
- * production cannot disagree about a sitemap, and this is where that function
- * is held to the contract (`contracts/layout-sitemap-and-robots-5.17.md`).
+ * production cannot disagree about a sitemap.
  *
  * Layout chains here are OUTERMOST FIRST, matching the chain `discoverPages`
  * builds — so the last entry is the nearest ancestor.
@@ -55,6 +54,26 @@ describe("resolveSitemapDeclaration — inheritance", () => {
 });
 
 describe("resolveSitemapDeclaration — a page beats every layout, WHOLESALE", () => {
+  it("validates every ancestor before returning a page override", () => {
+    const pageDeclarations = [false, { priority: 0.9 }, () => []];
+    const invalidOuterDeclarations = [() => [], { unsupported: true }];
+
+    for (const pageDeclared of pageDeclarations) {
+      for (const invalidOuter of invalidOuterDeclarations) {
+        try {
+          resolveSitemapDeclaration(pageDeclared, [
+            layout("src/web/layout.tsx", invalidOuter),
+            layout("src/web/docs/layout.tsx", { priority: 0.1 }),
+          ]);
+          expect.unreachable("the invalid layout should have been refused");
+        } catch (error) {
+          expect(error).toBeInstanceOf(SitemapLayoutDeclarationError);
+          expect((error as Error).message).toContain("src/web/layout.tsx");
+        }
+      }
+    }
+  });
+
   it("uses the page's declaration instead of the layout's", () => {
     expect(
       resolveSitemapDeclaration({ priority: 0.9 }, [
@@ -154,6 +173,55 @@ describe("resolveSitemapDeclaration — what a layout may NOT declare", () => {
     expect(() => resolveSitemapDeclaration(undefined, [layout("src/web/layout.tsx", [])])).toThrow(
       /an array/,
     );
+  });
+
+  it.each([null, new (class LayoutOptions {})()])(
+    "refuses a non-plain options declaration, naming its source",
+    (declaration) => {
+      try {
+        resolveSitemapDeclaration(undefined, [layout("src/web/layout.tsx", declaration)]);
+        expect.unreachable("the non-plain declaration should have been refused");
+      } catch (error) {
+        expect(error).toBeInstanceOf(SitemapLayoutDeclarationError);
+        expect((error as Error).message).toContain("src/web/layout.tsx");
+      }
+    },
+  );
+
+  it.each([
+    ["priority", -0.1],
+    ["priority", 1.1],
+    ["priority", Number.NaN],
+    ["changefreq", "sometimes"],
+    ["lastmod", "   "],
+    ["lastmod", new Date("invalid")],
+    ["locales", true],
+    ["localePaths", []],
+    ["localePaths", { "": "/x" }],
+    ["localePaths", { ar: 1 }],
+  ])("refuses an invalid `%s` value, naming its source and key", (key, value) => {
+    try {
+      resolveSitemapDeclaration(undefined, [layout("src/web/docs/layout.tsx", { [key]: value })]);
+      expect.unreachable("the invalid option should have been refused");
+    } catch (error) {
+      expect(error).toBeInstanceOf(SitemapLayoutDeclarationError);
+      expect((error as Error).message).toContain("src/web/docs/layout.tsx");
+      expect((error as Error).message).toContain(`\`${key}\``);
+    }
+  });
+
+  it("accepts undefined option values and valid date serialization inputs", () => {
+    const declaration = {
+      priority: undefined,
+      changefreq: undefined,
+      lastmod: new Date("2026-09-20T00:00:00.000Z"),
+      locales: undefined,
+      localePaths: { ar: "", en: "/en/x" },
+    };
+
+    expect(
+      resolveSitemapDeclaration(undefined, [layout("src/web/layout.tsx", declaration)]),
+    ).toEqual(declaration);
   });
 
   it("does NOT validate the PAGE's declaration — that is the page contract's job, not this one's", () => {

@@ -19,4 +19,6 @@ export type LayoutModuleShape = {
   /** The layout's guards, in declaration order. */
   middleware?: readonly PipelineMiddleware[];
   loader?: PipelineLoader;
+  /** A static robots directive inherited by pages beneath this layout. */
+  metadata?: { robots?: string };
 };

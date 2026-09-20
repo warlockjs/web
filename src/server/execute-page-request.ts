@@ -611,6 +611,8 @@ export async function executePageRequest<TResult = PageDataBundle>(
 
     const resolved = resolvePageMetadata({
       metadata: triple.page.metadata,
+      layoutRobots:
+        typeof triple.layout.metadata === "function" ? undefined : triple.layout.metadata?.robots,
       data: bundle.pageData,
       error: bundle.error?.error,
       failed: Boolean(bundle.error),

@@ -1,15 +1,3 @@
-/**
- * The ONE place the layout/page sitemap precedence rule lives.
- *
- * Both pipelines call this. Dev's page source imports page and layout files;
- * production's reads the built manifest, which already carries each page's
- * layout modules. Neither re-derives the rule, so dev and production cannot
- * disagree about a sitemap without the disagreement being a single edited line
- * — which is what canon `b8e6ede3` asks for after five of nine v5.2 blockers
- * turned out to be the same two-pipelines-drifted defect.
- *
- * Contract: `contracts/layout-sitemap-and-robots-5.17.md` (revision 4).
- */
 import { SitemapLayoutDeclarationError } from "./errors";
 import type { SitemapPageExport, SitemapPageOptions } from "./sitemap-page-export";
 
@@ -21,12 +9,9 @@ import type { SitemapPageExport, SitemapPageOptions } from "./sitemap-page-expor
  * its URLs with a function, and a layout may not. A layout states policy; it
  * does not produce data.
  *
- * The narrowing is safe, and this is the distinction rev 1 of the contract got
- * wrong. Canon `1ca1e8ae` warns about one export name reached by two different
- * MECHANISMS — a static parse in one position and a module read in the other.
- * Both positions here are read the same way, off the module. Accepting fewer
- * VALUES in one position is an ordinary, documented difference, the same way
- * `prefix` is layout-only.
+ * Both positions are read the same way, off the module. Accepting fewer values
+ * in one position is an ordinary, documented difference, the same way `prefix`
+ * is layout-only.
  */
 export type LayoutSitemapDeclaration = false | SitemapPageOptions;
 
@@ -39,13 +24,34 @@ export type LayoutSitemapDeclaration = false | SitemapPageOptions;
  * read is indistinguishable from one that works, which is the same silence as
  * a guard that abstains rather than fails.
  */
-const SITEMAP_OPTION_KEYS: readonly (keyof SitemapPageOptions)[] = [
-  "priority",
-  "changefreq",
-  "lastmod",
-  "locales",
-  "localePaths",
-];
+const CHANGE_FREQS = ["always", "hourly", "daily", "weekly", "monthly", "yearly", "never"];
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function isLastmod(value: unknown): value is string | Date {
+  return (
+    (typeof value === "string" && value.trim() !== "") ||
+    (value instanceof Date && !Number.isNaN(value.getTime()))
+  );
+}
+
+const SITEMAP_OPTION_VALIDATORS = {
+  priority: (value: unknown) =>
+    typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1,
+  changefreq: (value: unknown) => typeof value === "string" && CHANGE_FREQS.includes(value),
+  lastmod: isLastmod,
+  locales: (value: unknown) => value === false,
+  localePaths: (value: unknown) =>
+    isPlainObject(value) &&
+    Object.entries(value).every(([locale, path]) => locale.length > 0 && typeof path === "string"),
+} satisfies Record<keyof SitemapPageOptions, (value: unknown) => boolean>;
+
+const SITEMAP_OPTION_KEYS = Object.keys(SITEMAP_OPTION_VALIDATORS) as (keyof SitemapPageOptions)[];
 
 /**
  * Narrows and validates one layout's declaration.
@@ -76,10 +82,10 @@ export function readLayoutSitemapDeclaration(
     );
   }
 
-  if (typeof declared !== "object" || declared === null || Array.isArray(declared)) {
+  if (!isPlainObject(declared)) {
     throw new SitemapLayoutDeclarationError(
       sourceFile,
-      `it is ${Array.isArray(declared) ? "an array" : typeof declared}. Declare \`false\` or an options object.`,
+      `it is ${Array.isArray(declared) ? "an array" : typeof declared}. Declare \`false\` or a plain options object.`,
     );
   }
 
@@ -92,6 +98,17 @@ export function readLayoutSitemapDeclaration(
       sourceFile,
       `it carries ${unknownKeys.map((key) => `\`${key}\``).join(", ")}, which the sitemap does not read. Valid options: ${SITEMAP_OPTION_KEYS.join(", ")}.`,
     );
+  }
+
+  for (const key of SITEMAP_OPTION_KEYS) {
+    const value = declared[key];
+
+    if (value !== undefined && !SITEMAP_OPTION_VALIDATORS[key](value)) {
+      throw new SitemapLayoutDeclarationError(
+        sourceFile,
+        `option \`${key}\` has an invalid value.`,
+      );
+    }
   }
 
   return declared as SitemapPageOptions;
@@ -113,7 +130,7 @@ export type LayoutSitemapSource = {
  *    default. A merged value is one no single file states, and the first
  *    question when an entry is wrong is "where did this come from?". Wholesale
  *    override answers that with a filename; merging answers it with a
- *    derivation. Derivations are how `ad861076` and `59e3b228` both happened.
+ *    derivation.
  * 2. otherwise the NEAREST ancestor layout that declared one — the more
  *    specific statement, the same way a nearer `prefix` is.
  * 3. otherwise nothing, and the page behaves exactly as it does today.
@@ -125,8 +142,6 @@ export function resolveSitemapDeclaration(
   pageDeclared: unknown,
   layouts: readonly LayoutSitemapSource[],
 ): SitemapPageExport | undefined {
-  if (pageDeclared !== undefined) return pageDeclared as SitemapPageExport;
-
   let nearest: LayoutSitemapDeclaration | undefined;
 
   for (const layout of layouts) {
@@ -134,6 +149,8 @@ export function resolveSitemapDeclaration(
 
     if (declaration !== undefined) nearest = declaration;
   }
+
+  if (pageDeclared !== undefined) return pageDeclared as SitemapPageExport;
 
   return nearest;
 }

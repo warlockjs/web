@@ -60,4 +60,18 @@ describe("composeLayoutModules", () => {
 
     await expect(composed.loader?.({} as never)).resolves.toBe("host-data");
   });
+
+  it("adds the nearest defined static robots directive from the full layout chain", () => {
+    const composed = composeLayoutModules(
+      [
+        { metadata: { robots: "index,follow" } },
+        { middleware: [], metadata: { robots: "noindex" } },
+        { default: function Host() {} },
+      ],
+      2,
+      ["src/web/layout.tsx", "src/web/admin/layout.tsx", "src/web/admin/users/layout.tsx"],
+    );
+
+    expect(composed.metadata).toEqual({ robots: "noindex" });
+  });
 });

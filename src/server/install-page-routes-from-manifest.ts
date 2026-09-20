@@ -245,6 +245,7 @@ function composeLayoutLevel(
   return composeLayoutModules(
     page.layouts.map((layout) => layout.module as LayoutModuleShape),
     hostIndex,
+    page.layouts.map((layout) => layout.sourceFile),
   );
 }
 
@@ -408,12 +409,9 @@ export function installPageRoutesFromManifest(
 
     // The layout slot's id resolves to the COMPOSED level — every layout's
     // middleware, in chain order — and every other id goes straight to the
-    // manifest lookup. A one-layout chain has nothing to compose, so it is left
-    // to resolve as the exact namespace object the manifest carries, untouched.
-    const composedLayout =
-      page.layouts.length > 1 && layout !== undefined
-        ? composeLayoutLevel(page, layout)
-        : undefined;
+    // manifest lookup. Composition also validates a single layout's static
+    // metadata before its module reaches the render pipeline.
+    const composedLayout = layout !== undefined ? composeLayoutLevel(page, layout) : undefined;
 
     // Every registered handler gets ITS OWN immutable, ordered, deduped CSS
     // chain: root, then every matched layout outer to inner (`page.layouts`,
