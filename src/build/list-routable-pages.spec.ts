@@ -81,3 +81,71 @@ describe("listRoutablePages", () => {
     expect(pages[0]?.sitemap).toBe(false);
   });
 });
+
+/**
+ * The DEV half of layout sitemap inheritance
+ * (`contracts/layout-sitemap-and-robots-5.17.md`).
+ *
+ * Production's half is covered in `../sitemap/manifest-sitemap-page-source.spec.ts`.
+ * Both halves need their own coverage precisely because they are the two
+ * pipelines canon `b8e6ede3` is about: a test of one says nothing about the
+ * other, and "it works in dev" is how every one of those defects was first
+ * reported.
+ */
+describe("listRoutablePages — layout declarations", () => {
+  it("carries each layout's `sitemap` export, outermost first", async () => {
+    const appRoot = makeAppTree({
+      // Renders nothing — a prefix-only layout. Two RENDERING layouts on one
+      // path are refused, so this is also the realistic shape, and it proves a
+      // non-rendering ancestor's declaration is still carried.
+      "src/web/docs/layout.tsx": [
+        'export const prefix = "/docs";',
+        "export const sitemap = { priority: 0.2 };",
+      ].join("\n"),
+      "src/web/docs/api/layout.tsx": [
+        "export const sitemap = false;",
+        "export default function Layout() { return null; }",
+      ].join("\n"),
+      "src/web/docs/api/reference.page.tsx": ["export default function Page() { return null; }"].join(
+        "\n",
+      ),
+    });
+
+    const [page] = await listRoutablePages({ appRoot });
+
+    expect(page?.layoutSitemaps?.map((layout) => layout.declared)).toEqual([
+      { priority: 0.2 },
+      false,
+    ]);
+  });
+
+  it("reports a layout that declared nothing as `undefined`, keeping its position", async () => {
+    // Order is load-bearing: the precedence rule takes the LAST declaration, so
+    // a silent layout dropping out of the chain would hand the wrong
+    // ancestor's policy to the page.
+    const appRoot = makeAppTree({
+      "src/web/shop/layout.tsx": ['export const prefix = "/shop";'].join("\n"),
+      "src/web/shop/items/layout.tsx": [
+        "export const sitemap = false;",
+        "export default function Layout() { return null; }",
+      ].join("\n"),
+      "src/web/shop/items/list.page.tsx": [
+        "export default function Page() { return null; }",
+      ].join("\n"),
+    });
+
+    const [page] = await listRoutablePages({ appRoot });
+
+    expect(page?.layoutSitemaps?.map((layout) => layout.declared)).toEqual([undefined, false]);
+  });
+
+  it("reports an empty chain for a page with no layouts, rather than omitting the field", async () => {
+    const appRoot = makeAppTree({
+      "src/web/plain.page.tsx": ["export default function Page() { return null; }"].join("\n"),
+    });
+
+    const [page] = await listRoutablePages({ appRoot });
+
+    expect(page?.layoutSitemaps).toEqual([]);
+  });
+});
