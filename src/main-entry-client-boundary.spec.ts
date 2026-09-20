@@ -31,35 +31,39 @@ describe("main entry (index.ts) client-boundary regression", () => {
    */
   const BUNDLE_TIMEOUT_MS = 30_000;
 
-  it("never bundles page-cache-driver.ts, and never imports @warlock.js/cache", async () => {
-    const entry = path.join(__dirname, "index.ts");
+  it(
+    "never bundles page-cache-driver.ts, and never imports @warlock.js/cache",
+    async () => {
+      const entry = path.join(__dirname, "index.ts");
 
-    const result = await build({
-      entryPoints: [entry],
-      bundle: true,
-      write: false,
-      metafile: true,
-      platform: "browser",
-      format: "esm",
-      logLevel: "silent",
-      packages: "external", // every bare specifier ("react", "@warlock.js/*", ...) stays external
-      outfile: path.join(__dirname, "__out__.js"), // virtual — write: false means nothing lands on disk
-    });
+      const result = await build({
+        entryPoints: [entry],
+        bundle: true,
+        write: false,
+        metafile: true,
+        platform: "browser",
+        format: "esm",
+        logLevel: "silent",
+        packages: "external", // every bare specifier ("react", "@warlock.js/*", ...) stays external
+        outfile: path.join(__dirname, "__out__.js"), // virtual — write: false means nothing lands on disk
+      });
 
-    const inputPaths = Object.keys(result.metafile.inputs).map((p) => path.resolve(p));
-    const pageCacheDriverInputs = inputPaths.filter((p) =>
-      p.replace(/\\/g, "/").endsWith("src/server/page-cache-driver.ts"),
-    );
-    expect(pageCacheDriverInputs).toEqual([]);
+      const inputPaths = Object.keys(result.metafile.inputs).map((p) => path.resolve(p));
+      const pageCacheDriverInputs = inputPaths.filter((p) =>
+        p.replace(/\\/g, "/").endsWith("src/server/page-cache-driver.ts"),
+      );
+      expect(pageCacheDriverInputs).toEqual([]);
 
-    const externalImports = new Set<string>();
-    for (const input of Object.values(result.metafile.inputs)) {
-      for (const imp of input.imports) {
-        if (imp.external) externalImports.add(imp.path);
+      const externalImports = new Set<string>();
+      for (const input of Object.values(result.metafile.inputs)) {
+        for (const imp of input.imports) {
+          if (imp.external) externalImports.add(imp.path);
+        }
       }
-    }
-    expect(externalImports.has("@warlock.js/cache")).toBe(false);
-  }, BUNDLE_TIMEOUT_MS);
+      expect(externalImports.has("@warlock.js/cache")).toBe(false);
+    },
+    BUNDLE_TIMEOUT_MS,
+  );
 
   /**
    * The same defect shape, one release later. `listRoutablePages` was added to
@@ -71,25 +75,29 @@ describe("main entry (index.ts) client-boundary regression", () => {
    *
    * The build surface lives on `@warlock.js/web/build` instead.
    */
-  it("never bundles src/build/** — the build surface is its own subpath", async () => {
-    const entry = path.join(__dirname, "index.ts");
+  it(
+    "never bundles src/build/** — the build surface is its own subpath",
+    async () => {
+      const entry = path.join(__dirname, "index.ts");
 
-    const result = await build({
-      entryPoints: [entry],
-      bundle: true,
-      write: false,
-      metafile: true,
-      platform: "browser",
-      format: "esm",
-      logLevel: "silent",
-      packages: "external",
-      outfile: path.join(__dirname, "__out__.js"),
-    });
+      const result = await build({
+        entryPoints: [entry],
+        bundle: true,
+        write: false,
+        metafile: true,
+        platform: "browser",
+        format: "esm",
+        logLevel: "silent",
+        packages: "external",
+        outfile: path.join(__dirname, "__out__.js"),
+      });
 
-    const buildInputs = Object.keys(result.metafile.inputs)
-      .map((inputPath) => path.resolve(inputPath).split(path.sep).join("/"))
-      .filter((inputPath) => inputPath.includes("/web/src/build/"));
+      const buildInputs = Object.keys(result.metafile.inputs)
+        .map((inputPath) => path.resolve(inputPath).split(path.sep).join("/"))
+        .filter((inputPath) => inputPath.includes("/web/src/build/"));
 
-    expect(buildInputs).toEqual([]);
-  }, BUNDLE_TIMEOUT_MS);
+      expect(buildInputs).toEqual([]);
+    },
+    BUNDLE_TIMEOUT_MS,
+  );
 });
