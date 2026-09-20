@@ -134,3 +134,107 @@ describe("NonLiteralRouteExportError — what the app developer is told", () => 
     expect(message).toContain('export const prefix = "/shop"');
   });
 });
+
+/**
+ * Layout `sitemap`, per `contracts/layout-sitemap-and-robots-5.17.md`.
+ *
+ * The reader's job here is narrow: read the two accepted forms, and refuse
+ * everything else with a message naming what it found. What the value MEANS —
+ * precedence against a page's own declaration, nearest-ancestor-wins — belongs
+ * to the caller, exactly as it does for `route` and `prefix`.
+ */
+describe("readRouteExports — a layout's `sitemap`", () => {
+  const layout = "src/web/admin/layout.tsx";
+
+  it("reads `false` — the whole subtree is out of the sitemap", () => {
+    expect(read("export const sitemap = false;", layout)).toEqual({
+      ok: true,
+      sitemap: false,
+    });
+  });
+
+  it("reads an object of static defaults descendants inherit", () => {
+    expect(
+      read('export const sitemap = { changefreq: "weekly", priority: 0.5 };', layout),
+    ).toEqual({
+      ok: true,
+      sitemap: { changefreq: "weekly", priority: 0.5 },
+    });
+  });
+
+  it("reads a boolean value inside the defaults object", () => {
+    expect(read("export const sitemap = { images: true };", layout)).toEqual({
+      ok: true,
+      sitemap: { images: true },
+    });
+  });
+
+  it("reads an empty object without inventing anything", () => {
+    expect(read("export const sitemap = {};", layout)).toEqual({ ok: true, sitemap: {} });
+  });
+
+  it("refuses `true`, which would be a word with no behaviour behind it", () => {
+    const result = read("export const sitemap = true;", layout);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    // A layout cannot put a page in the sitemap that would not be there
+    // anyway, so accepting `true` would define a setting that does nothing.
+    expect(result.rejection.detail).toContain("`true`");
+    expect(result.rejection.exportName).toBe("sitemap");
+  });
+
+  it("refuses a value that would have to be evaluated to know", () => {
+    const result = read("export const sitemap = buildSitemapPolicy();", layout);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.rejection.detail).toContain("function call");
+  });
+
+  it("refuses a spread, which hides another object behind a reference", () => {
+    const result = read("export const sitemap = { ...shared, priority: 0.5 };", layout);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.rejection.detail).toContain("spreads");
+  });
+
+  it("refuses a computed key", () => {
+    const result = read("export const sitemap = { [key]: 0.5 };", layout);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.rejection.detail).toContain("computed");
+  });
+
+  it("refuses a non-literal value inside the object, and names the key", () => {
+    const result = read("export const sitemap = { priority: computePriority() };", layout);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.rejection.detail).toContain("priority");
+    expect(result.rejection.detail).toContain("function call");
+  });
+
+  it("refuses it when exported through an export list", () => {
+    const result = read("const sitemap = false; export { sitemap };", layout);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.rejection.exportName).toBe("sitemap");
+    expect(result.rejection.detail).toContain("export list");
+  });
+
+  it("reads `sitemap` alongside `prefix` on the same layout", () => {
+    expect(
+      read('export const prefix = "/admin";\nexport const sitemap = false;', layout),
+    ).toEqual({ ok: true, prefix: "/admin", sitemap: false });
+  });
+
+  it("still reads a file that declares none of the reserved names", () => {
+    expect(read("export default function Layout() { return null; }", layout)).toEqual({
+      ok: true,
+    });
+  });
+});

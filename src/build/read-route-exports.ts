@@ -1,6 +1,6 @@
 /**
- * Reads a page's `route` export and a layout's `prefix` export STATICALLY —
- * by parsing the source, never by loading the module.
+ * Reads a page's `route` export and a layout's `prefix` and `sitemap` exports
+ * STATICALLY — by parsing the source, never by loading the module.
  *
  * The build has to know a page's declared route before anything is built, and
  * the only other way to learn it is to run the page: import the module, let its
@@ -11,10 +11,10 @@
  * REFUSED rather than guessed: a wrong route path that builds is worse than a
  * build that stops and says which file to change.
  *
- * `route` and `prefix` are names the page contract reserves, so this reads them
- * out of whichever file it is given and refuses a computed one wherever it
- * appears — a page that exports `prefix`, or a layout that exports `route`, is
- * using a name the framework already owns.
+ * `route`, `prefix` and `sitemap` are names the page contract reserves, so this
+ * reads them out of whichever file it is given and refuses a computed one
+ * wherever it appears — a page that exports `prefix`, or a layout that exports
+ * `route`, is using a name the framework already owns.
  *
  * Single responsibility, deliberately: this returns values or a typed
  * rejection and decides nothing. What a rejection costs, and when a page is
@@ -50,22 +50,44 @@ type ValueNode = ObjectProperty["value"];
  */
 export type DeclaredRoute = { path: string; name?: string };
 
+/**
+ * A layout's declared crawl policy for every page beneath it.
+ *
+ * `false` excludes descendants from the sitemap; an object supplies static
+ * defaults they inherit. A page's own `sitemap` overrides this WHOLESALE
+ * rather than merging into it — see `contracts/layout-sitemap-and-robots-5.17.md`:
+ * a merged value is one no single file states, and "where did this come from?"
+ * then has a derivation for an answer instead of a filename.
+ */
+export type DeclaredLayoutSitemap = false | Record<string, string | number | boolean>;
+
+/** The export names the page contract reserves, wherever they appear. */
+export type ReservedExportName = "route" | "prefix" | "sitemap";
+
+const RESERVED_EXPORT_NAMES: readonly ReservedExportName[] = ["route", "prefix", "sitemap"];
+
+function isReservedExportName(name: string): name is ReservedExportName {
+  return (RESERVED_EXPORT_NAMES as readonly string[]).includes(name);
+}
+
 /** Which export could not be read, from which file, and what was found instead. */
 export type RouteExportsRejection = {
   sourceFile: string;
-  exportName: "route" | "prefix";
+  exportName: ReservedExportName;
   /** A sentence fragment naming the form that was found, e.g. "its value is a function call". */
   detail: string;
 };
 
 export type RouteExportsReadResult =
-  | { ok: true; route?: DeclaredRoute; prefix?: string }
+  | { ok: true; route?: DeclaredRoute; prefix?: string; sitemap?: DeclaredLayoutSitemap }
   | { ok: false; rejection: RouteExportsRejection };
 
-const EXAMPLES: Record<"route" | "prefix", string> = {
+const EXAMPLES: Record<ReservedExportName, string> = {
   route:
     'export const route = "/list"; (or export const route = { path: "/list", name: "shop.list" };)',
   prefix: 'export const prefix = "/shop";',
+  sitemap:
+    'export const sitemap = false; (or export const sitemap = { changefreq: "weekly", priority: 0.5 };)',
 };
 
 /**
@@ -145,6 +167,87 @@ function describe(node: ValueNode): string {
     default:
       return "its value is computed rather than written out";
   }
+}
+
+type SitemapRead = { ok: true; sitemap: DeclaredLayoutSitemap } | { ok: false; detail: string };
+
+/**
+ * Reads a layout's `sitemap` declaration.
+ *
+ * Accepts exactly two forms, and the narrowness is the point. `false` is a
+ * policy: nothing beneath this layout belongs in the sitemap. An object of
+ * literal values is a set of defaults descendants inherit. Anything else —
+ * `true`, a function, a value read off config — is REFUSED, because this
+ * reader parses rather than evaluates, and the alternative to refusing is
+ * either running layout modules at build time (how `src/build/**` reached the
+ * client bundle in 5.15) or silently ignoring what the developer wrote.
+ */
+function readLayoutSitemap(node: ValueNode): SitemapRead {
+  const value = unwrap(node);
+
+  if (value.type === "BooleanLiteral") {
+    // `true` is not "include it" — a layout cannot put a page in the sitemap
+    // that would not be there anyway, so accepting `true` would define a word
+    // with no behaviour behind it.
+    if (value.value) {
+      return {
+        ok: false,
+        detail:
+          "its value is `true`, which would mean nothing — a layout can exclude its pages with `false` or supply defaults with an object, but it cannot include a page that is not already routable",
+      };
+    }
+
+    return { ok: true, sitemap: false };
+  }
+
+  if (value.type !== "ObjectExpression") return { ok: false, detail: describe(node) };
+
+  const defaults: Record<string, string | number | boolean> = {};
+
+  for (const property of value.properties) {
+    if (property.type !== "ObjectProperty") {
+      return {
+        ok: false,
+        detail:
+          property.type === "SpreadElement"
+            ? "it spreads another object, which cannot be read without evaluating it"
+            : "it contains a method rather than a value",
+      };
+    }
+
+    if (property.computed) {
+      return { ok: false, detail: "one of its keys is computed rather than written out" };
+    }
+
+    const key =
+      property.key.type === "Identifier"
+        ? property.key.name
+        : property.key.type === "StringLiteral"
+          ? property.key.value
+          : undefined;
+
+    if (key === undefined) {
+      return { ok: false, detail: "one of its keys is not a plain name" };
+    }
+
+    const propertyValue = unwrap(property.value);
+
+    switch (propertyValue.type) {
+      case "StringLiteral":
+        defaults[key] = propertyValue.value;
+        break;
+      case "NumericLiteral":
+        defaults[key] = propertyValue.value;
+        break;
+      case "BooleanLiteral":
+        defaults[key] = propertyValue.value;
+        break;
+      default:
+        return { ok: false, detail: `\`${key}\` — ${describe(property.value)}` };
+    }
+  }
+
+  return { ok: true, sitemap: defaults };
 }
 
 type ObjectRead = { ok: true; route: DeclaredRoute } | { ok: false; detail: string };
@@ -236,13 +339,14 @@ export function readRouteExports(sourceFile: string, source?: string): RouteExpo
   const text = source ?? fs.readFileSync(sourceFile, "utf-8");
   const ast = parseSource(sourceFile, text);
 
-  const reject = (exportName: "route" | "prefix", detail: string): RouteExportsReadResult => ({
+  const reject = (exportName: ReservedExportName, detail: string): RouteExportsReadResult => ({
     ok: false,
     rejection: { sourceFile, exportName, detail },
   });
 
   let route: DeclaredRoute | undefined;
   let prefix: string | undefined;
+  let sitemap: DeclaredLayoutSitemap | undefined;
 
   for (const statement of ast.program.body) {
     if (statement.type !== "ExportNamedDeclaration" || statement.exportKind === "type") continue;
@@ -258,7 +362,7 @@ export function readRouteExports(sourceFile: string, source?: string): RouteExpo
           ? specifier.exported.name
           : specifier.exported.value;
 
-      if (exported === "route" || exported === "prefix") {
+      if (isReservedExportName(exported)) {
         return reject(
           exported,
           "it is exported through an export list rather than declared with `export const`",
@@ -275,10 +379,19 @@ export function readRouteExports(sourceFile: string, source?: string): RouteExpo
 
       const declared = declarator.id.name;
 
-      if (declared !== "route" && declared !== "prefix") continue;
+      if (!isReservedExportName(declared)) continue;
 
       if (declarator.init === null || declarator.init === undefined) {
         return reject(declared, "it is declared without a value");
+      }
+
+      if (declared === "sitemap") {
+        const read = readLayoutSitemap(declarator.init);
+
+        if (!read.ok) return reject("sitemap", read.detail);
+
+        sitemap = read.sitemap;
+        continue;
       }
 
       if (declared === "prefix") {
@@ -313,5 +426,6 @@ export function readRouteExports(sourceFile: string, source?: string): RouteExpo
     ok: true,
     ...(route === undefined ? {} : { route }),
     ...(prefix === undefined ? {} : { prefix }),
+    ...(sitemap === undefined ? {} : { sitemap }),
   };
 }
