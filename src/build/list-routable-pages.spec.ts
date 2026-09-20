@@ -106,9 +106,9 @@ describe("listRoutablePages — layout declarations", () => {
         "export const sitemap = false;",
         "export default function Layout() { return null; }",
       ].join("\n"),
-      "src/web/docs/api/reference.page.tsx": ["export default function Page() { return null; }"].join(
-        "\n",
-      ),
+      "src/web/docs/api/reference.page.tsx": [
+        "export default function Page() { return null; }",
+      ].join("\n"),
     });
 
     const [page] = await listRoutablePages({ appRoot });
@@ -129,9 +129,9 @@ describe("listRoutablePages — layout declarations", () => {
         "export const sitemap = false;",
         "export default function Layout() { return null; }",
       ].join("\n"),
-      "src/web/shop/items/list.page.tsx": [
-        "export default function Page() { return null; }",
-      ].join("\n"),
+      "src/web/shop/items/list.page.tsx": ["export default function Page() { return null; }"].join(
+        "\n",
+      ),
     });
 
     const [page] = await listRoutablePages({ appRoot });
