@@ -34,25 +34,45 @@ describe("server-seam client-entry isolation", () => {
     ["page-cache subpath", path.join(srcDir, "page-cache.ts")],
   ] as const;
 
-  it.each(clientEntries)("%s never reaches src/server/index.ts", async (_label, entry) => {
-    const result = await build({
-      entryPoints: [entry],
-      bundle: true,
-      write: false,
-      metafile: true,
-      platform: "browser",
-      format: "esm",
-      logLevel: "silent",
-      packages: "external",
-      outfile: path.join(srcDir, "__out__.js"), // virtual — write: false means nothing lands on disk
-    });
+  /**
+   * Explicit timeout, and the number is measured rather than guessed.
+   *
+   * Each case runs a REAL esbuild bundle of a real entry point, so the default
+   * 5s is not a budget this work can fit in — and when it overran, the case
+   * did not fail, it ABSTAINED. A boundary guard that times out has neither
+   * passed nor failed, so nothing here could be relied on either way.
+   *
+   * What the time actually goes on: with the timeout raised, this file's seven
+   * cases spend 8.43s in tests and 256s in import/transform. The assertions are
+   * cheap; loading the module graph in a cold worker is not, and vitest's
+   * per-test clock runs through it. 30s leaves room for that on a loaded
+   * machine without being so large that a genuine hang looks like slowness.
+   */
+  const BUNDLE_TIMEOUT_MS = 30_000;
 
-    const serverIndexInputs = Object.keys(result.metafile.inputs)
-      .map((inputPath) => path.resolve(inputPath).split(path.sep).join("/"))
-      .filter((inputPath) => inputPath.endsWith("src/server/index.ts"));
+  it.each(clientEntries)(
+    "%s never reaches src/server/index.ts",
+    async (_label, entry) => {
+      const result = await build({
+        entryPoints: [entry],
+        bundle: true,
+        write: false,
+        metafile: true,
+        platform: "browser",
+        format: "esm",
+        logLevel: "silent",
+        packages: "external",
+        outfile: path.join(srcDir, "__out__.js"), // virtual — write: false means nothing lands on disk
+      });
 
-    expect(serverIndexInputs).toEqual([]);
-  });
+      const serverIndexInputs = Object.keys(result.metafile.inputs)
+        .map((inputPath) => path.resolve(inputPath).split(path.sep).join("/"))
+        .filter((inputPath) => inputPath.endsWith("src/server/index.ts"));
+
+      expect(serverIndexInputs).toEqual([]);
+    },
+    BUNDLE_TIMEOUT_MS,
+  );
 });
 
 describe("server-seam", () => {

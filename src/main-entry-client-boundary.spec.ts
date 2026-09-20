@@ -21,6 +21,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * "does the graph reach page-cache-driver.ts".
  */
 describe("main entry (index.ts) client-boundary regression", () => {
+  /**
+   * Explicit timeout, measured rather than guessed. Both cases run a REAL
+   * esbuild bundle of the package entry, which does not fit the default 5s on
+   * a loaded machine — and when it overran, the case did not fail, it
+   * ABSTAINED. A boundary guard that times out has neither passed nor failed,
+   * so nothing here could be relied on either way. Same reasoning and same
+   * number as `server/server-seam.spec.ts`.
+   */
+  const BUNDLE_TIMEOUT_MS = 30_000;
+
   it("never bundles page-cache-driver.ts, and never imports @warlock.js/cache", async () => {
     const entry = path.join(__dirname, "index.ts");
 
@@ -49,7 +59,7 @@ describe("main entry (index.ts) client-boundary regression", () => {
       }
     }
     expect(externalImports.has("@warlock.js/cache")).toBe(false);
-  });
+  }, BUNDLE_TIMEOUT_MS);
 
   /**
    * The same defect shape, one release later. `listRoutablePages` was added to
@@ -81,5 +91,5 @@ describe("main entry (index.ts) client-boundary regression", () => {
       .filter((inputPath) => inputPath.includes("/web/src/build/"));
 
     expect(buildInputs).toEqual([]);
-  });
+  }, BUNDLE_TIMEOUT_MS);
 });
