@@ -17,3 +17,26 @@ export class MissingPublicUrlError extends Error {
     this.name = "MissingPublicUrlError";
   }
 }
+
+/**
+ * Raised when a LAYOUT declares a `sitemap` the contract does not accept —
+ * a URL supplier function, `true`, a non-object, or an options object carrying
+ * a key the sitemap never reads.
+ *
+ * It throws rather than ignoring the declaration, and that is the whole point.
+ * A developer who writes a supplier on a layout and sees no error concludes it
+ * worked; the pages then quietly never appear. That silence is the defect
+ * class this seat exists to close (canon `51c7857b`: a mechanical gate cannot
+ * be satisfied by an opinion, and one that abstains has not passed).
+ *
+ * Contract: `contracts/layout-sitemap-and-robots-5.17.md` §3 and §7.
+ */
+export class SitemapLayoutDeclarationError extends Error {
+  public constructor(
+    public readonly sourceFile: string,
+    public readonly detail: string,
+  ) {
+    super(`Cannot use the \`sitemap\` export of "${sourceFile}": ${detail}`);
+    this.name = "SitemapLayoutDeclarationError";
+  }
+}
