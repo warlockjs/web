@@ -36,6 +36,8 @@ function deferred() {
 
 type HookHandle = {
   current: ReturnType<typeof useChangeLocaleCode>;
+  /** Re-renders the SAME component type, so the hook instance survives. */
+  rerender: () => void;
 };
 
 const roots: Root[] = [];
@@ -43,8 +45,15 @@ const containers: HTMLDivElement[] = [];
 
 /** Mounts a probe that publishes the hook's latest return value. */
 function mountHook(): HookHandle {
-  const handle = { current: undefined as unknown as ReturnType<typeof useChangeLocaleCode> };
+  const handle = {
+    current: undefined as unknown as ReturnType<typeof useChangeLocaleCode>,
+    rerender: () => undefined as void,
+  };
 
+  // Declared ONCE, outside any re-render. Rendering a freshly-declared
+  // function component is a different element TYPE as far as React is
+  // concerned, so it remounts and the hook starts over — which looks exactly
+  // like an unstable callback identity and is not.
   function Probe(): ReactElement | null {
     handle.current = useChangeLocaleCode();
     return null;
@@ -60,6 +69,12 @@ function mountHook(): HookHandle {
   act(() => {
     root.render(createElement(Probe));
   });
+
+  handle.rerender = () => {
+    act(() => {
+      root.render(createElement(Probe));
+    });
+  };
 
   return handle;
 }
@@ -196,14 +211,7 @@ describe("useChangeLocaleCode", () => {
     const hook = mountHook();
     const first = hook.current.changeLocale;
 
-    act(() => {
-      roots[roots.length - 1]?.render(
-        createElement(function Probe() {
-          hook.current = useChangeLocaleCode();
-          return null;
-        }),
-      );
-    });
+    hook.rerender();
 
     expect(hook.current.changeLocale).toBe(first);
   });
