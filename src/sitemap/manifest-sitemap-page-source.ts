@@ -83,6 +83,14 @@ export function createManifestSitemapPageSource(manifest: PageManifest): Sitemap
           routePath: path,
           metadata: pageModule.metadata,
           sitemap: pageModule.sitemap,
+          // Read off the layout MODULES the manifest already carries — the
+          // same mechanism dev uses, and the same one this file already uses
+          // for `prefix` above. No new manifest field is needed, which is why
+          // reading the module beats parsing the source for this export.
+          layoutSitemaps: page.layouts.map((layout) => ({
+            sourceFile: layout.sourceFile,
+            declared: (layout.module as { sitemap?: unknown }).sitemap,
+          })),
         };
       });
 }

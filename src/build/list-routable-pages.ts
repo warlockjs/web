@@ -32,6 +32,17 @@ export type ListedRoutablePage = {
   metadata?: PageMetadata;
   /** The page module's `sitemap` export, exactly as it declared it — a caller that cares about its shape (e.g. `@warlock.js/sitemap`) narrows it itself. */
   sitemap?: unknown;
+  /**
+   * What each layout on this page's path declared, OUTERMOST FIRST — raw, and
+   * deliberately unresolved here.
+   *
+   * The precedence rule between these and the page's own `sitemap` lives in
+   * ONE place (`../sitemap/resolve-layout-sitemap.ts`), called from ONE place
+   * (`collectSitemapEntries`). If each page SOURCE resolved it instead, dev
+   * and production would each hold a copy of the rule, and two copies of a
+   * rule are what canon `b8e6ede3` is about.
+   */
+  layoutSitemaps?: readonly { sourceFile: string; declared: unknown }[];
 };
 
 /**
@@ -59,11 +70,23 @@ export async function listRoutablePages(
     pages.map(async (page) => {
       const pageModule = (await import(pathToFileURL(page.pageFile).href)) as ListedPageModule;
 
+      // `page.layouts` is already outermost-first, which is the order the
+      // precedence rule expects — the nearest ancestor is the last one that
+      // declared. Read the same way production does, off the module, so both
+      // pipelines learn a layout's policy by the same mechanism.
+      const layoutSitemaps = await Promise.all(
+        page.layouts.map(async (layoutFile) => ({
+          sourceFile: layoutFile,
+          declared: ((await import(pathToFileURL(layoutFile).href)) as ListedPageModule).sitemap,
+        })),
+      );
+
       return {
         routeName: page.routeName,
         routePath: page.routePath,
         metadata: pageModule.metadata,
         sitemap: pageModule.sitemap,
+        layoutSitemaps,
       };
     }),
   );

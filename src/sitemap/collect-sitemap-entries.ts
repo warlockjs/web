@@ -18,7 +18,8 @@ import {
   type LocaleMatrix,
 } from "./expand-locale-entries";
 import { getProductionSitemapPageSource } from "./production-sitemap-page-source";
-import type { SitemapPageExport, SitemapPageOptions, SitemapPageUrl } from "./sitemap-page-export";
+import { resolveSitemapDeclaration } from "./resolve-layout-sitemap";
+import type { SitemapPageOptions, SitemapPageUrl } from "./sitemap-page-export";
 import type { SitemapPageSource } from "./sitemap-page-source";
 
 export type CollectSitemapEntriesOptions = DiscoverPagesOptions & {
@@ -65,7 +66,12 @@ export async function collectSitemapEntries(
   const declaredRoutes = new Set<string>();
 
   for (const page of pages) {
-    const sitemapExport = page.sitemap as SitemapPageExport | undefined;
+    // THE one call site for the layout/page precedence rule. Both page sources
+    // hand over raw declarations — the page's own and each layout's on its
+    // path — and the rule is applied here, once, so dev and production cannot
+    // disagree about a sitemap without the disagreement being this line
+    // (canon `b8e6ede3`). See `contracts/layout-sitemap-and-robots-5.17.md`.
+    const sitemapExport = resolveSitemapDeclaration(page.sitemap, page.layoutSitemaps ?? []);
 
     // Opt-out — never emitted, and never declared, either: an author who
     // wrote `false` asked for silence, not a zero-count row.
