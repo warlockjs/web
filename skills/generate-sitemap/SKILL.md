@@ -1,6 +1,6 @@
 ---
 name: generate-sitemap
-description: 'Serve `/sitemap.xml` and `/robots.txt` from a Warlock web app with the `@warlock.js/web/sitemap` subpath — the `web.sitemap` and `web.robots` keys in `src/config/web.ts`, the page-level `export const sitemap` (opt out, static options, or a supplier for dynamic routes), locale/hreflang expansion, the automatic switch to a sharded `SitemapIndex`, when generation runs (runtime boot or `regenerateSitemap()` — never `warlock build`), the 503-before-first-generation rule, and `MissingPublicUrlError`. Triggers: `web.sitemap`, `web.robots`, `WebSitemapConfig`, `RobotsConfig`, `SitemapPageExport`, `export const sitemap`, `regenerateSitemap`, `generateSitemap`, `MissingPublicUrlError`, `splitByLocale`, `localeUrl`, `referenceSitemap`, `warlock add sitemap`; "add a sitemap to my Warlock site", "dynamic route missing from sitemap.xml", "regenerate the sitemap after publishing a post", "robots.txt", "sitemap returns 503", "hreflang in the sitemap". Skip: the framework-blind builder classes themselves (`Sitemap`, `SitemapIndex`, Express/cron usage) — `@warlock.js/sitemap/sitemap-overview/SKILL.md`; `app.publicUrl` — `@warlock.js/core/configure-app/SKILL.md`; page metadata `robots: noindex` — `@warlock.js/web/create-a-page/SKILL.md`; competing tools `next-sitemap`, `sitemap` npm package direct.'
+description: 'Serve `/sitemap.xml` and `/robots.txt` from a Warlock web app with the `@warlock.js/web/sitemap` subpath — the `web.sitemap` and `web.robots` keys in `src/config/web.ts`, page `config.sitemap` (opt out, static options, or a supplier for dynamic routes), locale/hreflang expansion, the automatic switch to a sharded `SitemapIndex`, when generation runs (runtime boot or `regenerateSitemap()` — never `warlock build`), the 503-before-first-generation rule, and `MissingPublicUrlError`. Triggers: `web.sitemap`, `web.robots`, `WebSitemapConfig`, `RobotsConfig`, `SitemapPageExport`, `export const sitemap`, `regenerateSitemap`, `generateSitemap`, `MissingPublicUrlError`, `splitByLocale`, `localeUrl`, `referenceSitemap`, `warlock add sitemap`; "add a sitemap to my Warlock site", "dynamic route missing from sitemap.xml", "regenerate the sitemap after publishing a post", "robots.txt", "sitemap returns 503", "hreflang in the sitemap". Skip: the framework-blind builder classes themselves (`Sitemap`, `SitemapIndex`, Express/cron usage) — `@warlock.js/sitemap/sitemap-overview/SKILL.md`; `app.publicUrl` — `@warlock.js/core/configure-app/SKILL.md`; page metadata `robots: noindex` — `@warlock.js/web/create-a-page/SKILL.md`; competing tools `next-sitemap`, `sitemap` npm package direct.'
 ---
 
 # Warlock — generate a sitemap and robots.txt
@@ -48,34 +48,38 @@ reaches page discovery, which a page's own graph must never pull in.
 
 ## `web.sitemap` keys
 
-| key | default | meaning |
-| --- | --- | --- |
-| `enabled` | `false` | Nothing is discovered, generated or routed until `true`. |
-| `path` | `/sitemap.xml` | The served path of the single file or the index. |
-| `outputDir` | `storagePath("sitemap")` | Where files are written. Must be a directory the sitemap owns outright — publishing replaces it whole, and `@warlock.js/sitemap` refuses a non-empty directory it did not create (`UnownedOutputDirectoryError`). Never point it at `public/`. |
-| `gzip` | `false` | On the sharded path, write each shard as `.xml.gz` instead of `.xml`. |
-| `defaults` | — | `changefreq` / `priority` applied to every entry that does not set its own. |
-| `locales.codes` | `app.locales` | Locale codes each page is expanded into, with `xhtml:link` hreflang alternates. |
-| `locales.defaultLocale` | — | Also emitted as `x-default`. Unset: no `x-default`. |
-| `locales.splitByLocale` | `false` | One shard per locale, listed in an index. |
-| `localeUrl` | `path?locale=<code>` | Override how a path becomes a locale URL — only when the app implements its own prefix routing. A page's `localePaths` still wins. |
-| `regenerate.onBoot` | `true` | Generate at boot (dev and production). `warlock build` never generates — see below. |
+| key                     | default                  | meaning                                                                                                                                                                                                                                        |
+| ----------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`               | `false`                  | Nothing is discovered, generated or routed until `true`.                                                                                                                                                                                       |
+| `path`                  | `/sitemap.xml`           | The served path of the single file or the index.                                                                                                                                                                                               |
+| `outputDir`             | `storagePath("sitemap")` | Where files are written. Must be a directory the sitemap owns outright — publishing replaces it whole, and `@warlock.js/sitemap` refuses a non-empty directory it did not create (`UnownedOutputDirectoryError`). Never point it at `public/`. |
+| `gzip`                  | `false`                  | On the sharded path, write each shard as `.xml.gz` instead of `.xml`.                                                                                                                                                                          |
+| `defaults`              | —                        | `changefreq` / `priority` applied to every entry that does not set its own.                                                                                                                                                                    |
+| `locales.codes`         | `app.locales`            | Locale codes each page is expanded into, with `xhtml:link` hreflang alternates.                                                                                                                                                                |
+| `locales.defaultLocale` | —                        | Also emitted as `x-default`. Unset: no `x-default`.                                                                                                                                                                                            |
+| `locales.splitByLocale` | `false`                  | One shard per locale, listed in an index.                                                                                                                                                                                                      |
+| `localeUrl`             | `path?locale=<code>`     | Override how a path becomes a locale URL — only when the app implements its own prefix routing. A page's `localePaths` still wins.                                                                                                             |
+| `regenerate.onBoot`     | `true`                   | Generate at boot (dev and production). `warlock build` never generates — see below.                                                                                                                                                            |
 
 Above 50,000 URLs (or with `splitByLocale`) web switches from a single
 `Sitemap` to a sharded `SitemapIndex` automatically; `path` then serves the
 index and each shard is served at `/<shard file>`.
 
-## Per-page control: `export const sitemap`
+## Per-page control: `config.sitemap`
 
 Every routable page is included by default, expanded per locale. Error pages
-are never listed. A page module can export `sitemap` to change that:
+are never listed. A page module can put `sitemap` in `config` to change that:
 
 ```tsx
-export const sitemap = false;
+import type { PageConfig } from "@warlock.js/web";
+
+export const config = { sitemap: false } satisfies PageConfig;
 ```
 
 ```tsx
-export const sitemap = { priority: 0.9, changefreq: "daily", locales: false };
+export const config = {
+  sitemap: { priority: 0.9, changefreq: "daily", locales: false },
+} satisfies PageConfig;
 ```
 
 The object form takes `priority`, `changefreq`, `lastmod`, `locales: false`
@@ -86,23 +90,31 @@ can name its concrete paths; without one the route contributes nothing and is
 reported with `count: 0` in the result's `routes`, never silently dropped:
 
 ```tsx
-export const sitemap = async () => [
-  { path: "/posts/hello-world", lastmod: new Date("2026-09-01") },
-  { path: "/posts/second-post", localePaths: { ar: "/posts/thani" } },
-];
+import type { PageConfig } from "@warlock.js/web";
+
+export const config = {
+  sitemap: async () => [
+    { path: "/posts/hello-world", lastmod: new Date("2026-09-01") },
+    { path: "/posts/second-post", localePaths: { ar: "/posts/thani" } },
+  ],
+} satisfies PageConfig;
 ```
 
 In a real page, read the rows from your model — the function runs at
 generation time, not per request.
 
+A layout may set static `config.sitemap` defaults or `false` for descendants;
+supplier functions belong to pages only. The nearest explicit page/layout
+policy wins. Root config has no sitemap key. Configure sitewide generation
+under `web.sitemap`, and HTML indexing policy separately with
+`config.metadata.robots` on pages or layouts.
+
 ## When it runs — never on a request
 
 `warlock build` never generates the sitemap — the build process loads no app
 config and ships no page source files, so it logs
-`[warlock:web] sitemap: \`warlock build\` never generates the sitemap; when web.sitemap is enabled it is generated at runtime boot (web.sitemap.regenerate.onBoot)`
-and leaves generation to boot. Generation happens at boot (dev and
-production) when `regenerate.onBoot` is on, and whenever the app calls
-`regenerateSitemap()`:
+`[warlock:web] sitemap: \`warlock build\` never generates the sitemap; when web.sitemap is enabled it is generated at runtime boot (web.sitemap.regenerate.onBoot)`and leaves generation to boot. Generation happens at boot (dev and
+production) when`regenerate.onBoot`is on, and whenever the app calls`regenerateSitemap()`:
 
 ```ts
 import { regenerateSitemap } from "@warlock.js/web/sitemap";
@@ -125,12 +137,12 @@ origin is configured, before any page is read.
 
 ## `web.robots`
 
-| key | default | meaning |
-| --- | --- | --- |
-| `enabled` | `false` | Registers `GET /robots.txt`. |
-| `groups` | — | `{ userAgent, allow?, disallow? }` blocks. |
-| `referenceSitemap` | `true` | Appends `Sitemap: <origin><web.sitemap.path>` when the sitemap is enabled and has an origin. |
-| `extra` | — | Raw lines appended verbatim (`Host:`, `Crawl-delay:`). |
+| key                | default | meaning                                                                                      |
+| ------------------ | ------- | -------------------------------------------------------------------------------------------- |
+| `enabled`          | `false` | Registers `GET /robots.txt`.                                                                 |
+| `groups`           | —       | `{ userAgent, allow?, disallow? }` blocks.                                                   |
+| `referenceSitemap` | `true`  | Appends `Sitemap: <origin><web.sitemap.path>` when the sitemap is enabled and has an origin. |
+| `extra`            | —       | Raw lines appended verbatim (`Host:`, `Crawl-delay:`).                                       |
 
 A hand-written `public/robots.txt` wins outright: web registers no route and
 warns that the `Sitemap:` line is then yours to add.
@@ -140,6 +152,6 @@ warns that the `Sitemap:` line is then yours to add.
 - **503 on `/sitemap.xml`** — no generation has succeeded yet. Check the
   boot log for `[warlock:web] sitemap regeneration failed`; a missing
   `app.publicUrl` is the usual cause.
-- **A dynamic page is missing** — it has no `export const sitemap` supplier.
+- **A dynamic page is missing** — it has no `config.sitemap` supplier.
   Its route shows up with `count: 0` in the generation result.
 - **`outputDir` inside `public/`** — refused. The sitemap owns its directory.

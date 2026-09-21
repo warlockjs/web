@@ -7,6 +7,12 @@ description: 'Author `src/web/root.tsx`, the full-document application root that
 
 `src/web/root.tsx` is the application document. Its default export renders the complete `<html>` tree and contains the one DOM node the browser hydrates: `#vessel`.
 
+The root may export `config`, `loader`, `register`, `ErrorBoundary`, and its
+default component. `RootConfig` has one policy key only: `middleware`. Root
+metadata, route/prefix, cache, validation, sitemap, and robots policy are not
+root exports. Keep sitewide sitemap and robots serving in `web.sitemap` and
+`web.robots`; page and layout policy belongs in their own `config` exports.
+
 ## The shape
 
 ```tsx title="src/web/root.tsx"
@@ -58,22 +64,15 @@ export default function App({ children }: AppProps) {
 
 `useTextDirection()` derives `"rtl"` or `"ltr"` from the same locale `useLocale()` already exposes — via `localeDirection()`, a pure function safe to call on the server or the client. No hydration payload change is involved: the direction is computed from the locale that already made the trip, not carried separately.
 
-To switch the active locale without a full reload, call `changeLocaleCode(code)`. The server persists the choice in its `locale` cookie when the resulting navigation data request carries `?locale=`, so `lang` and `dir` on the next render (and every render after) reflect the new locale.
+To switch the active locale without a full reload, call `changeLocaleCode(code)`. The switch commits a browser locale preference only after the replacement tree is ready, so a failed or superseded request cannot change the next document load. `lang` and `dir` follow the committed locale on the next render (and every render after).
 
-### `useTrans()` survives hydration via the payload's `translations` key (5.15.0)
+### `useTrans()` and route translations
 
-The hydration payload carries a seventh required key, `translations` — the
-active locale's registered keywords only, not every locale. It is registered
-into `@mongez/localization`'s client-side table *before* `hydrateRoot` runs
-(`hydrate-page.tsx`), because registering after the first client render would
-be too late: React would already have reconciled the DOM to the raw
-translation key. `useTrans()` reads that same table, so it now works
-identically before and after hydration — previously the server-rendered HTML
-was correctly translated but React silently replaced it with the raw key on
-hydration, with no error or warning. `isHydrationPayload()` requires
-`translations` to be present and an object; a payload built before 5.15
-(missing the key) is rejected as malformed rather than silently hydrating
-with an empty table.
+The hydration payload carries the selected route-locale translation snapshot.
+`LocaleProvider` receives that snapshot and `useTrans()` translates from it;
+route JSON is not registered into a process-global localization table. The
+snapshot contains the active locale only, so a request or client navigation
+cannot inherit another route's keywords.
 
 ## `#vessel` is the hydration boundary
 
@@ -173,6 +172,22 @@ export default function App({ data, children }: AppProps<typeof loader>) {
 ```
 
 The App loader runs first and is awaited before the outermost layout loader starts; matched layout loaders then run outermost to innermost before the page loader. Its return is for the App component; use `shared` for request data that multiple levels need.
+
+## Root middleware
+
+Use the optional root config for guards that must run before layout and page
+middleware:
+
+```tsx
+import type { RootConfig } from "@warlock.js/web";
+
+export const config = {
+  middleware: [attachRequestContext],
+} satisfies RootConfig;
+```
+
+`loader`, `register`, and `ErrorBoundary` remain separate exports. Named
+`middleware`, `metadata`, `sitemap`, or route-policy exports are invalid.
 
 ## Gotchas
 

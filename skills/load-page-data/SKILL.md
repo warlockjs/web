@@ -1,6 +1,6 @@
 ---
 name: load-page-data
-description: 'Load App, Layout, and Page data with `AppLoader`, `LayoutLoader`, and `PageLoader`; type component `data`, validate page input, short-circuit with the buffered response, and publish request-scoped browser-safe values through `shared`. Triggers: `PageLoader`, `LayoutLoader`, `AppLoader`, `PageProps`, `shared`, `useShared`, `validation`, `request.validated`, `process.env`, `env("PUBLIC_...")`, `import.meta.env.PUBLIC_`; "load page data", "pass server data to React", "share request data", "redirect from a loader", "read an environment variable in a page", "process.env refused in the client build", "globalThis.process refused", "window.process refused", "loader execution order", "return a Response from a loader". Skip: page module basics — `@warlock.js/web/create-a-page/SKILL.md`; layouts — `@warlock.js/web/use-layouts/SKILL.md`; mutation follow-up — `@warlock.js/web/navigate-on-the-client/SKILL.md`; competing loaders Next data functions, Remix loaders, React Server Components.'
+description: "Load App, Layout, and Page data with named loaders; page validation and middleware belong in `config`. Triggers: `PageLoader`, `LayoutLoader`, `AppLoader`, `PageProps`, `config.validation`, `config.middleware`, `request.validated`, `shared`."
 ---
 
 # Warlock — load page data
@@ -96,16 +96,12 @@ one for anything request-scoped.
 
 ```tsx title="src/web/products/product-details.page.tsx"
 import { v } from "@warlock.js/seal";
-import type { PageLoader, PageProps } from "@warlock.js/web";
+import type { PageConfig, PageLoader, PageProps } from "@warlock.js/web";
 
-export const route = {
-  path: "/products/:id",
-  name: "products.details",
-} as const;
-
-export const validation = {
-  params: v.object({ id: v.string().minLength(2) }),
-} as const;
+export const config = {
+  route: { path: "/products/:id", name: "products.details" },
+  validation: { params: v.object({ id: v.string().minLength(2) }) },
+} satisfies PageConfig;
 
 export const loader = (async ({ request, response, shared }) => {
   const { params } = request.validated();
@@ -124,7 +120,7 @@ export const loader = (async ({ request, response, shared }) => {
     },
     locale: (shared as { locale?: string }).locale ?? "en",
   };
-}) satisfies PageLoader<typeof validation, typeof route>;
+}) satisfies PageLoader<typeof config.validation, typeof config.route>;
 
 export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
   return (
@@ -169,7 +165,7 @@ page data.
 ```
 
 The fix is always the same: give the offending value a `resource` (see
-[`define-resource/SKILL.md`](../../core/define-resource/SKILL.md)) or a
+[`define-resource/SKILL.md`](../../../core/skills/define-resource/SKILL.md)) or a
 `toJSON()` method so it reaches the wire as the plain value devalue already
 knows how to serialize — never work around the throw by hand-flattening the
 value in the loader.
@@ -206,13 +202,15 @@ export const loader = (async ({ signal }) => {
 
 ## Validation
 
-A page's `validation` export declares a [Seal](https://www.npmjs.com/package/@warlock.js/seal) schema per source, `params` and `query` kept as two separate keys — never merged into one bag. Declare either or both; a page that only has a dynamic segment can skip `query` entirely, and one that only reads query keys can skip `params`:
+A page's `config.validation` declares a [Seal](https://www.npmjs.com/package/@warlock.js/seal) schema per source, `params` and `query` kept as separate keys. Declare either or both:
 
 ```ts
-export const validation = {
-  params: v.object({ id: v.int().coerce() }),
-  query: v.object({ tab: v.string().optional() }).stripUnknown(),
-};
+export const config = {
+  validation: {
+    params: v.object({ id: v.int().coerce() }),
+    query: v.object({ tab: v.string().optional() }).stripUnknown(),
+  },
+} satisfies PageConfig;
 ```
 
 **`params` and `query` arrive as strings — coerce numeric ones.** `request.params`/`request.query` come off the URL, so `v.int()` alone rejects `"2"` ("This input accepts only numbers"). Reach for `v.int().coerce()` (or the matching coercing primitive) on every numeric param or query key.
@@ -293,14 +291,14 @@ Required keys need an unconditional middleware writer. Optional keys may be writ
 
 ```tsx title="src/web/root.tsx"
 import { Head, Scripts, shared as writableShared } from "@warlock.js/web";
-import type { AppProps } from "@warlock.js/web";
+import type { AppProps, RootConfig } from "@warlock.js/web";
 import "./types";
 
 const publishLocale = async () => {
   writableShared.locale = "en";
 };
 
-export const middleware = [publishLocale];
+export const config = { middleware: [publishLocale] } satisfies RootConfig;
 
 export default function App({ children, shared }: AppProps) {
   return (

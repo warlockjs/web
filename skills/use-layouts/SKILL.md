@@ -1,18 +1,18 @@
 ---
 name: use-layouts
-description: 'Wrap pages with positional `layout.tsx` modules, compose literal `prefix` exports, load typed layout data with `LayoutLoader` / `LayoutProps`, and preserve layout state during client navigation. Triggers: `layout.tsx`, `prefix`, `LayoutLoader`, `LayoutProps`, `children`; "add a page layout", "share navigation between pages", "prefix page routes", "keep a layout mounted". Skip: full-document root — `@warlock.js/web/write-the-root/SKILL.md`; page route export — `@warlock.js/web/create-a-page/SKILL.md`; loader and shared lifecycle — `@warlock.js/web/load-page-data/SKILL.md`; competing layout systems `next/layout`, React Router outlets, Remix nested routes.'
+description: 'Wrap pages with positional `layout.tsx` modules, compose literal `config.prefix`, inherited middleware, static robots, and sitemap defaults, load typed layout data with `LayoutLoader` / `LayoutProps`, and preserve layout state during client navigation. Triggers: `layout.tsx`, `prefix`, `LayoutLoader`, `LayoutProps`, `children`; "add a page layout", "share navigation between pages", "prefix page routes", "keep a layout mounted". Skip: full-document root — `@warlock.js/web/write-the-root/SKILL.md`; page route export — `@warlock.js/web/create-a-page/SKILL.md`; loader and shared lifecycle — `@warlock.js/web/load-page-data/SKILL.md`; competing layout systems `next/layout`, React Router outlets, Remix nested routes.'
 ---
 
 # Warlock — use layouts
 
-A positional `layout.tsx` applies to pages in its directory and descendant directories. Its default export wraps the page; its optional `prefix` contributes to every descendant page's effective URL.
+A positional `layout.tsx` applies to pages in its directory and descendant directories. Its default export wraps the page; its optional `config.prefix` contributes to every descendant page's effective URL.
 
 ## The shape
 
 ```tsx title="src/web/products/layout.tsx"
-import type { LayoutLoader, LayoutProps } from "@warlock.js/web";
+import type { LayoutConfig, LayoutLoader, LayoutProps } from "@warlock.js/web";
 
-export const prefix = "/products";
+export const config = { prefix: "/products" } satisfies LayoutConfig;
 
 export const loader = (async () => {
   return {
@@ -42,35 +42,41 @@ export default function ProductsLayout({ data, children }: LayoutProps<typeof lo
 A page beside it can declare its path relative to the prefix:
 
 ```tsx title="src/web/products/index.page.tsx"
-export const route = {
-  path: "/",
-  name: "products.index",
-} as const;
+import type { PageConfig } from "@warlock.js/web";
+
+export const config = {
+  route: { path: "/", name: "products.index" },
+} satisfies PageConfig;
 
 export default function ProductsPage() {
   return <h1>Products</h1>;
 }
 ```
 
-The effective URL is `/products`. A page with `route.path = "/:id"` under the same layout is served at `/products/:id`.
+The effective URL is `/products`. A page with `config.route.path = "/:id"` under the same layout is served at `/products/:id`.
 
 ## Prefix composition
 
-Every positional layout on the page's directory ancestry may export a literal `prefix`. Prefixes compose outermost first, then the page's own route path — never appended to the directory's own name, so a layout `prefix` OVERRIDES its directory's segment rather than adding to it.
+Every positional layout on the page's directory ancestry may declare a literal `config.prefix`. Prefixes compose outermost first, then the page's own route path — never appended to the directory's own name, so a layout prefix replaces its directory's segment rather than adding to it.
 
 ```tsx title="src/web/users/layout.tsx"
-export const prefix = "/users";
+import type { LayoutConfig } from "@warlock.js/web";
+
+export const config = { prefix: "/users" } satisfies LayoutConfig;
 ```
 
 ```tsx title="src/web/users/account/layout.tsx"
-export const prefix = "/account";
+import type { LayoutConfig } from "@warlock.js/web";
+
+export const config = { prefix: "/account" } satisfies LayoutConfig;
 ```
 
 ```tsx title="src/web/users/account/settings.page.tsx"
-export const route = {
-  path: "/settings",
-  name: "users.account.settings",
-} as const;
+import type { PageConfig } from "@warlock.js/web";
+
+export const config = {
+  route: { path: "/settings", name: "users.account.settings" },
+} satisfies PageConfig;
 
 export default function SettingsPage() {
   return <h1>Account settings</h1>;
@@ -79,7 +85,7 @@ export default function SettingsPage() {
 
 This page's effective URL is `/users/account/settings`.
 
-Like page routes, prefixes are read statically at build time. Write `export const prefix = "/account";` directly; computed prefixes are refused.
+Like page routes, prefixes are read statically at build time. Write `export const config = { prefix: "/account" } satisfies LayoutConfig;` directly; computed prefixes are refused.
 
 ## Rendering-layout limit
 
@@ -87,7 +93,7 @@ Prefix nesting does not imply wrapper nesting. Pages currently support at most o
 
 The two prefix-only layouts above are legal because neither renders. Add a default export to at most one of them. If two layouts on the path have default exports, discovery and boot throw `NestedLayoutsNotSupportedError`, naming the page and both rendering layouts.
 
-Non-rendering layouts may carry prefixes and middleware and may nest freely. Do not delete a middleware-only authorization boundary to satisfy the rendering limit; consolidate only the default-export wrappers.
+Non-rendering layouts may carry `config.prefix` and `config.middleware` and may nest freely. Do not delete a middleware-only authorization boundary to satisfy the rendering limit; consolidate only the default-export wrappers.
 
 ## `404.page.tsx` never gets a layout
 
@@ -111,14 +117,23 @@ Use `shared` when multiple levels need one request-derived value, and write it i
 
 ## The client boundary
 
-A layout is projected for the browser the same way a page is: `prefix`, `middleware`, `loader`, and (page-only) `validation`/`route` never reach the client bundle — `prefix` joins that stripped set for a layout the way `route` does for a page. The default export and any other surviving exports form the client graph. `register()` is the one export that is NOT stripped — it runs once per module namespace on both the server and the browser; see [create-a-page](../create-a-page/SKILL.md).
+A layout is projected for the browser the same way a page is: `config` and `loader` are stripped, including imports used only by them. The default component and `register()` form the client graph; `register()` runs once per module namespace on both the server and the browser. A named `ErrorBoundary` remains a separate server-rendered boundary export. See [create-a-page](../create-a-page/SKILL.md).
+
+## Inherited policy
+
+`LayoutConfig` also accepts `middleware`, static `metadata.robots`, and static
+`sitemap` defaults (or `false`). It does not accept page routes, cache policy,
+validation, arbitrary metadata, or a sitemap supplier function. Descendant
+pages inherit the nearest explicit robots and sitemap policy; an unrelated
+page metadata field does not erase inherited robots. `RootConfig` has only
+middleware, so root metadata and sitemap defaults are not inherited.
 
 ## Gotchas
 
 - **`layout.tsx` is positional.** It applies by directory ancestry; moving a page can change its layout and URL prefix together.
 - **Only one layout on a path may render.** Multiple prefix/middleware-only layouts are fine; multiple default exports are not.
-- **A layout prefix changes the registered URL, and overrides its directory's segment rather than adding to it.** Check the composed path, not only the page's `route.path`.
-- **Keep `prefix` literal.** The build parses it without executing the module.
+- **A layout prefix changes the registered URL, and overrides its directory's segment rather than adding to it.** Check the composed path, not only the page's `config.route.path`.
+- **Keep `config.prefix` literal.** The build parses it without executing the module.
 - **Use `LayoutProps<typeof loader>`.** Bare `LayoutProps` is for a layout with no loader and gives `data` as `undefined`.
 - **Layout persistence is type-and-position based.** Changing to another layout component remounts it, as normal React reconciliation requires.
 
@@ -126,5 +141,5 @@ A layout is projected for the browser the same way a page is: `prefix`, `middlew
 
 - [`create-a-page/SKILL.md`](../create-a-page/SKILL.md) — declare the page path composed after the prefix.
 - [`write-the-root/SKILL.md`](../write-the-root/SKILL.md) — the document and `#vessel` outside the layout.
-- [`load-page-data/SKILL.md`](../load-page-data/SKILL.md) — `LayoutLoader`, parallel execution, and `shared`.
+- [`load-page-data/SKILL.md`](../load-page-data/SKILL.md) — `LayoutLoader`, sequential execution, and `shared`.
 - [`navigate-on-the-client/SKILL.md`](../navigate-on-the-client/SKILL.md) — client swaps and `refresh()`.

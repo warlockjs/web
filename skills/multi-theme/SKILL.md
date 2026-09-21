@@ -1,6 +1,6 @@
 ---
 name: multi-theme
-description: 'Serve a different theme per request (per host or tenant) from one app: middleware resolves the theme into `shared`, the page renders a component from a static `lazy(() => import(...))` map, `linkStylesheetsFor()` puts only the active theme''s CSS into the server-rendered `<head>`, and the server page cache keys by host (plus `route.cache.varyBy`) so tenants never share an entry. Triggers: `linkStylesheetsFor`, `UnknownStylesheetSourceError`, `InvalidStylesheetSourceError`, `varyBy`, "multi-tenant theme", "theme per host", "white-label store", "lazy theme component", "theme CSS flashes unstyled", "only load the active theme CSS", "cache per tenant". Skip: general CSS delivery — `@warlock.js/web/serve-styles/SKILL.md`; `shared` basics — `@warlock.js/web/load-page-data/SKILL.md`; page cache basics — `@warlock.js/web/create-a-page/SKILL.md`; runtime CSS-in-JS theme engines.'
+description: 'Serve a different theme per request (per host or tenant) from one app: middleware resolves the theme into `shared`, the page renders a component from a static `lazy(() => import(...))` map, `linkStylesheetsFor()` puts only the active theme''s CSS into the server-rendered `<head>`, and the server page cache keys by host (plus `config.cache.varyBy`) so tenants never share an entry. Triggers: `linkStylesheetsFor`, `UnknownStylesheetSourceError`, `InvalidStylesheetSourceError`, `varyBy`, "multi-tenant theme", "theme per host", "white-label store", "lazy theme component", "theme CSS flashes unstyled", "only load the active theme CSS", "cache per tenant". Skip: general CSS delivery — `@warlock.js/web/serve-styles/SKILL.md`; `shared` basics — `@warlock.js/web/load-page-data/SKILL.md`; page cache basics — `@warlock.js/web/create-a-page/SKILL.md`; runtime CSS-in-JS theme engines.'
 ---
 
 # Warlock — one app, a theme per request
@@ -52,7 +52,7 @@ export default function BetaTheme() {
 
 ```tsx title="src/web/root.tsx"
 import { Head, Scripts, linkStylesheetsFor, shared } from "@warlock.js/web";
-import type { AppProps, HttpContext } from "@warlock.js/web";
+import type { AppProps, HttpContext, RootConfig } from "@warlock.js/web";
 import { themeSources, type ThemeId } from "./themes";
 
 const selectTheme = async ({ request }: HttpContext) => {
@@ -62,7 +62,7 @@ const selectTheme = async ({ request }: HttpContext) => {
   linkStylesheetsFor(request, themeSources[theme]);
 };
 
-export const middleware = [selectTheme];
+export const config = { middleware: [selectTheme] } satisfies RootConfig;
 ```
 
 Each theme imports its own stylesheet (`import "./alpha.css";`). Never inline a `<style>` tag.
@@ -86,7 +86,7 @@ export default function HomePage() {
 ```
 
 - Read the theme from `useShared()` only. Never re-derive it on the client (`location.host`), or the client may pick a different theme than the server rendered.
-- Keep the map static: one literal `import()` per theme. Vite then emits one chunk plus one CSS file per theme. A computed specifier such as `` import(`./themes/${id}`) `` is not supported.
+- Keep the map static: one literal `import()` per theme. Vite then emits one chunk plus one CSS file per theme. A computed specifier such as ``import(`./themes/${id}`)`` is not supported.
 
 ## 3. CSS: `linkStylesheetsFor(request, sourceFile)`
 
@@ -99,15 +99,17 @@ The server cannot see which lazy module rendered, and it never follows `dynamicI
 ## 4. Page cache
 
 ```ts
-export const route = {
-  path: "/",
+import type { PageConfig } from "@warlock.js/web";
+
+export const config = {
+  route: "/",
   cache: {
     public: true,
     maxAge: 60,
     serverCache: true,
     tags: (_data, { shared }) => [`theme:${shared.theme}`],
   },
-} as const;
+} satisfies PageConfig;
 ```
 
 - The key always includes the request host, so tenants on different hosts never share an entry.

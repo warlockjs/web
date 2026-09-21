@@ -1,6 +1,6 @@
 ---
 name: stream-deferred-data
-description: 'Stream slow page-loader data after the shell with `defer()` and React `use()` inside `<Suspense>`, instead of blocking the first byte on it. Covers the wire contract (a deferred value settles as a chunk script after the shell, or as an NDJSON line on client navigation), errors reaching the nearest `<Suspense>` error boundary with status 200 already sent, `web.streaming.deferTimeout`, and the metadata rule (`metadata()` may read only resolved keys). Triggers: `defer()`, `use(data.`, `DeferredValueError`, `DeferTimeoutError`, `DeferredStreamClosedError`, `DeferredKeyInMetadataError`, `web.streaming.deferTimeout`, `__WARLOCK_DEFER__`; "stream part of a page", "slow loader data", "show a skeleton while reviews load", "Suspense in a page component", "defer a promise from a loader". Skip: the rest of the loader contract — `@warlock.js/web/load-page-data/SKILL.md`; re-fetching after a mutation — `@warlock.js/web/navigate-on-the-client/SKILL.md`; competing primitives Remix `defer()`/`Await`, Next.js `loading.tsx`/streaming RSC (this framework has no RSC).'
+description: 'Stream slow page-loader data after the shell with `defer()` and React `use()` inside `<Suspense>`, instead of blocking the first byte on it. Covers the wire contract (a deferred value settles as a chunk script after the shell, or as an NDJSON line on client navigation), errors reaching the nearest `<Suspense>` error boundary with status 200 already sent, `web.streaming.deferTimeout`, and the metadata rule (`config.metadata` may read only resolved keys). Triggers: `defer()`, `use(data.`, `DeferredValueError`, `DeferTimeoutError`, `DeferredStreamClosedError`, `DeferredKeyInMetadataError`, `web.streaming.deferTimeout`, `__WARLOCK_DEFER__`; "stream part of a page", "slow loader data", "show a skeleton while reviews load", "Suspense in a page component", "defer a promise from a loader". Skip: the rest of the loader contract — `@warlock.js/web/load-page-data/SKILL.md`; re-fetching after a mutation — `@warlock.js/web/navigate-on-the-client/SKILL.md`; competing primitives Remix `defer()`/`Await`, Next.js `loading.tsx`/streaming RSC (this framework has no RSC).'
 ---
 
 # Warlock — stream deferred page data
@@ -17,7 +17,7 @@ loader value, but a slow key no longer holds up everything else.
 import { use, Suspense } from "react";
 import { v } from "@warlock.js/seal";
 import { defer } from "@warlock.js/web";
-import type { PageLoader, PageProps } from "@warlock.js/web";
+import type { PageConfig, PageLoader, PageProps } from "@warlock.js/web";
 
 type Review = { id: string; text: string };
 
@@ -29,7 +29,7 @@ async function getReviews(id: string): Promise<Review[]> {
   return [{ id: `${id}-1`, text: "Great product." }];
 }
 
-export const validation = {
+const validation = {
   params: v.object({ id: v.string() }),
 };
 
@@ -41,6 +41,10 @@ export const loader = (async ({ request }) => {
     reviews: getReviews(params.id), // a Promise — streamed in after the shell
   });
 }) satisfies PageLoader<typeof validation>;
+
+export const config = {
+  validation,
+} satisfies PageConfig<typeof loader>;
 
 function Reviews({ reviews }: { reviews: Promise<Review[]> }) {
   const list = use(reviews);
@@ -118,10 +122,7 @@ ever reads the deferred key.
 ```tsx title="src/web/products/reviews-boundary.tsx"
 import { Component, type ReactNode } from "react";
 
-export class ReviewsBoundary extends Component<
-  { children: ReactNode },
-  { error?: unknown }
-> {
+export class ReviewsBoundary extends Component<{ children: ReactNode }, { error?: unknown }> {
   state: { error?: unknown } = {};
 
   static getDerivedStateFromError(error: unknown) {
@@ -185,28 +186,31 @@ each get their own 10-second (or configured) budget, timed independently.
 
 ## The metadata rule
 
-**`metadata()` may read only RESOLVED keys.** It runs before the shell
+**`config.metadata` may read only RESOLVED keys.** It runs before the shell
 flushes; a deferred key resolves only after. Reading one throws
 `DeferredKeyInMetadataError` — naming the key and the page — in dev AND in
 production, unconditionally:
 
 ```tsx
+import type { PageConfig, PageLoader } from "@warlock.js/web";
+
 export const loader = (async () =>
-  defer({ product: await getProduct(id), reviews: getReviews(id) })
-) satisfies PageLoader;
+  defer({ product: await getProduct(id), reviews: getReviews(id) })) satisfies PageLoader;
 
 // Wrong — "reviews" is a defer()-ed key:
-export const metadata = (({ data }) => ({
-  title: `${data.reviews.length} reviews`, // throws DeferredKeyInMetadataError
-})) satisfies PageMetadata<typeof loader>;
+const invalidConfig = {
+  metadata: ({ data }) => ({
+    title: `${data.reviews.length} reviews`, // throws DeferredKeyInMetadataError
+  }),
+} satisfies PageConfig<typeof loader>;
 
 // Right — describe the page from what's already resolved:
-export const metadata = (({ data }) => ({
-  title: data.product.name,
-})) satisfies PageMetadata<typeof loader>;
+export const config = {
+  metadata: ({ data }) => ({ title: data.product.name }),
+} satisfies PageConfig<typeof loader>;
 ```
 
-There is no way to make `metadata()` wait for a deferred value — a page's
+There is no way to make `config.metadata` wait for a deferred value — a page's
 `<head>` is part of the shell, and the shell is exactly the thing `defer()`
 exists to stop waiting on. If the description genuinely needs the deferred
 value, resolve it inside the loader instead of deferring it.
@@ -308,7 +312,7 @@ cache never serves one representation to a client that asked for the other.
   `DeferredInNonPageLoaderError`.
 - **Only top-level keys may be promises.** A promise nested under a resolved
   key throws `NestedDeferredValueError`.
-- **`metadata()` reads resolved keys only.** A deferred key throws
+- **`config.metadata` reads resolved keys only.** A deferred key throws
   `DeferredKeyInMetadataError`, naming the key and the page.
 - **A deferred rejection never changes the response's status.** It resolves
   to the nearest `<Suspense>` error boundary; the document (or NDJSON

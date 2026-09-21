@@ -210,3 +210,31 @@ export function CurrentProductId() {
 - [`load-page-data/SKILL.md`](../load-page-data/SKILL.md) — what `refresh()` re-runs.
 - [`use-layouts/SKILL.md`](../use-layouts/SKILL.md) — why layout state persists.
 - [`write-the-root/SKILL.md`](../write-the-root/SKILL.md) — the `#vessel` swap boundary.
+
+## Switch the locale
+
+`useChangeLocaleCode()` returns `{ changeLocaleCode, changeLocale, isLoading }`. `changeLocale` is the same function kept for compatibility.
+
+```tsx
+import { useState } from "react";
+import { useChangeLocaleCode } from "@warlock.js/web";
+
+function LocalePicker() {
+  const { changeLocaleCode, isLoading } = useChangeLocaleCode();
+  const [error, setError] = useState<string>();
+  const switchToArabic = async () => {
+    try {
+      await changeLocaleCode("ar");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Locale switch failed");
+    }
+  };
+  return (
+    <button disabled={isLoading} onClick={switchToArabic}>
+      {error ?? "Arabic"}
+    </button>
+  );
+}
+```
+
+The switch re-fetches the current page and commits after its tree is ready. In the default strategy, the browser writes its locale preference only at that commit, so a failed or superseded switch leaves the displayed page and the next document load unchanged. Prefix and `[locale]` routes update their path as part of the successful navigation. Await the returned promise when failure handling matters.

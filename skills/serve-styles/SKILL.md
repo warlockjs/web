@@ -67,11 +67,11 @@ A page may import CSS directly:
 
 ```tsx title="src/web/products/products.page.tsx"
 import "./products.css";
+import type { PageConfig } from "@warlock.js/web";
 
-export const route = {
-  path: "/products",
-  name: "products.index",
-} as const;
+export const config = {
+  route: { path: "/products", name: "products.index" },
+} satisfies PageConfig;
 
 export default function ProductsPage() {
   return (
