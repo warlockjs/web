@@ -33,12 +33,13 @@ import type { ConnectorEsbuildPatch } from "@warlock.js/core";
 // `../../../core/src/connectors/types` deep import, for the same reason.
 import { normalizeRoutePath } from "../../../core/src/router/normalize-route-path";
 import {
-  discoverPages,
+  discoverPageGraph,
   discoverWebRoots,
   isDiscoveredRoutablePage,
   isFile,
   walkFiles,
 } from "./discover-pages";
+import { serializeRouteLocales } from "./serialize-route-locales";
 import {
   isNotFoundPageFile,
   NOT_FOUND_ROUTE_NAME,
@@ -377,8 +378,12 @@ const EMPTY_BARREL_CONTENTS = [
   "",
 ].join("\n");
 
-function emptyPageBarrelContents(clientDir: string, publicFiles: readonly string[]): string {
-  if (publicFiles.length === 0) return EMPTY_BARREL_CONTENTS;
+function emptyPageBarrelContents(
+  clientDir: string,
+  publicFiles: readonly string[],
+  localeFiles: readonly unknown[],
+): string {
+  if (publicFiles.length === 0 && localeFiles.length === 0) return EMPTY_BARREL_CONTENTS;
 
   return [
     ...BARREL_HEADER,
@@ -388,6 +393,7 @@ function emptyPageBarrelContents(clientDir: string, publicFiles: readonly string
     "providePageManifest({",
     `  clientDir: ${quote(clientDir)},`,
     `  publicFiles: ${JSON.stringify([...publicFiles])},`,
+    ...(localeFiles.length === 0 ? [] : [`  localeFiles: ${JSON.stringify(localeFiles)},`]),
     "  pages: [],",
     "});",
     "",
@@ -420,13 +426,15 @@ export async function generatePagesBarrel(
   const { appRoot, productionDir, clientDir, publicFiles = [] } = options;
   const srcRoot = path.join(appRoot, options.srcDir ?? "src");
   const webRoots = discoverWebRoots(srcRoot);
-  const discovered = discoverPages({ appRoot, srcDir: options.srcDir });
+  const graph = discoverPageGraph({ appRoot, srcDir: options.srcDir });
+  const discovered = graph.pages;
+  const localeFiles = serializeRouteLocales(graph.localeFiles, appRoot);
   const routablePages = discovered.filter(isDiscoveredRoutablePage);
   const errorPage = discovered.find((page) => page.type === "error");
 
   if (discovered.length === 0) {
     console.log("web configured, 0 pages");
-    const contents = emptyPageBarrelContents(clientDir, publicFiles);
+    const contents = emptyPageBarrelContents(clientDir, publicFiles, localeFiles);
 
     return {
       pageCount: 0,
@@ -541,6 +549,7 @@ export async function generatePagesBarrel(
       ? []
       : [`  clientDir: ${quote(clientDir)},`]),
     ...(publicFiles.length === 0 ? [] : [`  publicFiles: ${JSON.stringify([...publicFiles])},`]),
+    ...(localeFiles.length === 0 ? [] : [`  localeFiles: ${JSON.stringify(localeFiles)},`]),
     ...(routablePages.length === 0
       ? []
       : [`  app: { module: app, sourceFile: ${relativeToApp(appFile)} },`]),

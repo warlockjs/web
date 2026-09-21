@@ -116,6 +116,20 @@ export type DiscoveredErrorPage = {
 /** The complete static web graph: routable leaves plus the optional error boundary. */
 export type DiscoveredPage = DiscoveredRoutablePage | DiscoveredErrorPage;
 
+/** A `locales.json` file found under a web root. Its contents are read later. */
+export type DiscoveredLocaleFile = {
+  /** Absolute path to the locale declaration file. */
+  sourceFile: string;
+  /** Absolute path to the web root containing the declaration. */
+  webRoot: string;
+};
+
+/** The page recipe and locale declaration locations found in one filesystem walk. */
+export type DiscoveredPageGraph = {
+  pages: DiscoveredPage[];
+  localeFiles: DiscoveredLocaleFile[];
+};
+
 export function isDiscoveredRoutablePage(page: DiscoveredPage): page is DiscoveredRoutablePage {
   return page.type === "page";
 }
@@ -371,6 +385,12 @@ export type DiscoveredPageFile = {
   webRoot: string;
 };
 
+/** Source-only discovery shared by dev installation and static graph building. */
+export type DiscoveredPageFileGraph = {
+  pages: DiscoveredPageFile[];
+  localeFiles: DiscoveredLocaleFile[];
+};
+
 /**
  * The subject list: every `*.page.tsx` under the page root, one call for the
  * whole graph.
@@ -391,7 +411,17 @@ export type DiscoveredPageFile = {
  * are only ever handed `<appRoot>/src`.
  */
 export function discoverPageFiles(srcRoot: string): DiscoveredPageFile[] {
-  const found: DiscoveredPageFile[] = [];
+  return discoverPageFileGraph(srcRoot).pages;
+}
+
+/**
+ * Finds page and locale files without reading any source. Dev installation
+ * deliberately uses this shape so one malformed page cannot prevent healthy
+ * modules from being loaded and registered.
+ */
+export function discoverPageFileGraph(srcRoot: string): DiscoveredPageFileGraph {
+  const pages: DiscoveredPageFile[] = [];
+  const localeFiles: DiscoveredLocaleFile[] = [];
 
   const ignoredAppWebFiles = discoverIgnoredAppWebFiles(srcRoot);
   if (ignoredAppWebFiles.length > 0) {
@@ -399,12 +429,16 @@ export function discoverPageFiles(srcRoot: string): DiscoveredPageFile[] {
   }
 
   for (const webRoot of discoverWebRoots(srcRoot)) {
-    for (const pageFile of walkFiles(webRoot, (fileName) => fileName.endsWith(".page.tsx"))) {
-      found.push({ pageFile, webRoot });
-    }
+    const found = walkPageGraphFiles(webRoot);
+    pages.push(...found.pageFiles.map((pageFile) => ({ pageFile, webRoot })));
+    localeFiles.push(...found.localeFiles.map((sourceFile) => ({ sourceFile, webRoot })));
   }
 
-  return found;
+  localeFiles.sort((left, right) =>
+    compareStrings(toPosix(left.sourceFile), toPosix(right.sourceFile)),
+  );
+
+  return { pages, localeFiles };
 }
 
 /** Every file under `dir` (recursive) whose name matches `predicate`. */
@@ -422,6 +456,38 @@ export function walkFiles(dir: string, predicate: (fileName: string) => boolean)
   }
 
   return found;
+}
+
+/** The two declaration kinds collected together while walking one web root. */
+type PageGraphFiles = {
+  pageFiles: string[];
+  localeFiles: string[];
+};
+
+/**
+ * Walks one web root once. Locale declarations are deliberately discovered by
+ * filename only: parsing and validation belong to their consuming manifest
+ * builder, while this scanner remains responsible only for filesystem shape.
+ */
+function walkPageGraphFiles(dir: string): PageGraphFiles {
+  const pageFiles: string[] = [];
+  const localeFiles: string[] = [];
+
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort(byName)) {
+    const full = path.join(dir, entry.name);
+
+    if (entry.isDirectory()) {
+      const nested = walkPageGraphFiles(full);
+      pageFiles.push(...nested.pageFiles);
+      localeFiles.push(...nested.localeFiles);
+    } else if (entry.isFile() && entry.name.endsWith(".page.tsx")) {
+      pageFiles.push(full);
+    } else if (entry.isFile() && entry.name === "locales.json") {
+      localeFiles.push(full);
+    }
+  }
+
+  return { pageFiles, localeFiles };
 }
 
 /**
@@ -578,9 +644,16 @@ function readDeclarations(
  * see {@link discoverIgnoredAppWebFiles}.
  */
 export function discoverPages(options: DiscoverPagesOptions): DiscoveredPage[] {
+  return discoverPageGraph(options).pages;
+}
+
+/**
+ * Scans the page root once and returns its page recipe alongside every locale
+ * declaration file, including declarations in directories with no page.
+ */
+export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPageGraph {
   const { appRoot } = options;
   const srcRoot = path.join(appRoot, options.srcDir ?? "src");
-  const webRoots = discoverWebRoots(srcRoot);
   const appFile = path.join(srcRoot, "web", "root.tsx");
   const hasAppFile = isFile(appFile);
   const declarations = new Map<string, ModuleConfigRead>();
@@ -588,172 +661,168 @@ export function discoverPages(options: DiscoverPagesOptions): DiscoveredPage[] {
   const relativeToApp = (file: string) => toPosix(path.relative(appRoot, file));
 
   const pages: DiscoveredPage[] = [];
+  const sourceGraph = discoverPageFileGraph(srcRoot);
   const explicitRouteFiles = new Set<string>();
   let errorPage: DiscoveredErrorPage | undefined;
 
-  const ignoredAppWebFiles = discoverIgnoredAppWebFiles(srcRoot);
-  if (ignoredAppWebFiles.length > 0) warnIgnoredAppWebFiles(ignoredAppWebFiles, appRoot);
+  for (const { pageFile, webRoot } of sourceGraph.pages) {
+    const pageSource = fs.readFileSync(pageFile, "utf-8");
+    assertPageHasDefaultExport(relativeToApp(pageFile), pageSource);
+    const { route } = readDeclarations(pageFile, declarations, pageSource);
+    if (isErrorPageFile(pageFile)) {
+      if (route !== undefined) throw new ErrorPageDeclaresRouteError(relativeToApp(pageFile));
 
-  for (const webRoot of webRoots) {
-    for (const pageFile of walkFiles(webRoot, (fileName) => fileName.endsWith(".page.tsx"))) {
-      const pageSource = fs.readFileSync(pageFile, "utf-8");
-      assertPageHasDefaultExport(relativeToApp(pageFile), pageSource);
-      const { route } = readDeclarations(pageFile, declarations, pageSource);
-      if (isErrorPageFile(pageFile)) {
-        if (route !== undefined) throw new ErrorPageDeclaresRouteError(relativeToApp(pageFile));
-
-        if (errorPage !== undefined) {
-          throw new DuplicateErrorPageError(
-            relativeToApp(errorPage.pageFile),
-            relativeToApp(pageFile),
-          );
-        }
-
-        errorPage = { type: "error", pageFile, webRoot, ...(hasAppFile ? { appFile } : {}) };
-        continue;
-      }
-      const isNotFoundPage = isNotFoundPageFile(pageFile);
-
-      // THE NOT-FOUND PAGE IS THE ONE PAGE WITH NO URL, in both directions.
-      //
-      // Every ordinary page may derive its URL from the filesystem.
-      // `404.page.tsx` is reached by NOT matching, so the opposite remains the
-      // error: a `route` export here reads as a promise that some path is
-      // browsable, which the installers never keep.
-      //
-      // Discovery still reports it, with the SAME reserved identity both
-      // installers register it under, so the emitted artefacts agree with the
-      // server about which entry is the not-found page — and so the client
-      // registry carries the module the SSR'd document has to hydrate against.
-      if (isNotFoundPage && route !== undefined) {
-        throw new NotFoundPageDeclaresRouteError(relativeToApp(pageFile));
-      }
-
-      // The page contract is not only `route`. `metadata` is the other export
-      // every page may declare, and it is the one with no compiler behind it
-      // unless the author opted in to a type annotation — so it is checked
-      // here, by name, exactly like the route above.
-      //
-      // AFTER the reserved-404 route check on purpose: an impossible 404 route
-      // contract is more fundamental than a malformed `<head>` declaration.
-      const unknownMetadataKeys = readMetadataKeys(relativeToApp(pageFile), pageSource);
-
-      if (unknownMetadataKeys.length > 0) {
-        throw new UnknownMetadataKeyError(relativeToApp(pageFile), unknownMetadataKeys);
-      }
-
-      // The policy decides which layout the page RENDERS INSIDE, from the FULL
-      // enumerated chain: a layout anywhere on the ancestry path counts, not
-      // just one in the page's own directory. Discovery supplies the one fact
-      // the rule needs and the pure policy cannot learn — whether each layout
-      // renders anything at all.
-      const layouts = layoutChainFor(pageFile, webRoot);
-      const layoutFacts = layouts.map((layout) => {
-        const declaration = readDeclarations(layout, declarations);
-        return {
-          layout,
-          renders: declaration.hasDefault,
-          hasMiddleware: declaration.hasMiddleware,
-        };
-      });
-      const selection = selectPageLayout(
-        layoutFacts.map(({ layout, renders }) => ({ layout, renders })),
-      );
-
-      if (selection.type === "rejected") {
-        throw new NestedLayoutsNotSupportedError(
+      if (errorPage !== undefined) {
+        throw new DuplicateErrorPageError(
+          relativeToApp(errorPage.pageFile),
           relativeToApp(pageFile),
-          selection.layouts.map(relativeToApp),
         );
       }
 
-      // Every layout that declares a guard, outermost first. Both installers
-      // now CONCATENATE the whole chain into the pipeline's single layout slot
-      // (`../server/install-page-routes.ts`, `../server/install-page-routes-from-manifest.ts`),
-      // so a guard anywhere on the path runs, in this order — which is why the
-      // temporary refusal that used to stand here is gone rather than relaxed.
-      const middlewareLayouts = layoutFacts
-        .filter(({ hasMiddleware }) => hasMiddleware)
-        .map(({ layout }) => layout);
-
-      // EVERY prefix on the path, outermost first: a `prefix`-only layout is
-      // still a segment of the URL, and composing only the rendering layout's
-      // would serve the subtree from a path nobody declared.
-      const layoutPrefix = layouts.reduce(
-        (composed, layoutFile) =>
-          composeRoutePath(composed, readDeclarations(layoutFile, declarations).prefix ?? "/"),
-        "/",
-      );
-
-      const relativePageFile = toPosix(path.relative(webRoot, pageFile));
-      const layoutPrefixes = Object.fromEntries(
-        layouts.flatMap((layoutFile) => {
-          const prefix = readDeclarations(layoutFile, declarations).prefix;
-          if (prefix === undefined) return [];
-
-          const directory = toPosix(path.relative(webRoot, path.dirname(layoutFile)));
-          return [[directory, prefix]];
-        }),
-      );
-      // Routed through `canonicalizeRouteExport` — the ONE seam that validates
-      // a declared `route.path` (`../routing/route-identity.ts`) — rather than
-      // reading `route.path` directly, so `effectiveRoutePath` can never carry
-      // a path the grammar has rejected. This does not depend on `routeName`
-      // (below) also validating: even if that field were reordered, made
-      // conditional, or removed, an unsupported declared path still cannot
-      // reach `effectiveRoutePath` unvalidated.
-      const canonicalRoute =
-        !isNotFoundPage && route ? canonicalizeRouteExport(route, relativePageFile) : undefined;
-
-      const effectiveRoutePath = isNotFoundPage
-        ? NOT_FOUND_ROUTE_PATH
-        : canonicalRoute
-          ? composeRoutePath(layoutPrefix, canonicalRoute.path)
-          : deriveFilesystemRoutePath({ pageFile: relativePageFile, layoutPrefixes });
-
-      if (!isNotFoundPage && route !== undefined) {
-        explicitRouteFiles.add(relativeToApp(pageFile));
-      }
-
-      pages.push({
-        type: "page",
-        routeName: isNotFoundPage
-          ? NOT_FOUND_ROUTE_NAME
-          : resolvePageRouteName(route, relativePageFile),
-        // The catch-all, which the client route matcher already understands as
-        // a terminal `catch-all` token sorted LAST by specificity
-        // (`../client/runtime/matcher.ts`) — so the browser resolves the
-        // not-found page for a URL that matched nothing, exactly as the server
-        // did, and never in preference to a real page.
-        routePath: effectiveRoutePath,
-        pageFile,
-        webRoot,
-        // THE NOT-FOUND PAGE RENDERS INSIDE THE APPLICATION ROOT AND NOTHING
-        // ELSE — an EMPTY chain, not the one enumerated above.
-        //
-        // Both installers render it with `layoutFile: undefined`, deliberately
-        // and independently (`../server/install-page-routes.ts`,
-        // `../server/install-page-routes-from-manifest.ts`), for the same
-        // reason the 404 page takes no loader: a path whose entire job is to
-        // handle failure must not depend on chrome that can itself throw,
-        // redirect, or need data. Reporting layouts here anyway put them in the
-        // client registry and therefore in HYDRATION, so the server rendered
-        // `App(Page)` while the browser rebuilt `App(Layout(Page))` — a
-        // guaranteed mismatch on the one route nobody is watching, invisible to
-        // any application that happens to have no layouts.
-        //
-        // Aligned by REMOVING them from the client, never by giving them to the
-        // server: layouts on the not-found route would make it the most fragile
-        // route in the application.
-        //
-        // The chain above is still enumerated and still validated, so a nested
-        // layout on this page's path is refused at build time exactly as it is
-        // everywhere else — what changes is only what the page renders inside.
-        layouts: isNotFoundPage ? [] : layouts,
-        middlewareLayouts: isNotFoundPage ? [] : middlewareLayouts,
-        ...(hasAppFile ? { appFile } : {}),
-      });
+      errorPage = { type: "error", pageFile, webRoot, ...(hasAppFile ? { appFile } : {}) };
+      continue;
     }
+    const isNotFoundPage = isNotFoundPageFile(pageFile);
+
+    // THE NOT-FOUND PAGE IS THE ONE PAGE WITH NO URL, in both directions.
+    //
+    // Every ordinary page may derive its URL from the filesystem.
+    // `404.page.tsx` is reached by NOT matching, so the opposite remains the
+    // error: a `route` export here reads as a promise that some path is
+    // browsable, which the installers never keep.
+    //
+    // Discovery still reports it, with the SAME reserved identity both
+    // installers register it under, so the emitted artefacts agree with the
+    // server about which entry is the not-found page — and so the client
+    // registry carries the module the SSR'd document has to hydrate against.
+    if (isNotFoundPage && route !== undefined) {
+      throw new NotFoundPageDeclaresRouteError(relativeToApp(pageFile));
+    }
+
+    // The page contract is not only `route`. `metadata` is the other export
+    // every page may declare, and it is the one with no compiler behind it
+    // unless the author opted in to a type annotation — so it is checked
+    // here, by name, exactly like the route above.
+    //
+    // AFTER the reserved-404 route check on purpose: an impossible 404 route
+    // contract is more fundamental than a malformed `<head>` declaration.
+    const unknownMetadataKeys = readMetadataKeys(relativeToApp(pageFile), pageSource);
+
+    if (unknownMetadataKeys.length > 0) {
+      throw new UnknownMetadataKeyError(relativeToApp(pageFile), unknownMetadataKeys);
+    }
+
+    // The policy decides which layout the page RENDERS INSIDE, from the FULL
+    // enumerated chain: a layout anywhere on the ancestry path counts, not
+    // just one in the page's own directory. Discovery supplies the one fact
+    // the rule needs and the pure policy cannot learn — whether each layout
+    // renders anything at all.
+    const layouts = layoutChainFor(pageFile, webRoot);
+    const layoutFacts = layouts.map((layout) => {
+      const declaration = readDeclarations(layout, declarations);
+      return {
+        layout,
+        renders: declaration.hasDefault,
+        hasMiddleware: declaration.hasMiddleware,
+      };
+    });
+    const selection = selectPageLayout(
+      layoutFacts.map(({ layout, renders }) => ({ layout, renders })),
+    );
+
+    if (selection.type === "rejected") {
+      throw new NestedLayoutsNotSupportedError(
+        relativeToApp(pageFile),
+        selection.layouts.map(relativeToApp),
+      );
+    }
+
+    // Every layout that declares a guard, outermost first. Both installers
+    // now CONCATENATE the whole chain into the pipeline's single layout slot
+    // (`../server/install-page-routes.ts`, `../server/install-page-routes-from-manifest.ts`),
+    // so a guard anywhere on the path runs, in this order — which is why the
+    // temporary refusal that used to stand here is gone rather than relaxed.
+    const middlewareLayouts = layoutFacts
+      .filter(({ hasMiddleware }) => hasMiddleware)
+      .map(({ layout }) => layout);
+
+    // EVERY prefix on the path, outermost first: a `prefix`-only layout is
+    // still a segment of the URL, and composing only the rendering layout's
+    // would serve the subtree from a path nobody declared.
+    const layoutPrefix = layouts.reduce(
+      (composed, layoutFile) =>
+        composeRoutePath(composed, readDeclarations(layoutFile, declarations).prefix ?? "/"),
+      "/",
+    );
+
+    const relativePageFile = toPosix(path.relative(webRoot, pageFile));
+    const layoutPrefixes = Object.fromEntries(
+      layouts.flatMap((layoutFile) => {
+        const prefix = readDeclarations(layoutFile, declarations).prefix;
+        if (prefix === undefined) return [];
+
+        const directory = toPosix(path.relative(webRoot, path.dirname(layoutFile)));
+        return [[directory, prefix]];
+      }),
+    );
+    // Routed through `canonicalizeRouteExport` — the ONE seam that validates
+    // a declared `route.path` (`../routing/route-identity.ts`) — rather than
+    // reading `route.path` directly, so `effectiveRoutePath` can never carry
+    // a path the grammar has rejected. This does not depend on `routeName`
+    // (below) also validating: even if that field were reordered, made
+    // conditional, or removed, an unsupported declared path still cannot
+    // reach `effectiveRoutePath` unvalidated.
+    const canonicalRoute =
+      !isNotFoundPage && route ? canonicalizeRouteExport(route, relativePageFile) : undefined;
+
+    const effectiveRoutePath = isNotFoundPage
+      ? NOT_FOUND_ROUTE_PATH
+      : canonicalRoute
+        ? composeRoutePath(layoutPrefix, canonicalRoute.path)
+        : deriveFilesystemRoutePath({ pageFile: relativePageFile, layoutPrefixes });
+
+    if (!isNotFoundPage && route !== undefined) {
+      explicitRouteFiles.add(relativeToApp(pageFile));
+    }
+
+    pages.push({
+      type: "page",
+      routeName: isNotFoundPage
+        ? NOT_FOUND_ROUTE_NAME
+        : resolvePageRouteName(route, relativePageFile),
+      // The catch-all, which the client route matcher already understands as
+      // a terminal `catch-all` token sorted LAST by specificity
+      // (`../client/runtime/matcher.ts`) — so the browser resolves the
+      // not-found page for a URL that matched nothing, exactly as the server
+      // did, and never in preference to a real page.
+      routePath: effectiveRoutePath,
+      pageFile,
+      webRoot,
+      // THE NOT-FOUND PAGE RENDERS INSIDE THE APPLICATION ROOT AND NOTHING
+      // ELSE — an EMPTY chain, not the one enumerated above.
+      //
+      // Both installers render it with `layoutFile: undefined`, deliberately
+      // and independently (`../server/install-page-routes.ts`,
+      // `../server/install-page-routes-from-manifest.ts`), for the same
+      // reason the 404 page takes no loader: a path whose entire job is to
+      // handle failure must not depend on chrome that can itself throw,
+      // redirect, or need data. Reporting layouts here anyway put them in the
+      // client registry and therefore in HYDRATION, so the server rendered
+      // `App(Page)` while the browser rebuilt `App(Layout(Page))` — a
+      // guaranteed mismatch on the one route nobody is watching, invisible to
+      // any application that happens to have no layouts.
+      //
+      // Aligned by REMOVING them from the client, never by giving them to the
+      // server: layouts on the not-found route would make it the most fragile
+      // route in the application.
+      //
+      // The chain above is still enumerated and still validated, so a nested
+      // layout on this page's path is refused at build time exactly as it is
+      // everywhere else — what changes is only what the page renders inside.
+      layouts: isNotFoundPage ? [] : layouts,
+      middlewareLayouts: isNotFoundPage ? [] : middlewareLayouts,
+      ...(hasAppFile ? { appFile } : {}),
+    });
   }
 
   // The error page is captured separately above so a second one can be
@@ -767,5 +836,5 @@ export function discoverPages(options: DiscoverPagesOptions): DiscoveredPage[] {
   assertUniqueRoutePaths(routablePages, appRoot, explicitRouteFiles);
   assertUniqueRouteNames(routablePages, appRoot);
 
-  return pages;
+  return { pages, localeFiles: sourceGraph.localeFiles };
 }

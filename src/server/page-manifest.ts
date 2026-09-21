@@ -49,6 +49,16 @@ export type PageManifestErrorPageEntry = {
   sourceFile: string;
 };
 
+/** A validated route-locales source artifact retained verbatim for boot-time locale assembly. */
+export type PageManifestLocaleFile = {
+  /** App-root-relative POSIX path to the source JSON file. */
+  sourceFile: string;
+  /** App-root-relative POSIX identity of the web root that owns the file. */
+  webRoot: string;
+  /** Original JSON text, retained so production never reads application source files. */
+  source: string;
+};
+
 export type PageManifest = {
   /**
    * Where the client bundle was written, as an APP-ROOT-RELATIVE POSIX path
@@ -76,6 +86,8 @@ export type PageManifest = {
    * root and therefore never exposes `.vite/manifest.json`.
    */
   publicFiles?: readonly string[];
+  /** Validated route-locales JSON sources, emitted by the production barrel without client imports. */
+  localeFiles?: readonly PageManifestLocaleFile[];
   /**
    * The application root component every page renders inside.
    *

@@ -187,6 +187,25 @@ describe("generatePagesBarrel", () => {
     vi.restoreAllMocks();
   });
 
+  it("serializes discovered locale sources even when no pages exist", async () => {
+    const source = '{\n  "shared": { "en": "Shared" }\n}\n';
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/web/locales.json": source,
+    });
+    const productionDir = path.join(appRoot, ".warlock", "production");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const result = await generatePagesBarrel({ appRoot, productionDir, clientDir: "dist/client" });
+
+    expect(result.pageCount).toBe(0);
+    expect(result.contents).toContain(
+      'localeFiles: [{"sourceFile":"src/web/locales.json","webRoot":"src/web","source":"{\\n  \\"shared\\": { \\"en\\": \\"Shared\\" }\\n}\\n"}]',
+    );
+    expect(result.contents).not.toContain("import * as");
+    vi.restoreAllMocks();
+  });
+
   it("bakes the client directory and exact public-file list into a zero-page barrel", async () => {
     const appRoot = makeAppTree({ "src/web/root.tsx": APP });
     const productionDir = path.join(appRoot, ".warlock", "production");
