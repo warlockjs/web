@@ -19,7 +19,6 @@ import type {
   SerializedErrorPageProps,
 } from "../hydration-payload";
 import { registerModules } from "../register-modules";
-import { assertTranslationRegistrationComplete } from "./assert-translation-registration-complete";
 import { installPayloadTranslations } from "./install-payload-translations";
 import { loadClientRouteComposition } from "./runtime";
 import type { ClientPageEntry, ClientProjectedModule } from "./runtime/types";
@@ -173,16 +172,10 @@ export async function buildHydratedTree(
     throw new MissingHydrationErrorPageError(payload.name);
   }
 
-  // BEFORE `registerModules`, not after: the payload's own `translations`
-  // (`build-hydration-payload.ts`'s `translations` key) is the server's full
-  // locale table, not a page-scoped subset, so it does not need a
-  // `register()` hook to land it client-side — the same install
-  // `hydrate-page.tsx` performs for the initial document. Doing this here
-  // makes it the ONE place every client render of a payload (navigation,
-  // `refresh()`, `changeLocaleCode()`, and the initial hydration tree, which
-  // all funnel through this function) picks it up, so a page/layout whose
-  // `register()` never learned about an app-level namespace still renders
-  // correctly instead of throwing (dev) or rendering raw keys (prod).
+  // Legacy payloads supply the registry copy before registration. Scoped
+  // payloads stay in their route provider and never extend the registry.
+  // Both modes already carry the server's required copy, so register() is
+  // not required to reproduce it and cannot prove its provenance afterward.
   installPayloadTranslations(payload);
 
   // Registration is the first lifecycle action after the real namespaces have
@@ -196,13 +189,6 @@ export async function buildHydratedTree(
     ...composition.layouts,
     selectedPageModule,
   ]);
-
-  // Post-register, pre-render: register() has had its one chance to install
-  // this page's translations, and nothing below has read one yet.
-  // Development-only — see `assert-translation-registration-complete.ts`.
-  if (import.meta.env?.DEV) {
-    assertTranslationRegistrationComplete(payload.name, payload.locale, payload.translations);
-  }
 
   const { shared } = payload;
   let element: ReactNode;

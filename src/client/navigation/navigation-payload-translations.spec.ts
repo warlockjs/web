@@ -7,10 +7,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HydrationDocumentPayloadSource } from "../../hydration-payload";
 import { useTrans } from "../../localization";
 import { currentNavigator } from "../../routing/navigator";
-import {
-  IncompleteTranslationRegistrationError,
-  assertTranslationRegistrationComplete,
-} from "../assert-translation-registration-complete";
 import { buildHydratedTree } from "../build-hydrated-tree";
 import type { ClientPageEntry, ClientRouteComposition } from "../runtime/types";
 import { NavigationRoot } from "./navigation-root";
@@ -27,7 +23,7 @@ import { resetManualScrollRestorationInstalled } from "./scroll-restoration";
  *
  * `build-hydrated-tree.ts` now installs `payload.translations` itself
  * (`install-payload-translations.ts`), before `registerModules` runs and
- * before the dev assertion reads the table, so this suite proves it end to
+ * before components read the table, so this suite proves it end to
  * end through the real `buildHydratedTree` and `NavigationRoot` — not a
  * stub `buildTree` — the same shape `navigation-root-document.spec.ts` uses
  * for the `<html lang dir>` fix.
@@ -153,32 +149,5 @@ describe("client navigation installs the payload's translations", () => {
 
     expect(container.querySelector('[data-testid="page"]')?.textContent).toBe("Sign in");
     expect(errorSpy).not.toHaveBeenCalled();
-  });
-});
-
-describe("assertTranslationRegistrationComplete keeps its job", () => {
-  it("still throws, naming the page/locale/keys, when the PAYLOAD itself lacks a key the server required", () => {
-    let failure: unknown;
-
-    try {
-      // A direct caller can still ask for keys the payload it is checking
-      // against never carried — this is the shape `buildHydratedTree` itself
-      // can no longer produce (its `required` argument IS `payload.translations`,
-      // which it installs before this runs), but the function's own contract
-      // — comparing whatever `required` names against whatever is actually
-      // registered — has not changed. See `assert-translation-registration-
-      // complete.spec.ts` for the full unit contract.
-      assertTranslationRegistrationComplete("products.show", "fr-payload-gap", {
-        auth: { login: "Se connecter" },
-      });
-    } catch (error) {
-      failure = error;
-    }
-
-    expect(failure).toBeInstanceOf(IncompleteTranslationRegistrationError);
-    const error = failure as IncompleteTranslationRegistrationError;
-    expect(error.pageName).toBe("products.show");
-    expect(error.locale).toBe("fr-payload-gap");
-    expect(error.missingKeys).toEqual(["auth"]);
   });
 });

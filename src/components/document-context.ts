@@ -99,6 +99,11 @@ export type HydrationDocumentPayloadSource = {
    */
   readonly translations: Keywords;
   /**
+   * A JSON locale snapshot. Its presence selects provider-scoped lookup on
+   * the client instead of registering this payload into the global table.
+   */
+  readonly translationMode?: "scoped";
+  /**
    * The params the SERVER matched for this request — `bundle.route.params`
    * (`server/execute-page-request.ts:288`), carried untransformed. Same reason
    * `name` is here: the browser must not re-derive them from

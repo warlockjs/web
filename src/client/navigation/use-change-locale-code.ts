@@ -46,6 +46,8 @@ import { changeLocaleCode } from "./change-locale-code";
  */
 export type UseChangeLocaleCode = {
   /** Switch to `code`. Rejects if the switch fails. */
+  changeLocaleCode: (code: string) => Promise<void>;
+  /** @deprecated Use {@link changeLocaleCode}. */
   changeLocale: (code: string) => Promise<void>;
   /** Whether a switch started by THIS hook instance is in flight. */
   isLoading: boolean;
@@ -59,6 +61,7 @@ export function useChangeLocaleCode(): UseChangeLocaleCode {
   // still out; setting state then is a warning in the console of an app that
   // did nothing wrong.
   const mounted = useRef(true);
+  const latestInvocation = useRef(0);
 
   // Reset on mount as well as clearing on unmount: under StrictMode the effect
   // runs, cleans up, and runs again on the same instance. Without the reset the
@@ -70,10 +73,13 @@ export function useChangeLocaleCode(): UseChangeLocaleCode {
 
     return () => {
       mounted.current = false;
+      latestInvocation.current += 1;
     };
   }, []);
 
   const changeLocale = useCallback(async (code: string) => {
+    const invocation = latestInvocation.current + 1;
+    latestInvocation.current = invocation;
     setIsLoading(true);
 
     try {
@@ -82,9 +88,11 @@ export function useChangeLocaleCode(): UseChangeLocaleCode {
       // `finally`, not the success path: a rejection must clear the flag too,
       // or a failed switch leaves the picker disabled forever — the control
       // the user would reach for to try again.
-      if (mounted.current) setIsLoading(false);
+      if (mounted.current && latestInvocation.current === invocation) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
-  return { changeLocale, isLoading };
+  return { changeLocaleCode: changeLocale, changeLocale, isLoading };
 }

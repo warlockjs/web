@@ -13,3 +13,4 @@
  * connector imports it inside its request handler, never at module scope.
  */
 export { listRoutablePages, type ListedRoutablePage } from "./list-routable-pages";
+export { listRouteLocaleKeys, type ListRouteLocaleKeysOptions } from "./list-route-locale-keys";

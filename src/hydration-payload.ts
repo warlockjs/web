@@ -57,6 +57,38 @@ function isPlainObject(value: unknown): boolean {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const FORBIDDEN_SCOPED_TRANSLATION_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+
+/**
+ * Scoped translations become an immutable client-side dictionary. Validate
+ * their complete tree at the wire boundary so a malformed nested value cannot
+ * throw during a provider render. The active-path set rejects devalue cycles
+ * while still allowing an ordinary repeated object at independent branches.
+ */
+function isScopedTranslationTree(value: unknown, ancestors = new WeakSet<object>()): boolean {
+  if (!isPlainObject(value)) return false;
+
+  const record = value as Record<string, unknown>;
+  const prototype = Object.getPrototypeOf(record);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  if (ancestors.has(record)) return false;
+
+  ancestors.add(record);
+
+  for (const key of Object.keys(record)) {
+    if (FORBIDDEN_SCOPED_TRANSLATION_KEYS.has(key)) return false;
+
+    const entry = record[key];
+    if (typeof entry !== "string" && !isScopedTranslationTree(entry, ancestors)) {
+      return false;
+    }
+  }
+
+  ancestors.delete(record);
+
+  return true;
+}
+
 function hasExactStringKeys(
   value: Record<PropertyKey, unknown>,
   required: readonly string[],
@@ -119,6 +151,15 @@ export function isHydrationPayload(value: unknown): value is HydrationDocumentPa
   if (typeof locale !== "string" || locale.length === 0) return false;
 
   if (!isPlainObject((value as Record<string, unknown>).translations)) return false;
+
+  const translationMode = (value as Record<string, unknown>).translationMode;
+  if (translationMode !== undefined && translationMode !== "scoped") return false;
+  if (
+    translationMode === "scoped" &&
+    !isScopedTranslationTree((value as Record<string, unknown>).translations)
+  ) {
+    return false;
+  }
 
   for (const key of OPTIONAL_OBJECT_PAYLOAD_KEYS) {
     const optional = (value as Record<string, unknown>)[key];

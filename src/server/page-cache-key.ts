@@ -29,6 +29,8 @@ export type PageCacheKeyInput = {
   variant: PageCacheVariant;
   /** The route's own `cache.varyBy(request)` result, when it declares one. */
   vary?: string;
+  /** Content identity of route-owned translations, absent for legacy registration. */
+  translationsRevision?: string;
 };
 
 /**
@@ -86,8 +88,12 @@ export function computePageCacheKey(input: PageCacheKeyInput): string {
 
   const host = input.host.toLowerCase();
   const vary = input.vary === undefined ? "" : `|vary=${encodeURIComponent(input.vary)}`;
+  const translations =
+    input.translationsRevision === undefined
+      ? ""
+      : `|translations=${encodeURIComponent(input.translationsRevision)}`;
 
   // The host is URI-component encoded so no host value can forge the path
   // part of another entry's key.
-  return `${encodeURIComponent(host)}${pathname}?${query}|${input.locale}|${input.variant}${vary}`;
+  return `${encodeURIComponent(host)}${pathname}?${query}|${input.locale}|${input.variant}${vary}${translations}`;
 }

@@ -6,6 +6,7 @@ import type { SerializedErrorPageProps } from "../components/document-context";
 import type { SharedStore } from "../shared";
 import type { DeferSettlement } from "./defer-settlement";
 import type { BufferedResponse } from "./settle-page-response";
+import type { RouteTranslations } from "./route-translations";
 
 export type PipelineStore = SharedStore & {
   request: Request;
@@ -175,6 +176,8 @@ export type PageDataBundle = {
   metadata?: MetadataOutput;
   shortCircuit?: PageShortCircuit;
   error?: PageErrorRecord;
+  /** Immutable route-owned translations selected for this request. */
+  routeTranslations?: RouteTranslations;
   /**
    * Selected only for the framework-owned application error-page terminal —
    * already the JSON-safe shape (`hydrationErrorPageProps` produces this, not

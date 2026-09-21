@@ -10,6 +10,11 @@ const base: PageCacheKeyInput = {
 };
 
 describe("computePageCacheKey — tenant isolation", () => {
+  it("separates changed route copy from prior JSON and legacy cache entries", () => {
+    const first = computePageCacheKey({ ...base, translationsRevision: "one" });
+    expect(first).not.toBe(computePageCacheKey({ ...base, translationsRevision: "two" }));
+    expect(first).not.toBe(computePageCacheKey(base));
+  });
   it("gives two hosts serving the same URL two different keys", () => {
     expect(computePageCacheKey(base)).not.toBe(computePageCacheKey({ ...base, host: "beta.test" }));
   });

@@ -1,10 +1,18 @@
-import { transFrom, type Converter, type Translatable } from "@mongez/localization";
+import {
+  transFrom,
+  transFromKeywords,
+  type Converter,
+  type Keywords,
+  type Translatable,
+} from "@mongez/localization";
 import { createContext, useCallback, useContext, type ReactNode } from "react";
 import type { TranslationKey } from "./index";
 import { recordCurrentLocale } from "./routing/current-locale";
 
 export type LocaleProviderProps = {
   readonly locale: string;
+  /** A selected-locale snapshot that must stay independent of the global registry. */
+  readonly translations?: Readonly<Keywords>;
   readonly children: ReactNode;
 };
 
@@ -14,7 +22,12 @@ export type Translate = (
   converter?: Converter,
 ) => ReturnType<typeof transFrom>;
 
-const LocaleContext = createContext<string | undefined>(undefined);
+type LocaleValue = {
+  readonly locale: string;
+  readonly translations?: Readonly<Keywords>;
+};
+
+const LocaleContext = createContext<LocaleValue | undefined>(undefined);
 
 /**
  * Bind translations to the request locale carried by the hydration payload.
@@ -27,32 +40,46 @@ const LocaleContext = createContext<string | undefined>(undefined);
  * value this component wrote, because two concurrent requests both
  * rendering a `LocaleProvider` must never share one process-wide slot.
  */
-export function LocaleProvider({ locale, children }: LocaleProviderProps) {
+export function LocaleProvider({ locale, translations, children }: LocaleProviderProps) {
   recordCurrentLocale(locale);
 
-  return <LocaleContext.Provider value={locale}>{children}</LocaleContext.Provider>;
+  return (
+    <LocaleContext.Provider value={{ locale, translations }}>{children}</LocaleContext.Provider>
+  );
 }
 
 /** Read the locale selected for the current server render or client page. */
 export function useLocale(): string {
-  const locale = useContext(LocaleContext);
+  const value = useContext(LocaleContext);
 
-  if (locale === undefined) {
+  if (value === undefined) {
     throw new Error(
       "useLocale() was called outside Warlock's LocaleProvider. Render the component " +
         "through the @warlock.js/web page pipeline.",
     );
   }
 
-  return locale;
+  return value.locale;
 }
 
 /** Translate without consulting @mongez/localization's process-global locale. */
 export function useTrans(): Translate {
-  const locale = useLocale();
+  const value = useContext(LocaleContext);
+
+  if (value === undefined) {
+    throw new Error(
+      "useTrans() was called outside Warlock's LocaleProvider. Render the component " +
+        "through the @warlock.js/web page pipeline.",
+    );
+  }
+
+  const { locale, translations } = value;
 
   return useCallback(
-    (keyword, placeholders, converter) => transFrom(locale, keyword, placeholders, converter),
-    [locale],
+    (keyword, placeholders, converter) =>
+      translations === undefined
+        ? transFrom(locale, keyword, placeholders, converter)
+        : transFromKeywords(locale, translations, keyword, placeholders, converter),
+    [locale, translations],
   );
 }

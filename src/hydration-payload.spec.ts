@@ -1,7 +1,11 @@
 import { stringify } from "devalue";
 import { describe, expect, it } from "vitest";
 import { escapePayload, PAYLOAD_SCRIPT_ID } from "./components/document-context";
-import { REQUIRED_PAYLOAD_KEYS, readHydrationPayload } from "./hydration-payload";
+import {
+  isHydrationPayload,
+  REQUIRED_PAYLOAD_KEYS,
+  readHydrationPayload,
+} from "./hydration-payload";
 import { buildHydrationPayload } from "./server/build-hydration-payload";
 import type { PageDataBundle } from "./server/execute-page-request";
 
@@ -125,6 +129,42 @@ describe("readHydrationPayload", () => {
     const documentNode = makeDocument(stringify(fullPayload));
 
     expect(() => readHydrationPayload(documentNode)).not.toThrow();
+  });
+
+  it("accepts only the scoped translation-mode discriminator", () => {
+    const scoped = { ...fullPayload, translationMode: "scoped" };
+
+    expect(readHydrationPayload(makeDocument(stringify(scoped)))).toEqual(scoped);
+    expect(() =>
+      readHydrationPayload(makeDocument(stringify({ ...fullPayload, translationMode: "global" }))),
+    ).toThrow(/Warlock hydration payload was found at #.* but could not be read\./);
+  });
+
+  it.each([
+    ["a null leaf", { nested: null }],
+    ["a numeric leaf", { nested: 1 }],
+    ["an array leaf", { nested: ["value"] }],
+    ["a __proto__ key", JSON.parse('{"__proto__":"value"}')],
+    ["a prototype key", { prototype: "value" }],
+    ["a constructor key", { constructor: "value" }],
+  ])("rejects a scoped payload with %s", (_label, translations) => {
+    expect(
+      isHydrationPayload({
+        ...fullPayload,
+        translationMode: "scoped",
+        translations,
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects a devalue cycle in scoped translations before provider rendering", () => {
+    const translations: Record<string, unknown> = {};
+    translations.self = translations;
+    const cyclicPayload = { ...fullPayload, translationMode: "scoped", translations };
+
+    expect(() => readHydrationPayload(makeDocument(stringify(cyclicPayload)))).toThrow(
+      /Warlock hydration payload was found at #.* but could not be read\./,
+    );
   });
 
   it("returns metadata and params when the payload carries them", () => {

@@ -34,7 +34,7 @@ import path from "node:path";
 import { readFileSync } from "node:fs";
 import type { ViteDevServer } from "vite";
 import {
-  discoverPageFiles,
+  discoverPageFileGraph,
   ErrorPageDeclaresRouteError,
   isErrorPageFile,
   layoutChainFor,
@@ -49,7 +49,8 @@ import { toPosix } from "../shared/to-posix";
 import { resolvePageRouteIdentity, resolvePageRouteName } from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
 import { publishLocaleRouting } from "../routing/locale-routing";
-import { type FastifyInstance, type Router } from "@warlock.js/core";
+import { config, type FastifyInstance, type Router } from "@warlock.js/core";
+import { buildRouteLocaleManifest } from "../build/build-route-locale-manifest";
 import { composeLayoutModules } from "./compose-layout-modules";
 import { createPageRouteHandler, type PageRouteHandler } from "./create-page-route-handler";
 import { resolveLocaleRouting } from "./locale-routing/resolve-locale-routing";
@@ -67,6 +68,7 @@ import {
   registerNotFoundPageRoute,
 } from "./not-found-page";
 import type { LayoutModuleShape, PageRouteExport } from "./page-module-shapes";
+import { createRouteTranslationsResolver } from "./route-translations";
 
 export type { LayoutModuleShape, PageModuleShape, PageRouteExport } from "./page-module-shapes";
 
@@ -413,8 +415,21 @@ export async function installPageRoutes(
   // catch-all's absence of them) are decided against this one value, and
   // publishing it once after the loop keeps it in step with `publishRouteTable`.
   const localeRouting = resolveLocaleRouting();
-  const discovered = [...discoverPageFiles(appSrcRoot)].sort((left, right) =>
+  const discoveredGraph = discoverPageFileGraph(appSrcRoot);
+  const discovered = [...discoveredGraph.pages].sort((left, right) =>
     left.pageFile < right.pageFile ? -1 : left.pageFile > right.pageFile ? 1 : 0,
+  );
+  const getRouteTranslations = createRouteTranslationsResolver(
+    buildRouteLocaleManifest(
+      {
+        pages: [...discoveredGraph.pages, { pageFile: appFile, webRoot: path.dirname(appFile) }],
+        localeFiles: discoveredGraph.localeFiles,
+      },
+      {
+        localeCodes: config.key<readonly string[] | undefined>("app.localeCodes"),
+        localeCode: config.key<string | undefined>("app.localeCode"),
+      },
+    ),
   );
 
   // THE NOT-FOUND PAGE IS TAKEN OUT OF THE ORDINARY LOOP, not filtered inside
@@ -565,6 +580,8 @@ export async function installPageRoutes(
         Promise.all(layoutLevel.chain.map((layoutFile) => vite.ssrLoadModule(layoutFile))),
       hydrationClientModuleUrl,
       loadErrorPage,
+      errorPageFile,
+      getRouteTranslations,
       stylesheetUrls,
       resolveRequestStylesheetUrls,
       cache,
@@ -648,6 +665,8 @@ export async function installPageRoutes(
               loadModule: (moduleId) => vite.ssrLoadModule(moduleId),
               hydrationClientModuleUrl,
               loadErrorPage,
+              errorPageFile,
+              getRouteTranslations,
               // NO LAYOUT means no layout CSS either — just root and the
               // not-found page's own stylesheets, same reasoning as the
               // shared helper's own header comment.

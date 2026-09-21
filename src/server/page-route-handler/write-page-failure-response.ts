@@ -7,6 +7,7 @@ import type { PageCacheOptIn } from "../../routing/route-identity";
 import { buildHydrationPayload } from "../build-hydration-payload";
 import type { BufferedCookie } from "../execute-page-request";
 import type { ErrorPageModuleLoader } from "../error-page";
+import type { RouteTranslations } from "../route-translations";
 import { pageVaryHeader } from "../page-vary-header";
 import { renderPageFailure } from "../render-page";
 import { applyCommit } from "./apply-commit";
@@ -30,6 +31,10 @@ export async function writePageFailureResponse(options: {
   response: Response;
   thrown: unknown;
   loadErrorPage?: ErrorPageModuleLoader;
+  routeTranslations?: RouteTranslations;
+  getRouteTranslations?: import("../route-translations").RouteTranslationsResolver;
+  appFile?: string;
+  errorPageFile?: string;
   stylesheetUrls?: readonly string[];
   hydrationClientModuleUrl?: string;
   cache?: PageCacheOptIn;
@@ -42,6 +47,10 @@ export async function writePageFailureResponse(options: {
     response,
     thrown,
     loadErrorPage,
+    routeTranslations,
+    getRouteTranslations,
+    appFile,
+    errorPageFile,
     stylesheetUrls,
     hydrationClientModuleUrl,
     cache,
@@ -56,6 +65,10 @@ export async function writePageFailureResponse(options: {
     response,
     thrown,
     loadErrorPage,
+    routeTranslations,
+    getRouteTranslations,
+    appFile,
+    errorPageFile,
     stylesheetUrls,
     hydrationClientModuleUrl,
   });

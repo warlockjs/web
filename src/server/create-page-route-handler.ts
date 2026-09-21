@@ -68,6 +68,8 @@ declare module "@warlock.js/core" {
   }
 }
 import type { ErrorPageModuleLoader } from "./error-page";
+import type { RouteTranslationsResolver } from "./route-translations";
+import { bindRequestRouteTranslations } from "./request-route-translations";
 
 /**
  * Raised when a page route handler is constructed WITHOUT an `httpServer`
@@ -123,6 +125,10 @@ export type PageRouteHandlerOptions = {
   appFile: string;
   /** The page module's id. */
   pageFile: string;
+  /** Route-owned dictionary resolver; omitted keeps registry-backed legacy translation. */
+  getRouteTranslations?: RouteTranslationsResolver;
+  /** Source identity for the application's error page. */
+  errorPageFile?: string;
   /** The page's own-directory `layout.tsx`, when it has one. */
   layoutFile?: string | undefined;
   loadModule: PageModuleLoader;
@@ -269,6 +275,8 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     name,
     appFile,
     pageFile,
+    getRouteTranslations,
+    errorPageFile,
     layoutFile,
     loadModule,
     loadComposedLayout,
@@ -317,6 +325,10 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
 
   return async (context: HttpContext) => {
     const { request, response } = context;
+
+    // Bind the normal page source before any middleware or loader can render.
+    // The resolver is request-local and never mutates @mongez/localization's registry.
+    const routeTranslations = bindRequestRouteTranslations(request, getRouteTranslations, pageFile);
 
     const wantsData = isDataRequest(request.header(WARLOCK_DATA_REQUEST_HEADER, undefined));
 
@@ -372,6 +384,11 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     let cacheHeaderValue: "hit" | "miss" | "bypass" | undefined;
     let cacheKey: string | undefined;
     let attemptStorageAfterRender = false;
+    // The lookup describes the request BEFORE loaders run. A loader is allowed
+    // to select a different locale, so never store a response whose final
+    // scoped snapshot or locale differs under this earlier key.
+    const cacheLookupLocale = request.locale;
+    const cacheLookupTranslationsRevision = routeTranslations?.revision;
 
     try {
       if (cache?.serverCache === true) {
@@ -381,6 +398,7 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
           cache,
           credentialedRequest,
           pageCacheVariant,
+          translationsRevision: routeTranslations?.revision,
         });
 
         if (outcome.served) return;
@@ -466,6 +484,11 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         matched: { entry, params },
         createHttp: () => ({ request, response }),
         loadErrorPage,
+        routeTranslations,
+        errorPageFile,
+        appFile,
+        pageFile,
+        getRouteTranslations,
         dataRequest: wantsData,
         // Stage 2 slice S3: a plain data request (no `x-ndjson` in `Accept`)
         // awaits every deferred settlement and inlines it — the NDJSON
@@ -619,7 +642,11 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       // so `tapPipeableStreamForPageCacheLimit`'s tap sees every byte as it
       // flows to the visitor).
       const cacheStorageAttempt =
-        attemptStorageAfterRender && cacheKey !== undefined && cache !== undefined
+        attemptStorageAfterRender &&
+        cacheKey !== undefined &&
+        cache !== undefined &&
+        request.locale === cacheLookupLocale &&
+        rendered.bundle?.routeTranslations?.revision === cacheLookupTranslationsRevision
           ? await storePageCacheAfterRender({
               request,
               response,
@@ -762,6 +789,10 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
           response,
           thrown,
           loadErrorPage,
+          routeTranslations: getRouteTranslations?.(errorPageFile ?? appFile, request.locale),
+          getRouteTranslations,
+          appFile,
+          errorPageFile,
           stylesheetUrls,
           hydrationClientModuleUrl,
           cache,

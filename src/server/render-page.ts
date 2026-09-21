@@ -58,6 +58,7 @@ import {
 } from "./document-stylesheet-urls";
 import type { DeferSettlement } from "./defer-settlement";
 import { createSettledThenable } from "../loaders/settled-thenable";
+import { bindRequestRouteTranslations } from "./request-route-translations";
 
 export { escapePayload, PAYLOAD_SCRIPT_ID };
 export type { BufferedCookie };
@@ -114,6 +115,11 @@ export type RenderPageRequestOptions = {
   createHttp: ExecutePageRequestOptions["createHttp"];
   /** Loaded only after the ordinary boundary chain has been exhausted. */
   loadErrorPage?: ErrorPageModuleLoader;
+  routeTranslations?: import("./route-translations").RouteTranslations;
+  getRouteTranslations?: import("./route-translations").RouteTranslationsResolver;
+  errorPageFile?: string;
+  appFile?: string;
+  pageFile?: string;
   /**
    * True for the JSON representation of a page route (`create-page-route-handler.ts`'s
    * `wantsData` branch) — a client navigation, never a browser address-bar
@@ -260,6 +266,10 @@ export type RenderPageFailureOptions = {
   response: Response;
   thrown: unknown;
   loadErrorPage?: ErrorPageModuleLoader;
+  routeTranslations?: import("./route-translations").RouteTranslations;
+  getRouteTranslations?: import("./route-translations").RouteTranslationsResolver;
+  appFile?: string;
+  errorPageFile?: string;
   /** Same as `RenderPageRequestOptions.stylesheetUrls` — stylesheets still render here, unconditionally. */
   stylesheetUrls?: readonly string[];
   /**
@@ -711,6 +721,9 @@ async function finishRender(
     crawler?: boolean;
     /** See `RenderPageRequestOptions.noindex`. */
     noindex?: boolean;
+    getRouteTranslations?: import("./route-translations").RouteTranslationsResolver;
+    appFile: string;
+    errorPageFile?: string;
   },
 ): Promise<RenderedPage> {
   // Read from the stage 7 commit, never live off `response` — this function
@@ -1005,6 +1018,7 @@ async function finishRender(
       value: documentValue,
       children: createElement(LocaleProvider, {
         locale: documentValue.payload.locale,
+        translations: bundle.routeTranslations?.keywords,
         children: element,
       }),
     });
@@ -1032,12 +1046,22 @@ async function finishRender(
   let renderTimeThrow = false;
   let body: string;
 
-  const renderFrameworkRoot = (): string =>
-    renderWithContext(
+  const renderFrameworkRoot = (): string => {
+    bundle.routeTranslations = bindRequestRouteTranslations(
+      request,
+      streamOptions.getRouteTranslations,
+      streamOptions.appFile,
+    );
+    documentValue = {
+      ...documentValue,
+      payload: buildHydrationPayload(bundle, documentSlots.locale),
+    };
+    return renderWithContext(
       createElement(DefaultApp, {
         children: createElement(FrameworkRootBoundary, {}),
       }),
     );
+  };
   const renderFrameworkAfterErrorPageFailure = (): string => {
     bundle.errorPage = undefined;
     bundle.metadata = ERROR_PAGE_METADATA;
@@ -1054,6 +1078,11 @@ async function finishRender(
     serializableError: unknown = thrown,
   ): Promise<string | undefined> => {
     if (!loadErrorPage) return undefined;
+    bundle.routeTranslations = bindRequestRouteTranslations(
+      request,
+      streamOptions.getRouteTranslations,
+      streamOptions.errorPageFile ?? streamOptions.appFile,
+    );
 
     // The status is the FAILURE's own — 500 for an ordinary escalated throw,
     // but a `route.validate` rejection carries its own 400
@@ -1313,6 +1342,9 @@ export async function renderPageFailure(options: RenderPageFailureOptions): Prom
   const { request, response, name, path, thrown, loadErrorPage } = options;
   const bundle: PageDataBundle = markNonHydrating({
     route: { name, path, params: {}, query: {} },
+    ...(options.routeTranslations === undefined
+      ? {}
+      : { routeTranslations: options.routeTranslations }),
   });
   // No pipeline ran (there is no triple), so there is no commit to read —
   // never a live `response.getHeaders()` read either; see `finishRender`.
@@ -1339,6 +1371,7 @@ export async function renderPageFailure(options: RenderPageFailureOptions): Prom
         value,
         children: createElement(LocaleProvider, {
           locale: value.payload.locale,
+          translations: bundle.routeTranslations?.keywords,
           children: element,
         }),
       }),
@@ -1349,6 +1382,11 @@ export async function renderPageFailure(options: RenderPageFailureOptions): Prom
     if (!loadErrorPage) throw new Error("No application error page is configured.");
     const props: ServerErrorPageProps = { error: thrown, status: 500 };
     const module = await loadErrorPage();
+    bundle.routeTranslations = bindRequestRouteTranslations(
+      request,
+      options.getRouteTranslations,
+      options.errorPageFile ?? options.appFile ?? "",
+    );
     registerModules([module as RegisterableModuleNamespace]);
     const errorPage = hydrationErrorPageProps(props, undefined, request.id);
     bundle.errorPage = errorPage;
@@ -1358,7 +1396,7 @@ export async function renderPageFailure(options: RenderPageFailureOptions): Prom
     value = {
       ...value,
       metadata: resolveErrorPageMetadata(module, ssrProps),
-      payload: markNonHydrating({ ...frameworkPayload, errorPage }),
+      payload: markNonHydrating({ ...buildHydrationPayload(bundle, slots.locale), errorPage }),
     };
     body = renderWithContext(
       createElement(DefaultApp, { children: errorPageElement(module, ssrProps) }),
@@ -1366,6 +1404,11 @@ export async function renderPageFailure(options: RenderPageFailureOptions): Prom
   } catch (errorPageThrown) {
     if (loadErrorPage) reportErrorPageFailure(bundle.route, errorPageThrown, request);
     bundle.errorPage = undefined;
+    bundle.routeTranslations = bindRequestRouteTranslations(
+      request,
+      options.getRouteTranslations,
+      options.appFile ?? "",
+    );
     bundle.metadata = ERROR_PAGE_METADATA;
     value = {
       ...value,
@@ -1407,15 +1450,31 @@ export async function renderPageRequest(
   options: RenderPageRequestOptions,
 ): Promise<RenderedPage | Response> {
   const registry = requireRegistry(options);
-  const { state, createHttp } = capturingCreateHttp(registry);
+  const { state, createHttp: captureHttp } = capturingCreateHttp(registry);
+  const createHttp: ExecutePageRequestOptions["createHttp"] = (match) => {
+    const context = captureHttp(match);
+    if (options.pageFile !== undefined) {
+      bindRequestRouteTranslations(context.request, options.getRouteTranslations, options.pageFile);
+    }
+    return context;
+  };
 
   const rendered = await executePageRequest({
     url,
     routes: registry.routes,
     matched: options.matched,
     createHttp,
-    finish: (bundle) =>
-      finishRender(
+    finish: (bundle) => {
+      if (options.getRouteTranslations !== undefined && options.pageFile !== undefined) {
+        bundle.routeTranslations = options.getRouteTranslations(
+          options.pageFile,
+          state.captured!.request.locale,
+        );
+      } else if (options.routeTranslations !== undefined) {
+        bundle.routeTranslations = options.routeTranslations;
+      }
+
+      return finishRender(
         state.match!.entry.triple,
         bundle,
         documentSlotsFrom(state.captured),
@@ -1432,8 +1491,12 @@ export async function renderPageRequest(
           awaitDeferredForDataRequest: options.awaitDeferredForDataRequest,
           crawler: options.crawler,
           noindex: options.noindex,
+          getRouteTranslations: options.getRouteTranslations,
+          appFile: options.appFile ?? "",
+          errorPageFile: options.errorPageFile,
         },
-      ),
+      );
+    },
   });
 
   if (!rendered) {

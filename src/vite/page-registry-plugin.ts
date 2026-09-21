@@ -489,7 +489,7 @@ export function clientPageRegistry(options: ClientPageRegistryPluginOptions = {}
      * construction.
      */
     async hotUpdate(context) {
-      if (isProjectableFile(context.file)) {
+      if (isProjectableFile(context.file) || path.basename(context.file) === "locales.json") {
         const routeGraphHandled = await options.beforePageHotUpdate?.({
           file: context.file,
           type: context.type,

@@ -9,6 +9,7 @@ import {
 import { DocumentContext } from "../../components/document-context";
 import { DefaultErrorBoundary } from "../default-error-boundary";
 import { LocaleProvider } from "../../localization";
+import { scopedPayloadTranslations } from "../install-payload-translations";
 import type {
   HydrationDocumentPayloadSource,
   SerializedErrorPageProps,
@@ -693,7 +694,10 @@ export function NavigationRoot({
     <DocumentContext.Provider
       value={{ metadata: current.payload.metadata, payload: current.payload }}
     >
-      <LocaleProvider locale={current.payload.locale}>
+      <LocaleProvider
+        locale={current.payload.locale}
+        translations={scopedPayloadTranslations(current.payload)}
+      >
         {/*
           THE FIRST-PARTY FLOOR. NOT keyed on the page name — a changing
           `key` would remount this boundary's whole subtree, layouts

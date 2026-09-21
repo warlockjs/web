@@ -100,6 +100,40 @@ describe("buildHydrationPayload — unserializable loader values", () => {
   });
 });
 
+describe("buildHydrationPayload — route translation snapshots", () => {
+  it("serializes only the selected snapshot and marks scoped mode", () => {
+    const payload = buildHydrationPayload(
+      bundleOf({
+        routeTranslations: {
+          locale: "en",
+          revision: "account-en",
+          keywords: { account: { title: "Account" } },
+        },
+      }),
+      "en",
+    );
+
+    expect(payload.translations).toEqual({ account: { title: "Account" } });
+    expect(payload.translations).not.toHaveProperty("catalog");
+    expect(payload.translationMode).toBe("scoped");
+  });
+
+  it("refuses mismatched locales instead of leaking the global registry into a scoped payload", () => {
+    expect(() =>
+      buildHydrationPayload(
+        bundleOf({
+          routeTranslations: {
+            locale: "ar",
+            revision: "account-ar",
+            keywords: { account: { title: "Arabic account" } },
+          },
+        }),
+        "en",
+      ),
+    ).toThrow(/snapshot locale.*does not match payload locale/);
+  });
+});
+
 /**
  * RELEASE BLOCKER fix (5.17): `inlinedDeferredKeys` — the marker
  * `render-page.ts`'s data-request/crawler await-and-inline path sets once a

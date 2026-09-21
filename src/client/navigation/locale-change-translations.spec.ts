@@ -55,8 +55,18 @@ function payloadOf(
   name: string,
   locale: string,
   translations: Keywords,
+  translationMode?: "scoped",
 ): HydrationDocumentPayloadSource {
-  return { appData: {}, layoutData: {}, pageData: {}, shared: {}, name, locale, translations };
+  return {
+    appData: {},
+    layoutData: {},
+    pageData: {},
+    shared: {},
+    name,
+    locale,
+    translations,
+    ...(translationMode === undefined ? {} : { translationMode }),
+  };
 }
 
 /** Answer every `fetch` with the payload for whichever `?locale=` the request carried. */
@@ -165,5 +175,32 @@ describe("changeLocaleCode installs the payload's translations", () => {
 
     expect(container.querySelector('[data-testid="page"]')?.textContent).toBe("تسجيل الدخول");
     expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it("uses the selected scoped copy at hydration and after a locale switch", async () => {
+    const initial = payloadOf(
+      "products.show",
+      "snapshot-en",
+      { auth: { login: "Scoped English" } },
+      "scoped",
+    );
+    const arabic = payloadOf(
+      "products.show",
+      "snapshot-ar",
+      { auth: { login: "Scoped Arabic" } },
+      "scoped",
+    );
+
+    stubFetchByLocaleParam({ "snapshot-ar": arabic });
+    await mount(initial);
+
+    expect(container.querySelector('[data-testid="page"]')?.textContent).toBe("Scoped English");
+
+    await act(async () => {
+      await changeLocaleCode("snapshot-ar");
+    });
+    await flush();
+
+    expect(container.querySelector('[data-testid="page"]')?.textContent).toBe("Scoped Arabic");
   });
 });

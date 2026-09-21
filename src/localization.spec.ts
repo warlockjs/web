@@ -1,4 +1,4 @@
-import { setTranslationsList } from "@mongez/localization";
+import { setTranslationsList, type Keywords } from "@mongez/localization";
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -21,8 +21,14 @@ function ConvertedProbe() {
   );
 }
 
-function render(locale: string): string {
-  return renderToString(createElement(LocaleProvider, { locale, children: createElement(Probe) }));
+function render(locale: string, translations?: Readonly<Keywords>): string {
+  return renderToString(
+    createElement(LocaleProvider, {
+      locale,
+      translations,
+      children: createElement(Probe),
+    }),
+  );
 }
 
 describe("request-bound localization", () => {
@@ -60,5 +66,10 @@ describe("request-bound localization", () => {
     );
 
     expect(html).toContain("<strong>مرحبا</strong>");
+  });
+
+  it("uses a supplied snapshot without reading the global locale registry", () => {
+    expect(render("en", { greeting: "Snapshot" })).toContain("Snapshot");
+    expect(render("en", {})).toContain("greeting");
   });
 });

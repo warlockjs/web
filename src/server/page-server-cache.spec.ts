@@ -23,6 +23,7 @@ import { WARLOCK_DATA_REQUEST_HEADER, WARLOCK_DATA_REQUEST_VALUE } from "../rout
 import { NDJSON_CONTENT_TYPE } from "./write-deferred-ndjson-response";
 import type { PageCacheOptIn } from "../routing/route-identity";
 import type { BufferedCookie } from "./execute-page-request";
+import type { RouteTranslations } from "./route-translations";
 
 const { renderPageRequest, fakeCache, fakeCacheStore, fakeCacheTagIndex } = vi.hoisted(() => {
   const store = new Map<string, unknown>();
@@ -146,6 +147,7 @@ function renderedJson(
      * `PageDataBundle.inlinedDeferredKeys`.
      */
     inlinedDeferredKeys?: string[];
+    routeTranslations?: RouteTranslations;
   } = {},
 ) {
   const data = overrides.data ?? { id: 1 };
@@ -164,6 +166,7 @@ function renderedJson(
       route: { name: "route", params: {} },
       deferredKeys: overrides.deferredKeys,
       inlinedDeferredKeys: overrides.inlinedDeferredKeys,
+      routeTranslations: overrides.routeTranslations,
     },
     usesDefer: overrides.usesDefer ?? false,
   };
@@ -179,7 +182,10 @@ function registerRoute(
   urlPath: string,
   server: FastifyInstance,
   cache: PageCacheOptIn,
-  options: { methods?: Array<"get" | "post"> } = {},
+  options: {
+    methods?: Array<"get" | "post">;
+    getRouteTranslations?: (sourceFile: string, locale: string) => RouteTranslations;
+  } = {},
 ): void {
   const handler = createPageRouteHandler({
     path: urlPath,
@@ -190,6 +196,7 @@ function registerRoute(
     loadModule: async (moduleId) => moduleById[moduleId],
     httpServer: server,
     cache,
+    getRouteTranslations: options.getRouteTranslations,
   });
 
   for (const method of options.methods ?? ["get"]) {
@@ -202,6 +209,14 @@ let touchAuth: (request: Request) => void = () => {};
 
 describe("server-side page cache (route.cache.serverCache)", () => {
   const server = Fastify();
+  let translationRevision = "one";
+  let englishKeyword = "English one";
+  let arabicKeyword = "Arabic one";
+  const routeTranslations = (_sourceFile: string, locale: string): RouteTranslations => ({
+    locale,
+    revision: `${locale}:${translationRevision}`,
+    keywords: { copy: { title: locale === "ar" ? arabicKeyword : englishKeyword } },
+  });
 
   beforeAll(async () => {
     await registerHttpPlugins(server);
@@ -280,6 +295,12 @@ describe("server-side page cache (route.cache.serverCache)", () => {
       serverCache: true,
       tags: ["streamed"],
     });
+    registerRoute(
+      "/__scache-translations",
+      server,
+      { public: true, maxAge: 60, serverCache: true, tags: ["translations"] },
+      { getRouteTranslations: routeTranslations },
+    );
     registerRoute("/__scache-entry-limit", server, {
       public: true,
       maxAge: 60,
@@ -293,6 +314,9 @@ describe("server-side page cache (route.cache.serverCache)", () => {
   beforeEach(() => {
     renderPageRequest.mockReset();
     touchAuth = () => {};
+    translationRevision = "one";
+    englishKeyword = "English one";
+    arabicKeyword = "Arabic one";
     renderPageRequest.mockImplementation(
       async (_url: string, options: { createHttp: () => { request: Request } }) => {
         const { request } = options.createHttp();
@@ -397,6 +421,120 @@ describe("server-side page cache (route.cache.serverCache)", () => {
     });
     expect(jsonHit.headers["x-warlock-cache"]).toBe("hit");
     expect(renderPageRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses a new cache entry when the selected translation JSON revision changes", async () => {
+    renderPageRequest.mockImplementation(
+      async (_url: string, options: { routeTranslations?: RouteTranslations }) =>
+        renderedJson({ routeTranslations: options.routeTranslations }),
+    );
+    const dataHeaders = {
+      [WARLOCK_DATA_REQUEST_HEADER]: WARLOCK_DATA_REQUEST_VALUE,
+      locale: "en",
+    };
+
+    const first = await server.inject({
+      method: "GET",
+      url: "/__scache-translations",
+      headers: dataHeaders,
+    });
+    const firstPayload = devalueParse(first.body) as {
+      translations: unknown;
+      translationMode: unknown;
+    };
+    expect(first.headers["x-warlock-cache"]).toBe("miss");
+    expect(firstPayload).toMatchObject({
+      translations: { copy: { title: "English one" } },
+      translationMode: "scoped",
+    });
+
+    const hit = await server.inject({
+      method: "GET",
+      url: "/__scache-translations",
+      headers: dataHeaders,
+    });
+    expect(hit.headers["x-warlock-cache"]).toBe("hit");
+    expect(renderPageRequest).toHaveBeenCalledTimes(1);
+
+    translationRevision = "two";
+    englishKeyword = "English two";
+    const changed = await server.inject({
+      method: "GET",
+      url: "/__scache-translations",
+      headers: dataHeaders,
+    });
+    const changedPayload = devalueParse(changed.body) as {
+      translations: unknown;
+      translationMode: unknown;
+    };
+    expect(changed.headers["x-warlock-cache"]).toBe("miss");
+    expect(changedPayload).toMatchObject({
+      translations: { copy: { title: "English two" } },
+      translationMode: "scoped",
+    });
+
+    const changedHit = await server.inject({
+      method: "GET",
+      url: "/__scache-translations",
+      headers: dataHeaders,
+    });
+    expect(changedHit.headers["x-warlock-cache"]).toBe("hit");
+    expect(renderPageRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not store a response when rendering changes the request locale", async () => {
+    renderPageRequest.mockImplementation(
+      async (_url: string, options: { createHttp: () => { request: Request } }) => {
+        const { request } = options.createHttp();
+        request.locale = "ar";
+        return renderedJson({ routeTranslations: routeTranslations("page.tsx", "ar") });
+      },
+    );
+    const headers = {
+      [WARLOCK_DATA_REQUEST_HEADER]: WARLOCK_DATA_REQUEST_VALUE,
+      locale: "en",
+    };
+
+    const first = await server.inject({ method: "GET", url: "/__scache-translations", headers });
+    const second = await server.inject({ method: "GET", url: "/__scache-translations", headers });
+    const returned = devalueParse(first.body) as {
+      locale: unknown;
+      translations: unknown;
+      translationMode: unknown;
+    };
+
+    expect(first.headers["x-warlock-cache"]).toBe("miss");
+    expect(second.headers["x-warlock-cache"]).toBe("miss");
+    expect(returned).toMatchObject({
+      locale: "ar",
+      translations: { copy: { title: "Arabic one" } },
+      translationMode: "scoped",
+    });
+    expect(renderPageRequest).toHaveBeenCalledTimes(2);
+    expect(fakeCacheStore.size).toBe(0);
+  });
+
+  it("does not store a same-locale response whose snapshot revision changed during rendering", async () => {
+    renderPageRequest.mockImplementation(
+      async (_url: string, options: { createHttp: () => { request: Request } }) => {
+        const { request } = options.createHttp();
+        translationRevision = translationRevision === "one" ? "two" : "three";
+        englishKeyword = `English ${translationRevision}`;
+        return renderedJson({ routeTranslations: routeTranslations("page.tsx", request.locale) });
+      },
+    );
+    const headers = {
+      [WARLOCK_DATA_REQUEST_HEADER]: WARLOCK_DATA_REQUEST_VALUE,
+      locale: "en",
+    };
+
+    const first = await server.inject({ method: "GET", url: "/__scache-translations", headers });
+    const second = await server.inject({ method: "GET", url: "/__scache-translations", headers });
+
+    expect(first.headers["x-warlock-cache"]).toBe("miss");
+    expect(second.headers["x-warlock-cache"]).toBe("miss");
+    expect(renderPageRequest).toHaveBeenCalledTimes(2);
+    expect(fakeCacheStore.size).toBe(0);
   });
 
   // ── Auth bypass on HIT — the sharpest test in this suite ─────────────────

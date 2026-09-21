@@ -60,6 +60,11 @@ export function buildHydrationPayload(
   bundle: PageDataBundle,
   locale: string,
 ): HydrationDocumentPayloadSource {
+  if (bundle.routeTranslations !== undefined && bundle.routeTranslations.locale !== locale) {
+    throw new Error(
+      `Route translation snapshot locale ${JSON.stringify(bundle.routeTranslations.locale)} does not match payload locale ${JSON.stringify(locale)}.`,
+    );
+  }
   const appData = serializableData(bundle.appData);
   const layoutData = serializableData(bundle.layoutData);
   const pageData = wirePageData(bundle.pageData, bundle.deferredKeys);
@@ -116,7 +121,11 @@ export function buildHydrationPayload(
     // a valid, empty table for the browser, not a malformed payload
     // (`hydration-payload.ts`'s gate requires `translations` to be an
     // object).
-    translations: getKeywordsListOf(locale) ?? {},
+    translations:
+      bundle.routeTranslations !== undefined
+        ? bundle.routeTranslations.keywords
+        : (getKeywordsListOf(locale) ?? {}),
+    ...(bundle.routeTranslations !== undefined ? { translationMode: "scoped" as const } : {}),
     // Same optional/never-empty rule as `metadata`/`errorPage` above — see
     // `HydrationDocumentPayloadSource.deferred`'s own doc comment.
     ...(deferredMarkerKeys.length === 0 ? {} : { deferred: deferredMarkerKeys }),

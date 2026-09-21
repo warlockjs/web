@@ -391,15 +391,10 @@ describe("buildHydratedTree", () => {
    * about a namespace (an app-level one registered only server-side, in the
    * real bug this suite guards against — see `navigation-payload-
    * translations.spec.ts`) is no longer the only source, so it no longer
-   * causes a failure here. `import.meta.env.DEV` is flipped for the duration
-   * of each case because the invariant is development-only by design (see
-   * `assert-translation-registration-complete.ts`); it is restored afterwards
-   * so later cases keep exercising the untouched, production-shaped default.
-   * The assertion's own closed-failure behaviour (given a mismatched
-   * required/registered pair) is unit-tested directly in `assert-
-   * translation-registration-complete.spec.ts` — nothing about that changed.
+   * causes a failure here. These cases exercise development mode, which
+   * previously ran an obsolete registration assertion after payload install.
    */
-  describe("translation registration completeness (development-only)", () => {
+  describe("payload translations in development", () => {
     let localeCounter = 0;
 
     function freshLocale(): string {
@@ -466,7 +461,7 @@ describe("buildHydratedTree", () => {
       expect(page.type).toBe(Page);
     });
 
-    it("leaves initial hydration unchanged — translations installed ahead of buildTree satisfy the check without register()'s help", async () => {
+    it("preserves translations already installed before initial hydration", async () => {
       // @ts-expect-error test-only mutation of Vite's injected env object
       import.meta.env.DEV = true;
 
@@ -513,6 +508,30 @@ describe("buildHydratedTree", () => {
       const page = asElement(await buildHydratedTree(pages, payload));
 
       expect(page.type).toBe(Page);
+    });
+
+    it("does not require global registration for a scoped payload in development", async () => {
+      // @ts-expect-error test-only mutation of Vite's injected env object
+      import.meta.env.DEV = true;
+
+      const locale = freshLocale();
+      const pages = [
+        entry("main.home", () => ({
+          Page: { register: () => {}, default: Page },
+          layouts: [],
+        })),
+      ];
+      const payload: HydrationDocumentPayloadSource = {
+        ...payloadFor("main.home"),
+        locale,
+        translations: { home: { title: "Snapshot" } },
+        translationMode: "scoped",
+      };
+
+      const page = asElement(await buildHydratedTree(pages, payload));
+
+      expect(page.type).toBe(Page);
+      expect(getKeywordsListOf(locale)).toBeNull();
     });
   });
 });

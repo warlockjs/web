@@ -1,6 +1,7 @@
 import { parse } from "devalue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCoreHttp } from "./__fixtures__/core-http";
+import { buildHydrationPayload } from "./build-hydration-payload";
 import type { PageDataBundle } from "./execute-page-request";
 import { NDJSON_CONTENT_TYPE, writeDeferredNdjsonResponse } from "./write-deferred-ndjson-response";
 
@@ -107,6 +108,35 @@ describe("writeDeferredNdjsonResponse()", () => {
     expect(parse(line.settlement)).toEqual({
       ok: false,
       error: { name: "Error", message: "boom" },
+    });
+  });
+
+  it("matches buildHydrationPayload's scoped translation fields on its first line", async () => {
+    const bundle = bundleWith({
+      routeTranslations: {
+        locale: "en",
+        revision: "translation-revision",
+        keywords: { account: { title: "Account" } },
+      },
+    });
+    const http = createCoreHttp({ url: "/dashboard" });
+    const chunks: Buffer[] = [];
+    http.reply.raw.on("data", (chunk: Buffer) => chunks.push(chunk));
+
+    await writeDeferredNdjsonResponse(http.response, bundle, "en", 200);
+
+    const [line] = Buffer.concat(chunks).toString("utf8").trim().split("\n");
+    const ndjsonPayload = parse(line!) as Record<string, unknown>;
+    const jsonPayload = buildHydrationPayload(bundle, "en");
+
+    expect({
+      locale: ndjsonPayload.locale,
+      translations: ndjsonPayload.translations,
+      translationMode: ndjsonPayload.translationMode,
+    }).toEqual({
+      locale: jsonPayload.locale,
+      translations: jsonPayload.translations,
+      translationMode: jsonPayload.translationMode,
     });
   });
 

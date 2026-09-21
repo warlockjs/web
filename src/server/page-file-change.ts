@@ -75,6 +75,18 @@ export function isErrorPageFilePath(file: string): boolean {
   return path.basename(file) === "error.page.tsx";
 }
 
+/** Route locale JSON participates in the same atomic page-table replacement. */
+export function isRouteLocaleFilePath(file: string, appSrcRoot: string): boolean {
+  const relative = path.relative(path.join(appSrcRoot, "web"), file);
+  return (
+    path.basename(file) === "locales.json" &&
+    relative !== "" &&
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  );
+}
+
 export function classifyPageFileChanges(
   changedFiles: readonly string[],
   options: PageFileChangeOptions,
@@ -102,7 +114,7 @@ export function classifyPageFileChanges(
     // force the existing full page-table derivation transaction. `added` is
     // deliberately the transaction's "replacement required" bucket here;
     // it does not claim the layout itself owns a newly-added route.
-    if (isPageLayoutFilePath(file, pageRoot)) {
+    if (isPageLayoutFilePath(file, pageRoot) || isRouteLocaleFilePath(file, pageRoot)) {
       (fileExists(file) ? classified.added : classified.removed).push(file);
       continue;
     }

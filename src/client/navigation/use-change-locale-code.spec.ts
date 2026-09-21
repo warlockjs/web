@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, createElement, type ReactElement } from "react";
+import { act, createElement, StrictMode, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -107,6 +107,7 @@ describe("useChangeLocaleCode", () => {
     });
 
     expect(changeLocaleCode).toHaveBeenCalledWith("ar");
+    expect(hook.current.changeLocaleCode).toBe(hook.current.changeLocale);
   });
 
   it("reports isLoading for exactly the window the switch is in flight", async () => {
@@ -178,6 +179,59 @@ describe("useChangeLocaleCode", () => {
     });
   });
 
+  it.each(["older first", "newer first"])(
+    "keeps loading for the latest overlapping invocation when %s settles",
+    async (settlement) => {
+      const first = deferred();
+      const second = deferred();
+      changeLocaleCode.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+      const hook = mountHook();
+
+      act(() => {
+        void hook.current.changeLocaleCode("ar");
+        void hook.current.changeLocaleCode("fr");
+      });
+      expect(hook.current.isLoading).toBe(true);
+
+      const firstToSettle = settlement === "older first" ? first : second;
+      const secondToSettle = settlement === "older first" ? second : first;
+      await act(async () => {
+        firstToSettle.resolve();
+        await firstToSettle.promise;
+      });
+      expect(hook.current.isLoading).toBe(settlement === "older first");
+
+      await act(async () => {
+        secondToSettle.resolve();
+        await secondToSettle.promise;
+      });
+      expect(hook.current.isLoading).toBe(false);
+    },
+  );
+
+  it("does not let an older rejection clear a newer pending invocation", async () => {
+    const older = deferred();
+    const newer = deferred();
+    changeLocaleCode.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    const hook = mountHook();
+
+    act(() => {
+      void hook.current.changeLocaleCode("ar").catch(() => undefined);
+      void hook.current.changeLocaleCode("fr");
+    });
+    await act(async () => {
+      older.reject(new Error("older failed"));
+      await older.promise.catch(() => undefined);
+    });
+    expect(hook.current.isLoading).toBe(true);
+
+    await act(async () => {
+      newer.resolve();
+      await newer.promise;
+    });
+    expect(hook.current.isLoading).toBe(false);
+  });
+
   it("does not warn when the switch settles after unmount", async () => {
     const inFlight = deferred();
     changeLocaleCode.mockReturnValue(inFlight.promise);
@@ -214,5 +268,39 @@ describe("useChangeLocaleCode", () => {
     hook.rerender();
 
     expect(hook.current.changeLocale).toBe(first);
+    expect(hook.current.changeLocaleCode).toBe(first);
+  });
+
+  it("clears a current invocation after StrictMode's effect rehearsal", async () => {
+    const inFlight = deferred();
+    changeLocaleCode.mockReturnValue(inFlight.promise);
+    const handle = { current: undefined as unknown as ReturnType<typeof useChangeLocaleCode> };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    containers.push(container);
+    const root = createRoot(container);
+    roots.push(root);
+
+    act(() => {
+      root.render(
+        createElement(
+          StrictMode,
+          null,
+          createElement(() => {
+            handle.current = useChangeLocaleCode();
+            return null;
+          }),
+        ),
+      );
+    });
+    act(() => {
+      void handle.current.changeLocaleCode("ar");
+    });
+    await act(async () => {
+      inFlight.resolve();
+      await inFlight.promise;
+    });
+
+    expect(handle.current.isLoading).toBe(false);
   });
 });

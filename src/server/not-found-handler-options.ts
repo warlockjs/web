@@ -33,6 +33,7 @@
 import type { PageModuleLoader, PageRouteHandlerOptions } from "./create-page-route-handler";
 import type { ErrorPageModuleLoader } from "./error-page";
 import type { RequestStylesheetUrlResolver } from "./document-stylesheet-urls";
+import type { RouteTranslationsResolver } from "./route-translations";
 import { NOT_FOUND_ROUTE_NAME, NOT_FOUND_ROUTE_PATH } from "./not-found-page";
 
 export type NotFoundPageHandlerInput = {
@@ -45,6 +46,8 @@ export type NotFoundPageHandlerInput = {
   /** `modulepreload` URLs for the entry's own static imports (card 53f8647e). */
   hydrationClientModulePreloadUrls?: readonly string[];
   loadErrorPage?: ErrorPageModuleLoader;
+  errorPageFile?: string;
+  getRouteTranslations?: RouteTranslationsResolver;
   /** Already resolved by the caller — see this module's header for why. */
   stylesheetUrls: readonly string[];
   /** Resolves per-request `linkStylesheetsFor()` declarations; see `PageRouteHandlerOptions`. */
@@ -71,6 +74,8 @@ export function notFoundPageHandlerOptions(
     hydrationClientModuleUrl: input.hydrationClientModuleUrl,
     hydrationClientModulePreloadUrls: input.hydrationClientModulePreloadUrls,
     loadErrorPage: input.loadErrorPage,
+    errorPageFile: input.errorPageFile,
+    getRouteTranslations: input.getRouteTranslations,
     // NO LAYOUT means no layout CSS either — just root and the not-found
     // page's own stylesheets.
     stylesheetUrls: input.stylesheetUrls,

@@ -32,6 +32,7 @@ export async function resolvePageCacheHitOrMiss(options: {
   cache: PageCacheOptIn;
   credentialedRequest: boolean;
   pageCacheVariant: PageCacheVariant;
+  translationsRevision?: string;
 }): Promise<PageCacheLookupOutcome> {
   const { request, response, cache, credentialedRequest, pageCacheVariant } = options;
 
@@ -64,6 +65,7 @@ export async function resolvePageCacheHitOrMiss(options: {
     query: request.query as Record<string, unknown>,
     locale: request.locale,
     variant: pageCacheVariant,
+    translationsRevision: options.translationsRevision,
   });
 
   const hit = await getPageCacheEntry(cacheKey);

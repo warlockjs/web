@@ -5,7 +5,9 @@ import { parse } from "devalue";
 import { createElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PAYLOAD_SCRIPT_ID } from "../components/document-context";
-import { useLocale } from "../localization";
+import { useLocale, useTrans } from "../localization";
+import type { RouteTranslationsResolver } from "./route-translations";
+import { buildHydrationPayload } from "./build-hydration-payload";
 import type { ServerErrorPageProps } from "../props";
 
 const { resolvePageMetadata } = vi.hoisted(() => ({
@@ -306,6 +308,125 @@ function fakeErrorPageModule(): ErrorPageModule {
     default: () => createElement("main", {}, "Sorry about that."),
   };
 }
+
+describe("route-owned translation render scope", () => {
+  const resolver: RouteTranslationsResolver = (source, locale) => ({
+    locale,
+    keywords: { title: `${source}:${locale}`, [source]: "owned" },
+    revision: `${source}:${locale}`,
+  });
+  function Copy() {
+    return createElement("main", null, useTrans()("title"));
+  }
+  const scope = {
+    appFile: "root",
+    pageFile: "page",
+    errorPageFile: "error",
+    getRouteTranslations: resolver,
+  };
+
+  it("renders concurrent selected locales from the same snapshots as their payloads", async () => {
+    const results = await Promise.all(
+      ["en", "ar"].map(async (locale) => {
+        const context = createHttp(locale);
+        const entry: PageRouteEntry = {
+          path: "/copy",
+          name: "copy",
+          triple: {
+            app: {},
+            layout: {},
+            page: {
+              default: Copy,
+              loader: ({ request }) => ({ title: request.t("title") }),
+            },
+          },
+        };
+        const rendered = await renderPageRequest("/copy", {
+          ...scope,
+          routes: [entry],
+          createHttp: () => context,
+        });
+        if (rendered instanceof Response) throw new Error("unexpected terminal response");
+        expect(rendered.html).toContain(`<main>page:${locale}</main>`);
+        expect(rendered.bundle?.pageData).toEqual({ title: `page:${locale}` });
+        const payload = buildHydrationPayload(rendered.bundle!, locale);
+        expect(payload.translationMode).toBe("scoped");
+        expect(payload.translations).toEqual(resolver("page", locale).keywords);
+        return payload;
+      }),
+    );
+    expect(results[0]!.translations).not.toEqual(results[1]!.translations);
+  });
+
+  it("switches application error rendering and request helpers to the error source", async () => {
+    const context = createHttp();
+    const rendered = await renderPageRequest("/boom", {
+      ...scope,
+      routes: [throwingPageEntry()],
+      createHttp: () => context,
+      loadErrorPage: async () => ({
+        default: () => {
+          expect(context.request.t("title")).toBe("error:en");
+          return createElement(Copy);
+        },
+      }),
+    });
+    if (rendered instanceof Response) throw new Error("unexpected terminal response");
+    expect(rendered.html).toContain("<main>error:en</main>");
+    expect(buildHydrationPayload(rendered.bundle!, "en").translations).toEqual(
+      resolver("error", "en").keywords,
+    );
+  });
+
+  it.each([false, true])("uses root-only copy after error page fails=%s", async (fails) => {
+    const context = createHttp();
+    const rendered = await renderPageRequest("/boom", {
+      ...scope,
+      routes: [throwingPageEntry()],
+      createHttp: () => context,
+      ...(fails
+        ? {
+            loadErrorPage: async () => ({
+              default: () => {
+                throw new Error("boundary failed");
+              },
+            }),
+          }
+        : {}),
+    });
+    if (rendered instanceof Response) throw new Error("unexpected terminal response");
+    expect(context.request.t("title")).toBe("root:en");
+    expect(buildHydrationPayload(rendered.bundle!, "en").translations).toEqual(
+      resolver("root", "en").keywords,
+    );
+  });
+
+  it.each([false, true])(
+    "selects pre-triple failure copy when error page fails=%s",
+    async (fails) => {
+      const context = createHttp();
+      const rendered = await renderPageFailure({
+        ...scope,
+        ...context,
+        name: "boom",
+        path: "/boom",
+        thrown: new Error("module failed"),
+        loadErrorPage: async () => ({
+          default: () => {
+            if (fails) throw new Error("boundary failed");
+            return createElement(Copy);
+          },
+        }),
+      });
+      const source = fails ? "root" : "error";
+      expect(context.request.t("title")).toBe(`${source}:en`);
+      expect(buildHydrationPayload(rendered.bundle!, "en").translations).toEqual(
+        resolver(source, "en").keywords,
+      );
+      if (!fails) expect(rendered.html).toContain("<main>error:en</main>");
+    },
+  );
+});
 
 describe("renderPageFailure — pre-triple fallback", () => {
   it("marks the bundle non-hydrating and emits neither the __WARLOCK_DATA__ payload nor its script", async () => {

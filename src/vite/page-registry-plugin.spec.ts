@@ -418,6 +418,26 @@ describe("clientPageRegistry — the server half wins: metadata edits force a fu
     expect(result).toEqual([]);
   });
 
+  it.each(["create", "update", "delete"] as const)(
+    "waits for route locale JSON %s publication without parsing it as a module",
+    async (type) => {
+      const file = "/app/src/web/account/locales.json";
+      const beforePageHotUpdate = vi.fn(async () => true);
+      const plugin = clientPageRegistry({ appRoot: makeAppRoot(), beforePageHotUpdate });
+      const { thisArg, sent } = hotUpdateContext();
+      const read = vi.fn(() => '{"title":{"en":"Updated"}}');
+      const result = await callHookWith<Promise<any>>(plugin, "hotUpdate", thisArg, {
+        ...hotUpdateOptions(file, ""),
+        type,
+        read,
+      });
+      expect(beforePageHotUpdate).toHaveBeenCalledWith({ file, type });
+      expect(read).not.toHaveBeenCalled();
+      expect(sent).toEqual([]);
+      expect(result).toEqual([]);
+    },
+  );
+
   it("a JSX edit (projected client code changed) sends nothing and defers to Fast Refresh", async () => {
     const plugin = clientPageRegistry({ appRoot: makeAppRoot() });
 

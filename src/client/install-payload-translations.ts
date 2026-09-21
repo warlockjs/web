@@ -1,5 +1,36 @@
-import { extend } from "@mongez/localization";
+import { extend, type Keywords } from "@mongez/localization";
 import type { HydrationDocumentPayloadSource } from "../hydration-payload";
+
+const scopedSnapshots = new WeakMap<object, Readonly<Keywords>>();
+
+function copyKeywords(keywords: Readonly<Keywords>): Keywords {
+  const copy = Object.create(null) as Keywords;
+
+  for (const [key, value] of Object.entries(keywords)) {
+    copy[key] = typeof value === "string" ? value : copyKeywords(value as Readonly<Keywords>);
+  }
+
+  return Object.freeze(copy);
+}
+
+/**
+ * Return one immutable, payload-owned copy of a scoped JSON snapshot. The
+ * WeakMap keeps rerenders from cloning it while allowing superseded payloads
+ * to be collected.
+ */
+export function scopedPayloadTranslations(
+  payload: HydrationDocumentPayloadSource,
+): Readonly<Keywords> | undefined {
+  if (payload.translationMode !== "scoped") return undefined;
+
+  const cached = scopedSnapshots.get(payload);
+  if (cached !== undefined) return cached;
+
+  const snapshot = copyKeywords(payload.translations);
+  scopedSnapshots.set(payload, snapshot);
+
+  return snapshot;
+}
 
 /**
  * Install a payload's `translations` into `@mongez/localization`'s
@@ -16,5 +47,7 @@ import type { HydrationDocumentPayloadSource } from "../hydration-payload";
  * several, this being the one every payload carries unconditionally.
  */
 export function installPayloadTranslations(payload: HydrationDocumentPayloadSource): void {
+  if (payload.translationMode === "scoped") return;
+
   extend(payload.locale, payload.translations);
 }

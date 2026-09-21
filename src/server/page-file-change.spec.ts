@@ -97,6 +97,22 @@ describe("classifyPageFileChanges", () => {
     ).toEqual({ added: [], removed: [], inspectionNeeded: [] });
   });
 
+  it.each([true, false])("replaces the page table when route locale JSON exists=%s", (exists) => {
+    const localeFile = path.join(webRoot, "(account)", "[id]", "locales.json");
+    const outside = path.join(appSrcRoot, "locales.json");
+    const changes = classifyPageFileChanges([localeFile, outside], {
+      appRoot,
+      appSrcRoot,
+      installedPageFiles: [homePage],
+      fileExists: exists ? existing(localeFile, outside) : existing(),
+    });
+    expect(changes).toEqual({
+      added: exists ? [localeFile] : [],
+      removed: exists ? [] : [localeFile],
+      inspectionNeeded: [],
+    });
+  });
+
   it("returns an empty classification for an empty batch", () => {
     const changes = classifyPageFileChanges([], {
       appRoot,

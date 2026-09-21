@@ -33,7 +33,9 @@ import { resolveLayoutLevel } from "../routing/layout-level";
 import { resolvePageRouteIdentity } from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
 import { publishLocaleRouting } from "../routing/locale-routing";
-import { type Router } from "@warlock.js/core";
+import { config, type Router } from "@warlock.js/core";
+import path from "node:path";
+import { buildRouteLocaleManifest } from "../build/build-route-locale-manifest";
 import { composeLayoutModules } from "./compose-layout-modules";
 import { createPageModuleLoader } from "./create-page-module-loader";
 import { resolveLocaleRouting } from "./locale-routing/resolve-locale-routing";
@@ -57,6 +59,7 @@ import {
 } from "./not-found-page";
 import type { PageManifest, PageManifestLayoutEntry, PageManifestPageEntry } from "./page-manifest";
 import type { PageRouteExport } from "./page-module-shapes";
+import { createRouteTranslationsResolver } from "./route-translations";
 
 /** The exports this module reads off a layout module namespace. */
 /**
@@ -282,6 +285,48 @@ export function installPageRoutesFromManifest(
     createHandler = createPageRouteHandler,
   } = options;
 
+  const localeFiles = manifest.localeFiles ?? [];
+  const localeSourceByFile = new Map(localeFiles.map((file) => [file.sourceFile, file]));
+  const manifestWebRoot =
+    manifest.app === undefined ? undefined : path.dirname(manifest.app.sourceFile);
+  const getRouteTranslations = createRouteTranslationsResolver(
+    buildRouteLocaleManifest(
+      {
+        pages: [
+          ...manifest.pages.map((page) => ({
+            pageFile: page.sourceFile,
+            webRoot: manifestWebRoot ?? path.dirname(page.sourceFile),
+          })),
+          ...(manifest.app === undefined
+            ? []
+            : [{ pageFile: manifest.app.sourceFile, webRoot: manifestWebRoot! }]),
+          ...(manifest.errorPage === undefined
+            ? []
+            : [
+                {
+                  pageFile: manifest.errorPage.sourceFile,
+                  webRoot: manifestWebRoot ?? path.dirname(manifest.errorPage.sourceFile),
+                },
+              ]),
+        ],
+        localeFiles: localeFiles.map(({ sourceFile, webRoot }) => ({ sourceFile, webRoot })),
+      },
+      {
+        localeCodes: config.key<readonly string[] | undefined>("app.localeCodes"),
+        localeCode: config.key<string | undefined>("app.localeCode"),
+        readSource: (sourceFile) => {
+          const source = localeSourceByFile.get(sourceFile);
+          if (source === undefined) {
+            throw new Error(
+              `Route locale manifest has no serialized source for ${JSON.stringify(sourceFile)}.`,
+            );
+          }
+          return source.source;
+        },
+      },
+    ),
+  );
+
   if (manifest.errorPage !== undefined) {
     const errorPage = normalizePageModule(
       manifest.errorPage.module,
@@ -378,6 +423,8 @@ export function installPageRoutesFromManifest(
             hydrationClientModuleUrl,
             hydrationClientModulePreloadUrls,
             loadErrorPage,
+            errorPageFile: manifest.errorPage?.sourceFile,
+            getRouteTranslations,
             // NO LAYOUT means no layout CSS either — just root and the
             // not-found page's own stylesheets, same reasoning as the
             // shared helper's own header comment.
@@ -468,6 +515,8 @@ export function installPageRoutesFromManifest(
       hydrationClientModuleUrl,
       hydrationClientModulePreloadUrls,
       loadErrorPage,
+      errorPageFile: manifest.errorPage?.sourceFile,
+      getRouteTranslations,
       stylesheetUrls,
       resolveRequestStylesheetUrls,
       cache,
