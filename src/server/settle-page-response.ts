@@ -28,6 +28,7 @@ export function designateBoundary(
 
   for (let index = throwingIndex; index >= 0; index--) {
     const level = LEVEL_ORDER[index];
+    if (level === undefined) continue;
 
     if (triple[level].ErrorBoundary) {
       return { throwingLevel, boundaryLevel: level };

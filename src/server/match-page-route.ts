@@ -27,6 +27,7 @@ export function matchPath(pattern: string, pathname: string): Record<string, str
   for (let index = 0; index < patternSegments.length; index++) {
     const patternSegment = patternSegments[index];
     const pathSegment = pathSegments[index];
+    if (patternSegment === undefined || pathSegment === undefined) return undefined;
 
     if (patternSegment.startsWith(":")) {
       params[patternSegment.slice(1)] = decodeURIComponent(pathSegment);

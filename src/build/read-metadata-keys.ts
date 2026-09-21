@@ -120,14 +120,18 @@ function editDistance(left: string, right: string): number {
     const current = [row];
 
     for (let column = 1; column <= right.length; column++) {
-      const substitution = previous[column - 1] + (left[row - 1] === right[column - 1] ? 0 : 1);
-      current[column] = Math.min(substitution, previous[column] + 1, current[column - 1] + 1);
+      const diagonal = previous[column - 1] ?? Number.POSITIVE_INFINITY;
+      const deletion = previous[column] ?? Number.POSITIVE_INFINITY;
+      const insertion = current[column - 1] ?? Number.POSITIVE_INFINITY;
+      const substitution = diagonal + (left.charAt(row - 1) === right.charAt(column - 1) ? 0 : 1);
+
+      current[column] = Math.min(substitution, deletion + 1, insertion + 1);
     }
 
     previous = current;
   }
 
-  return previous[right.length];
+  return previous[right.length] ?? Number.POSITIVE_INFINITY;
 }
 
 /**

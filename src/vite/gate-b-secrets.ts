@@ -57,7 +57,8 @@ const VITE_BUILTIN_ENV_KEYS = new Set(["MODE", "DEV", "PROD", "BASE_URL", "SSR"]
 const JS_MODULE_EXTENSIONS = /\.(tsx?|jsx?|mjs|cjs)$/;
 
 function isJsModule(id: string): boolean {
-  return JS_MODULE_EXTENSIONS.test(id.split("?")[0]);
+  const [sourceFile = id] = id.split("?", 1);
+  return JS_MODULE_EXTENSIONS.test(sourceFile);
 }
 
 /**

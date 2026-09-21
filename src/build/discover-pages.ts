@@ -442,10 +442,8 @@ export function layoutChainFor(pageFile: string, webRoot: string): string[] {
 
   let current = webRoot;
 
-  for (let index = 0; index <= segments.length; index++) {
-    if (index > 0) {
-      current = path.join(current, segments[index - 1]);
-    }
+  for (const segment of [undefined, ...segments]) {
+    if (segment !== undefined) current = path.join(current, segment);
 
     const candidate = path.join(current, "layout.tsx");
 

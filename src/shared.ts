@@ -45,14 +45,11 @@ declare global {
  */
 
 /**
- * The per-request target's runtime shape. `SharedContext` (index.ts:17) is the
- * app-augmentable public surface — apps declaration-merge their own keys onto
- * it — so `SharedTarget` intersects it in rather than replacing it: every
- * `SharedContext` member is structurally a `SharedTarget` member too, which is
- * what lets `enterSharedScope` and `shared` below hand back a `SharedTarget`
- * value where a `SharedContext` is expected with no cast at the boundary.
+ * Middleware builds the per-request target incrementally. App-augmented
+ * required fields do not exist when the scope starts; the public sealed
+ * payload contract applies after middleware has populated this target.
  */
-type SharedTarget = SharedContext & Record<string | symbol, unknown>;
+type SharedTarget = Partial<SharedContext> & Record<string | symbol, unknown>;
 
 /**
  * The pipeline's per-request store, structurally. At runtime this IS core's
@@ -241,7 +238,7 @@ function sealedWriteError(action: string, key: string | symbol): Error {
  * Returns the raw target; the pipeline may hold it, but app code goes through
  * `shared`.
  */
-export function enterSharedScope(store: SharedStore): SharedContext {
+export function enterSharedScope(store: SharedStore): Partial<SharedContext> {
   if (sharedScopes.has(store)) {
     throw new Error(
       "enterSharedScope() was called twice for the same request store " +
@@ -479,7 +476,7 @@ export async function sealShared(store?: SharedStore): Promise<Readonly<SharedCo
  * store resolver, on every single access — two concurrent requests writing
  * `shared.locale` write to two different objects.
  */
-export const shared: SharedContext = new Proxy({} as SharedTarget, {
+export const shared: SharedContext = new Proxy({} as SharedContext, {
   get(_stub, key) {
     return requireScope(`read \`shared.${String(key)}\``).target[key];
   },

@@ -73,8 +73,7 @@ export function deriveFilesystemRoutePath(input: FilesystemRouteInput): string {
   const prefixes = input.layoutPrefixes ?? {};
   const segments = [...validatedPrefixSegments(prefixes[""] ?? "", input.pageFile)];
 
-  for (let index = 0; index < directories.length; index++) {
-    const directory = directories[index];
+  for (const [index, directory] of directories.entries()) {
     const directoryPath = directories.slice(0, index + 1).join("/");
     const prefix = prefixes[directoryPath];
 

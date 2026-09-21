@@ -412,7 +412,7 @@ export function currentSearch(): string {
  * delimiter.
  */
 function searchPairsOf(source: string): string {
-  const withoutHash = source.split("#", 1)[0];
+  const [withoutHash = ""] = source.split("#", 1);
   const questionMark = withoutHash.indexOf("?");
 
   return questionMark === -1 ? withoutHash : withoutHash.slice(questionMark + 1);
@@ -446,16 +446,28 @@ function parseKey(key: string): ParsedKey {
   const nestedArray = NESTED_ARRAY_KEY.exec(key);
 
   if (nestedArray) {
-    return { kind: "nestedArray", name: nestedArray[1], subKey: nestedArray[2] };
+    const [name, subKey] = [nestedArray[1], nestedArray[2]];
+
+    if (name !== undefined && subKey !== undefined) {
+      return { kind: "nestedArray", name, subKey };
+    }
   }
 
   const array = ARRAY_KEY.exec(key);
 
-  if (array) return { kind: "array", name: array[1] };
+  if (array) {
+    const name = array[1];
+
+    if (name !== undefined) return { kind: "array", name };
+  }
 
   const nested = NESTED_KEY.exec(key);
 
-  if (nested) return { kind: "nested", name: nested[1], subKey: nested[2] };
+  if (nested) {
+    const [name, subKey] = [nested[1], nested[2]];
+
+    if (name !== undefined && subKey !== undefined) return { kind: "nested", name, subKey };
+  }
 
   return { kind: "plain", name: key };
 }
@@ -611,8 +623,9 @@ export const queryString = {
    */
   get<T = null>(key: string, defaultValue: T = null as T): QueryStringValue | T {
     const all = decode(browserSearch());
+    const value = all[key];
 
-    return key in all ? all[key] : defaultValue;
+    return value === undefined ? defaultValue : value;
   },
 
   /**

@@ -174,7 +174,9 @@ export function selectPageLayout(chain: LayoutChainInput): LayoutPolicyResult {
   }
 
   if (rendering.length === 1) {
-    return { type: "selected", layout: rendering[0] };
+    const [layout] = rendering;
+
+    if (layout !== undefined) return { type: "selected", layout };
   }
 
   return { type: "rejected", layouts: rendering };

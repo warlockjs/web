@@ -95,7 +95,7 @@ function isGovernedScope(source: string): boolean {
  * `@warlock.js/core`, `@warlock.js/core` -> `@warlock.js/core`.
  */
 function governedPackageNameOf(source: string): string {
-  const [scope, name] = source.split("/");
+  const [scope = "", name = ""] = source.split("/");
   return `${scope}/${name}`;
 }
 
@@ -182,10 +182,13 @@ function findNodeModulesPackageJson(pkgName: string, startDir: string): string |
 function packageNameFromNodeModulesPath(normalized: string): string | undefined {
   const segments = normalized.split("node_modules/");
   if (segments.length < 2) return undefined;
-  const afterLast = segments[segments.length - 1];
+  const afterLast = segments.at(-1);
+  if (!afterLast) return undefined;
   const parts = afterLast.split("/");
-  const name = afterLast.startsWith("@") ? `${parts[0]}/${parts[1]}` : parts[0];
-  return isGovernedScope(`${name}/`) ? name : undefined;
+  const [first, second] = parts;
+  if (!first) return undefined;
+  const name = afterLast.startsWith("@") ? (second ? `${first}/${second}` : undefined) : first;
+  return name !== undefined && isGovernedScope(`${name}/`) ? name : undefined;
 }
 
 /**
@@ -260,7 +263,7 @@ export function isServerFile(resolvedPath: string, appRoot: string): boolean {
   // than trusted to every caller: `bare` is what every check below judges,
   // matching `completeLocalModulePath`'s own bare/query split for the same
   // specifier (see its note).
-  const bare = resolvedPath.split("?")[0];
+  const [bare = resolvedPath] = resolvedPath.split("?", 1);
   const normalized = toPosix(bare);
   // `.server` may or may not carry an extension by the time Gate A judges it
   // — a bare specifier like `./blog.server` (extension resolved later by
@@ -295,7 +298,7 @@ export function isServerFile(resolvedPath: string, appRoot: string): boolean {
  * is POSIX-normalized so the directory-segment test sees `/` on every platform.
  */
 export function isClientFile(resolvedPath: string): boolean {
-  const bare = resolvedPath.split("?")[0];
+  const [bare = resolvedPath] = resolvedPath.split("?", 1);
   const normalized = toPosix(bare);
   if (/\.client(\.[jt]sx?)?$/.test(normalized)) return true;
   if (/(^|\/)\.client(\/|$)/.test(normalized)) return true;
@@ -760,7 +763,7 @@ function displayName(id: string): string {
   const normalized = toPosix(id);
   const segments = normalized.split("node_modules/");
   if (segments.length < 2) return path.basename(normalized);
-  return segments[segments.length - 1];
+  return segments.at(-1) ?? path.basename(normalized);
 }
 
 /** Rollup's normalized `external`, as `buildStart` receives it. */

@@ -101,10 +101,13 @@ export type PageCacheOptIn = {
   ttl?: number;
 };
 
-/** What a function-form `route.cache.tags` receives besides the page data. */
+/** What a function-form `config.cache.tags` receives besides the page data. */
 export type PageCacheTagContext = {
-  /** The request's sealed `shared` payload — e.g. the tenant or theme middleware resolved. */
-  shared: Readonly<SharedContext>;
+  /**
+   * The request's shared payload. A response without a page bundle supplies
+   * an empty object, so app-augmented fields are not guaranteed at this seam.
+   */
+  shared: Readonly<Partial<SharedContext>>;
 };
 
 /** The shape a page's `route` export may declare — mirrors `PageRouteExport` in `install-page-routes.ts`. */

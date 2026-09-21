@@ -174,7 +174,7 @@ export function acceptsHtmlExplicitly(accept: string | undefined): boolean {
   if (!accept) return false;
 
   for (const entry of accept.split(",")) {
-    const [rawType, ...parameters] = entry.split(";");
+    const [rawType = "", ...parameters] = entry.split(";");
 
     if (rawType.trim().toLowerCase() !== HTML_MEDIA_TYPE) continue;
 

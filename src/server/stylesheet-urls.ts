@@ -110,6 +110,10 @@ export function devStylesheetUrls(appRoot: string, sourceFile: string): string[]
 
   while (match !== null) {
     const specifier = match[1];
+    if (specifier === undefined) {
+      match = pattern.exec(source);
+      continue;
+    }
     const lowered = specifier.toLowerCase();
 
     if (STYLE_EXTENSIONS.some((extension) => lowered.endsWith(extension))) {
@@ -220,7 +224,7 @@ function devModuleStylesheetUrls(appRoot: string, module: ModuleNode): string[] 
   const relative = path.relative(appRoot, module.file);
   if (relative.startsWith("..") || path.isAbsolute(relative)) return [];
 
-  const url = module.url.split("?", 1)[0];
+  const url = module.url.split("?", 1)[0] ?? "";
   return url.startsWith("/") ? [`${url}${VITE_DIRECT_CSS_QUERY}`] : [];
 }
 

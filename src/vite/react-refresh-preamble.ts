@@ -8,7 +8,7 @@ type ReactPluginFactory = ((options?: Record<string, unknown>) => PluginOption[]
 
 /** POSIX-normalised, case-folded — Vite ids are `/`-separated on Windows too. */
 function normalizeModuleId(id: string): string {
-  const [filepath] = id.split("?");
+  const [filepath = id] = id.split("?", 1);
 
   return filepath.replace(/\\/g, "/").toLowerCase();
 }

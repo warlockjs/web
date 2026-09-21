@@ -81,6 +81,10 @@ export function classifyPageFileSegment(segment: string): PageFileSegmentVerdict
   if (groupMatch) {
     const groupName = groupMatch[1];
 
+    if (groupName === undefined) {
+      return rejected(`Segment "${segment}" could not be read as a group name.`);
+    }
+
     if (groupName.includes("[") || groupName.includes("]")) {
       return rejected(
         `Segment "${segment}" is a group, and a group contributes nothing to the URL path, so ` +

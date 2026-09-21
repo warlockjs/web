@@ -6,5 +6,5 @@ import { toPosix } from "./to-posix";
  * paths on Windows. Both sides key through here so they agree.
  */
 export function moduleKey(id: string): string {
-  return toPosix(id.split("?")[0]);
+  return toPosix(id.split("?", 1)[0] ?? id);
 }

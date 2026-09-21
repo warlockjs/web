@@ -239,7 +239,10 @@ function collectSpecifiers(source: string): string[] {
     let match = pattern.exec(source);
 
     while (match !== null) {
-      specifiers.push(match[1]);
+      const specifier = match[1];
+
+      if (specifier !== undefined) specifiers.push(specifier);
+
       match = pattern.exec(source);
     }
   }
@@ -248,7 +251,7 @@ function collectSpecifiers(source: string): string[] {
 }
 
 function hazardFor(specifier: string): string | undefined {
-  const [base, query] = specifier.split("?", 2);
+  const [base = "", query] = specifier.split("?", 2);
   const lowered = base.toLowerCase();
 
   /*
