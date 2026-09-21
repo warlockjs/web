@@ -26,15 +26,15 @@ describe("createManifestSitemapPageSource", () => {
     const manifest: PageManifest = {
       pages: [
         pageEntry("src/web/about.page.tsx", {
-          route: "/about",
+          config: { route: "/about" },
           default: () => null,
         }),
         pageEntry("src/web/posts/[id].page.tsx", {
-          sitemap: async () => [{ path: "/posts/hello-world" }],
+          config: { sitemap: async () => [{ path: "/posts/hello-world" }] },
           default: () => null,
         }),
         pageEntry("src/web/draft.page.tsx", {
-          sitemap: false,
+          config: { sitemap: false },
           default: () => null,
         }),
         pageEntry("src/web/404.page.tsx", {
@@ -62,7 +62,7 @@ describe("createManifestSitemapPageSource", () => {
         routeName: "posts.id",
         routePath: "/posts/:id",
         metadata: undefined,
-        sitemap: (manifest.pages[1].module as { sitemap: unknown }).sitemap,
+        sitemap: (manifest.pages[1].module as { config: { sitemap: unknown } }).config.sitemap,
         layoutSitemaps: [],
       },
       {
@@ -77,7 +77,9 @@ describe("createManifestSitemapPageSource", () => {
 
   it("is what collectSitemapEntries uses in production instead of listRoutablePages — proven by a watched red control", async () => {
     const manifest: PageManifest = {
-      pages: [pageEntry("src/web/about.page.tsx", { route: "/about", default: () => null })],
+      pages: [
+        pageEntry("src/web/about.page.tsx", { config: { route: "/about" }, default: () => null }),
+      ],
     };
 
     setProductionSitemapPageSource(createManifestSitemapPageSource(manifest));
@@ -115,13 +117,13 @@ describe("createManifestSitemapPageSource — layout declarations", () => {
     // that refusal is what makes this case worth having: it proves a
     // non-rendering ancestor's declaration is still carried, which is exactly
     // the ancestor the request pipeline cannot see today.
-    const outerLayout = { prefix: "/docs", sitemap: { priority: 0.2 } };
-    const innerLayout = { sitemap: false, default: () => null };
+    const outerLayout = { config: { prefix: "/docs", sitemap: { priority: 0.2 } } };
+    const innerLayout = { config: { sitemap: false }, default: () => null };
 
     const manifest: PageManifest = {
       pages: [
         {
-          module: { route: "/docs/api", default: () => null },
+          module: { config: { route: "/docs/api" }, default: () => null },
           sourceFile: "src/web/docs/api.page.tsx",
           layouts: [
             { module: outerLayout, sourceFile: "src/web/docs/layout.tsx" },
@@ -145,11 +147,11 @@ describe("createManifestSitemapPageSource — layout declarations", () => {
     const manifest: PageManifest = {
       pages: [
         {
-          module: { route: "/x", default: () => null },
+          module: { config: { route: "/x" }, default: () => null },
           sourceFile: "src/web/x.page.tsx",
           layouts: [
             { module: { default: () => null }, sourceFile: "src/web/layout.tsx" },
-            { module: { sitemap: false }, sourceFile: "src/web/deep/layout.tsx" },
+            { module: { config: { sitemap: false } }, sourceFile: "src/web/deep/layout.tsx" },
           ],
         },
       ],

@@ -183,7 +183,7 @@ describe("dev SSR config: the client page registry honours a custom appSrcRoot",
     fs.writeFileSync(
       pageFile,
       [
-        `export const route = { path: "/home" };`,
+        `export const config = { route: { path: "/home" } };`,
         `export default function Home() { return null; }`,
       ].join("\n"),
       "utf-8",

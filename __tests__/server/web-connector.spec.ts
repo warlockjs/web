@@ -141,7 +141,7 @@ function withoutClientBuild(): void {
 
 /** The one export the manifest registration step reads off a page module namespace. */
 function pageModule(route: string) {
-  return { route, default: () => null };
+  return { config: { route }, default: () => null };
 }
 
 const appEntry = {
@@ -532,7 +532,7 @@ describe("WebConnector unregistered global page diagnostic", () => {
       fs.mkdirSync(path.join(temporaryAppSrcRoot, "web"), { recursive: true });
       fs.writeFileSync(
         path.join(temporaryAppSrcRoot, "web", "about.page.tsx"),
-        'export const route = "/about";\nexport default () => null;\n',
+        'export const config = { route: "/about" };\nexport default () => null;\n',
       );
 
       const harness = await bootHarness(ownGraph, temporaryAppSrcRoot, temporaryAppRoot);

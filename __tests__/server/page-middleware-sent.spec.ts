@@ -58,7 +58,7 @@ function moduleLoader(modules: Record<string, unknown>): PageModuleLoader {
 }
 
 const guardedLayout = {
-  middleware: [({ response }: any) => response.redirect("/login")],
+  config: { middleware: [({ response }: any) => response.redirect("/login")] },
   default: ({ children }: { children?: ReactNode }) => createElement("section", null, children),
 };
 

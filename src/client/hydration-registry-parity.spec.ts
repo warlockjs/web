@@ -138,7 +138,7 @@ describe("hydration payload name / client registry key parity", () => {
       "src/web/index.page.tsx": page(),
       "src/web/blog/archive.page.tsx": page(),
       "src/web/users/[id].page.tsx": page(),
-      "src/web/docs/[...slug].page.tsx": `export const route = { path: "/docs/*", name: "docs.catchAll" };\n${page()}`,
+      "src/web/docs/[...slug].page.tsx": `export const config = { route: { path: "/docs/*", name: "docs.catchAll" } };\n${page()}`,
       "src/web/(marketing)/about.page.tsx": page(),
     });
 

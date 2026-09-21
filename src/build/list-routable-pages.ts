@@ -11,18 +11,13 @@
  */
 import { pathToFileURL } from "node:url";
 import type { PageMetadata } from "../metadata";
+import { normalizePageModule } from "../server/normalize-page-module";
 import { NOT_FOUND_ROUTE_NAME, NOT_FOUND_ROUTE_PATH } from "../server/not-found-page";
 import {
   discoverPages,
   isDiscoveredRoutablePage,
   type DiscoverPagesOptions,
 } from "./discover-pages";
-
-/** The subset of a page module's exports {@link listRoutablePages} reads. */
-type ListedPageModule = {
-  metadata?: PageMetadata;
-  sitemap?: unknown;
-};
 
 /** One routable page, with its module's `metadata`/`sitemap` exports resolved. */
 export type ListedRoutablePage = {
@@ -68,7 +63,11 @@ export async function listRoutablePages(
 
   return Promise.all(
     pages.map(async (page) => {
-      const pageModule = (await import(pathToFileURL(page.pageFile).href)) as ListedPageModule;
+      const pageModule = normalizePageModule(
+        await import(pathToFileURL(page.pageFile).href),
+        "page",
+        page.pageFile,
+      );
 
       // `page.layouts` is already outermost-first, which is the order the
       // precedence rule expects — the nearest ancestor is the last one that
@@ -77,7 +76,11 @@ export async function listRoutablePages(
       const layoutSitemaps = await Promise.all(
         page.layouts.map(async (layoutFile) => ({
           sourceFile: layoutFile,
-          declared: ((await import(pathToFileURL(layoutFile).href)) as ListedPageModule).sitemap,
+          declared: normalizePageModule(
+            await import(pathToFileURL(layoutFile).href),
+            "layout",
+            layoutFile,
+          ).sitemap,
         })),
       );
 

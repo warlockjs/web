@@ -1,8 +1,8 @@
 /**
  * Projection — the compile-time AST transform that strips a page module's
- * seven server exports before the CLIENT graph forms.
+ * eight server exports before the CLIENT graph forms.
  *
- * Removes `export const route/middleware/validation/loader/metadata/prefix/sitemap = ...`
+ * Removes `export const config/route/middleware/validation/loader/metadata/prefix/sitemap = ...`
  * (const-arrow form) and `export async function loader(...) {...}`
  * (function-declaration form — a page declares these as separate named
  * exports, not one fused object, so both forms are real), plus any import
@@ -40,6 +40,7 @@ import { parse } from "@babel/parser";
 import MagicString from "magic-string";
 import path from "node:path";
 import type { Plugin } from "vite";
+import { readModuleConfig } from "../build/read-module-config";
 
 /**
  * Exported so Gate C (`gate-c-verify.ts`) can re-derive "does the emitted
@@ -48,6 +49,7 @@ import type { Plugin } from "vite";
  * own list.
  */
 export const SERVER_EXPORT_NAMES = new Set([
+  "config",
   "route",
   "middleware",
   "validation",
@@ -56,6 +58,169 @@ export const SERVER_EXPORT_NAMES = new Set([
   "prefix",
   "sitemap",
 ]);
+
+type ProjectableModuleKind = "page" | "layout" | "root";
+
+function projectableModuleKind(id: string): ProjectableModuleKind {
+  const base = path.basename(id.split("?", 1)[0] ?? id);
+  if (base === "root.tsx" || base === "root.ts") return "root";
+  if (base === "layout.tsx" || base === "layout.ts" || /\.layout\.tsx?$/.test(base)) {
+    return "layout";
+  }
+  return "page";
+}
+
+/** True only for the one server-only binding which projection removes. */
+function hasConfigExport(code: string): boolean {
+  const program = parse(code, { sourceType: "module", plugins: ["typescript", "jsx"] }).program;
+  return program.body.some(
+    (statement: any) =>
+      statement.type === "ExportNamedDeclaration" &&
+      statement.declaration?.type === "VariableDeclaration" &&
+      statement.declaration.declarations.some(
+        (declaration: any) =>
+          declaration.id?.type === "Identifier" && declaration.id.name === "config",
+      ),
+  );
+}
+
+/**
+ * Projection deliberately has no general purpose scope dependency. This small
+ * walk answers the one question that must be exact after `config` is removed:
+ * did a surviving runtime expression still read that binding? Property names,
+ * type queries and bindings named config are not reads of the module binding.
+ */
+function hasUnshadowedConfigRead(code: string): boolean {
+  const program = parse(code, { sourceType: "module", plugins: ["typescript", "jsx"] })
+    .program as any;
+
+  const bindsConfig = (node: any): boolean => {
+    if (!node) return false;
+    if (node.type === "Identifier") return node.name === "config";
+    if (node.type === "AssignmentPattern") return bindsConfig(node.left);
+    if (node.type === "RestElement") return bindsConfig(node.argument);
+    if (node.type === "ObjectPattern")
+      return node.properties.some((p: any) => bindsConfig(p.value ?? p.argument));
+    if (node.type === "ArrayPattern") return node.elements.some(bindsConfig);
+    return false;
+  };
+  const blockBindsConfig = (statements: any[]): boolean =>
+    statements.some((statement) => {
+      const declaration =
+        statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+      if (declaration?.type === "VariableDeclaration")
+        return declaration.declarations.some((d: any) => bindsConfig(d.id));
+      return (
+        (declaration?.type === "FunctionDeclaration" || declaration?.type === "ClassDeclaration") &&
+        declaration.id?.name === "config"
+      );
+    });
+  let found = false;
+  const walk = (node: any, shadowed: boolean, parent?: any, key?: string): void => {
+    if (found || !node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item, shadowed, parent, key);
+      return;
+    }
+    if (typeof node.type !== "string") return;
+    if (
+      [
+        "TSAsExpression",
+        "TSSatisfiesExpression",
+        "TSNonNullExpression",
+        "TSTypeAssertion",
+        "TSInstantiationExpression",
+      ].includes(node.type)
+    ) {
+      walk(node.expression, shadowed, node, "expression");
+      return;
+    }
+    if (node.type.startsWith("TS") || node.type === "TypeAnnotation") return;
+    if (node.type === "Identifier") {
+      const isProperty =
+        (parent?.type === "MemberExpression" || parent?.type === "OptionalMemberExpression") &&
+        key === "property" &&
+        !parent.computed;
+      const isObjectKey =
+        (parent?.type === "ObjectProperty" || parent?.type === "ObjectMethod") &&
+        key === "key" &&
+        !parent.computed;
+      const isBinding =
+        (parent?.type === "VariableDeclarator" && key === "id") ||
+        ((parent?.type === "FunctionDeclaration" ||
+          parent?.type === "FunctionExpression" ||
+          parent?.type === "ArrowFunctionExpression") &&
+          (key === "id" || key === "params"));
+      if (node.name === "config" && !shadowed && !isProperty && !isObjectKey && !isBinding)
+        found = true;
+      return;
+    }
+    if (node.type === "CatchClause") {
+      const catchesConfig = bindsConfig(node.param) || blockBindsConfig(node.body?.body ?? []);
+      walk(node.body, shadowed || catchesConfig, node, "body");
+      return;
+    }
+    if (node.type === "ForInStatement" || node.type === "ForOfStatement") {
+      // The RHS runs before the loop binding exists; the body runs inside it.
+      walk(node.right, shadowed, node, "right");
+      const bindsLoopConfig =
+        node.left?.type === "VariableDeclaration" &&
+        node.left.declarations.some((declaration: any) => bindsConfig(declaration.id));
+      walk(node.body, shadowed || bindsLoopConfig, node, "body");
+      return;
+    }
+    if (node.type === "ForStatement") {
+      const bindsLoopConfig =
+        node.init?.type === "VariableDeclaration" &&
+        node.init.declarations.some((declaration: any) => bindsConfig(declaration.id));
+      walk(node.init, shadowed, node, "init");
+      walk(node.test, shadowed || bindsLoopConfig, node, "test");
+      walk(node.update, shadowed || bindsLoopConfig, node, "update");
+      walk(node.body, shadowed || bindsLoopConfig, node, "body");
+      return;
+    }
+    let nestedShadowed = shadowed;
+    if (node.type === "Program" || node.type === "BlockStatement")
+      nestedShadowed ||= blockBindsConfig(node.body);
+    if (
+      node.type === "FunctionDeclaration" ||
+      node.type === "FunctionExpression" ||
+      node.type === "ArrowFunctionExpression"
+    ) {
+      nestedShadowed ||=
+        node.id?.name === "config" ||
+        node.params?.some(bindsConfig) ||
+        blockBindsConfig(node.body?.body ?? []);
+    }
+    if (
+      node.type === "ObjectMethod" ||
+      node.type === "ClassMethod" ||
+      node.type === "ClassPrivateMethod"
+    ) {
+      nestedShadowed ||= node.params?.some(bindsConfig) || blockBindsConfig(node.body?.body ?? []);
+    }
+    if (node.type === "StaticBlock") nestedShadowed ||= blockBindsConfig(node.body);
+    for (const childKey of Object.keys(node)) {
+      if (
+        [
+          "type",
+          "start",
+          "end",
+          "loc",
+          "range",
+          "extra",
+          "leadingComments",
+          "trailingComments",
+          "innerComments",
+        ].includes(childKey)
+      )
+        continue;
+      walk(node[childKey], nestedShadowed, node, childKey);
+    }
+  };
+  walk(program, false);
+  return found;
+}
 
 /**
  * Recognized client-safe assets that always survive projection untouched,
@@ -72,7 +237,7 @@ const ASSET_EXTENSION_RE =
 /**
  * Top-level statement types that need no ambiguity check and are never
  * touched by removal: import declarations are handled by their own
- * survives/orphaned logic below, and every export (other than the 7 server
+ * survives/orphaned logic below, and every export (other than the 8 server
  * names) plus type-only declarations survive unconditionally — projection
  * classifies by FILE, not by the data an export touches.
  *
@@ -160,7 +325,7 @@ function exportedSpecifierName(specifier: any): string | null {
 /**
  * A re-export by specifier list — `export { x as sitemap } from "m"` (with a
  * source) or `export { x as sitemap }` (a local re-export of an imported or
- * module-scope binding) — reaches the exact same 7 server names the
+ * module-scope binding) — reaches the exact same 8 server names the
  * declaration form does, just through a second syntax shape
  * `isServerExportDeclaration` does not parse. One rule inspecting one form
  * while a second form reaches the same place unexamined is exactly the
@@ -196,7 +361,7 @@ function isServerExportDeclaration(stmt: any): boolean {
  * Generic duck-typed AST walk (no `@babel/traverse` dependency — this
  * package only needs `@babel/parser` + `@babel/types`-shaped nodes).
  * Collects every `Identifier`/`JSXIdentifier` name reachable from `node`,
- * used to decide whether an import binding still has a reader once the 7
+ * used to decide whether an import binding still has a reader once the 8
  * server exports are gone. Over-collecting (e.g. counting an object
  * property key as a "use") only ever biases toward KEEPING an import, never
  * toward dropping one that is still needed — the safe direction for a
@@ -226,6 +391,46 @@ function collectIdentifierNames(node: unknown, names: Set<string>): void {
     }
     collectIdentifierNames(record[key], names);
   }
+}
+
+/** A mixed `export const config = ..., register = ...` declaration. */
+interface VariableExportEdit {
+  stmt: any;
+  keep: any[];
+  remove: any[];
+}
+
+/**
+ * A validation schema is allowed to be assembled in local constants (for
+ * example `const validation = { query: v.object(...) }`). Those constants are
+ * an explicit part of the server-only `config.validation` value, unlike an
+ * arbitrary unread initializer. Keep that narrow exception separate from the
+ * ordinary side-effect refusal below.
+ */
+function configValidationRootNames(declarator: any): Set<string> {
+  const names = new Set<string>();
+  let init = declarator?.init;
+  while (
+    [
+      "TSAsExpression",
+      "TSSatisfiesExpression",
+      "TSNonNullExpression",
+      "TSTypeAssertion",
+      "ParenthesizedExpression",
+    ].includes(init?.type)
+  ) {
+    init = init.expression;
+  }
+  if (init?.type !== "ObjectExpression") return names;
+  for (const property of init.properties ?? []) {
+    const key = property?.key;
+    const keyName =
+      key?.type === "Identifier" ? key.name : key?.type === "StringLiteral" ? key.value : undefined;
+    if (property?.type === "ObjectProperty" && !property.computed && keyName === "validation") {
+      collectIdentifierNames(property.value, names);
+    }
+  }
+  return names;
 }
 
 /**
@@ -362,14 +567,12 @@ function removeStatement(s: MagicString, code: string, node: any): void {
 }
 
 function statementSnippet(code: string, node: any): string {
-  return code
-    .slice(node.start as number, node.end as number)
-    .split("\n")[0]
-    .trim();
+  const firstLine = code.slice(node.start as number, node.end as number).split("\n")[0] ?? "";
+  return firstLine.trim();
 }
 
 /**
- * The transform itself: parse, remove the 7 server exports and every import
+ * The transform itself: parse, remove the 8 server exports and every import
  * orphaned only by that removal, fail closed on anything attribution-
  * ambiguous. `filePath` is only used for error messages — a fence error
  * must name the file.
@@ -388,6 +591,9 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
   const localDeclarations: LocalDeclaration[] = [];
   const reexportEdits: ReexportEdit[] = [];
   const reexportEditByStmt = new Map<any, ReexportEdit>();
+  const variableExportEdits: VariableExportEdit[] = [];
+  const variableExportEditByStmt = new Map<any, VariableExportEdit>();
+  const removedServerDeclarators: any[] = [];
 
   for (const stmt of body) {
     if (stmt.type === "ImportDeclaration") {
@@ -410,7 +616,7 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
       // Projection classifies by file and never opens a
       // second file to resolve what a re-export actually forwards — doing so
       // would mean parsing and walking the source module too, i.e. a second
-      // parser. Whether the source exports one of the 7 server names is
+      // parser. Whether the source exports one of the 8 server names is
       // therefore unknowable here, so this is attribution-ambiguous the same
       // way an unrecognized top-level statement is, and gets the same
       // refusal rather than an assumption that it is safe.
@@ -418,9 +624,31 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
         filePath,
         statementSnippet(code, stmt),
         stmt.loc.start.line,
-        `a star re-export forwards every name the source module exports, including possibly one of the 7 known server exports (route, middleware, validation, loader, metadata, prefix, sitemap) — projection cannot inspect the source module's exports without parsing a second file, so it can't tell whether this leaks a server-only binding into the client bundle`,
+        `a star re-export forwards every name the source module exports, including possibly one of the 8 known server exports (config, route, middleware, validation, loader, metadata, prefix, sitemap) — projection cannot inspect the source module's exports without parsing a second file, so it can't tell whether this leaks a server-only binding into the client bundle`,
         `replace the star re-export with explicit named re-exports (export { ComponentA, ComponentB } from "./source"), listing only the client-safe names`,
       );
+    }
+    if (
+      stmt.type === "ExportNamedDeclaration" &&
+      stmt.declaration?.type === "VariableDeclaration"
+    ) {
+      const declarations = stmt.declaration.declarations as any[];
+      const remove = declarations.filter(
+        (declarator) =>
+          declarator.id?.type === "Identifier" && SERVER_EXPORT_NAMES.has(declarator.id.name),
+      );
+      if (remove.length > 0) {
+        removedServerDeclarators.push(...remove);
+        if (remove.length === declarations.length) {
+          removedServerExports.push(stmt);
+        } else {
+          const keep = declarations.filter((declarator) => !remove.includes(declarator));
+          const edit: VariableExportEdit = { stmt, keep, remove };
+          variableExportEdits.push(edit);
+          variableExportEditByStmt.set(stmt, edit);
+        }
+        continue;
+      }
     }
     if (isServerExportDeclaration(stmt)) {
       removedServerExports.push(stmt);
@@ -458,7 +686,7 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
       continue;
     }
 
-    // Attribution-IMPOSSIBLE: not an import, not one of the 7 known server
+    // Attribution-IMPOSSIBLE: not an import, not one of the 8 known server
     // exports, not another export, not a type-only declaration, and it binds
     // no name for a reader to point at. Fail closed rather than guess which
     // side of the fence it belongs on.
@@ -466,12 +694,34 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
       filePath,
       statementSnippet(code, stmt),
       stmt.loc.start.line,
-      `top-level executable code that declares nothing — outside the 7 known server exports (route, middleware, validation, loader, metadata, prefix, sitemap), and binding no name, so projection has no reader to attribute it by and can't tell whether it belongs to the server or the client`,
-      `move universal static declarations and their imports into export function register(), or mark the code with an explicit .server/.client file; server-only work can instead move inside one of the 7 declared server exports`,
+      `top-level executable code that declares nothing — outside the 8 known server exports (config, route, middleware, validation, loader, metadata, prefix, sitemap), and binding no name, so projection has no reader to attribute it by and can't tell whether it belongs to the server or the client`,
+      `move universal static declarations and their imports into export function register(), or mark the code with an explicit .server/.client file; server-only work can instead move inside one of the 8 declared server exports`,
     );
   }
 
   const removedLocals = new Set<any>();
+  const configValidationDependencies = new Set<string>();
+  for (const declarator of removedServerDeclarators) {
+    if (declarator.id?.name !== "config") continue;
+    for (const name of configValidationRootNames(declarator))
+      configValidationDependencies.add(name);
+  }
+  // Follow local schema helpers too: `schema` -> `validation` -> config.
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const local of localDeclarations) {
+      if (![...local.names].some((name) => configValidationDependencies.has(name))) continue;
+      const reads = new Set<string>();
+      collectIdentifierNames(local.stmt, reads);
+      for (const own of local.names) reads.delete(own);
+      for (const name of reads) {
+        if (!configValidationDependencies.has(name)) {
+          configValidationDependencies.add(name);
+          changed = true;
+        }
+      }
+    }
+  }
 
   /**
    * Every name READ by something that survives projection. Imports are excluded
@@ -491,7 +741,18 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
       if (removedServerExports.includes(stmt) || removedLocals.has(stmt)) continue;
       const own = new Set<string>();
       const reexport = reexportEditByStmt.get(stmt);
-      if (reexport) {
+      const variableExport = variableExportEditByStmt.get(stmt);
+      if (variableExport) {
+        // Only the declarators that remain in this mixed export can keep an
+        // import or local alive. Reading the removed config declarator here
+        // would falsely retain its server-only dependency graph.
+        for (const declarator of variableExport.keep) {
+          collectIdentifierNames(declarator, own);
+          const declared = new Set<string>();
+          collectPatternNames(declarator.id, declared);
+          for (const name of declared) own.delete(name);
+        }
+      } else if (reexport) {
         // A specifier's `local` name is a real reference to a module-scope
         // binding ONLY when the export has no source — `export { x as
         // sitemap } from "m"` names "x" as it exists in "m", not anything in
@@ -516,7 +777,10 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
   for (let changed = true; changed;) {
     changed = false;
     for (const local of localDeclarations) {
-      if (local.removed || !local.definitionShaped) continue;
+      const isConfigValidationDependency = [...local.names].some((name) =>
+        configValidationDependencies.has(name),
+      );
+      if (local.removed || (!local.definitionShaped && !isConfigValidationDependency)) continue;
       if (hasSurvivingReader(local, survivingNames)) continue;
       local.removed = true;
       removedLocals.add(local.stmt);
@@ -574,7 +838,7 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
         statementSnippet(code, decl),
         decl.loc.start.line,
         `a bare side-effect import with no recognized client-safe asset extension — projection can't tell if it belongs only to the server exports being removed or must ship to the client`,
-        `move universal static declarations and their imports into export function register(), or mark it with an explicit .server/.client file; server-only work can instead move inside one of the 7 declared server exports`,
+        `move universal static declarations and their imports into export function register(), or mark it with an explicit .server/.client file; server-only work can instead move inside one of the 8 declared server exports`,
       );
     }
 
@@ -588,6 +852,15 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
 
   for (const stmt of removedLocals) {
     removeStatement(s, code, stmt);
+  }
+
+  for (const edit of variableExportEdits) {
+    const declaration = edit.stmt.declaration;
+    const kept = edit.keep.map((declarator: any) => code.slice(declarator.start, declarator.end));
+    // Babel's VariableDeclaration range includes its trailing semicolon. The
+    // replacement must provide one too, otherwise a following export joins
+    // the retained initializer and becomes invalid source.
+    s.overwrite(declaration.start, declaration.end, `${declaration.kind} ${kept.join(", ")};`);
   }
 
   for (const edit of reexportEdits) {
@@ -617,7 +890,7 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
 }
 
 export function isProjectableFile(id: string): boolean {
-  const base = path.basename(id.split("?")[0]);
+  const base = path.basename(id.split("?", 1)[0] ?? id);
   if (/\.page\.tsx?$/.test(base)) return true;
   if (base === "layout.tsx" || base === "layout.ts") return true;
   // NAMED layouts — `dashboard.layout.tsx` and friends — are subjects too.
@@ -664,19 +937,31 @@ function hmrRegisterModulesBinding(code: string): string {
 
 /**
  * The client-build Vite plugin. Scoped to `*.page.tsx`/`layout.tsx`/`root.tsx`
- * and skipped entirely for the SSR build (`options.ssr`) — the server still
- * needs `route`/`middleware`/`validation`/`loader`/`metadata`/`prefix` intact.
+ * Source validation runs for both Vite environments: the dev SSR graph must
+ * reject legacy authoring too. Only client projection then removes `config`
+ * and its exclusive dependency graph.
  */
 export function projection(): Plugin {
   return {
     name: "warlock:projection",
     enforce: "pre",
     transform(code, id, options) {
-      if (options?.ssr) return null;
       if (!isProjectableFile(id)) return null;
 
       try {
+        // Discovery and the client compiler must share the same closed public
+        // surface. Do this before the SSR return: Vite's dev server otherwise
+        // lets old `route`/`middleware` exports slip through unexamined.
+        readModuleConfig(id, code, projectableModuleKind(id));
+        if (options?.ssr) return null;
+
+        const configExported = hasConfigExport(code);
         const { code: transformed, map } = projectModule(code, id);
+        if (configExported && hasUnshadowedConfigRead(transformed)) {
+          throw new Error(
+            `Projection refused "${id}": a surviving client export or helper reads the server-only \`config\` binding. Move that value into a client-safe export or pass only resolved data to the component.`,
+          );
+        }
         const registerModules = hmrRegisterModulesBinding(transformed);
         return {
           code:

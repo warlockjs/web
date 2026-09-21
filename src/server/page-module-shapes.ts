@@ -1,24 +1,13 @@
-import type { PageCacheOptIn } from "../routing/route-identity";
-import type { PipelineLoader, PipelineMiddleware } from "./execute-page-request";
+import type { NormalizedPageModule } from "./normalize-page-module";
 
 /** A page declares either a bare path or a path plus an explicit route name. */
-export type PageRouteExport = string | { path: string; name?: string; cache?: PageCacheOptIn };
+export type PageRouteExport = NonNullable<NormalizedPageModule["route"]>;
 
-/** The only export the page installers read off a page module namespace. */
-export type PageModuleShape = {
-  route?: PageRouteExport;
-};
+/** The page settings installers consume after config normalization. */
+export type PageModuleShape = Pick<NormalizedPageModule, "route" | "cache">;
 
-/** The exports the page installers read off a layout module namespace. */
-export type LayoutModuleShape = {
-  /** Universal registration hook; invoked on this real namespace, never a composed wrapper. */
-  register?: () => unknown;
-  prefix?: string;
-  /** The default export decides whether this layout renders. */
-  default?: unknown;
-  /** The layout's guards, in declaration order. */
-  middleware?: readonly PipelineMiddleware[];
-  loader?: PipelineLoader;
-  /** A static robots directive inherited by pages beneath this layout. */
-  metadata?: { robots?: string };
-};
+/** The layout pipeline view after config normalization. */
+export type LayoutModuleShape = Pick<
+  NormalizedPageModule,
+  "register" | "prefix" | "default" | "middleware" | "loader" | "metadata" | "ErrorBoundary"
+>;

@@ -54,6 +54,7 @@ import { resolvePageCacheHitOrMiss } from "./page-route-handler/serve-page-cache
 import { storePageCacheAfterRender } from "./page-route-handler/store-page-cache-after-render";
 import { sendPageDataResponse } from "./page-route-handler/send-page-data-response";
 import { writePageFailureResponse } from "./page-route-handler/write-page-failure-response";
+import { normalizePageModule } from "./normalize-page-module";
 
 declare module "@warlock.js/core" {
   interface RequestLocals {
@@ -125,6 +126,12 @@ export type PageRouteHandlerOptions = {
   /** The page's own-directory `layout.tsx`, when it has one. */
   layoutFile?: string | undefined;
   loadModule: PageModuleLoader;
+  /**
+   * The already-normalized layout pipeline view. Installers supply this only
+   * when several raw layout namespaces were composed into one slot; it must
+   * not be normalized again because it is not an application module namespace.
+   */
+  loadComposedLayout?: () => Promise<PageTripleModule>;
   /** Optional lazy application `error.page.tsx` loader. Never called on success. */
   loadErrorPage?: ErrorPageModuleLoader;
   /**
@@ -264,6 +271,7 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     pageFile,
     layoutFile,
     loadModule,
+    loadComposedLayout,
     loadErrorPage,
     loadRegistrationLayouts,
     hydrationClientModuleUrl,
@@ -382,27 +390,37 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         attemptStorageAfterRender = outcome.attemptStorageAfterRender;
       }
 
-      const [appModule, layoutModule, ownPageModule, registrationLayouts] = await Promise.all([
+      const [rawAppModule, layoutModule, rawPageModule, registrationLayouts] = await Promise.all([
         loadModule(appFile),
-        layoutFile ? loadModule(layoutFile) : Promise.resolve({}),
+        layoutFile
+          ? (loadComposedLayout?.() ??
+            loadModule(layoutFile).then((module) =>
+              normalizePageModule(module, "layout", layoutFile),
+            ))
+          : Promise.resolve({}),
         loadModule(pageFile),
         loadRegistrationLayouts?.() ?? Promise.resolve([]),
       ]);
 
+      // Refuse invalid live app/page namespaces before their registration hooks
+      // can run. Registration itself still receives the original namespaces so
+      // its WeakSet continues to track HMR replacement identities.
+      const appModule = normalizePageModule(rawAppModule, "root", appFile);
+      const pageModule = normalizePageModule(rawPageModule, "page", pageFile);
+
       // Registration is the first lifecycle action after all module namespaces
       // have loaded and before `renderPageRequest` can run middleware, loaders or
-      // render. App/page are already their real namespaces. Layouts deliberately
-      // come from the separate raw chain above, never from `layoutModule`, which
-      // may be the synthetic composed middleware wrapper used by dev.
+      // render. Layouts deliberately come from the separate raw chain above,
+      // never from `layoutModule`, which may be the synthetic composed middleware
+      // wrapper used by dev.
       registerModules([
-        appModule as RegisterableModuleNamespace,
+        rawAppModule as RegisterableModuleNamespace,
         ...registrationLayouts,
-        ownPageModule as RegisterableModuleNamespace,
+        rawPageModule as RegisterableModuleNamespace,
       ]);
 
-      const pageModule = ownPageModule as PageTripleModule;
       const triple: PageRouteEntry["triple"] = {
-        app: appModule as PageTripleModule,
+        app: appModule,
         layout: layoutModule as PageTripleModule,
         // Registration above deliberately receives the REAL namespace. Only the
         // pipeline view is projected: spreading preserves the component,

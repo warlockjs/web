@@ -57,7 +57,10 @@ describe("findUnregisteredPageFiles", () => {
 
     try {
       fs.mkdirSync(path.dirname(modulePage), { recursive: true });
-      fs.writeFileSync(modulePage, 'export const route = "/ignored";\nexport default () => null;');
+      fs.writeFileSync(
+        modulePage,
+        'export const config = { route: "/ignored" };\nexport default (): null => null;',
+      );
 
       expect(
         findUnregisteredPageFiles({
@@ -79,7 +82,10 @@ describe("findUnregisteredPageFiles", () => {
 
     try {
       fs.mkdirSync(path.dirname(customPage), { recursive: true });
-      fs.writeFileSync(customPage, 'export const route = "/about";\nexport default () => null;');
+      fs.writeFileSync(
+        customPage,
+        'export const config = { route: "/about" };\nexport default (): null => null;',
+      );
 
       const report = createUnregisteredPageReporter({
         appRoot: temporaryAppRoot,

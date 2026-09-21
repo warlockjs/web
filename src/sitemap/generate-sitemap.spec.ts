@@ -34,7 +34,7 @@ describe("generateSitemap", () => {
   it("does nothing and writes no output when web.sitemap.enabled is unset (default disabled)", async () => {
     const appRoot = makeAppTree({
       "src/web/about.page.tsx": [
-        'export const route = "/about";',
+        'export const config = { route: "/about" };',
         "export default function Page() { return null; }",
       ].join("\n"),
     });
@@ -62,7 +62,7 @@ describe("generateSitemap", () => {
   it("writes a bounded sitemap.xml for a plain site", async () => {
     const appRoot = makeAppTree({
       "src/web/about.page.tsx": [
-        'export const route = "/about";',
+        'export const config = { route: "/about" };',
         "export default function Page() { return null; }",
       ].join("\n"),
     });
@@ -99,7 +99,7 @@ describe("generateSitemap", () => {
   it("splits by locale into a SitemapIndex with one source per locale", async () => {
     const appRoot = makeAppTree({
       "src/web/about.page.tsx": [
-        'export const route = "/about";',
+        'export const config = { route: "/about" };',
         "export default function Page() { return null; }",
       ].join("\n"),
     });
@@ -128,7 +128,7 @@ describe("generateSitemap", () => {
     // on splitByLocale (or grows past one file) after a single-file publish.
     const appRoot = makeAppTree({
       "src/web/about.page.tsx": [
-        'export const route = "/about";',
+        'export const config = { route: "/about" };',
         "export default function Page() { return null; }",
       ].join("\n"),
     });
@@ -151,7 +151,7 @@ describe("generateSitemap", () => {
   it("picks up app.localeCodes / app.localeCode with no web.sitemap.locales override, and emits en/ar alternates", async () => {
     const appRoot = makeAppTree({
       "src/web/about.page.tsx": [
-        'export const route = "/about";',
+        'export const config = { route: "/about" };',
         "export default function Page() { return null; }",
       ].join("\n"),
     });

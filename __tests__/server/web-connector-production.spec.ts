@@ -63,7 +63,7 @@ const appSrcRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "f
 
 /** The one export `installPageRoutesFromManifest` reads off a page module namespace. */
 function pageModule(path: string, name?: string) {
-  return { route: name === undefined ? path : { path, name }, default: () => null };
+  return { config: { route: name === undefined ? path : { path, name } }, default: () => null };
 }
 
 const appEntry = {

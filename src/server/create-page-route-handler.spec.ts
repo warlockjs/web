@@ -136,6 +136,8 @@ function handlerOptions(
   };
 }
 
+const MockPage = (): null => null;
+
 beforeEach(() => {
   renderPageRequest.mockReset();
   renderPageRequest.mockResolvedValue(renderedOk());
@@ -148,7 +150,7 @@ describe("createPageRouteHandler — universal registration", () => {
   it("hands core's selected route and multi-segment params to the page pipeline", async () => {
     const handler = createPageRouteHandler(
       handlerOptions(
-        { "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} },
+        { "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": { default: MockPage } },
         { path: "/stores/:storeId/products/:productId", name: "product" },
       ),
     );
@@ -167,7 +169,7 @@ describe("createPageRouteHandler — universal registration", () => {
   it("preserves the catch-all page's param-free route convention", async () => {
     const handler = createPageRouteHandler(
       handlerOptions(
-        { "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} },
+        { "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": { default: MockPage } },
         { path: "*", name: "not-found", matchPath: (requestPath) => requestPath },
       ),
     );
@@ -188,7 +190,7 @@ describe("createPageRouteHandler — universal registration", () => {
       handlerOptions({
         "app.tsx": {},
         "composed-layout.tsx": {},
-        "account.page.tsx": {},
+        "account.page.tsx": { default: MockPage },
       }),
     );
 
@@ -207,7 +209,7 @@ describe("createPageRouteHandler — universal registration", () => {
     const outerLayout = { register: () => calls.push("outer layout") };
     const innerLayout = { register: () => calls.push("inner layout") };
     const syntheticLayout = { register: () => calls.push("synthetic layout") };
-    const page = { register: () => calls.push("page") };
+    const page = { default: MockPage, register: () => calls.push("page") };
 
     renderPageRequest.mockImplementation(async () => {
       calls.push("render");
@@ -235,8 +237,8 @@ describe("createPageRouteHandler — universal registration", () => {
     const calls: string[] = [];
     const app = { register: () => calls.push("app") };
     const sharedLayout = { register: () => calls.push("layout") };
-    const firstPage = { register: () => calls.push("first page") };
-    const secondPage = { register: () => calls.push("second page") };
+    const firstPage = { default: MockPage, register: () => calls.push("first page") };
+    const secondPage = { default: MockPage, register: () => calls.push("second page") };
     const moduleById = {
       "app.tsx": app,
       "layout.tsx": sharedLayout,
@@ -274,6 +276,7 @@ describe("createPageRouteHandler — universal registration", () => {
         "app.tsx": { register: () => undefined },
         "composed-layout.tsx": {},
         "account.page.tsx": {
+          default: MockPage,
           register: () => {
             throw failure;
           },
@@ -332,7 +335,7 @@ describe("createPageRouteHandler — universal registration", () => {
       handlerOptions({
         "app.tsx": {},
         "composed-layout.tsx": {},
-        "account.page.tsx": { loader },
+        "account.page.tsx": { default: MockPage, loader },
       }),
     );
 
@@ -362,7 +365,7 @@ describe("createPageRouteHandler — streaming document render", () => {
     const requestContext = context();
     const handler = createPageRouteHandler(
       handlerOptions(
-        { "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} },
+        { "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": { default: MockPage } },
         { hydrationClientModuleUrl: "/hydrate.js" },
       ),
     );
@@ -389,7 +392,7 @@ describe("createPageRouteHandler — streaming document render", () => {
 
     const handler = createPageRouteHandler(
       handlerOptions(
-        { "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} },
+        { "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": { default: MockPage } },
         { hydrationClientModuleUrl: "/hydrate.js", stylesheetUrls: ["/app.css"] },
       ),
     );
@@ -413,7 +416,11 @@ describe("createPageRouteHandler — streaming document render", () => {
 
     const requestContext = context();
     const handler = createPageRouteHandler(
-      handlerOptions({ "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} }),
+      handlerOptions({
+        "app.tsx": {},
+        "composed-layout.tsx": {},
+        "account.page.tsx": { default: MockPage },
+      }),
     );
 
     await handler(requestContext as never);
@@ -443,6 +450,7 @@ describe("createPageRouteHandler — streaming document render", () => {
           "app.tsx": {},
           "composed-layout.tsx": {},
           "account.page.tsx": {
+            default: MockPage,
             register: () => {
               throw new Error("register failed");
             },
@@ -489,7 +497,7 @@ describe("createPageRouteHandler — middleware 2xx short-circuit stays a plain 
     const requestContext = context();
     const handler = createPageRouteHandler(
       handlerOptions(
-        { "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} },
+        { "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": { default: MockPage } },
         { hydrationClientModuleUrl: "/hydrate.js", stylesheetUrls: ["/app.css"] },
       ),
     );
@@ -522,7 +530,7 @@ describe("createPageRouteHandler — middleware 2xx short-circuit stays a plain 
     const requestContext = context();
     const handler = createPageRouteHandler(
       handlerOptions(
-        { "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} },
+        { "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": { default: MockPage } },
         { hydrationClientModuleUrl: "/hydrate.js", stylesheetUrls: ["/app.css"] },
       ),
     );
@@ -554,7 +562,7 @@ describe("createPageRouteHandler — fallback data requests", () => {
     const requestContext = dataRequestContext();
     const handler = createPageRouteHandler(
       handlerOptions(
-        { "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} },
+        { "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": { default: MockPage } },
         { hydrationClientModuleUrl: "/hydrate.js" },
       ),
     );
@@ -596,6 +604,7 @@ describe("createPageRouteHandler — fallback data requests", () => {
           "app.tsx": {},
           "composed-layout.tsx": {},
           "account.page.tsx": {
+            default: MockPage,
             register: () => {
               throw new Error("register failed");
             },
@@ -659,7 +668,11 @@ describe("createPageRouteHandler — persisting a navigation-requested locale", 
 
     const requestContext = dataRequestContext("/account", undefined, { locale: "ar" }, "ar");
     const handler = createPageRouteHandler(
-      handlerOptions({ "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} }),
+      handlerOptions({
+        "app.tsx": {},
+        "composed-layout.tsx": {},
+        "account.page.tsx": { default: MockPage },
+      }),
     );
 
     await handler(requestContext as never);
@@ -683,7 +696,11 @@ describe("createPageRouteHandler — persisting a navigation-requested locale", 
 
     const requestContext = dataRequestContext("/account", undefined, {}, "en");
     const handler = createPageRouteHandler(
-      handlerOptions({ "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} }),
+      handlerOptions({
+        "app.tsx": {},
+        "composed-layout.tsx": {},
+        "account.page.tsx": { default: MockPage },
+      }),
     );
 
     await handler(requestContext as never);
@@ -696,7 +713,11 @@ describe("createPageRouteHandler — persisting a navigation-requested locale", 
 
     const requestContext = context("/account", {}, { locale: "ar" });
     const handler = createPageRouteHandler(
-      handlerOptions({ "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} }),
+      handlerOptions({
+        "app.tsx": {},
+        "composed-layout.tsx": {},
+        "account.page.tsx": { default: MockPage },
+      }),
     );
 
     await handler(requestContext as never);
@@ -739,7 +760,11 @@ describe("createPageRouteHandler — persisting a navigation-requested locale", 
 
     const requestContext = dataRequestContext("/account", undefined, { locale: "xx" }, "en");
     const handler = createPageRouteHandler(
-      handlerOptions({ "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} }),
+      handlerOptions({
+        "app.tsx": {},
+        "composed-layout.tsx": {},
+        "account.page.tsx": { default: MockPage },
+      }),
     );
 
     await handler(requestContext as never);
@@ -760,7 +785,11 @@ describe("createPageRouteHandler — Stage 2 slice S3 (NDJSON client navigation)
 
     const requestContext = dataRequestContext("/dashboard");
     const handler = createPageRouteHandler(
-      handlerOptions({ "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} }),
+      handlerOptions({
+        "app.tsx": {},
+        "composed-layout.tsx": {},
+        "account.page.tsx": { default: MockPage },
+      }),
     );
 
     await handler(requestContext as never);
@@ -790,7 +819,11 @@ describe("createPageRouteHandler — Stage 2 slice S3 (NDJSON client navigation)
       "application/x-ndjson, application/json",
     );
     const handler = createPageRouteHandler(
-      handlerOptions({ "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} }),
+      handlerOptions({
+        "app.tsx": {},
+        "composed-layout.tsx": {},
+        "account.page.tsx": { default: MockPage },
+      }),
     );
 
     await handler(requestContext as never);
@@ -819,7 +852,11 @@ describe("createPageRouteHandler — Stage 2 slice S3 (NDJSON client navigation)
 
     const requestContext = dataRequestContext("/plain", "application/x-ndjson, application/json");
     const handler = createPageRouteHandler(
-      handlerOptions({ "app.tsx": {}, "composed-layout.tsx": {}, "account.page.tsx": {} }),
+      handlerOptions({
+        "app.tsx": {},
+        "composed-layout.tsx": {},
+        "account.page.tsx": { default: MockPage },
+      }),
     );
 
     await handler(requestContext as never);

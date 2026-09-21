@@ -1,6 +1,6 @@
 /**
  * Real response `Cache-Control` headers for a page route that opted in via
- * `route.cache: { public: true, maxAge }`, proven against an actual Fastify
+ * `config.cache: { public: true, maxAge }`, proven against an actual Fastify
  * response rather than against the function that sets it — same pattern as
  * `set-cookie-cache-floor.spec.ts` and `auth-derived-cache-headers.spec.ts`,
  * applied to the opt-in half of `response-cache-floor.ts`'s precedence.
@@ -24,6 +24,7 @@ import { registerHttpPlugins, router, Response, type Request } from "@warlock.js
 import { WARLOCK_DATA_REQUEST_HEADER, WARLOCK_DATA_REQUEST_VALUE } from "../routing/data-request";
 import type { PageCacheOptIn } from "../routing/route-identity";
 import type { BufferedCookie } from "./execute-page-request";
+import { InvalidPageModuleConfigError, normalizePageModule } from "./normalize-page-module";
 
 const { renderPageRequest } = vi.hoisted(() => ({
   renderPageRequest: vi.fn(),
@@ -47,9 +48,9 @@ function renderedOk(
 }
 
 const moduleById: Record<string, unknown> = {
-  "app.tsx": {},
-  "layout.tsx": {},
-  "page.tsx": {},
+  "app.tsx": { config: {}, default: () => null },
+  "layout.tsx": { config: {}, default: () => null },
+  "page.tsx": { config: {}, default: () => null },
 };
 
 function registerRoute(urlPath: string, httpServer: FastifyInstance, cache?: PageCacheOptIn): void {
@@ -140,6 +141,29 @@ describe("page route cache opt-in", () => {
 
   afterAll(async () => {
     await server.close();
+  });
+
+  it("refuses the withdrawn route.cache nesting and names the page module", () => {
+    expect(() =>
+      normalizePageModule(
+        {
+          default: () => null,
+          config: { route: { path: "/legacy-cache", cache: { public: true, maxAge: 60 } } },
+        },
+        "page",
+        "src/web/legacy-cache.page.tsx",
+      ),
+    ).toThrow(InvalidPageModuleConfigError);
+    expect(() =>
+      normalizePageModule(
+        {
+          default: () => null,
+          config: { route: { path: "/legacy-cache", cache: { public: true, maxAge: 60 } } },
+        },
+        "page",
+        "src/web/legacy-cache.page.tsx",
+      ),
+    ).toThrow("src/web/legacy-cache.page.tsx");
   });
 
   // ── 1. INNOCENT CASE FIRST ────────────────────────────────────────────────

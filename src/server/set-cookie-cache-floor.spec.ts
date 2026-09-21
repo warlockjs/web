@@ -44,7 +44,7 @@ function renderedOk(
 const moduleById: Record<string, unknown> = {
   "app.tsx": {},
   "layout.tsx": {},
-  "page.tsx": {},
+  "page.tsx": { default: (): null => null },
 };
 
 function registerRoute(urlPath: string, httpServer: FastifyInstance): void {

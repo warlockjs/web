@@ -9,18 +9,16 @@
  * file, no test ever put a root id through the transform at all, and the one
  * test whose title named the root only ran `helper.ts`.
  *
- * It carries the server exports a real root carries — `middleware`, `loader`
- * and `revalidate` — because the point is not that the file is transformed but
+ * It carries the server exports a real root carries — `config` and `loader` —
+ * because the point is not that the file is transformed but
  * that those exports do not survive into the browser bundle.
  */
 import { serverSecret } from "./server-only-helper";
 import { sharedValue } from "./helper";
 
-export const middleware = [() => serverSecret];
+export const config = { middleware: [() => serverSecret] };
 
 export const loader = async () => ({ appName: sharedValue });
-
-export const revalidate = false;
 
 export default function App({ children }: { children?: unknown }) {
   /*

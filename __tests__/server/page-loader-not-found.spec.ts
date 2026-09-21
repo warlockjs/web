@@ -70,8 +70,8 @@ afterEach(() => {
 
 /** The application's own `404.page.tsx`. */
 const notFoundPage = {
+  config: { metadata: { title: "Not found" } },
   default: () => createElement("main", { "data-testid": "app-not-found" }, "No such product"),
-  metadata: { title: "Not found" },
 };
 
 const missingPage = {
@@ -313,7 +313,7 @@ afterEach(() => {
   }
 });
 
-const routedMissingPage = { ...missingPage, route: PAGE_URL };
+const routedMissingPage = { ...missingPage, config: { route: PAGE_URL } };
 
 describe("a page installed by each installer renders the APP's 404.page.tsx on a loader notFound()", () => {
   it("production — installPageRoutesFromManifest", async () => {

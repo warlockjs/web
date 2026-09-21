@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { collectSitemapEntries } from "./collect-sitemap-entries";
 import { generateSitemap } from "./generate-sitemap";
 import { createManifestSitemapPageSource } from "./manifest-sitemap-page-source";
-import type { PageManifest } from "../server/page-manifest";
+import type { PageManifest, PageManifestPageEntry } from "../server/page-manifest";
 
 const temporaryDirectories: string[] = [];
 const locales = {
@@ -33,14 +33,18 @@ function makeAppTree(files: Record<string, string>): string {
   return appRoot;
 }
 
-function page(sourceFile: string, module: Record<string, unknown>, layouts = [] as const) {
+function page(
+  sourceFile: string,
+  module: Record<string, unknown>,
+  layouts: PageManifestPageEntry["layouts"] = [],
+) {
   return { sourceFile, module, layouts };
 }
 
 function policyManifest(): PageManifest {
-  const excluded = { sitemap: false };
-  const outer = { sitemap: { priority: 0.1, changefreq: "weekly" } };
-  const nearest = { sitemap: { priority: 0.7 }, default: () => null };
+  const excluded = { config: { sitemap: false } };
+  const outer = { config: { sitemap: { priority: 0.1, changefreq: "weekly" } } };
+  const nearest = { config: { sitemap: { priority: 0.7 } }, default: () => null };
 
   return {
     pages: [
@@ -51,24 +55,27 @@ function policyManifest(): PageManifest {
       page("src/web/policy/hidden.page.tsx", { default: () => null }, [
         { sourceFile: "src/web/policy/layout.tsx", module: excluded },
       ]),
-      page("src/web/policy/opt-in.page.tsx", { sitemap: { priority: 0.9 }, default: () => null }, [
-        { sourceFile: "src/web/policy/layout.tsx", module: excluded },
-      ]),
+      page(
+        "src/web/policy/opt-in.page.tsx",
+        { config: { sitemap: { priority: 0.9 } }, default: () => null },
+        [{ sourceFile: "src/web/policy/layout.tsx", module: excluded }],
+      ),
     ],
   } as PageManifest;
 }
 
 function policyTree(): Record<string, string> {
   return {
-    "src/web/policy/layout.tsx": "export const sitemap = false;",
+    "src/web/policy/layout.tsx": "export const config = { sitemap: false };",
     "src/web/policy/hidden.page.tsx": "export default function Page() { return null; }",
     "src/web/policy/opt-in.page.tsx": [
-      "export const sitemap = { priority: 0.9 };",
+      "export const config = { sitemap: { priority: 0.9 } };",
       "export default function Page() { return null; }",
     ].join("\n"),
-    "src/web/guides/layout.tsx": 'export const sitemap = { priority: 0.1, changefreq: "weekly" };',
+    "src/web/guides/layout.tsx":
+      'export const config = { sitemap: { priority: 0.1, changefreq: "weekly" } };',
     "src/web/guides/api/layout.tsx": [
-      "export const sitemap = { priority: 0.7 };",
+      "export const config = { sitemap: { priority: 0.7 } };",
       "export default function Layout() { return null; }",
     ].join("\n"),
     "src/web/guides/api/reference.page.tsx": "export default function Page() { return null; }",
@@ -157,18 +164,25 @@ describe("layout sitemap pipeline", () => {
     "rejects a layout with %s even when its page explicitly overrides it",
     async (_kind, sourceDeclaration, manifestDeclaration) => {
       const appRoot = makeAppTree({
-        "src/web/bad/layout.tsx": `export const sitemap = ${sourceDeclaration};`,
+        "src/web/bad/layout.tsx": `export const config = { sitemap: ${sourceDeclaration} };`,
         "src/web/bad/child.page.tsx": [
-          "export const sitemap = { priority: 0.8 };",
+          "export const config = { sitemap: { priority: 0.8 } };",
           "export default function Page() { return null; }",
         ].join("\n"),
       });
       const layoutFile = path.join(appRoot, "src/web/bad/layout.tsx");
       const manifest: PageManifest = {
         pages: [
-          page("src/web/bad/child.page.tsx", { sitemap: { priority: 0.8 }, default: () => null }, [
-            { sourceFile: "src/web/bad/layout.tsx", module: { sitemap: manifestDeclaration } },
-          ]),
+          page(
+            "src/web/bad/child.page.tsx",
+            { config: { sitemap: { priority: 0.8 } }, default: () => null },
+            [
+              {
+                sourceFile: "src/web/bad/layout.tsx",
+                module: { config: { sitemap: manifestDeclaration } },
+              },
+            ],
+          ),
         ],
       } as PageManifest;
 

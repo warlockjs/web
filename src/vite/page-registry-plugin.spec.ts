@@ -42,10 +42,10 @@ afterAll(() => {
   for (const root of tempRoots) fs.rmSync(root, { recursive: true, force: true });
 });
 
-/** A minimal page: one `route` export discovery can read statically, one default component. */
+/** A minimal page: one static `config.route`, one default component. */
 function pageSource(routePath: string, body: string): string {
   return [
-    `export const route = { path: ${JSON.stringify(routePath)} };`,
+    `export const config = { route: { path: ${JSON.stringify(routePath)} } };`,
     ``,
     ...body.split("\n"),
   ].join("\n");
@@ -77,12 +77,10 @@ function callHookWith<T>(
   return fn.apply(thisArg, args) as T;
 }
 
-/** The one page shape the reload seam cares about: a client component plus a server `metadata` export. */
+/** The one page shape the reload seam cares about: a client component plus server `config.metadata`. */
 function metadataPageSource(routePath: string, title: string, bodyText: string): string {
   return [
-    `export const route = { path: ${JSON.stringify(routePath)} };`,
-    ``,
-    `export const metadata = { title: ${JSON.stringify(title)} };`,
+    `export const config = { route: { path: ${JSON.stringify(routePath)} }, metadata: { title: ${JSON.stringify(title)} } };`,
     ``,
     `export default function Page() {`,
     `  return ${JSON.stringify(bodyText)};`,
@@ -97,7 +95,7 @@ function registerPageSource(
   componentText: string,
 ): string {
   return [
-    `export const route = { path: "/registered" };`,
+    `export const config = { route: { path: "/registered" } };`,
     ``,
     `export function register${signature} {`,
     `  ${registerBody}`,
@@ -112,7 +110,7 @@ function registerPageSource(
 
 function constRegisterPageSource(registerBody: string, componentText: string): string {
   return [
-    `export const route = { path: "/registered" };`,
+    `export const config = { route: { path: "/registered" } };`,
     ``,
     `export const register = () => {`,
     `  ${registerBody}`,
@@ -127,7 +125,7 @@ function constRegisterPageSource(registerBody: string, componentText: string): s
 
 function declaredRegisterPageSource(declaration: string, componentText: string): string {
   return [
-    `export const route = { path: "/registered" };`,
+    `export const config = { route: { path: "/registered" } };`,
     ``,
     declaration,
     ``,
@@ -749,9 +747,7 @@ describe("clientPageRegistry — shared imports and locals reload (measured agai
     return [
       `import { pageTitle } from ${JSON.stringify(specifier)};`,
       ``,
-      `export const route = { path: "/blog/article" };`,
-      ``,
-      `export const metadata = { title: pageTitle };`,
+      `export const config = { route: { path: "/blog/article" }, metadata: { title: pageTitle } };`,
       ``,
       `export default function Page() {`,
       `  return pageTitle;`,
@@ -765,9 +761,7 @@ describe("clientPageRegistry — shared imports and locals reload (measured agai
     return [
       `const pageTitle = ${JSON.stringify(value)};`,
       ``,
-      `export const route = { path: "/blog/article" };`,
-      ``,
-      `export const metadata = { title: pageTitle };`,
+      `export const config = { route: { path: "/blog/article" }, metadata: { title: pageTitle } };`,
       ``,
       `export default function Page() {`,
       `  return pageTitle;`,
@@ -827,9 +821,7 @@ describe("clientPageRegistry — shared imports and locals reload (measured agai
       [
         `const Title = () => "First" + ${JSON.stringify(suffix)};`,
         ``,
-        `export const route = { path: "/blog/article" };`,
-        ``,
-        `export const metadata = { title: Title() };`,
+        `export const config = { route: { path: "/blog/article" }, metadata: { title: Title() } };`,
         ``,
         `export default function Page() {`,
         `  return "body";`,
@@ -850,9 +842,7 @@ describe("clientPageRegistry — shared imports and locals reload (measured agai
       [
         `const greet = () => ${JSON.stringify(greeting)};`,
         ``,
-        `export const route = { path: "/blog/article" };`,
-        ``,
-        `export const metadata = { title: "First" };`,
+        `export const config = { route: { path: "/blog/article" }, metadata: { title: "First" } };`,
         ``,
         `export default function Page() {`,
         `  return greet();`,
@@ -873,9 +863,7 @@ describe("clientPageRegistry — shared imports and locals reload (measured agai
       [
         `import { Card } from "./card";`,
         ``,
-        `export const route = { path: "/blog/article" };`,
-        ``,
-        `export const metadata = { title: "First" };`,
+        `export const config = { route: { path: "/blog/article" }, metadata: { title: "First" } };`,
         ``,
         `function Row() {`,
         `  return ${JSON.stringify(rowText)};`,
@@ -926,7 +914,7 @@ function makeProofAppRoot(): string {
     [
       `import { databaseSecret } from "./repository";`,
       ``,
-      `export const route = { path: "/blog/article" };`,
+      `export const config = { route: { path: "/blog/article" } };`,
       ``,
       `export const loader = async () => {`,
       `  return { secret: databaseSecret };`,

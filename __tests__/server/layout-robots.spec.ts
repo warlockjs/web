@@ -53,15 +53,49 @@ function layoutChain(outer: LayoutModuleShape = { metadata: { robots: "noindex" 
 
   // Deliberately compose a non-rendering ancestor into its inner rendering
   // host. This is the two-layout installer composition path.
-  return { raw: [outer, inner] as const, composed: composeLayoutModules([outer, inner], 1) };
+  const raw = [
+    {
+      config: {
+        ...(outer.metadata === undefined ? {} : { metadata: outer.metadata }),
+        ...(outer.middleware === undefined ? {} : { middleware: outer.middleware }),
+        ...(outer.prefix === undefined ? {} : { prefix: outer.prefix }),
+      },
+      ...(outer.register === undefined ? {} : { register: outer.register }),
+      ...(outer.loader === undefined ? {} : { loader: outer.loader }),
+      ...(outer.default === undefined ? {} : { default: outer.default }),
+    },
+    {
+      config: {
+        ...(inner.metadata === undefined ? {} : { metadata: inner.metadata }),
+        ...(inner.middleware === undefined ? {} : { middleware: inner.middleware }),
+        ...(inner.prefix === undefined ? {} : { prefix: inner.prefix }),
+      },
+      ...(inner.register === undefined ? {} : { register: inner.register }),
+      ...(inner.loader === undefined ? {} : { loader: inner.loader }),
+      ...(inner.default === undefined ? {} : { default: inner.default }),
+    },
+  ] as const;
+
+  return { raw, composed: composeLayoutModules([outer, inner], 1) };
 }
 
 function handlerFor(page: Page, outer?: LayoutModuleShape): PageRouteHandler {
   const layouts = layoutChain(outer);
+  const rawPage = {
+    config: {
+      ...(page.metadata === undefined ? {} : { metadata: page.metadata }),
+      ...(page.middleware === undefined ? {} : { middleware: page.middleware }),
+    },
+    default: page.default,
+  };
+  const rawApp = {
+    config: { middleware: App.config.middleware },
+    loader: App.loader,
+    default: App.default,
+  };
   const modules: Record<string, unknown> = {
-    [APP_FILE]: App,
-    [LAYOUT_FILE]: layouts.composed,
-    [PAGE_FILE]: page,
+    [APP_FILE]: rawApp,
+    [PAGE_FILE]: rawPage,
   };
 
   return createPageRouteHandler({
@@ -71,6 +105,7 @@ function handlerFor(page: Page, outer?: LayoutModuleShape): PageRouteHandler {
     layoutFile: LAYOUT_FILE,
     pageFile: PAGE_FILE,
     loadModule: async (id) => modules[id],
+    loadComposedLayout: async () => layouts.composed,
     // The production registration surface keeps the raw namespaces; only the
     // request pipeline receives the synthetic composed host.
     loadRegistrationLayouts: async () => layouts.raw,
@@ -149,14 +184,17 @@ describe("inherited layout robots at the request boundary", () => {
     const entry: PageRouteEntry = {
       path: URL,
       name: "robots.single-layout",
-      triple: { app: App as never, layout: composed as never, page: page({ title: "Robots" }) as never },
+      triple: {
+        app: App as never,
+        layout: composed as never,
+        page: page({ title: "Robots" }) as never,
+      },
     };
 
     const bundle = await executePageRequest({
       url: URL,
       routes: [entry],
-      createHttp: (match) =>
-        createCoreHttp({ url: URL, params: match.params, query: match.query }),
+      createHttp: (match) => createCoreHttp({ url: URL, params: match.params, query: match.query }),
     });
 
     expect(bundle).toMatchObject({

@@ -155,23 +155,24 @@ function installThroughProduction(
 }
 
 function fixture({ page, notFound }: { page: boolean; notFound: boolean }): Fixture {
-  const files: Record<string, string> = { "src/web/root.tsx": "" };
+  const files: Record<string, string> = { "src/web/root.tsx": "export default (): null => null;" };
   const manifestPages: PageManifestPageEntry[] = [];
   const modules: Record<string, unknown> = {};
 
   if (page) {
-    files["src/web/home.page.tsx"] = "";
+    files["src/web/home.page.tsx"] =
+      'export const config = { route: "/" };\nexport default (): null => null;';
     manifestPages.push({
-      module: { default: () => null, route: "/" },
+      module: { default: (): null => null, config: { route: "/" } },
       sourceFile: "src/web/home.page.tsx",
       layouts: [],
     });
   }
 
   if (notFound) {
-    files["src/web/404.page.tsx"] = "";
+    files["src/web/404.page.tsx"] = "export default (): null => null;";
     manifestPages.push({
-      module: { default: () => null },
+      module: { default: (): null => null },
       sourceFile: "src/web/404.page.tsx",
       layouts: [],
     });
@@ -193,8 +194,8 @@ describe("not-found route parity gate", () => {
 
     for (const relative of Object.keys(subject.files)) {
       subject.modules[path.join(appRoot, relative)] = relative.endsWith("home.page.tsx")
-        ? { default: () => null, route: "/" }
-        : { default: () => null };
+        ? { default: (): null => null, config: { route: "/" } }
+        : { default: (): null => null };
     }
 
     // Reuse the materialized fixture for both sides; production reads its manifest
@@ -215,8 +216,8 @@ describe("not-found route parity gate", () => {
 
     for (const relative of Object.keys(subject.files)) {
       subject.modules[path.join(appRoot, relative)] = relative.endsWith("home.page.tsx")
-        ? { default: () => null, route: "/" }
-        : { default: () => null };
+        ? { default: (): null => null, config: { route: "/" } }
+        : { default: (): null => null };
     }
 
     const dev = await installThroughDev(subject, appRoot);

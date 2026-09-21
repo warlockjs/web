@@ -19,7 +19,6 @@ import {
 import { NotFoundPageDeclaresRouteError } from "../server/not-found-page";
 import { MissingPageDefaultExportError } from "./page-default-export";
 import { UnknownMetadataKeyError } from "./read-metadata-keys";
-import { NonLiteralRouteExportError } from "./read-route-exports";
 
 /**
  * None of this file's fixtures declare an `error.page.tsx`, so every result
@@ -87,7 +86,7 @@ function nonRenderingLayout(declaration: string): string {
  * filesystem convention directly.
  */
 function routed(routePath: string): string {
-  return pageDeclaring(`export const route = ${JSON.stringify(routePath)};`);
+  return pageDeclaring(`export const config = { route: ${JSON.stringify(routePath)} };`);
 }
 
 /** App-relative POSIX paths, so expectations read like the tree the fixture declared. */
@@ -280,7 +279,7 @@ describe("discoverPages — property A: a defined total order", () => {
       // Two files declare one route path — only the file path separates them.
       "src/web/list.page.tsx": routed("/list"),
       "src/web/users/list.page.tsx": pageDeclaring(
-        'export const route = { path: "/list", name: "users.list" };',
+        'export const config = { route: { path: "/list", name: "users.list" } };',
       ),
     });
 
@@ -343,10 +342,10 @@ describe("discoverPages — property B: one route name, one page", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
       "src/web/reports/list.page.tsx": pageDeclaring(
-        'export const route = { path: "/reports/list", name: "users.list" };',
+        'export const config = { route: { path: "/reports/list", name: "users.list" } };',
       ),
       "src/web/users/list.page.tsx": pageDeclaring(
-        'export const route = { path: "/list", name: "users.list" };',
+        'export const config = { route: { path: "/list", name: "users.list" } };',
       ),
     });
 
@@ -373,7 +372,7 @@ describe("discoverPages — property B: one route name, one page", () => {
       "src/web/root.tsx": APP,
       "src/web/list.page.tsx": routed("/list"),
       "src/web/users/list.page.tsx": pageDeclaring(
-        'export const route = { path: "/list", name: "users.list" };',
+        'export const config = { route: { path: "/list", name: "users.list" } };',
       ),
     });
 
@@ -388,7 +387,9 @@ describe("discoverPages — property C: the canonical route is the DECLARED one"
   it("(a) takes the declared route path over the filesystem-derived one", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/web/users/list.page.tsx": pageDeclaring('export const route = "/people/directory";'),
+      "src/web/users/list.page.tsx": pageDeclaring(
+        'export const config = { route: "/people/directory" };',
+      ),
     });
 
     const [page, ...rest] = discoverPages({ appRoot });
@@ -405,7 +406,7 @@ describe("discoverPages — property C: the canonical route is the DECLARED one"
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
       "src/web/users/list.page.tsx": pageDeclaring(
-        'import { buildRoute } from "./routes";\nexport const route = buildRoute("/list");',
+        'import { buildRoute } from "./routes";\nexport const config = { route: buildRoute("/list") };',
       ),
     });
 
@@ -413,14 +414,13 @@ describe("discoverPages — property C: the canonical route is the DECLARED one"
       discoverPages({ appRoot });
       expect.unreachable("expected discovery to reject the computed route export");
     } catch (error) {
-      expect(error).toBeInstanceOf(NonLiteralRouteExportError);
+      expect(error).toBeInstanceOf(Error);
 
       const message = (error as Error).message;
 
       expect(message).toContain("list.page.tsx");
-      expect(message).toContain("its value is a function call");
-      expect(message).toContain("without running your application code");
-      expect(message).toContain('export const route = "/list";');
+      expect(message).toContain("config.route");
+      expect(message).toContain("directly exported object literal");
     }
   });
 
@@ -430,9 +430,15 @@ describe("discoverPages — property C: the canonical route is the DECLARED one"
       // The prefix deliberately does NOT echo the directory name: a composition
       // that only ever agreed with the tree would be indistinguishable from the
       // filesystem derivation it replaced.
-      "src/web/shop/products/layout.tsx": layoutDeclaring('export const prefix = "/catalogue";'),
-      "src/web/shop/products/index.page.tsx": pageDeclaring('export const route = "/";'),
-      "src/web/shop/products/detail.page.tsx": pageDeclaring('export const route = "/detail";'),
+      "src/web/shop/products/layout.tsx": layoutDeclaring(
+        'export const config = { prefix: "/catalogue" };',
+      ),
+      "src/web/shop/products/index.page.tsx": pageDeclaring(
+        'export const config = { route: "/" };',
+      ),
+      "src/web/shop/products/detail.page.tsx": pageDeclaring(
+        'export const config = { route: "/detail" };',
+      ),
     });
 
     const pages = discoverPages({ appRoot });
@@ -444,10 +450,10 @@ describe("discoverPages — property C: the canonical route is the DECLARED one"
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
       "src/web/shop/alpha.page.tsx": pageDeclaring(
-        'export const route = { path: "/alpha", name: "shop.catalogue" };',
+        'export const config = { route: { path: "/alpha", name: "shop.catalogue" } };',
       ),
       "src/web/shop/beta.page.tsx": pageDeclaring(
-        'export const route = { path: "/beta", name: "shop.catalogue" };',
+        'export const config = { route: { path: "/beta", name: "shop.catalogue" } };',
       ),
     });
 
@@ -464,7 +470,7 @@ describe("discoverPages — property C: the canonical route is the DECLARED one"
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
       "src/web/shop/draft.page.tsx": pageDeclaring(""),
-      "src/web/shop/live.page.tsx": pageDeclaring('export const route = "/live";'),
+      "src/web/shop/live.page.tsx": pageDeclaring('export const config = { route: "/live" };'),
     });
 
     const draft = discoverPages({ appRoot }).find((page) =>
@@ -478,10 +484,14 @@ describe("discoverPages — property C: the canonical route is the DECLARED one"
   it("(f) reads through an `as const` wrapper rather than rejecting it", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/web/shop/layout.tsx": layoutDeclaring('export const prefix = "/shop" as const;'),
-      "src/web/shop/bare.page.tsx": pageDeclaring('export const route = "/bare" as const;'),
+      "src/web/shop/layout.tsx": layoutDeclaring(
+        'export const config = { prefix: "/shop" } as const;',
+      ),
+      "src/web/shop/bare.page.tsx": pageDeclaring(
+        'export const config = { route: "/bare" } as const;',
+      ),
       "src/web/shop/object.page.tsx": pageDeclaring(
-        'export const route = { path: "/object", name: "shop.thing" } as const;',
+        'export const config = { route: { path: "/object", name: "shop.thing" } } as const;',
       ),
     });
 
@@ -515,7 +525,7 @@ describe("discoverPages — property C: the canonical route is the DECLARED one"
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
       "src/web/users/id.page.tsx": pageDeclaring(
-        'export const route = { path: "/users/:id?", name: "userDetail" };',
+        'export const config = { route: { path: "/users/:id?", name: "userDetail" } };',
       ),
     });
 
@@ -536,7 +546,7 @@ describe("discoverPages — ancestor layout composition", () => {
   it("composes against the nearest ancestor layout's prefix when the page's own directory has none", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/web/main/layout.tsx": layoutDeclaring('export const prefix = "/admin";'),
+      "src/web/main/layout.tsx": layoutDeclaring('export const config = { prefix: "/admin" };'),
       "src/web/main/settings/dashboard.page.tsx": routed("/settings"),
     });
 
@@ -606,8 +616,10 @@ describe("discoverPages — property D: at most one RENDERING layout on a page's
     // a prefix. Two `layout.tsx` files, one wrapper — legal.
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/web/users/layout.tsx": layoutDeclaring('export const prefix = "/users";'),
-      "src/web/users/account/layout.tsx": nonRenderingLayout('export const prefix = "/account";'),
+      "src/web/users/layout.tsx": layoutDeclaring('export const config = { prefix: "/users" };'),
+      "src/web/users/account/layout.tsx": nonRenderingLayout(
+        'export const config = { prefix: "/account" };',
+      ),
       "src/web/users/account/settings.page.tsx": routed("/settings"),
     });
 
@@ -626,10 +638,12 @@ describe("discoverPages — property D: at most one RENDERING layout on a page's
   it("composes prefixes outermost-first through three layouts, only one of which renders", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/web/users/layout.tsx": nonRenderingLayout('export const prefix = "/users";'),
-      "src/web/users/account/layout.tsx": layoutDeclaring('export const prefix = "/account";'),
+      "src/web/users/layout.tsx": nonRenderingLayout('export const config = { prefix: "/users" };'),
+      "src/web/users/account/layout.tsx": layoutDeclaring(
+        'export const config = { prefix: "/account" };',
+      ),
       "src/web/users/account/settings/layout.tsx": nonRenderingLayout(
-        'export const prefix = "/settings";',
+        'export const config = { prefix: "/settings" };',
       ),
       "src/web/users/account/settings/edit.page.tsx": routed("/edit"),
     });
@@ -642,8 +656,8 @@ describe("discoverPages — property D: at most one RENDERING layout on a page's
   it("lets a non-rendering layout omit its prefix without contributing a segment", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/web/users/layout.tsx": layoutDeclaring('export const prefix = "/users";'),
-      "src/web/users/account/layout.tsx": nonRenderingLayout("export const somethingElse = 1;"),
+      "src/web/users/layout.tsx": layoutDeclaring('export const config = { prefix: "/users" };'),
+      "src/web/users/account/layout.tsx": nonRenderingLayout(""),
       "src/web/users/account/settings.page.tsx": routed("/settings"),
     });
 
@@ -654,7 +668,9 @@ describe("discoverPages — property D: at most one RENDERING layout on a page's
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
       "src/web/users/layout.tsx": LAYOUT,
-      "src/web/users/account/layout.tsx": nonRenderingLayout('export const prefix = "/account";'),
+      "src/web/users/account/layout.tsx": nonRenderingLayout(
+        'export const config = { prefix: "/account" };',
+      ),
       "src/web/users/account/settings/layout.tsx": LAYOUT,
       "src/web/users/account/settings/edit.page.tsx": routed("/edit"),
     });
@@ -676,12 +692,14 @@ describe("discoverPages — property D: at most one RENDERING layout on a page's
 });
 
 describe("discoverPages — the middleware chain, and the temporary refusal that protects it", () => {
-  const GATE = "export const middleware = [gate(permissions.account.view)];";
+  const GATE = "middleware: [gate(permissions.account.view)]";
 
   it("reports every middleware-bearing layout on the path, outermost first", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/web/users/layout.tsx": layoutDeclaring(`export const prefix = "/users";\n${GATE}`),
+      "src/web/users/layout.tsx": layoutDeclaring(
+        `export const config = { prefix: "/users", ${GATE} };`,
+      ),
       "src/web/users/account/settings.page.tsx": routed("/settings"),
     });
 
@@ -694,8 +712,10 @@ describe("discoverPages — the middleware chain, and the temporary refusal that
   it("leaves the chain empty when no layout declares middleware", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/web/users/layout.tsx": layoutDeclaring('export const prefix = "/users";'),
-      "src/web/users/account/layout.tsx": nonRenderingLayout('export const prefix = "/account";'),
+      "src/web/users/layout.tsx": layoutDeclaring('export const config = { prefix: "/users" };'),
+      "src/web/users/account/layout.tsx": nonRenderingLayout(
+        'export const config = { prefix: "/account" };',
+      ),
       "src/web/users/account/settings.page.tsx": routed("/settings"),
     });
 
@@ -713,9 +733,9 @@ describe("discoverPages — the middleware chain, and the temporary refusal that
   it("reports a chain whose middleware sits on a layout that is not the selected one", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/web/users/layout.tsx": layoutDeclaring('export const prefix = "/users";'),
+      "src/web/users/layout.tsx": layoutDeclaring('export const config = { prefix: "/users" };'),
       "src/web/users/account/layout.tsx": nonRenderingLayout(
-        `export const prefix = "/account";\n${GATE}`,
+        `export const config = { prefix: "/account", ${GATE} };`,
       ),
       "src/web/users/account/settings.page.tsx": routed("/settings"),
     });
@@ -730,7 +750,7 @@ describe("discoverPages — the middleware chain, and the temporary refusal that
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
       "src/web/users/account/layout.tsx": nonRenderingLayout(
-        `export const prefix = "/account";\n${GATE}`,
+        `export const config = { prefix: "/account", ${GATE} };`,
       ),
       "src/web/users/account/settings.page.tsx": routed("/settings"),
     });
@@ -743,9 +763,11 @@ describe("discoverPages — the middleware chain, and the temporary refusal that
   it("reports EVERY layout that carries a guard, outermost first — the order they must run in", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/web/users/layout.tsx": layoutDeclaring(`export const prefix = "/users";\n${GATE}`),
+      "src/web/users/layout.tsx": layoutDeclaring(
+        `export const config = { prefix: "/users", ${GATE} };`,
+      ),
       "src/web/users/account/layout.tsx": nonRenderingLayout(
-        `export const prefix = "/account";\n${GATE}`,
+        `export const config = { prefix: "/account", ${GATE} };`,
       ),
       "src/web/users/account/settings.page.tsx": routed("/settings"),
     });
@@ -762,7 +784,7 @@ describe("discoverPages — the middleware chain, and the temporary refusal that
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
       "src/web/users/account/layout.tsx": layoutDeclaring(
-        `export const prefix = "/account";\n${GATE}`,
+        `export const config = { prefix: "/account", ${GATE} };`,
       ),
       "src/web/users/account/settings.page.tsx": routed("/settings"),
     });
@@ -770,7 +792,7 @@ describe("discoverPages — the middleware chain, and the temporary refusal that
     expect(() => discoverPages({ appRoot })).not.toThrow();
   });
 
-  it("treats a re-exporting layout as possibly carrying middleware rather than assuming it does not", () => {
+  it("refuses an export-star layout before it can hide middleware", () => {
     // `export * from "./guard"` can contribute a `middleware` binding that no
     // parse can see. Assuming it does not is precisely the silent unguarding
     // this rule exists to prevent, so the conservative read is that it does —
@@ -778,14 +800,12 @@ describe("discoverPages — the middleware chain, and the temporary refusal that
     // failing the build.
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/web/users/layout.tsx": layoutDeclaring('export const prefix = "/users";'),
+      "src/web/users/layout.tsx": layoutDeclaring('export const config = { prefix: "/users" };'),
       "src/web/users/account/layout.tsx": nonRenderingLayout('export * from "./guard";'),
       "src/web/users/account/settings.page.tsx": routed("/settings"),
     });
 
-    const [page] = discoverPages({ appRoot });
-
-    expect(relative(appRoot, page.middlewareLayouts)).toEqual(["src/web/users/account/layout.tsx"]);
+    expect(() => discoverPages({ appRoot })).toThrow("export-star declarations are not allowed");
   });
 });
 
@@ -798,7 +818,7 @@ describe("discoverPages — 404.page.tsx", () => {
   it("reports it without a `route` export under the reserved not-found identity", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/web/home.page.tsx": pageDeclaring('export const route = "/";'),
+      "src/web/home.page.tsx": pageDeclaring('export const config = { route: "/" };'),
       "src/web/404.page.tsx": pageDeclaring(""),
     });
 
@@ -833,7 +853,7 @@ describe("discoverPages — 404.page.tsx", () => {
   it("refuses a `route` export on it — the opposite error, for the opposite reason", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/web/404.page.tsx": pageDeclaring('export const route = "/404";'),
+      "src/web/404.page.tsx": pageDeclaring('export const config = { route: "/404" };'),
     });
 
     try {
@@ -902,7 +922,7 @@ describe("discoverPages — error.page.tsx", () => {
     } catch (error) {
       expect(error).toBeInstanceOf(ErrorPageDeclaresRouteError);
       expect((error as Error).message).toContain("error.page.tsx");
-      expect((error as Error).message).toContain("remove the route export");
+      expect((error as Error).message).toContain("remove config.route");
     }
   });
 
@@ -932,7 +952,7 @@ describe("discoverPages — error.page.tsx", () => {
  * THE DEFECT THIS BLOCK EXISTS FOR, in the words of the report that found it:
  *
  * ```ts
- * export const metadata = { tittle: x }
+ * export const config = { metadata: { tittle: x } }
  * ```
  *
  * `tittle` is not a joke — it is the specification. That line compiles, the page
@@ -942,9 +962,9 @@ describe("discoverPages — error.page.tsx", () => {
  * here too, where every page already passes through.
  */
 describe("discoverPages — the `metadata` contract", () => {
-  /** A routed page whose `metadata` export is `declaration`, verbatim. */
+  /** A routed page whose `config.metadata` field is supplied verbatim. */
   function pageWithMetadata(declaration: string): string {
-    return pageDeclaring(`export const route = "/list";\n${declaration}`);
+    return pageDeclaring(`export const config = { route: "/list", ${declaration} };`);
   }
 
   function discoverWith(metadata: string) {
@@ -960,7 +980,7 @@ describe("discoverPages — the `metadata` contract", () => {
     // No `: PageMetadata` anywhere. TypeScript infers `{ tittle: string }` and
     // is satisfied. This is the acceptance criterion: a fix that only fires
     // when someone already wrote the type is a fix that does not fire.
-    const discover = discoverWith('export const metadata = { tittle: "x" };');
+    const discover = discoverWith('metadata: { tittle: "x" }');
 
     expect(discover).toThrow(UnknownMetadataKeyError);
     // The FILE and the KEY, because a build error that says only "unknown key"
@@ -970,7 +990,7 @@ describe("discoverPages — the `metadata` contract", () => {
   });
 
   it("names the line and suggests the key that was meant", () => {
-    const discover = discoverWith('export const metadata = { tittle: "x" };');
+    const discover = discoverWith('metadata: { tittle: "x" }');
 
     try {
       discover();
@@ -979,7 +999,7 @@ describe("discoverPages — the `metadata` contract", () => {
       const failure = error as UnknownMetadataKeyError;
 
       expect(failure.unknownKeys).toEqual([
-        { container: "metadata", key: "tittle", line: 2, suggestion: "title" },
+        { container: "config.metadata", key: "tittle", line: 1, suggestion: "title" },
       ]);
       expect(failure.message).toContain("Did you mean `title`?");
     }
@@ -989,7 +1009,7 @@ describe("discoverPages — the `metadata` contract", () => {
     // The full surface of `MetadataOutput`, which is the full surface of
     // `components/head.ts` — if this ever throws, the type and the key list
     // have drifted from the tags.
-    const discover = discoverWith(`export const metadata = {
+    const discover = discoverWith(`metadata: {
       title: "Products",
       description: "Everything in stock",
       keywords: ["shop", "products"],
@@ -997,56 +1017,52 @@ describe("discoverPages — the `metadata` contract", () => {
       robots: "index,follow",
       openGraph: { title: "Products", description: "d", image: "i", url: "u", type: "website" },
       twitter: { card: "summary", title: "Products", description: "d", image: "i" },
-    };`);
+    }`);
 
     expect(discover).not.toThrow();
   });
 
   it("checks INSIDE openGraph and twitter — same silence, one level down", () => {
-    const discover = discoverWith(
-      'export const metadata = { title: "x", openGraph: { titel: "x" } };',
-    );
+    const discover = discoverWith('metadata: { title: "x", openGraph: { titel: "x" } }');
 
-    expect(discover).toThrow(/`metadata\.openGraph\.titel`/);
+    expect(discover).toThrow(/`config\.metadata\.openGraph\.titel`/);
     expect(discover).toThrow(/Did you mean `title`\?/);
   });
 
   it("checks the FUNCTION form's concise body — how every reference-app page writes it", () => {
     const discover = discoverWith(
-      'export const metadata = ({ data }) => ({ title: data.name, descriptoin: "x" });',
+      'metadata: ({ data }) => ({ title: data.name, descriptoin: "x" })',
     );
 
-    expect(discover).toThrow(/`metadata\.descriptoin`/);
+    expect(discover).toThrow(/`config\.metadata\.descriptoin`/);
     expect(discover).toThrow(/Did you mean `description`\?/);
   });
 
   it("checks a function form's `return`, wherever in the body it sits", () => {
-    const discover = discoverWith(`export const metadata = ({ data }) => {
+    const discover = discoverWith(`metadata: ({ data }) => {
       if (data.missing) {
         return { robtos: "noindex" };
       }
 
       return { title: data.name };
-    };`);
+    }`);
 
-    expect(discover).toThrow(/`metadata\.robtos`/);
+    expect(discover).toThrow(/`config\.metadata\.robtos`/);
     expect(discover).toThrow(/Did you mean `robots`\?/);
   });
 
   it("does not mistake a nested callback's return for the metadata", () => {
-    const discover = discoverWith(`export const metadata = ({ data }) => {
+    const discover = discoverWith(`metadata: ({ data }) => {
       const rows = data.items.map(item => ({ tittle: item.name }));
 
       return { title: rows.length + " items" };
-    };`);
+    }`);
 
     expect(discover).not.toThrow();
   });
 
   it("reports EVERY unknown key at once, not the first one per build", () => {
-    const discover = discoverWith(
-      'export const metadata = { tittle: "x", descripton: "y", robots: "noindex" };',
-    );
+    const discover = discoverWith('metadata: { tittle: "x", descripton: "y", robots: "noindex" }');
 
     try {
       discover();
@@ -1060,24 +1076,24 @@ describe("discoverPages — the `metadata` contract", () => {
   });
 
   it("still refuses a key it cannot suggest a replacement for", () => {
-    const discover = discoverWith('export const metadata = { openGraphImage: "x" };');
+    const discover = discoverWith('metadata: { openGraphImage: "x" }');
 
-    expect(discover).toThrow(/`metadata\.openGraphImage` — no such key\./);
+    expect(discover).toThrow(/`config\.metadata\.openGraphImage` — no such key\./);
     expect(discover).not.toThrow(/Did you mean/);
   });
 
   it("a spread adds keys but excuses none written beside it", () => {
-    const discover = discoverWith('export const metadata = { ...base, tittle: "x" };');
+    const discover = discoverWith('metadata: { ...base, tittle: "x" }');
 
-    expect(discover).toThrow(/`metadata\.tittle`/);
+    expect(discover).toThrow(/`config\.metadata\.tittle`/);
   });
 
   it("says nothing about metadata it genuinely cannot read — computed keys and values elsewhere", () => {
     // Refusing what a parse cannot see would fail builds that are fine. The
     // type annotation is the second net in exactly these narrow places.
-    expect(discoverWith("export const metadata = buildMetadata();")).not.toThrow();
-    expect(discoverWith("export const metadata = shared;")).not.toThrow();
-    expect(discoverWith('export const metadata = { [key]: "x" };')).not.toThrow();
+    expect(discoverWith("metadata: buildMetadata()")).not.toThrow();
+    expect(discoverWith("metadata: shared")).not.toThrow();
+    expect(discoverWith('metadata: { [key]: "x" }')).not.toThrow();
   });
 
   it("leaves a page with no metadata export alone — it is an optional export", () => {
@@ -1090,20 +1106,20 @@ describe("discoverPages — the `metadata` contract", () => {
   });
 
   it("checks the ANNOTATED form too — the two nets catch the same key", () => {
-    const discover = discoverWith(
-      'export const metadata: PageMetadata = { tittle: "x" } as PageMetadata;',
-    );
+    const discover = discoverWith('metadata: ({ tittle: "x" } as PageMetadata)');
 
-    expect(discover).toThrow(/`metadata\.tittle`/);
+    expect(discover).toThrow(/`config\.metadata\.tittle`/);
   });
 
   it("still validates metadata when the route is derived", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/web/shop/products.page.tsx": pageDeclaring('export const metadata = { tittle: "x" };'),
+      "src/web/shop/products.page.tsx": pageDeclaring(
+        'export const config = { metadata: { tittle: "x" } };',
+      ),
     });
 
-    expect(() => discoverPages({ appRoot })).toThrow(/`metadata\.tittle`/);
+    expect(() => discoverPages({ appRoot })).toThrow(/`config\.metadata\.tittle`/);
   });
 });
 
@@ -1139,9 +1155,13 @@ describe("discoverPages — filesystem route derivation", () => {
   it("lets each layout prefix replace its own directory segment", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
-      "src/web/welcome/layout.tsx": nonRenderingLayout('export const prefix = "/welcome";'),
+      "src/web/welcome/layout.tsx": nonRenderingLayout(
+        'export const config = { prefix: "/welcome" };',
+      ),
       "src/web/welcome/home.page.tsx": pageDeclaring(""),
-      "src/web/admin/layout.tsx": nonRenderingLayout('export const prefix = "/dashboard";'),
+      "src/web/admin/layout.tsx": nonRenderingLayout(
+        'export const config = { prefix: "/dashboard" };',
+      ),
       "src/web/admin/index.page.tsx": pageDeclaring(""),
     });
 
@@ -1265,7 +1285,7 @@ describe("discoverPages — src/app/**/web/** is named, not registered, when ign
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
       "src/app/products/web/layout.tsx": layoutDeclaring(
-        'export const prefix = "/products";\nexport const middleware = [];',
+        'export const config = { prefix: "/products", middleware: [] };',
       ),
     });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);

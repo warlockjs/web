@@ -49,52 +49,52 @@ function recordingHandlerFactory() {
   return { createHandler, built };
 }
 
-const appModule = { default: () => null };
+const appModule = { config: {}, default: () => null };
 
 function manifestOf(pages: PageManifestPageEntry[]): PageManifest {
   return { app: { module: appModule, sourceFile: "src/web/root.tsx" }, pages };
 }
 
 const postsPage: PageManifestPageEntry = {
-  module: { default: () => null, route: "/posts" },
+  module: { config: { route: "/posts" }, default: () => null },
   sourceFile: "src/app/main/web/posts.page.tsx",
   layouts: [],
 };
 
 const postSlugPage: PageManifestPageEntry = {
-  module: { default: () => null, route: "/posts/:slug" },
+  module: { config: { route: "/posts/:slug" }, default: () => null },
   sourceFile: "src/app/main/web/posts.slug.page.tsx",
   layouts: [],
 };
 
 const homePage: PageManifestPageEntry = {
-  module: { default: () => null, route: "/" },
+  module: { config: { route: "/" }, default: () => null },
   sourceFile: "src/app/main/web/home.page.tsx",
   layouts: [],
 };
 
 const docsPage: PageManifestPageEntry = {
-  module: { default: () => null, route: "/docs/*" },
+  module: { config: { route: "/docs/*" }, default: () => null },
   sourceFile: "src/app/main/web/docs.page.tsx",
   layouts: [],
 };
 
 /** Card C: a `[locale]`-folder page, expressed here as an explicit `route`. */
 const localePostsPage: PageManifestPageEntry = {
-  module: { default: () => null, route: "/:locale/posts" },
+  module: { config: { route: "/:locale/posts" }, default: () => null },
   sourceFile: "src/app/main/web/[locale]/posts.page.tsx",
   layouts: [],
 };
 
 /** A `:locale` param NOT in the first segment — an ordinary param (card C.1). */
 const deepLocaleParamPage: PageManifestPageEntry = {
-  module: { default: () => null, route: "/posts/:locale" },
+  module: { config: { route: "/posts/:locale" }, default: () => null },
   sourceFile: "src/app/main/web/posts/locale-page.page.tsx",
   layouts: [],
 };
 
 const notFoundPage: PageManifestPageEntry = {
-  module: { default: () => null },
+  module: { config: {}, default: () => null },
   sourceFile: "src/app/main/web/404.page.tsx",
   layouts: [],
 };

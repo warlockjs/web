@@ -3,7 +3,7 @@
  * (v5/app src/app/main/web/contact-us.page.tsx — "this file is two lines and
  * a component"). No middleware, no validation, no loader, no metadata.
  */
-export const route = "/contact-us";
+export const config = { route: "/contact-us" };
 
 export default function ContactUsPage() {
   return (

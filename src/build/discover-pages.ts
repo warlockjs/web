@@ -18,7 +18,7 @@
  * "Static" means WITHOUT RUNNING THE APPLICATION — this module globs
  * `*.page.tsx`, `layout.tsx` and `root.tsx`, and reads each page's declared
  * `route` and each layout's declared `prefix` by PARSING the source
- * ({@link readRouteExports}). It still imports no application module.
+ * ({@link readModuleConfig}). It still imports no application module.
  *
  * An explicit `route` export wins. Otherwise the URL is derived from the page's
  * path beneath `src/web`: directories contribute segments, `(groups)` do not,
@@ -34,8 +34,8 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { parse } from "@babel/parser";
 import { composeRoutePath } from "../routing/compose-route-path";
+import { ErrorPageDeclaresRouteError } from "../routing/error-page-declares-route-error";
 // `../server/not-found-page` is imported for its CONSTANTS and its filename
 // predicate only. Its sole runtime import is the default fallback's build-time
 // stylesheet data URL; it imports no renderer or application runtime, so this
@@ -53,8 +53,7 @@ import { deriveFilesystemRoutePath } from "../routing/filesystem-route";
 import { canonicalizeRouteExport, resolvePageRouteName } from "../routing/route-identity";
 import { assertPageHasDefaultExport } from "./page-default-export";
 import { UnknownMetadataKeyError, readMetadataKeys } from "./read-metadata-keys";
-import type { RouteExportsReadResult } from "./read-route-exports";
-import { NonLiteralRouteExportError, readRouteExports } from "./read-route-exports";
+import { readModuleConfig, type ModuleConfigRead } from "./read-module-config";
 import { toPosix } from "../shared/to-posix";
 
 export type DiscoverPagesOptions = {
@@ -134,14 +133,7 @@ export class DuplicateErrorPageError extends Error {
   }
 }
 
-export class ErrorPageDeclaresRouteError extends Error {
-  public constructor(pageFile: string) {
-    super(
-      `The error page "${pageFile}" exports \`route\`. error.page.tsx is an error boundary, not a browsable page; remove the route export.`,
-    );
-    this.name = "ErrorPageDeclaresRouteError";
-  }
-}
+export { ErrorPageDeclaresRouteError } from "../routing/error-page-declares-route-error";
 
 /** Raised when two pages claim one route name. */
 export class DuplicatePageRouteNameError extends Error {
@@ -541,7 +533,7 @@ function assertUniqueRoutePaths(
 
 /**
  * The declared exports of one file, or a thrown
- * {@link NonLiteralRouteExportError} when they cannot be read without running
+ * a source-named error when they cannot be read without running
  * the application. Layouts are read once per run and remembered: a layout is
  * the nearest one for every page beside it, and parsing it once per page would
  * be the same answer bought repeatedly.
@@ -552,121 +544,18 @@ function assertUniqueRoutePaths(
  */
 function readDeclarations(
   sourceFile: string,
-  cache: Map<string, RouteExportsReadResult>,
+  cache: Map<string, ModuleConfigRead>,
   source?: string,
 ) {
   let result = cache.get(sourceFile);
 
   if (result === undefined) {
-    result = readRouteExports(sourceFile, source);
+    const kind = path.basename(sourceFile) === "layout.tsx" ? "layout" : "page";
+    result = readModuleConfig(sourceFile, source ?? fs.readFileSync(sourceFile, "utf-8"), kind);
     cache.set(sourceFile, result);
   }
 
-  if (!result.ok) {
-    throw new NonLiteralRouteExportError(result.rejection);
-  }
-
   return result;
-}
-
-/**
- * What a layout DOES, read by parsing it — the facts the layout policy's rule
- * needs and, being a pure module, cannot go and find for itself.
- */
-type LayoutShape = {
-  /**
-   * Whether the module has a default export — the export that puts an element
-   * in the document, and therefore the one thing that makes a layout count
-   * against the single-rendering-layout rule.
-   */
-  renders: boolean;
-  /** Whether the module exports `middleware`, or might via a re-export this cannot see through. */
-  hasMiddleware: boolean;
-};
-
-/**
- * Parses one layout and reports its shape. Remembered per run for the same
- * reason declarations are: a layout is on the path of every page beneath it.
- */
-function readLayoutShape(layoutFile: string, cache: Map<string, LayoutShape>): LayoutShape {
-  const cached = cache.get(layoutFile);
-
-  if (cached !== undefined) return cached;
-
-  const source = fs.readFileSync(layoutFile, "utf-8");
-  let program: ReturnType<typeof parse>["program"];
-
-  try {
-    program = parse(source, {
-      sourceType: "module",
-      // Every file this reads is a layout, i.e. `.tsx`.
-      plugins: ["typescript", "jsx"],
-      errorRecovery: false,
-    }).program;
-  } catch (error) {
-    throw new Error(
-      `Cannot read the exports of "${layoutFile}": the file could not be parsed ` +
-        `(${(error as Error).message}). Fix the syntax error and the build will continue.`,
-    );
-  }
-
-  const shape: LayoutShape = { renders: false, hasMiddleware: false };
-
-  for (const statement of program.body) {
-    if (statement.type === "ExportDefaultDeclaration") {
-      shape.renders = true;
-      continue;
-    }
-
-    // `export * from "./guard"` cannot re-export a default — the language
-    // excludes it — but it CAN contribute `middleware`, and no parse can see
-    // through it without resolving and reading another module. Reading it as
-    // "no middleware here" is exactly the silent unguarding this slice exists
-    // to prevent, so it is read as "possibly" and fails loudly downstream.
-    if (statement.type === "ExportAllDeclaration") {
-      shape.hasMiddleware = true;
-      continue;
-    }
-
-    if (statement.type !== "ExportNamedDeclaration" || statement.exportKind === "type") continue;
-
-    for (const specifier of statement.specifiers) {
-      if (specifier.type !== "ExportSpecifier" || specifier.exportKind === "type") continue;
-
-      const exported =
-        specifier.exported.type === "Identifier"
-          ? specifier.exported.name
-          : specifier.exported.value;
-
-      if (exported === "default") shape.renders = true;
-      if (exported === "middleware") shape.hasMiddleware = true;
-    }
-
-    const { declaration } = statement;
-
-    if (declaration === null || declaration === undefined) continue;
-
-    if (declaration.type === "VariableDeclaration") {
-      for (const declarator of declaration.declarations) {
-        if (declarator.id.type === "Identifier" && declarator.id.name === "middleware") {
-          shape.hasMiddleware = true;
-        }
-      }
-
-      continue;
-    }
-
-    if (
-      (declaration.type === "FunctionDeclaration" || declaration.type === "ClassDeclaration") &&
-      declaration.id?.name === "middleware"
-    ) {
-      shape.hasMiddleware = true;
-    }
-  }
-
-  cache.set(layoutFile, shape);
-
-  return shape;
 }
 
 /**
@@ -696,8 +585,8 @@ export function discoverPages(options: DiscoverPagesOptions): DiscoveredPage[] {
   const webRoots = discoverWebRoots(srcRoot);
   const appFile = path.join(srcRoot, "web", "root.tsx");
   const hasAppFile = isFile(appFile);
-  const declarations = new Map<string, RouteExportsReadResult>();
-  const layoutShapes = new Map<string, LayoutShape>();
+  const declarations = new Map<string, ModuleConfigRead>();
+  if (hasAppFile) readModuleConfig(appFile, fs.readFileSync(appFile, "utf-8"), "root");
   const relativeToApp = (file: string) => toPosix(path.relative(appRoot, file));
 
   const pages: DiscoveredPage[] = [];
@@ -761,9 +650,16 @@ export function discoverPages(options: DiscoverPagesOptions): DiscoveredPage[] {
       // the rule needs and the pure policy cannot learn — whether each layout
       // renders anything at all.
       const layouts = layoutChainFor(pageFile, webRoot);
-      const shapes = layouts.map((layoutFile) => readLayoutShape(layoutFile, layoutShapes));
+      const layoutFacts = layouts.map((layout) => {
+        const declaration = readDeclarations(layout, declarations);
+        return {
+          layout,
+          renders: declaration.hasDefault,
+          hasMiddleware: declaration.hasMiddleware,
+        };
+      });
       const selection = selectPageLayout(
-        layouts.map((layout, index) => ({ layout, renders: shapes[index].renders })),
+        layoutFacts.map(({ layout, renders }) => ({ layout, renders })),
       );
 
       if (selection.type === "rejected") {
@@ -778,7 +674,9 @@ export function discoverPages(options: DiscoverPagesOptions): DiscoveredPage[] {
       // (`../server/install-page-routes.ts`, `../server/install-page-routes-from-manifest.ts`),
       // so a guard anywhere on the path runs, in this order — which is why the
       // temporary refusal that used to stand here is gone rather than relaxed.
-      const middlewareLayouts = layouts.filter((_, index) => shapes[index].hasMiddleware);
+      const middlewareLayouts = layoutFacts
+        .filter(({ hasMiddleware }) => hasMiddleware)
+        .map(({ layout }) => layout);
 
       // EVERY prefix on the path, outermost first: a `prefix`-only layout is
       // still a segment of the URL, and composing only the rendering layout's

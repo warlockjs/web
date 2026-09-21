@@ -110,7 +110,8 @@ function buildContext(appRoot: string): ConnectorBuildContext {
 }
 
 const APP = "export default function App() { return null; }\n";
-const PAGE = 'export const route = "/";\nexport default function Page() { return null; }\n';
+const PAGE =
+  'export const config = { route: "/" };\nexport default function Page() { return null; }\n';
 
 /**
  * Keep emit-path tests focused on contribution orchestration. The real barrel

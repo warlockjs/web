@@ -29,11 +29,11 @@ describe("listRoutablePages", () => {
   it("resolves each page's metadata and sitemap exports", async () => {
     const appRoot = makeAppTree({
       "src/web/about.page.tsx": [
-        'export const metadata = { title: "About", robots: "noindex" };',
+        'export const config = { metadata: { title: "About", robots: "noindex" } };',
         "export default function Page() { return null; }",
       ].join("\n"),
       "src/web/posts/[id].page.tsx": [
-        'export const sitemap = async () => [{ path: "/posts/hello-world" }];',
+        'export const config = { sitemap: async () => [{ path: "/posts/hello-world" }] };',
         "export default function Page() { return null; }",
       ].join("\n"),
     });
@@ -54,7 +54,7 @@ describe("listRoutablePages", () => {
   it("excludes the not-found route and the error page", async () => {
     const appRoot = makeAppTree({
       "src/web/home.page.tsx": [
-        'export const route = "/";',
+        'export const config = { route: "/" };',
         "export default function Page() { return null; }",
       ].join("\n"),
       "src/web/404.page.tsx": "export default function Page() { return null; }",
@@ -70,7 +70,7 @@ describe("listRoutablePages", () => {
   it("reports a page's explicit sitemap opt-out", async () => {
     const appRoot = makeAppTree({
       "src/web/draft.page.tsx": [
-        "export const sitemap = false;",
+        "export const config = { sitemap: false };",
         "export default function Page() { return null; }",
       ].join("\n"),
     });
@@ -99,11 +99,10 @@ describe("listRoutablePages — layout declarations", () => {
       // path are refused, so this is also the realistic shape, and it proves a
       // non-rendering ancestor's declaration is still carried.
       "src/web/docs/layout.tsx": [
-        'export const prefix = "/docs";',
-        "export const sitemap = { priority: 0.2 };",
+        'export const config = { prefix: "/docs", sitemap: { priority: 0.2 } };',
       ].join("\n"),
       "src/web/docs/api/layout.tsx": [
-        "export const sitemap = false;",
+        "export const config = { sitemap: false };",
         "export default function Layout() { return null; }",
       ].join("\n"),
       "src/web/docs/api/reference.page.tsx": [
@@ -124,9 +123,9 @@ describe("listRoutablePages — layout declarations", () => {
     // a silent layout dropping out of the chain would hand the wrong
     // ancestor's policy to the page.
     const appRoot = makeAppTree({
-      "src/web/shop/layout.tsx": ['export const prefix = "/shop";'].join("\n"),
+      "src/web/shop/layout.tsx": ['export const config = { prefix: "/shop" };'].join("\n"),
       "src/web/shop/items/layout.tsx": [
-        "export const sitemap = false;",
+        "export const config = { sitemap: false };",
         "export default function Layout() { return null; }",
       ].join("\n"),
       "src/web/shop/items/list.page.tsx": ["export default function Page() { return null; }"].join(

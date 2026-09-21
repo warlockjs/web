@@ -78,16 +78,13 @@ async function refusalMessage(source: string, baseName: string): Promise<string>
   throw new Error(`expected ${baseName} to be refused, but it transformed cleanly`);
 }
 
-describe("projection — strip the 7 server exports (real transform hook, real output)", () => {
-  it("case 1: a shared import between loader and the component survives; all 5 declared server exports are gone", async () => {
+describe("projection — strip server config (real transform hook, real output)", () => {
+  it("case 1: a shared import between loader and the component survives; config and loader are gone", async () => {
     const code = await transformedCode("case1-shared-import.page.tsx");
 
     expect(code).toContain('from "./helper"');
-    expect(code).not.toMatch(/export const route/);
-    expect(code).not.toMatch(/export const middleware/);
-    expect(code).not.toMatch(/export const validation/);
+    expect(code).not.toMatch(/export const config/);
     expect(code).not.toMatch(/export const loader/);
-    expect(code).not.toMatch(/export const metadata/);
     expect(code).toContain("export default function BlogPage");
     expect(code).toContain("formatTitle(data.title)");
   });
@@ -105,7 +102,7 @@ describe("projection — strip the 7 server exports (real transform hook, real o
     const code = await transformedCode("case3-css-import.page.tsx");
 
     expect(code).toContain('import "./styles.css"');
-    expect(code).not.toMatch(/export const route/);
+    expect(code).not.toMatch(/export const config/);
     expect(code).not.toMatch(/export const loader/);
   });
 
@@ -132,7 +129,7 @@ describe("projection — strip the 7 server exports (real transform hook, real o
     expect(code).toContain("export default function BlogPage");
   });
 
-  it("skips the SSR build entirely — the server still needs all 7 exports intact", async () => {
+  it("validates but skips projection in SSR, where the server needs config intact", async () => {
     const { result } = await runTransform("case1-shared-import.page.tsx", { ssr: true });
     expect(result).toBeNull();
   });
@@ -151,7 +148,7 @@ describe("projection — strip the 7 server exports (real transform hook, real o
    * passes whatever that title claims. `isProjectableFile` recognises a root by
    * EXACT BASENAME rather than by a suffix, which makes it the one branch a
    * rename silently disables: the root would stop being projected, its
-   * `middleware`, `loader` and `revalidate` would ship to the browser, and the
+   * `config` and `loader` would ship to the browser, and the
    * whole suite would stay green.
    *
    * So this asserts the positive case, on real transformed output.
@@ -159,34 +156,17 @@ describe("projection — strip the 7 server exports (real transform hook, real o
   it("projects the APP ROOT by name — its server exports do not reach the browser", async () => {
     const code = await transformedCode("root.tsx");
 
-    expect(code).not.toMatch(/export const middleware/);
+    expect(code).not.toMatch(/export const config/);
     expect(code).not.toMatch(/export const loader/);
     expect(code).toContain("export default function App");
   });
 
-  it("does NOT strip `revalidate` — the eighth server export projection does not know about", () => {
-    /*
-      A CHARACTERIZATION TEST: this asserts what the code does today, not what
-      it ought to do, and it is here so the gap is visible in the suite instead
-      of only in a card.
-
-      Projection strips seven exports — route, middleware, validation, loader,
-      metadata, prefix, sitemap. The page contract documents `revalidate` as a SERVER export too,
-      and the reference app's root says so in as many words ("The SIXTH server
-      export, and it is documented as one"). Projection has never been told.
-
-      Today the leak is inert: `export const revalidate = false` is a boolean,
-      so nothing server-side rides out with it. It stops being inert the moment
-      a page computes the value from anything — the expression survives, and its
-      imports survive with it, which is exactly how a server module reaches the
-      browser bundle.
-
-      When projection learns the sixth export, this test flips to `not.toMatch`
-      and the assertion below it moves up into the test above.
-    */
-    return transformedCode("root.tsx").then((code) => {
-      expect(code).toMatch(/export const revalidate/);
-    });
+  it("refuses the removed `revalidate` runtime export", async () => {
+    const message = await refusalMessage(
+      `export const revalidate = false; export default function App() { return null; }`,
+      "root.tsx",
+    );
+    expect(message).toContain("runtime export `revalidate` is not allowed");
   });
 
   it("drops the root's server-only import once the exports using it are gone", async () => {
@@ -230,9 +210,8 @@ describe("projection — refuses a star re-export rather than assuming it is saf
       "blog.page.tsx",
     );
 
-    expect(message).toContain('export * from "./shared-loaders"');
-    expect(message).toContain("server-only binding");
-    expect(message).toContain("Fix:");
+    expect(message).toContain("blog.page.tsx");
+    expect(message).toContain("export-star declarations are not allowed");
   });
 
   it('refuses `export * as ns from "./source"` the same way', async () => {
@@ -247,14 +226,14 @@ describe("projection — refuses a star re-export rather than assuming it is saf
       "blog.page.tsx",
     );
 
-    expect(message).toContain('export * as sharedLoaders from "./shared-loaders"');
-    expect(message).toContain("server-only binding");
+    expect(message).toContain("blog.page.tsx");
+    expect(message).toContain("namespace re-exports are not allowed");
   });
 
-  it("still strips the 7 named server exports declared directly, unaffected by the star-reexport refusal", async () => {
+  it("still strips direct config and loader declarations, unaffected by the star-reexport refusal", async () => {
     const code = await transformedCode("case1-shared-import.page.tsx");
 
-    expect(code).not.toMatch(/export const route/);
+    expect(code).not.toMatch(/export const config/);
     expect(code).not.toMatch(/export const loader/);
   });
 });
@@ -276,8 +255,8 @@ describe("projection — register lifecycle hook", () => {
     expect(webHomeRegisterStub).toContain("export function register()");
     expect(webHomeRegisterStub).toContain('extend("en", {');
     expect(webHomeRegisterStub).toContain('extend("ar", {');
-    expect(code).not.toMatch(/export const route/);
-    expect(code).not.toMatch(/export const metadata/);
+    expect(code).not.toMatch(/export const config/);
+    expect(code).not.toMatch(/^export const loader/m);
   });
 
   it.each([
@@ -393,7 +372,7 @@ describe("projection — attributing a module-scope declaration by who reads it"
         `  readSession(request);`,
         `};`,
         ``,
-        `export const middleware = [publishCart];`,
+        `export const config = { middleware: [publishCart] };`,
         ``,
         `export default function ProductsLayout({ data }) {`,
         `  return <h1>{formatTitle(data.title)}</h1>;`,
@@ -403,7 +382,7 @@ describe("projection — attributing a module-scope declaration by who reads it"
     );
 
     expect(code).not.toContain("publishCart");
-    expect(code).not.toMatch(/export const middleware/);
+    expect(code).not.toMatch(/export const config/);
     // The point of removing the helper: the server module it pulled in goes too.
     expect(code).not.toMatch(/from ["']\.\/server-only-helper["']/);
     expect(code).toContain('from "./helper"');
@@ -571,12 +550,12 @@ describe("projection — attributing a module-scope declaration by who reads it"
    * EXPORT survives whatever it references, including when
    * nothing in the file reads it.
    */
-  it("never attributes a non-server-named export — it survives unread", async () => {
-    const code = await transformSource(
+  it("refuses an unrecognized runtime export", async () => {
+    const message = await refusalMessage(
       [
         `export const title = "/products";`,
         ``,
-        `export const middleware = [];`,
+        `export const config = { middleware: [] };`,
         ``,
         `export default function ProductsLayout() {`,
         `  return <main />;`,
@@ -585,8 +564,7 @@ describe("projection — attributing a module-scope declaration by who reads it"
       "layout.tsx",
     );
 
-    expect(code).toContain('export const title = "/products"');
-    expect(code).not.toMatch(/export const middleware/);
+    expect(message).toContain("runtime export `title` is not allowed");
   });
 });
 
@@ -597,11 +575,11 @@ describe("projection — attributing a module-scope declaration by who reads it"
  * until now it survived projection unread — the exact shape the export-list
  * check above pins in the OTHER direction.
  */
-describe("projection — strips the `prefix` server export", () => {
-  it("removes `export const prefix` and does not attribute it as a survivor", async () => {
+describe("projection — strips `config.prefix`", () => {
+  it("removes a literal config prefix", async () => {
     const code = await transformSource(
       [
-        `export const prefix = "/products";`,
+        `export const config = { prefix: "/products" };`,
         ``,
         `export default function ProductsLayout() {`,
         `  return <main />;`,
@@ -610,17 +588,17 @@ describe("projection — strips the `prefix` server export", () => {
       "layout.tsx",
     );
 
-    expect(code).not.toMatch(/export const prefix/);
+    expect(code).not.toMatch(/export const config/);
     expect(code).toContain("export default function ProductsLayout");
   });
 
-  it("removes an import held alive only by `prefix`, same as the other 5 server exports", async () => {
-    const code = await transformSource(
+  it("refuses a non-literal config prefix rather than evaluating its import", async () => {
+    const message = await refusalMessage(
       [
         `import { basePrefix } from "./server-only-helper";`,
         `import { formatTitle } from "./helper";`,
         ``,
-        `export const prefix = basePrefix;`,
+        `export const config = { prefix: basePrefix };`,
         ``,
         `export default function ProductsLayout({ data }) {`,
         `  return <h1>{formatTitle(data.title)}</h1>;`,
@@ -629,9 +607,7 @@ describe("projection — strips the `prefix` server export", () => {
       "layout.tsx",
     );
 
-    expect(code).not.toMatch(/export const prefix/);
-    expect(code).not.toMatch(/from ["']\.\/server-only-helper["']/);
-    expect(code).toContain('from "./helper"');
+    expect(message).toContain("config.prefix must be a string literal");
   });
 });
 
@@ -645,11 +621,11 @@ describe("projection — strips the `prefix` server export", () => {
  * survived projection unread, dragging that import into the client graph and
  * crashing Gate B's parser rather than being stripped like the other 6.
  */
-describe("projection — strips the `sitemap` server export", () => {
-  it("removes `export const sitemap` and does not attribute it as a survivor", async () => {
+describe("projection — strips `config.sitemap`", () => {
+  it("removes a config sitemap supplier", async () => {
     const code = await transformSource(
       [
-        `export const sitemap = async () => [{ url: "/products" }];`,
+        `export const config = { sitemap: async () => [{ url: "/products" }] };`,
         ``,
         `export default function ProductsPage() {`,
         `  return <main />;`,
@@ -658,7 +634,7 @@ describe("projection — strips the `sitemap` server export", () => {
       "products.page.tsx",
     );
 
-    expect(code).not.toMatch(/export const sitemap/);
+    expect(code).not.toMatch(/export const config/);
     expect(code).toContain("export default function ProductsPage");
   });
 
@@ -668,10 +644,10 @@ describe("projection — strips the `sitemap` server export", () => {
         `import { Post } from "./models/post/post.model";`,
         `import { formatTitle } from "./helper";`,
         ``,
-        `export const sitemap = async () => {`,
+        `export const config = { sitemap: async () => {`,
         `  const posts = await Post.list();`,
         `  return posts.map(post => ({ url: post.slug }));`,
-        `};`,
+        `} };`,
         ``,
         `export default function BlogPage({ data }) {`,
         `  return <h1>{formatTitle(data.title)}</h1>;`,
@@ -680,7 +656,7 @@ describe("projection — strips the `sitemap` server export", () => {
       "blog.page.tsx",
     );
 
-    expect(code).not.toMatch(/export const sitemap/);
+    expect(code).not.toMatch(/export const config/);
     expect(code).not.toMatch(/from ["']\.\/models\/post\/post\.model["']/);
     expect(code).toContain('from "./helper"');
     expect(code).toContain("export default function BlogPage");
@@ -835,22 +811,13 @@ describe("projection — type-only imports/exports never trip the client boundar
  * the source module, the module edge itself) for every one of the 7 server
  * export names, the same as the declaration form already does.
  */
-describe("projection — re-export forms of the 7 server export names", () => {
-  it('drops a renamed re-export-with-source specifier ("export { x as sitemap } from") and the source module edge entirely', async () => {
-    const code = await transformSource(
-      [
-        `export { postSitemapEntries as sitemap } from "./post-sitemap-entries";`,
-        ``,
-        `export default function PostPage() {`,
-        `  return <article />;`,
-        `}`,
-      ].join("\n"),
+describe("projection — re-export surface", () => {
+  it("refuses legacy server re-exports", async () => {
+    const message = await refusalMessage(
+      `export { postSitemapEntries as sitemap } from "./post-sitemap-entries";\nexport default function PostPage() { return <article />; }`,
       "post.page.tsx",
     );
-
-    expect(code).not.toMatch(/sitemap/);
-    expect(code).not.toMatch(/from ["']\.\/post-sitemap-entries["']/);
-    expect(code).toContain("export default function PostPage");
+    expect(message).toContain("runtime export `sitemap` is not allowed");
   });
 
   it('drops an unrenamed re-export-with-source specifier ("export { loader } from") and the source module edge', async () => {
@@ -869,29 +836,10 @@ describe("projection — re-export forms of the 7 server export names", () => {
     expect(code).not.toMatch(/from ["']\.\/post-loader["']/);
   });
 
-  it('drops a local re-export of an imported binding ("import { x } from m; export { x as sitemap };") and lets unused-import elimination remove the import', async () => {
+  it("keeps the universal `register` co-export while stripping `loader`", async () => {
     const code = await transformSource(
       [
-        `import { postSitemapEntries } from "./post-sitemap-entries";`,
-        ``,
-        `export { postSitemapEntries as sitemap };`,
-        ``,
-        `export default function PostPage() {`,
-        `  return <article />;`,
-        `}`,
-      ].join("\n"),
-      "post.page.tsx",
-    );
-
-    expect(code).not.toMatch(/sitemap/);
-    expect(code).not.toMatch(/postSitemapEntries/);
-    expect(code).not.toMatch(/from ["']\.\/post-sitemap-entries["']/);
-  });
-
-  it('keeps an innocent co-exported name in a mixed re-export ("export { loader, Helper } from")', async () => {
-    const code = await transformSource(
-      [
-        `export { loader, Helper } from "./post-loader";`,
+        `export { loader, register } from "./post-loader";`,
         ``,
         `export default function PostPage() {`,
         `  return <article />;`,
@@ -901,23 +849,19 @@ describe("projection — re-export forms of the 7 server export names", () => {
     );
 
     expect(code).not.toMatch(/export \{[^}]*\bloader\b/);
-    expect(code).toContain('export { Helper } from "./post-loader";');
+    expect(code).toContain('export { register } from "./post-loader";');
   });
 
-  it("strips every one of the 7 server names in re-export-with-source form, one export statement per name", async () => {
-    const names = ["route", "middleware", "validation", "loader", "metadata", "prefix", "sitemap"];
-    const code = await transformSource(
-      names.map((name) => `export { ${name}Impl as ${name} } from "./post-${name}";`).join("\n") +
-        `\n\nexport default function PostPage() {\n  return <article />;\n}`,
-      "post.page.tsx",
-    );
-
-    for (const name of names) {
-      expect(code).not.toMatch(new RegExp(`\\b${name}\\b`));
-      expect(code).not.toMatch(new RegExp(`from ["']\\./post-${name}["']`));
-    }
-    expect(code).toContain("export default function PostPage");
-  });
+  it.each(["route", "middleware", "validation", "metadata", "prefix", "sitemap"])(
+    "refuses legacy %s re-exports",
+    async (name) => {
+      const message = await refusalMessage(
+        `export { ${name}Impl as ${name} } from "./post-${name}";\nexport default function PostPage() { return <article />; }`,
+        "post.page.tsx",
+      );
+      expect(message).toContain(`runtime export \`${name}\` is not allowed`);
+    },
+  );
 
   it("does not silently pass a server export through `export * from` — it stays refused the same as any other star re-export (ruling requested from @Suki, see task report)", async () => {
     const message = await refusalMessage(
@@ -931,7 +875,6 @@ describe("projection — re-export forms of the 7 server export names", () => {
       "post.page.tsx",
     );
 
-    expect(message).toContain('export * from "./post-sitemap-entries"');
-    expect(message).toContain("server-only binding");
+    expect(message).toContain("export-star declarations are not allowed");
   });
 });

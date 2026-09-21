@@ -27,7 +27,7 @@ const guard = async ({ request, response }: { request: any; response: any }) => 
   }
 };
 
-export const middleware = [guard];
+export const config = { middleware: [guard] };
 
 export const loader = (async () => {
   return { nav: ["home", "products"], locale: shared.locale };

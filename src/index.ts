@@ -40,6 +40,13 @@ export type {
   SerializedPageError,
 } from "./components/document-context";
 export type { PageMetadata } from "./metadata";
+export type {
+  PageConfig,
+  LayoutConfig,
+  RootConfig,
+  PageConfigValidation,
+  PageErrorBoundaryProps,
+} from "./page-config";
 // `listRoutablePages` is NOT re-exported here. It reaches `./build`, which
 // walks the filesystem and imports page files by path — on this barrel that
 // module joins the graph of every page importing `@warlock.js/web`, and a

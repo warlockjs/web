@@ -2,7 +2,7 @@
 // the build must FAIL naming the file, the statement, and the fix.
 console.log("boot");
 
-export const route = { path: "/blog" } as const;
+export const config = { route: { path: "/blog" } } as const;
 
 export default function BlogPage() {
   return <h1>Blog</h1>;

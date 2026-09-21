@@ -209,6 +209,32 @@ describe("gateCVerify — Gate C output verification (real Vite builds)", () => 
     });
   });
 
+  describe("config export provenance", () => {
+    const bundle = (code: string) => ({
+      "assets/page.js": { type: "chunk", fileName: "assets/page.js", code },
+    });
+
+    it("allows an ordinary top-level client config binding", () => {
+      expect(
+        findLeakedServerExports(
+          bundle(`const config = createClientSettings(); export function App() { return config; }`),
+        ),
+      ).toEqual([]);
+    });
+
+    it("refuses a directly exported config binding", () => {
+      expect(
+        findLeakedServerExports(bundle(`export const config = { route: "/" };`)),
+      ).toMatchObject([{ exportName: "config" }]);
+    });
+
+    it("refuses Rollup's minified config export alias", () => {
+      expect(
+        findLeakedServerExports(bundle(`const e = {}; export { e as config };`)),
+      ).toMatchObject([{ exportName: "config" }]);
+    });
+  });
+
   describe("a chunk Gate C cannot parse fails the gate — it is never reported clean", () => {
     /**
      * The malformed fixture is built INLINE as a hand-made bundle rather than

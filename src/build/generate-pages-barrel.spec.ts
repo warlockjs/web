@@ -37,7 +37,8 @@ afterEach(() => {
 });
 
 const APP = "export default function App() { return null; }\n";
-const PAGE = 'export const route = "/";\nexport default function Page() { return null; }\n';
+const PAGE =
+  'export const config = { route: "/" };\nexport default function Page() { return null; }\n';
 const LAYOUT = "export default function Layout() { return null; }\n";
 
 describe("generatePagesBarrel", () => {
@@ -87,10 +88,10 @@ describe("generatePagesBarrel", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,
       "src/web/dashboard.page.tsx":
-        'export const route = "/dashboard";\nexport default function Page() { return null; }\n',
+        'export const config = { route: "/dashboard" };\nexport default function Page() { return null; }\n',
       "src/web/users/account/layout.tsx": LAYOUT,
       "src/web/users/account/settings.page.tsx":
-        'export const route = "/users/account/settings";\nexport default function Page() { return null; }\n',
+        'export const config = { route: "/users/account/settings" };\nexport default function Page() { return null; }\n',
     });
     const productionDir = path.join(appRoot, ".warlock", "production");
 

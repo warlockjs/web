@@ -4,6 +4,7 @@ import type { SerializedErrorPageProps, SerializedPageError } from "../component
 import { ERROR_PAGE_METADATA } from "./resolve-page-metadata";
 import type { MetadataOutput } from "../metadata";
 import type { ServerErrorPageProps } from "../props";
+import { normalizePageModule } from "./normalize-page-module";
 import { PageValidationFailedError } from "./page-validation-failed-error";
 import { isVisitorSafePageError } from "./is-visitor-safe-page-error";
 
@@ -41,12 +42,8 @@ function sanitizeValidationIssues(errors: unknown): SafeValidationIssue[] {
     }));
 }
 
-/** Server-only shape of an application-owned `error.page.tsx` namespace. */
-export type ErrorPageModule = {
-  register?: () => unknown;
-  default?: unknown;
-  metadata?: MetadataOutput | ((props: ServerErrorPageProps) => MetadataOutput);
-};
+/** Raw server-only namespace of an application-owned `error.page.tsx` module. */
+export type ErrorPageModule = Record<string, unknown>;
 
 /** Deliberately lazy: normal requests never even load error.page.tsx. */
 export type ErrorPageModuleLoader = () => Promise<ErrorPageModule>;
@@ -127,12 +124,24 @@ export function serializePageError(thrown: unknown, requestId?: string): Seriali
   };
 }
 
-/** Error-page metadata improves the safe framework default; it cannot remove noindex. */
+/**
+ * Error-page metadata improves the safe framework default and preserves that
+ * default when config omits a field. This is the error page's config ingress:
+ * it deliberately accepts a raw namespace so direct callers cannot bypass
+ * config-only validation.
+ */
 export function resolveErrorPageMetadata(
-  module: ErrorPageModule,
+  module: unknown,
   props: ServerErrorPageProps,
 ): MetadataOutput {
-  const own = typeof module.metadata === "function" ? module.metadata(props) : module.metadata;
+  const normalized = normalizePageModule(module, "page", "error.page.tsx");
+  const declared = normalized.metadata;
+  const own =
+    typeof declared === "function"
+      ? // The error page uses error/status context rather than successful loader
+        // data. Normalization validates the returned metadata in either case.
+        (declared as unknown as (input: ServerErrorPageProps) => MetadataOutput)(props)
+      : declared;
 
   return { ...ERROR_PAGE_METADATA, ...own, robots: own?.robots ?? ERROR_PAGE_METADATA.robots };
 }

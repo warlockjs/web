@@ -31,7 +31,7 @@ describe("collectSitemapEntries", () => {
   it("collects a plain static page as one entry", async () => {
     const appRoot = makeAppTree({
       "src/web/about.page.tsx": [
-        'export const route = "/about";',
+        'export const config = { route: "/about" };',
         "export default function Page() { return null; }",
       ].join("\n"),
     });
@@ -42,10 +42,10 @@ describe("collectSitemapEntries", () => {
     expect(declaredRoutes.size).toBe(0);
   });
 
-  it("excludes a page that opts out with `export const sitemap = false`", async () => {
+  it("excludes a page that opts out with `config.sitemap = false`", async () => {
     const appRoot = makeAppTree({
       "src/web/draft.page.tsx": [
-        "export const sitemap = false;",
+        "export const config = { sitemap: false };",
         "export default function Page() { return null; }",
       ].join("\n"),
     });
@@ -59,7 +59,7 @@ describe("collectSitemapEntries", () => {
   it("calls a dynamic page's supplier and reports the pattern it contributed to", async () => {
     const appRoot = makeAppTree({
       "src/web/posts/[id].page.tsx": [
-        'export const sitemap = async () => [{ path: "/posts/hello-world" }, { path: "/posts/second" }];',
+        'export const config = { sitemap: async () => [{ path: "/posts/hello-world" }, { path: "/posts/second" }] };',
         "export default function Page() { return null; }",
       ].join("\n"),
     });
@@ -87,7 +87,7 @@ describe("collectSitemapEntries", () => {
   it("treats `locales: false` as locale-invariant: one entry, no alternates, even with locales configured", async () => {
     const appRoot = makeAppTree({
       "src/web/privacy.page.tsx": [
-        "export const sitemap = { locales: false };",
+        "export const config = { sitemap: { locales: false } };",
         "export default function Page() { return null; }",
       ].join("\n"),
     });
@@ -103,8 +103,7 @@ describe("collectSitemapEntries", () => {
   it("expands a static page across configured locales with per-page localePaths for divergent slugs", async () => {
     const appRoot = makeAppTree({
       "src/web/about.page.tsx": [
-        'export const route = "/about";',
-        'export const sitemap = { localePaths: { ar: "/about-ar" } };',
+        'export const config = { route: "/about", sitemap: { localePaths: { ar: "/about-ar" } } };',
         "export default function Page() { return null; }",
       ].join("\n"),
     });
@@ -120,7 +119,7 @@ describe("collectSitemapEntries", () => {
   it("does not declare an opted-out page's pattern", async () => {
     const appRoot = makeAppTree({
       "src/web/drafts/[id].page.tsx": [
-        "export const sitemap = false;",
+        "export const config = { sitemap: false };",
         "export default function Page() { return null; }",
       ].join("\n"),
     });

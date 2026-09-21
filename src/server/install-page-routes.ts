@@ -31,6 +31,7 @@
  * page module must be the one Vite serves, warm cache and all.
  */
 import path from "node:path";
+import { readFileSync } from "node:fs";
 import type { ViteDevServer } from "vite";
 import {
   discoverPageFiles,
@@ -38,18 +39,14 @@ import {
   isErrorPageFile,
   layoutChainFor,
 } from "../build/discover-pages";
-import { NonLiteralRouteExportError, readRouteExports } from "../build/read-route-exports";
+import { readModuleConfig } from "../build/read-module-config";
 import { composeRoutePath } from "../routing/compose-route-path";
 import { duplicateRoutePathMessage } from "../routing/duplicate-route-path";
 import { deriveFilesystemRoutePath } from "../routing/filesystem-route";
 import { resolveLayoutLevel as resolveComposedLayoutLevel } from "../routing/layout-level";
 import { PageFileSegmentNotSupportedError } from "../routing/page-file-segment";
 import { toPosix } from "../shared/to-posix";
-import {
-  resolvePageRouteCache,
-  resolvePageRouteIdentity,
-  resolvePageRouteName,
-} from "../routing/route-identity";
+import { resolvePageRouteIdentity, resolvePageRouteName } from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
 import { publishLocaleRouting } from "../routing/locale-routing";
 import { type FastifyInstance, type Router } from "@warlock.js/core";
@@ -58,9 +55,9 @@ import { createPageRouteHandler, type PageRouteHandler } from "./create-page-rou
 import { resolveLocaleRouting } from "./locale-routing/resolve-locale-routing";
 import { localePageRegistrations } from "./locale-routing/locale-page-registrations";
 import type { ErrorPageModule } from "./error-page";
-import type { PipelineLoader, PipelineMiddleware } from "./execute-page-request";
 import { layoutPrefixesByDirectory } from "./layout-prefixes";
 import { notFoundPageHandlerOptions } from "./not-found-handler-options";
+import { normalizePageModule } from "./normalize-page-module";
 import { devDeclaredStylesheetUrls, devHandlerStylesheetUrls } from "./stylesheet-urls";
 import type { RequestStylesheetUrlResolver } from "./document-stylesheet-urls";
 import {
@@ -69,7 +66,7 @@ import {
   NotFoundPageDeclaresRouteError,
   registerNotFoundPageRoute,
 } from "./not-found-page";
-import type { LayoutModuleShape, PageModuleShape, PageRouteExport } from "./page-module-shapes";
+import type { LayoutModuleShape, PageRouteExport } from "./page-module-shapes";
 
 export type { LayoutModuleShape, PageModuleShape, PageRouteExport } from "./page-module-shapes";
 
@@ -224,22 +221,6 @@ async function registerFailedPageRoute(input: {
     ),
   );
 }
-
-/* Moved to page-module-shapes.ts so both installers consume one contract.
-  * Universal registration hook; invoked on this real namespace, never a composed wrapper.
-  register?: () => unknown;
-  prefix?: string;
-  *
-   * The default export — the thing that puts an element in the document, and
-   * therefore the ONLY export that decides whether a layout counts against the
-   * single-rendering-layout rule (`../routing/layout-policy.ts`). In dev the
-   * module is loaded, so this is a fact rather than a guess.
-   *
-  default?: unknown;
-  * The layout's guards, in declaration order.
-  middleware?: readonly PipelineMiddleware[];
-  loader?: PipelineLoader;
-*/
 
 /** How this module gets a layout module namespace — `vite.ssrLoadModule`, in practice. */
 type LoadLayout = (layoutFile: string) => Promise<LayoutModuleShape>;
@@ -416,6 +397,10 @@ export async function installPageRoutes(
   // a caller (this file's own unit tests, most callers) that never supplied
   // one and means to fall back to the container instead.
   const httpServerOption = httpServer === undefined ? {} : { httpServer };
+  // Validate the live root namespace before any route is registered. This is
+  // deliberately an ingress projection only: request handlers still load the
+  // raw namespace so registration retains its module identity across HMR.
+  normalizePageModule(await vite.ssrLoadModule(appFile), "root", appFile);
   // See `InstallPageRoutesOptions.appRoot` for why this default, not
   // `appSrcRoot` itself, is the root every handler's CSS is resolved against.
   const stylesheetRoot = options.appRoot ?? path.dirname(appSrcRoot);
@@ -454,8 +439,11 @@ export async function installPageRoutes(
   // Parse only: the error boundary must remain lazy until a request actually
   // fails, while a route export is still rejected at install time.
   if (errorPageFile !== undefined) {
-    const declarations = readRouteExports(errorPageFile);
-    if (!declarations.ok) throw new NonLiteralRouteExportError(declarations.rejection);
+    const declarations = readModuleConfig(
+      errorPageFile,
+      readFileSync(errorPageFile, "utf-8"),
+      "page",
+    );
     if (declarations.route !== undefined) throw new ErrorPageDeclaresRouteError(errorPageFile);
   }
   const loadErrorPage =
@@ -480,10 +468,10 @@ export async function installPageRoutes(
   const fileByPath = new Map<string, string>();
 
   for (const { pageFile, webRoot } of pageFiles) {
-    let pageModule: PageModuleShape;
+    let rawPageModule: unknown;
 
     try {
-      pageModule = (await vite.ssrLoadModule(pageFile)) as PageModuleShape;
+      rawPageModule = await vite.ssrLoadModule(pageFile);
     } catch (loadError) {
       // THE PAGE ITSELF MUST NOT ABORT THE INSTALL: every other page still
       // needs to install and serve. Layout loading is deliberately NOT
@@ -495,13 +483,7 @@ export async function installPageRoutes(
       continue;
     }
 
-    const route = pageModule.route as unknown;
-
-    if (typeof route === "object" && route !== null) {
-      if ("middleware" in route) throw new RouteMiddlewareRemovedError(pageFile);
-      if ("validate" in route) throw new RouteValidationRemovedError(pageFile);
-    }
-
+    const pageModule = normalizePageModule(rawPageModule, "page", pageFile);
     const sourceFile = canonicalSourceFileFor(pageFile, appSrcRoot);
 
     // Route identity is explicit when declared and filesystem-derived otherwise.
@@ -513,10 +495,10 @@ export async function installPageRoutes(
 
     // Validated at INSTALL time, with everything else — a malformed `cache`
     // opt-in fails boot, not the first request that would have served it.
-    const cache = resolvePageRouteCache(pageModule.route, pageFile);
+    const cache = pageModule.cache;
 
-    const loadLayout: LoadLayout = (layoutFile) =>
-      vite.ssrLoadModule(layoutFile) as Promise<LayoutModuleShape>;
+    const loadLayout: LoadLayout = async (layoutFile) =>
+      normalizePageModule(await vite.ssrLoadModule(layoutFile), "layout", layoutFile);
     const layoutLevel = await resolveLayoutLevel(pageFile, webRoot, loadLayout);
     const { layoutFile, prefix: layoutPrefix } = layoutLevel;
 
@@ -570,18 +552,17 @@ export async function installPageRoutes(
       // The layout slot's id resolves to the COMPOSED level — every layout's
       // middleware, in chain order, and its validated static metadata — while
       // every other id goes straight to Vite.
-      loadModule:
-        layoutFile !== undefined
-          ? (moduleId) =>
-              moduleId === layoutFile
-                ? composeLayoutLevel({ ...layoutLevel, layoutFile }, loadLayout)
-                : vite.ssrLoadModule(moduleId)
-          : (moduleId) => vite.ssrLoadModule(moduleId),
+      loadModule: (moduleId) => vite.ssrLoadModule(moduleId),
+      loadComposedLayout:
+        layoutFile === undefined
+          ? undefined
+          : () => composeLayoutLevel({ ...layoutLevel, layoutFile }, loadLayout),
       // Registration tracks real module namespaces, not the composed
       // layout wrapper above. Loading the raw chain per request also lets
       // Vite hand over a replacement namespace after an HMR update; the
       // helper's WeakSet then gives that new identity its one invocation.
-      loadRegistrationLayouts: () => Promise.all(layoutLevel.chain.map(loadLayout)),
+      loadRegistrationLayouts: () =>
+        Promise.all(layoutLevel.chain.map((layoutFile) => vite.ssrLoadModule(layoutFile))),
       hydrationClientModuleUrl,
       loadErrorPage,
       stylesheetUrls,
@@ -643,7 +624,11 @@ export async function installPageRoutes(
     // refused at boot with everything else — not on the first request that
     // misses, which is the one request nobody is watching.
     if (notFoundPageFile !== undefined) {
-      const notFoundModule = (await vite.ssrLoadModule(notFoundPageFile)) as PageModuleShape;
+      const notFoundModule = normalizePageModule(
+        await vite.ssrLoadModule(notFoundPageFile),
+        "page",
+        notFoundPageFile,
+      );
 
       if (notFoundModule.route !== undefined) {
         throw new NotFoundPageDeclaresRouteError(notFoundPageFile);

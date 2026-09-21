@@ -27,9 +27,10 @@
  */
 import { composeRoutePath } from "../routing/compose-route-path";
 import { duplicateRoutePathMessage } from "../routing/duplicate-route-path";
+import { ErrorPageDeclaresRouteError } from "../routing/error-page-declares-route-error";
 import { deriveFilesystemRoutePath } from "../routing/filesystem-route";
 import { resolveLayoutLevel } from "../routing/layout-level";
-import { resolvePageRouteCache, resolvePageRouteIdentity } from "../routing/route-identity";
+import { resolvePageRouteIdentity } from "../routing/route-identity";
 import { publishRouteTable } from "../routing/route-table";
 import { publishLocaleRouting } from "../routing/locale-routing";
 import { type Router } from "@warlock.js/core";
@@ -45,6 +46,7 @@ import {
 } from "./create-page-route-handler";
 import { layoutPrefixesByDirectory } from "./layout-prefixes";
 import { notFoundPageHandlerOptions } from "./not-found-handler-options";
+import { normalizePageModule } from "./normalize-page-module";
 import { productionDeclaredStylesheetUrls, productionStylesheetUrls } from "./stylesheet-urls";
 import type { RequestStylesheetUrlResolver } from "./document-stylesheet-urls";
 import {
@@ -54,7 +56,7 @@ import {
   registerNotFoundPageRoute,
 } from "./not-found-page";
 import type { PageManifest, PageManifestLayoutEntry, PageManifestPageEntry } from "./page-manifest";
-import type { LayoutModuleShape, PageModuleShape, PageRouteExport } from "./page-module-shapes";
+import type { PageRouteExport } from "./page-module-shapes";
 
 /** The exports this module reads off a layout module namespace. */
 /**
@@ -153,7 +155,10 @@ function layoutPrefixesOf(page: PageManifestPageEntry): Record<string, string> {
       const slashIndex = relative.lastIndexOf("/");
       const directory = slashIndex === -1 ? "" : relative.slice(0, slashIndex);
 
-      return { directory, prefix: (layout.module as LayoutModuleShape).prefix };
+      return {
+        directory,
+        prefix: normalizePageModule(layout.module, "layout", layout.sourceFile).prefix,
+      };
     }),
   );
 }
@@ -211,8 +216,10 @@ function layoutLevelOf(page: PageManifestPageEntry): LayoutLevel {
     page.sourceFile,
     page.layouts.map((layout) => ({
       id: layout.sourceFile,
-      renders: typeof (layout.module as LayoutModuleShape).default !== "undefined",
-      prefix: (layout.module as LayoutModuleShape).prefix,
+      renders:
+        typeof normalizePageModule(layout.module, "layout", layout.sourceFile).default !==
+        "undefined",
+      prefix: normalizePageModule(layout.module, "layout", layout.sourceFile).prefix,
     })),
   );
 
@@ -243,7 +250,7 @@ function composeLayoutLevel(
   const hostIndex = page.layouts.indexOf(host);
 
   return composeLayoutModules(
-    page.layouts.map((layout) => layout.module as LayoutModuleShape),
+    page.layouts.map((layout) => normalizePageModule(layout.module, "layout", layout.sourceFile)),
     hostIndex,
     page.layouts.map((layout) => layout.sourceFile),
   );
@@ -274,6 +281,18 @@ export function installPageRoutesFromManifest(
     clientDir,
     createHandler = createPageRouteHandler,
   } = options;
+
+  if (manifest.errorPage !== undefined) {
+    const errorPage = normalizePageModule(
+      manifest.errorPage.module,
+      "page",
+      manifest.errorPage.sourceFile,
+    );
+
+    if (errorPage.route !== undefined) {
+      throw new ErrorPageDeclaresRouteError(manifest.errorPage.sourceFile);
+    }
+  }
 
   if (manifest.pages.length === 0) return [];
 
@@ -310,6 +329,8 @@ export function installPageRoutesFromManifest(
     );
   }
 
+  normalizePageModule(app.module, "root", app.sourceFile);
+
   // Ids are the manifest's own `sourceFile` strings and are passed on untouched:
   // the loader below matches them by exact string equality, so resolving,
   // joining or swapping separators on one side of that comparison would turn
@@ -335,7 +356,10 @@ export function installPageRoutesFromManifest(
 
   const notFoundPage = notFoundPages[0];
 
-  if (notFoundPage !== undefined && (notFoundPage.module as PageModuleShape).route !== undefined) {
+  if (
+    notFoundPage !== undefined &&
+    normalizePageModule(notFoundPage.module, "page", notFoundPage.sourceFile).route !== undefined
+  ) {
     throw new NotFoundPageDeclaresRouteError(notFoundPage.sourceFile);
   }
 
@@ -371,7 +395,8 @@ export function installPageRoutesFromManifest(
 
   for (const page of pages) {
     const { host: layout, prefix: layoutPrefix } = layoutLevelOf(page);
-    const routeExport = (page.module as PageModuleShape).route;
+    const pageModule = normalizePageModule(page.module, "page", page.sourceFile);
+    const routeExport = pageModule.route;
 
     const { path: routePath, name } = resolveRoute(routeExport, page.sourceFile);
 
@@ -379,7 +404,7 @@ export function installPageRoutesFromManifest(
     // own installer — so a malformed `cache` opt-in fails a production boot
     // instead of shipping a page whose freshness window the framework
     // silently guessed.
-    const cache = resolvePageRouteCache(routeExport, page.sourceFile);
+    const cache = pageModule.cache;
 
     // Explicit wins; otherwise the path is derived from the page's own source
     // location and the layouts on its path — the same rule dev applies at
@@ -436,13 +461,9 @@ export function installPageRoutesFromManifest(
       appFile: app.sourceFile,
       pageFile: page.sourceFile,
       layoutFile: layout?.sourceFile,
-      loadModule:
-        composedLayout === undefined
-          ? loadModule
-          : (moduleId) =>
-              moduleId === layout?.sourceFile
-                ? Promise.resolve(composedLayout)
-                : loadModule(moduleId),
+      loadModule: loadModule,
+      loadComposedLayout:
+        composedLayout === undefined ? undefined : () => Promise.resolve(composedLayout),
       loadRegistrationLayouts: () => Promise.resolve(page.layouts.map((layout) => layout.module)),
       hydrationClientModuleUrl,
       hydrationClientModulePreloadUrls,

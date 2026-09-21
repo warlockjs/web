@@ -317,12 +317,14 @@ describe("a committed cookie reaches the wire EXACTLY ONCE, on every exit", () =
     // under discussion is involved. Removing the mirror must not disturb it,
     // and this is what says so.
     const guardedPage = {
-      middleware: [
-        ({ response }: any) => {
-          response.cookie("mw-flash", "denied");
-          return response.redirect("/login");
-        },
-      ],
+      config: {
+        middleware: [
+          ({ response }: any) => {
+            response.cookie("mw-flash", "denied");
+            return response.redirect("/login");
+          },
+        ],
+      },
       loader: async () => ({ never: true }),
       default: () => null,
     };

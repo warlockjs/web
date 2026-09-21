@@ -8,17 +8,17 @@ import type { PageLoader, PageMetadata, PageProps } from "../../../src/index";
  * headers/cookies, may short-circuit with `notFound()`, and metadata inferred
  * from the loader's data.
  */
-export const route = {
-  path: "/:id",
-  name: "products.details",
-} as const;
-
 /**
  * Validated over params — the page's `{ schema, validating }` over params +
  * query. The 2-char floor gives the
  * specs a deterministic failure: `/products/x` → 422 before any loader runs.
  */
-export const validation = {
+const route = {
+  path: "/:id",
+  name: "products.details",
+} as const;
+
+const validation = {
   schema: v.object({
     id: v.string().minLength(2),
   }),
@@ -41,9 +41,9 @@ export const loader = (async ({ request, response, shared }: any) => {
   };
 }) satisfies PageLoader<typeof validation, typeof route>;
 
-export const metadata: PageMetadata<typeof loader> = ({ data }) => ({
-  title: data.product.name,
-});
+const metadata: PageMetadata<typeof loader> = ({ data }) => ({ title: data.product.name });
+
+export const config = { route, validation, metadata } as const;
 
 export default function ProductDetailsPage({ data, shared }: PageProps<typeof loader>) {
   return (

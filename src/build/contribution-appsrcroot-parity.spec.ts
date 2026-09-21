@@ -65,7 +65,7 @@ describe("production build discovery honours the same custom appSrcRoot as the d
     fs.writeFileSync(
       pageFile,
       [
-        `export const route = { path: "/home" };`,
+        `export const config = { route: { path: "/home" } };`,
         `export default function Home() { return null; }`,
       ].join("\n"),
       "utf-8",
@@ -138,7 +138,7 @@ describe("production build discovery honours the same custom appSrcRoot as the d
     fs.writeFileSync(
       pageFile,
       [
-        `export const route = { path: "/home" };`,
+        `export const config = { route: { path: "/home" } };`,
         `export default function Home() { return null; }`,
       ].join("\n"),
       "utf-8",

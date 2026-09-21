@@ -58,7 +58,7 @@ describe("sitemap case matrix", () => {
   it("case: static — a plain static page becomes one entry at its own path (full coverage: collect-sitemap-entries.spec.ts)", async () => {
     const appRoot = makeAppTree({
       "src/web/about.page.tsx": [
-        'export const route = "/about";',
+        'export const config = { route: "/about" };',
         "export default function Page() { return null; }",
       ].join("\n"),
     });
@@ -71,7 +71,7 @@ describe("sitemap case matrix", () => {
   it("case: dynamic — a dynamic page's sitemap() supplier contributes its concrete URLs under its route pattern (full coverage: collect-sitemap-entries.spec.ts, generate-sitemap.spec.ts)", async () => {
     const appRoot = makeAppTree({
       "src/web/posts/[id].page.tsx": [
-        'export const sitemap = async () => [{ path: "/posts/hello-world" }];',
+        'export const config = { sitemap: async () => [{ path: "/posts/hello-world" }] };',
         "export default function Page() { return null; }",
       ].join("\n"),
     });
@@ -85,7 +85,7 @@ describe("sitemap case matrix", () => {
   it("case: locale-invariant — `locales: false` yields one entry with zero alternates even with locales configured (full coverage: collect-sitemap-entries.spec.ts, expand-locale-entries.spec.ts)", async () => {
     const appRoot = makeAppTree({
       "src/web/privacy.page.tsx": [
-        "export const sitemap = { locales: false };",
+        "export const config = { sitemap: { locales: false } };",
         "export default function Page() { return null; }",
       ].join("\n"),
     });
@@ -108,7 +108,7 @@ describe("sitemap case matrix", () => {
   it("case: split-locale — web.sitemap.locales.splitByLocale writes a SitemapIndex with one source per locale (full coverage: generate-sitemap.spec.ts)", async () => {
     const appRoot = makeAppTree({
       "src/web/about.page.tsx": [
-        'export const route = "/about";',
+        'export const config = { route: "/about" };',
         "export default function Page() { return null; }",
       ].join("\n"),
     });

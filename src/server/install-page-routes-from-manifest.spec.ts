@@ -122,22 +122,22 @@ function manifestOf(pages: PageManifestPageEntry[]): PageManifest {
 }
 
 const homeLayout = {
-  module: { default: () => null, prefix: "/" },
+  module: { default: () => null, config: { prefix: "/" } },
   sourceFile: "src/app/main/web/layout.tsx",
 };
 
 const homePage: PageManifestPageEntry = {
-  module: { default: () => null, route: "/" },
+  module: { default: () => null, config: { route: "/" } },
   sourceFile: "src/app/main/web/home.page.tsx",
   layouts: [homeLayout],
 };
 
 const productsPage: PageManifestPageEntry = {
-  module: { default: () => null, route: "/" },
+  module: { default: () => null, config: { route: "/" } },
   sourceFile: "src/app/products/web/products.page.tsx",
   layouts: [
     {
-      module: { default: () => null, prefix: "/products" },
+      module: { default: () => null, config: { prefix: "/products" } },
       sourceFile: "src/app/products/web/layout.tsx",
     },
   ],
@@ -173,7 +173,7 @@ describe("production page route installation", () => {
 
   it("composes against the root prefix when a page has no layout", () => {
     const contactPage: PageManifestPageEntry = {
-      module: { default: () => null, route: "/contact-us" },
+      module: { default: () => null, config: { route: "/contact-us" } },
       sourceFile: "src/app/main/web/contact-us.page.tsx",
       layouts: [],
     };
@@ -188,7 +188,7 @@ describe("production page route installation", () => {
 
   it("composes against the root prefix when the layout exports no prefix", () => {
     const page: PageManifestPageEntry = {
-      module: { default: () => null, route: "/about" },
+      module: { default: () => null, config: { route: "/about" } },
       sourceFile: "src/app/main/web/about.page.tsx",
       layouts: [{ module: { default: () => null }, sourceFile: "src/app/main/web/layout.tsx" }],
     };
@@ -202,7 +202,7 @@ describe("production page route installation", () => {
 
   it("takes the route path and name off an object route export", () => {
     const page: PageManifestPageEntry = {
-      module: { default: () => null, route: { path: "/blog", name: "blog.listing" } },
+      module: { default: () => null, config: { route: { path: "/blog", name: "blog.listing" } } },
       sourceFile: "src/app/main/web/blog.page.tsx",
       layouts: [],
     };
@@ -242,7 +242,7 @@ describe("production page route installation", () => {
 
   it("derives the path for an unrouted page under a prefix-exporting layout at the prefix-replaced path, not doubled", () => {
     const docsLayout = {
-      module: { default: () => null, prefix: "/docs" },
+      module: { default: () => null, config: { prefix: "/docs" } },
       sourceFile: "src/web/docs/layout.tsx",
     };
 
@@ -263,7 +263,7 @@ describe("production page route installation", () => {
 
   it("hands each handler the manifest's own source file strings, byte for byte", () => {
     const nestedPage: PageManifestPageEntry = {
-      module: { default: () => null, route: "/deep" },
+      module: { default: () => null, config: { route: "/deep" } },
       sourceFile: "src/app/main/web/nested/deep.page.tsx",
       layouts: [homeLayout],
     };
@@ -301,12 +301,15 @@ describe("production page route installation", () => {
 
   it("refuses a page whose layout chain is nested, naming the page and its layouts", () => {
     const nestedLayoutsPage: PageManifestPageEntry = {
-      module: { default: () => null, route: "/dashboard" },
+      module: { default: () => null, config: { route: "/dashboard" } },
       sourceFile: "src/app/main/web/dashboard.page.tsx",
       layouts: [
-        { module: { default: () => null, prefix: "/" }, sourceFile: "src/app/main/web/layout.tsx" },
         {
-          module: { default: () => null, prefix: "/dashboard" },
+          module: { default: () => null, config: { prefix: "/" } },
+          sourceFile: "src/app/main/web/layout.tsx",
+        },
+        {
+          module: { default: () => null, config: { prefix: "/dashboard" } },
           sourceFile: "src/app/main/web/dashboard/layout.tsx",
         },
       ],
@@ -336,7 +339,7 @@ describe("production page route installation", () => {
 
   it("refuses two pages that compose to the same route path, naming both", () => {
     const duplicate: PageManifestPageEntry = {
-      module: { default: () => null, route: { path: "/", name: "main.home-again" } },
+      module: { default: () => null, config: { route: { path: "/", name: "main.home-again" } } },
       sourceFile: "src/app/main/web/index.page.tsx",
       layouts: [homeLayout],
     };
@@ -366,7 +369,7 @@ describe("production page route installation", () => {
 async function layoutMiddlewareOf(handlerOptions: PageRouteHandlerOptions) {
   if (handlerOptions.layoutFile === undefined) return [];
 
-  const layoutModule = (await handlerOptions.loadModule(handlerOptions.layoutFile)) as {
+  const layoutModule = (await handlerOptions.loadComposedLayout?.()) as {
     middleware?: readonly ((context: unknown) => unknown)[];
   };
 
@@ -387,28 +390,31 @@ async function runLayoutMiddleware(handlerOptions: PageRouteHandlerOptions) {
 describe("installPageRoutesFromManifest — declared route path grammar", () => {
   it("installs every allowed declared shape unchanged: /, static, whole-segment param, catch-all, bare string", () => {
     const rootPage: PageManifestPageEntry = {
-      module: { default: () => null, route: { path: "/" } },
+      module: { default: () => null, config: { route: { path: "/" } } },
       sourceFile: "src/app/main/web/home.page.tsx",
       layouts: [],
     };
     const staticPage: PageManifestPageEntry = {
-      module: { default: () => null, route: { path: "/users" } },
+      module: { default: () => null, config: { route: { path: "/users" } } },
       sourceFile: "src/app/main/web/users.page.tsx",
       layouts: [],
     };
     const paramPage: PageManifestPageEntry = {
-      module: { default: () => null, route: { path: "/users/:id" } },
+      module: { default: () => null, config: { route: { path: "/users/:id" } } },
       sourceFile: "src/app/main/web/users-id.page.tsx",
       layouts: [],
     };
     const catchAllPage: PageManifestPageEntry = {
-      module: { default: () => null, route: { path: "/prefix/*", name: "prefix.catch-all" } },
+      module: {
+        default: () => null,
+        config: { route: { path: "/prefix/*", name: "prefix.catch-all" } },
+      },
       sourceFile: "src/app/main/web/prefix-catch-all.page.tsx",
       layouts: [],
     };
     // A route export given as a bare string goes through the same seam.
     const bareStringPage: PageManifestPageEntry = {
-      module: { default: () => null, route: "/contact-us" },
+      module: { default: () => null, config: { route: "/contact-us" } },
       sourceFile: "src/app/main/web/contact-us.page.tsx",
       layouts: [],
     };
@@ -430,7 +436,7 @@ describe("installPageRoutesFromManifest — declared route path grammar", () => 
 
   it("raises PageRoutePathNotSupportedError, naming the page file, for a rejected declared path", () => {
     const page: PageManifestPageEntry = {
-      module: { default: () => null, route: { path: "/users/:id?" } },
+      module: { default: () => null, config: { route: { path: "/users/:id?" } } },
       sourceFile: "src/app/main/web/users-id.page.tsx",
       layouts: [],
     };
@@ -448,24 +454,28 @@ describe("installPageRoutesFromManifest — the layout middleware chain", () => 
 
     const outerModule = {
       default: () => null,
-      prefix: "/users",
-      middleware: [
-        () => {
-          calls.push("optionalAuth");
-        },
-      ],
+      config: {
+        prefix: "/users",
+        middleware: [
+          () => {
+            calls.push("optionalAuth");
+          },
+        ],
+      },
     };
     const innerModule = {
-      prefix: "/account",
-      middleware: [
-        () => {
-          calls.push("gate");
-        },
-      ],
+      config: {
+        prefix: "/account",
+        middleware: [
+          () => {
+            calls.push("gate");
+          },
+        ],
+      },
     };
 
     const guardedPage: PageManifestPageEntry = {
-      module: { default: () => null, route: "/settings" },
+      module: { default: () => null, config: { route: "/settings" } },
       sourceFile: "src/app/users/web/account/settings.page.tsx",
       layouts: [
         // Renders, and resolves the identity the gate below has nothing to
@@ -503,15 +513,14 @@ describe("installPageRoutesFromManifest — the layout middleware chain", () => 
     expect(registrationLayouts).toHaveLength(2);
     expect(registrationLayouts?.[0]).toBe(outerModule);
     expect(registrationLayouts?.[1]).toBe(innerModule);
-    await expect(built[0].loadModule("src/app/users/web/layout.tsx")).resolves.not.toBe(
-      outerModule,
-    );
+    await expect(built[0].loadModule("src/app/users/web/layout.tsx")).resolves.toBe(outerModule);
+    await expect(built[0].loadComposedLayout?.()).resolves.not.toBe(outerModule);
   });
 
   it("stops a composed layout loader chain when an outer loader redirects", async () => {
     const innerLoader = vi.fn(() => ({ mustNotRun: true }));
     const page: PageManifestPageEntry = {
-      module: { default: () => null, route: "/settings" },
+      module: { default: () => null, config: { route: "/settings" } },
       sourceFile: "src/app/users/web/account/settings.page.tsx",
       layouts: [
         {
@@ -531,7 +540,7 @@ describe("installPageRoutesFromManifest — the layout middleware chain", () => 
 
     run();
 
-    const composed = (await built[0].loadModule("src/app/users/web/layout.tsx")) as {
+    const composed = (await built[0].loadComposedLayout?.()) as {
       loader?: (context: unknown) => unknown;
     };
     const result = await composed.loader?.({
@@ -548,28 +557,32 @@ describe("installPageRoutesFromManifest — the layout middleware chain", () => 
     const calls: string[] = [];
 
     const unwrappedPage: PageManifestPageEntry = {
-      module: { default: () => null, route: "/orders" },
+      module: { default: () => null, config: { route: "/orders" } },
       sourceFile: "src/app/shop/web/admin/orders.page.tsx",
       layouts: [
         {
           module: {
-            prefix: "/shop",
-            middleware: [
-              () => {
-                calls.push("outer");
-              },
-            ],
+            config: {
+              prefix: "/shop",
+              middleware: [
+                () => {
+                  calls.push("outer");
+                },
+              ],
+            },
           },
           sourceFile: "src/app/shop/web/layout.tsx",
         },
         {
           module: {
-            prefix: "/admin",
-            middleware: [
-              () => {
-                calls.push("inner");
-              },
-            ],
+            config: {
+              prefix: "/admin",
+              middleware: [
+                () => {
+                  calls.push("inner");
+                },
+              ],
+            },
           },
           sourceFile: "src/app/shop/web/admin/layout.tsx",
         },
@@ -591,21 +604,23 @@ describe("installPageRoutesFromManifest — the layout middleware chain", () => 
     const calls: string[] = [];
 
     const page: PageManifestPageEntry = {
-      module: { default: () => null, route: "/orders" },
+      module: { default: () => null, config: { route: "/orders" } },
       sourceFile: "src/app/shop/web/admin/orders.page.tsx",
       layouts: [
         {
-          module: { default: () => null, prefix: "/shop" },
+          module: { default: () => null, config: { prefix: "/shop" } },
           sourceFile: "src/app/shop/web/layout.tsx",
         },
         {
           module: {
-            prefix: "/admin",
-            middleware: [
-              () => {
-                calls.push("gate");
-              },
-            ],
+            config: {
+              prefix: "/admin",
+              middleware: [
+                () => {
+                  calls.push("gate");
+                },
+              ],
+            },
           },
           sourceFile: "src/app/shop/web/admin/layout.tsx",
         },
@@ -626,12 +641,11 @@ describe("installPageRoutesFromManifest — the layout middleware chain", () => 
   it("leaves a page under ONE layout exactly as it was — that layout's own module, untouched", async () => {
     const layoutModule = {
       default: () => null,
-      prefix: "/admin",
-      middleware: [() => undefined],
+      config: { prefix: "/admin", middleware: [() => undefined] },
     };
 
     const page: PageManifestPageEntry = {
-      module: { default: () => null, route: "/dashboard" },
+      module: { default: () => null, config: { route: "/dashboard" } },
       sourceFile: "src/app/main/web/settings/dashboard.page.tsx",
       layouts: [{ module: layoutModule, sourceFile: "src/app/main/web/layout.tsx" }],
     };
@@ -648,7 +662,7 @@ describe("installPageRoutesFromManifest — the layout middleware chain", () => 
 
   it("leaves a page under NO layout exactly as it was — no layout level, no middleware", async () => {
     const page: PageManifestPageEntry = {
-      module: { default: () => null, route: "/contact-us" },
+      module: { default: () => null, config: { route: "/contact-us" } },
       sourceFile: "src/app/main/web/contact-us.page.tsx",
       layouts: [],
     };
@@ -669,26 +683,26 @@ describe("installPageRoutesFromManifest — the layout middleware chain", () => 
     // which is exactly what the generated barrel does — so the two sides are
     // answering for the same tree rather than for two hand-written guesses.
     const appRoot = makeAppTree({
-      "src/web/layout.tsx": 'export const prefix = "/users";\nexport default () => null;\n',
+      "src/web/layout.tsx":
+        'export const config = { prefix: "/users" };\nexport default () => null;\n',
       "src/web/account/layout.tsx":
-        'export const prefix = "/account";\nexport const middleware = [() => undefined];\n',
+        'export const config = { prefix: "/account", middleware: [() => undefined] };\n',
       "src/web/account/settings.page.tsx":
-        'export const route = "/settings";\nexport default () => null;\n',
+        'export const config = { route: "/settings" };\nexport default () => null;\n',
     });
 
     const discovered = discoverPages({ appRoot }).filter(isDiscoveredRoutablePage);
     const moduleByLayoutFile: Record<string, Record<string, unknown>> = {
-      "src/web/layout.tsx": { default: () => null, prefix: "/users" },
+      "src/web/layout.tsx": { default: () => null, config: { prefix: "/users" } },
       "src/web/account/layout.tsx": {
-        prefix: "/account",
-        middleware: [() => undefined],
+        config: { prefix: "/account", middleware: [() => undefined] },
       },
     };
 
     const { run, registered } = install(
       manifestOf(
         discovered.map((page) => ({
-          module: { default: () => null, route: "/settings" },
+          module: { default: () => null, config: { route: "/settings" } },
           sourceFile: toPosix(path.relative(appRoot, page.pageFile)),
           layouts: page.layouts.map((layoutFile) => {
             const sourceFile = toPosix(path.relative(appRoot, layoutFile));
@@ -710,12 +724,12 @@ describe("installPageRoutesFromManifest — the layout middleware chain", () => 
     // classification landed here, boot read every layout as rendering and
     // refused a page its own build had accepted.
     const guardedPage: PageManifestPageEntry = {
-      module: { default: () => null, route: "/settings" },
+      module: { default: () => null, config: { route: "/settings" } },
       sourceFile: "src/app/users/web/account/settings.page.tsx",
       layouts: [
-        { module: { prefix: "/users" }, sourceFile: "src/app/users/web/layout.tsx" },
+        { module: { config: { prefix: "/users" } }, sourceFile: "src/app/users/web/layout.tsx" },
         {
-          module: { prefix: "/account", middleware: [() => undefined] },
+          module: { config: { prefix: "/account", middleware: [() => undefined] } },
           sourceFile: "src/app/users/web/account/layout.tsx",
         },
       ],
@@ -845,7 +859,7 @@ describe("installPageRoutesFromManifest — the not-found page", () => {
 
   it("refuses a not-found page that declares a route export — it has no URL to promise", () => {
     const withRoute: PageManifestPageEntry = {
-      module: { default: () => null, route: "/404" },
+      module: { default: () => null, config: { route: "/404" } },
       sourceFile: "src/app/main/web/404.page.tsx",
       layouts: [],
     };
@@ -903,7 +917,7 @@ describe("installPageRoutesFromManifest — the not-found page", () => {
 describe("installPageRoutesFromManifest — route-local CSS", () => {
   it("gives a page with no layout only root's and its own stylesheets", () => {
     const contactPage: PageManifestPageEntry = {
-      module: { default: () => null, route: "/contact-us" },
+      module: { default: () => null, config: { route: "/contact-us" } },
       sourceFile: "src/app/main/web/contact-us.page.tsx",
       layouts: [],
     };
@@ -924,7 +938,7 @@ describe("installPageRoutesFromManifest — route-local CSS", () => {
 
   it("carries every matched layout's stylesheets, outer to inner, between root and the page", () => {
     const guardedPage: PageManifestPageEntry = {
-      module: { default: () => null, route: "/settings" },
+      module: { default: () => null, config: { route: "/settings" } },
       sourceFile: "src/app/users/web/account/settings.page.tsx",
       layouts: [
         { module: { default: () => null }, sourceFile: "src/app/users/web/layout.tsx" },

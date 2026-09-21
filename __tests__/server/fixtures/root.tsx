@@ -33,7 +33,7 @@ const publishUser = async ({ request }: { request: any; response: any }) => {
   if (name) shared.user = { name };
 };
 
-export const middleware = [base, publishUser];
+export const config = { middleware: [base, publishUser] };
 
 export const loader = (async () => ({
   appName: shared.appName,

@@ -1,12 +1,12 @@
 /**
- * Checks a page's `metadata` export for a key nothing reads — by parsing the
+ * Checks a page's `config.metadata` field for a key nothing reads — by parsing the
  * source, never by loading the module.
  *
  * THE POINT OF THIS ERROR IS THE UNANNOTATED CASE. A page that writes
- * `export const metadata: PageMetadata = { tittle: "x" }` is already refused by
+ * `export const config = { metadata: { tittle: "x" } } satisfies PageConfig` is already refused by
  * TypeScript, and if that were the whole story this module would not need to
  * exist. But the annotation is optional, nobody writes it, and
- * `export const metadata = { tittle: "x" }` is a perfectly well-typed program:
+ * `export const config = { metadata: { tittle: "x" } }` is a perfectly well-typed program:
  * the compiler infers `{ tittle: string }`, has nothing to check it against,
  * and says nothing. The page is then served with no `<title>` — not a wrong
  * title, a missing one — and no error is raised anywhere, at build or at
@@ -22,9 +22,9 @@
 import { parse } from "@babel/parser";
 import { METADATA_KEYS, OPEN_GRAPH_KEYS, TWITTER_KEYS } from "../metadata";
 
-/** One key a page's `metadata` declares that nothing reads, and where it is written. */
+/** One key a page's `config.metadata` declares that nothing reads, and where it is written. */
 export type UnknownMetadataKey = {
-  /** The object it was declared in: `metadata`, `metadata.openGraph`, `metadata.twitter`. */
+  /** The object it was declared in: `config.metadata` or one of its nested objects. */
   container: string;
   /** The key exactly as the page wrote it. */
   key: string;
@@ -35,13 +35,13 @@ export type UnknownMetadataKey = {
 };
 
 /**
- * Raised when a page's `metadata` export declares a key nothing reads.
+ * Raised when a page's `config.metadata` field declares a key nothing reads.
  *
  * THE POINT OF THIS ERROR IS THE UNANNOTATED CASE. A page that writes
- * `export const metadata: PageMetadata = { tittle: "x" }` is already refused by
+ * `export const config = { metadata: { tittle: "x" } } satisfies PageConfig` is already refused by
  * TypeScript, and if that were the whole story this class would not need to
  * exist. But the annotation is optional, nobody writes it, and
- * `export const metadata = { tittle: "x" }` is a perfectly well-typed program:
+ * `export const config = { metadata: { tittle: "x" } }` is a perfectly well-typed program:
  * the compiler infers `{ tittle: string }`, has nothing to check it against, and
  * says nothing. The page is then served with no `<title>` — not a wrong title, a
  * missing one — and no error is raised anywhere, at build or at runtime, ever.
@@ -69,15 +69,15 @@ export class UnknownMetadataKeyError extends Error {
       .join("\n  ");
 
     super(
-      `The \`metadata\` export of "${pageFile}" declares a key nothing reads:\n  ${findings}\n` +
+      `The \`config.metadata\` field of "${pageFile}" declares a key nothing reads:\n  ${findings}\n` +
         "Nothing writes an unknown key to `<head>`, so the tag it was meant to produce would " +
         "simply be absent from every response, with no error at build time or at runtime. The " +
         "build refuses it here instead.\n" +
         `  Known keys: ${METADATA_KEYS.join(", ")}.\n` +
         `  Inside \`openGraph\`: ${OPEN_GRAPH_KEYS.join(", ")}.\n` +
         `  Inside \`twitter\`: ${TWITTER_KEYS.join(", ")}.\n` +
-        "Annotating the export — `export const metadata: PageMetadata = { … }` — gets you the " +
-        "same list as autocomplete in the editor, before the build runs.",
+        "Writing `export const config = { … } satisfies PageConfig` gets you the same list as " +
+        "autocomplete in the editor, before the build runs.",
     );
     this.name = "UnknownMetadataKeyError";
   }
@@ -213,7 +213,7 @@ function collectUnknownKeys(
       continue;
     }
 
-    const nested = container === "metadata" ? NESTED_METADATA_KEYS[key] : undefined;
+    const nested = container === "config.metadata" ? NESTED_METADATA_KEYS[key] : undefined;
 
     if (nested === undefined || property.type !== "ObjectProperty") continue;
 
@@ -272,8 +272,16 @@ function collectReturnedObjects(node: unknown, into: PageObjectExpression[]): vo
   }
 }
 
-/** The metadata object literals one `metadata` export declares, if any can be seen at all. */
-function metadataObjectsOf(init: PageValueNode): PageObjectExpression[] {
+/** The metadata object literals one `config.metadata` field declares, if any can be seen at all. */
+function metadataObjectsOf(
+  init: PageValueNode | { type: "ObjectMethod"; body: unknown },
+): PageObjectExpression[] {
+  if (init.type === "ObjectMethod") {
+    const returned: PageObjectExpression[] = [];
+    collectReturnedObjects(init.body, returned);
+    return returned;
+  }
+
   const value = unwrapValue(init);
 
   if (value.type === "ObjectExpression") return [value];
@@ -292,17 +300,17 @@ function metadataObjectsOf(init: PageValueNode): PageObjectExpression[] {
     return returned;
   }
 
-  // `export const metadata = buildMetadata()`, or a bare identifier: the keys
+  // `config.metadata: buildMetadata()`, or a bare identifier: the keys
   // are not in this file. Silent by design — see `collectUnknownKeys`.
   return [];
 }
 
 /**
- * The unknown keys a page's `metadata` export declares, read by PARSING — the
+ * The unknown keys a page's `config.metadata` field declares, read by PARSING — the
  * same rule the rest of this module lives by, and the reason this check can run
  * before anything is built.
  *
- * Empty for a page with no `metadata` export, for one whose metadata is a value
+ * Empty for a page with no `config.metadata`, for one whose metadata is a value
  * this file cannot see into, and for a correct one.
  */
 export function readMetadataKeys(pageFile: string, source: string): UnknownMetadataKey[] {
@@ -316,7 +324,7 @@ export function readMetadataKeys(pageFile: string, source: string): UnknownMetad
     }).program;
   } catch (error) {
     throw new Error(
-      `Cannot read the \`metadata\` export of "${pageFile}": the file could not be parsed ` +
+      `Cannot read \`config.metadata\` in "${pageFile}": the file could not be parsed ` +
         `(${(error as Error).message}). Fix the syntax error and the build will continue.`,
     );
   }
@@ -331,11 +339,22 @@ export function readMetadataKeys(pageFile: string, source: string): UnknownMetad
     if (declaration?.type !== "VariableDeclaration") continue;
 
     for (const declarator of declaration.declarations) {
-      if (declarator.id.type !== "Identifier" || declarator.id.name !== "metadata") continue;
+      if (declarator.id.type !== "Identifier" || declarator.id.name !== "config") continue;
       if (declarator.init === null || declarator.init === undefined) continue;
+      const config = unwrapValue(declarator.init);
+      if (config.type !== "ObjectExpression") continue;
 
-      for (const object of metadataObjectsOf(declarator.init)) {
-        collectUnknownKeys(object, METADATA_KEYS, "metadata", unknownKeys);
+      for (const property of config.properties) {
+        if (property.type === "SpreadElement") continue;
+        const key = propertyKeyName(property as PageObjectProperty);
+        if (key !== "metadata") continue;
+        if (property.type !== "ObjectProperty" && property.type !== "ObjectMethod") continue;
+
+        for (const object of metadataObjectsOf(
+          property.type === "ObjectProperty" ? property.value : property,
+        )) {
+          collectUnknownKeys(object, METADATA_KEYS, "config.metadata", unknownKeys);
+        }
       }
     }
   }

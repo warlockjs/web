@@ -137,6 +137,10 @@ function fakeVite(moduleByFile: Record<string, unknown>): InstallPageRoutesOptio
     ssrLoadModule: vi.fn(async (id: string) => {
       const found = moduleByFile[id];
 
+      if (found === undefined && /[\\/]web[\\/]root\.tsx$/.test(id)) {
+        return { default: (): null => null };
+      }
+
       if (found === undefined) {
         throw new Error(`fakeVite: no module registered for "${id}"`);
       }
@@ -193,8 +197,8 @@ describe("installPageRoutes — source-file ownership", () => {
     const accountFile = path.join(appSrcRoot, "web", "account.page.tsx");
     const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
     const vite = fakeVite({
-      [accountFile]: { route: "/account" },
-      [homeFile]: { route: "/" },
+      [accountFile]: { default: (): null => null, config: { route: "/account" } },
+      [homeFile]: { default: (): null => null, config: { route: "/" } },
     });
 
     const { run, router } = install(appSrcRoot, vite);
@@ -226,7 +230,7 @@ describe("installPageRoutes — source-file ownership", () => {
     const appRoot = makeAppTree({ "src/web/home.page.tsx": "" });
     const appSrcRoot = path.join(appRoot, "src");
     const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
-    const vite = fakeVite({ [homeFile]: { route: "/" } });
+    const vite = fakeVite({ [homeFile]: { default: (): null => null, config: { route: "/" } } });
 
     const { run, router } = install(appSrcRoot, vite);
     await run();
@@ -247,8 +251,8 @@ describe("installPageRoutes — source-file ownership", () => {
     const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
     const notFoundFile = path.join(appSrcRoot, "web", "404.page.tsx");
     const vite = fakeVite({
-      [homeFile]: { route: "/" },
-      [notFoundFile]: { default: () => null },
+      [homeFile]: { default: (): null => null, config: { route: "/" } },
+      [notFoundFile]: { default: (): null => null },
     });
 
     const { run, router } = install(appSrcRoot, vite);
@@ -285,8 +289,8 @@ describe("installPageRoutes — the global root", () => {
     const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
 
     const vite = fakeVite({
-      [dashboardFile]: { route: "/dashboard" },
-      [homeFile]: { route: "/" },
+      [dashboardFile]: { default: (): null => null, config: { route: "/dashboard" } },
+      [homeFile]: { default: (): null => null, config: { route: "/" } },
     });
 
     const { run, registered } = install(appSrcRoot, vite);
@@ -307,8 +311,8 @@ describe("installPageRoutes — the global root", () => {
     const twoFile = path.join(appSrcRoot, "web", "two.page.tsx");
 
     const vite = fakeVite({
-      [oneFile]: { route: "/shared" },
-      [twoFile]: { route: "/shared" },
+      [oneFile]: { default: (): null => null, config: { route: "/shared" } },
+      [twoFile]: { default: (): null => null, config: { route: "/shared" } },
     });
 
     const { run } = install(appSrcRoot, vite);
@@ -334,8 +338,8 @@ describe("installPageRoutes — a page with no route export", () => {
     const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
 
     const vite = fakeVite({
-      [contactFile]: {},
-      [homeFile]: { route: "/" },
+      [contactFile]: { default: (): null => null },
+      [homeFile]: { default: (): null => null, config: { route: "/" } },
     });
 
     const { run, registered } = install(appSrcRoot, vite);
@@ -361,8 +365,8 @@ describe("installPageRoutes — a page with no route export", () => {
     const layoutFile = path.join(appSrcRoot, "web", "(shop)", "layout.tsx");
     const pageFile = path.join(appSrcRoot, "web", "(shop)", "products", "[id].page.tsx");
     const vite = fakeVite({
-      [layoutFile]: { prefix: "/catalog" },
-      [pageFile]: {},
+      [layoutFile]: { config: { prefix: "/catalog" } },
+      [pageFile]: { default: (): null => null },
     });
 
     const { run, registered } = install(appSrcRoot, vite);
@@ -400,15 +404,18 @@ describe("installPageRoutes — declared route path grammar", () => {
     const contactFile = path.join(appSrcRoot, "web", "contact-us.page.tsx");
 
     const vite = fakeVite({
-      [homeFile]: { route: { path: "/" } },
-      [usersFile]: { route: { path: "/users" } },
-      [userIdFile]: { route: { path: "/users/:id" } },
+      [homeFile]: { default: (): null => null, config: { route: { path: "/" } } },
+      [usersFile]: { default: (): null => null, config: { route: { path: "/users" } } },
+      [userIdFile]: { default: (): null => null, config: { route: { path: "/users/:id" } } },
       // Explicit `name` because the fixture's own filesystem path would
       // otherwise be used to derive one, and this test's only concern is the
       // DECLARED path grammar, not filesystem-segment grammar.
-      [catchAllFile]: { route: { path: "/prefix/*", name: "prefix.catch-all" } },
+      [catchAllFile]: {
+        default: (): null => null,
+        config: { route: { path: "/prefix/*", name: "prefix.catch-all" } },
+      },
       // A route export given as a bare string goes through the same seam.
-      [contactFile]: { route: "/contact-us" },
+      [contactFile]: { default: (): null => null, config: { route: "/contact-us" } },
     });
 
     const { run, registered } = install(appSrcRoot, vite);
@@ -423,7 +430,9 @@ describe("installPageRoutes — declared route path grammar", () => {
     const appRoot = makeAppTree({ "src/web/users/[id].page.tsx": "" });
     const appSrcRoot = path.join(appRoot, "src");
     const pageFile = path.join(appSrcRoot, "web", "users", "[id].page.tsx");
-    const vite = fakeVite({ [pageFile]: { route: { path: "/users/:id?" } } });
+    const vite = fakeVite({
+      [pageFile]: { default: (): null => null, config: { route: { path: "/users/:id?" } } },
+    });
 
     const { run } = install(appSrcRoot, vite);
 
@@ -448,9 +457,9 @@ describe("installPageRoutes — the shared enumerator is called exactly once", (
     const itemsFile = path.join(appSrcRoot, "web", "items.page.tsx");
 
     const vite = fakeVite({
-      [dashboardFile]: { route: "/dashboard" },
-      [homeFile]: { route: "/" },
-      [itemsFile]: { route: "/items" },
+      [dashboardFile]: { default: (): null => null, config: { route: "/dashboard" } },
+      [homeFile]: { default: (): null => null, config: { route: "/" } },
+      [itemsFile]: { default: (): null => null, config: { route: "/items" } },
     });
 
     const spy = vi.spyOn(discoverPagesModule, "discoverPageFiles");
@@ -487,8 +496,8 @@ describe("installPageRoutes — ancestor layout composition", () => {
     const pageFile = path.join(webRoot, "settings", "dashboard.page.tsx");
 
     const vite = fakeVite({
-      [pageFile]: { route: "/settings" },
-      [layoutFile]: { prefix: "/admin" },
+      [pageFile]: { default: (): null => null, config: { route: "/settings" } },
+      [layoutFile]: { config: { prefix: "/admin" } },
     });
 
     const { run, registered } = install(appSrcRoot, vite);
@@ -519,8 +528,8 @@ describe("installPageRoutes — no independent filesystem enumeration", () => {
     const homeWebRoot = path.join(appSrcRoot, "app", "main", "web");
 
     const vite = fakeVite({
-      [dashboardFile]: { route: "/dashboard" },
-      [homeFile]: { route: "/" },
+      [dashboardFile]: { default: (): null => null, config: { route: "/dashboard" } },
+      [homeFile]: { default: (): null => null, config: { route: "/" } },
     });
 
     vi.spyOn(discoverPagesModule, "discoverPageFiles").mockReturnValue([
@@ -567,7 +576,7 @@ function captureHandlerOptions(): PageRouteHandlerOptions[] {
 async function layoutMiddlewareOf(handlerOptions: PageRouteHandlerOptions) {
   if (handlerOptions.layoutFile === undefined) return [];
 
-  const layoutModule = (await handlerOptions.loadModule(handlerOptions.layoutFile)) as {
+  const layoutModule = (await handlerOptions.loadComposedLayout?.()) as {
     middleware?: readonly ((context: unknown) => unknown)[];
   };
 
@@ -597,14 +606,14 @@ describe("installPageRoutes — the layout middleware chain", () => {
     const outerFile = path.join(webRoot, "layout.tsx");
     const innerFile = path.join(webRoot, "account", "layout.tsx");
     const pageFile = path.join(webRoot, "account", "settings.page.tsx");
-    const outer = { default: () => null, middleware: [() => undefined] };
-    const inner = { middleware: [() => undefined] };
+    const outer = { default: (): null => null, config: { middleware: [() => undefined] } };
+    const inner = { config: { middleware: [() => undefined] } };
 
     const captured = captureHandlerOptions();
     const { run } = install(
       appSrcRoot,
       fakeVite({
-        [pageFile]: { route: "/settings" },
+        [pageFile]: { default: (): null => null, config: { route: "/settings" } },
         [outerFile]: outer,
         [innerFile]: inner,
       }),
@@ -612,7 +621,7 @@ describe("installPageRoutes — the layout middleware chain", () => {
     await run();
 
     const handler = captured[0];
-    const composed = await handler.loadModule(handler.layoutFile as string);
+    const composed = await handler.loadComposedLayout?.();
     const registrationLayouts = await handler.loadRegistrationLayouts?.();
 
     expect(registrationLayouts).toEqual([outer, inner]);
@@ -636,27 +645,31 @@ describe("installPageRoutes — the layout middleware chain", () => {
     const calls: string[] = [];
 
     const vite = fakeVite({
-      [pageFile]: { route: "/settings" },
+      [pageFile]: { default: (): null => null, config: { route: "/settings" } },
       // Renders, and resolves the identity the gate below has nothing to check
       // without.
       [usersLayoutFile]: {
-        default: () => null,
-        prefix: "/users",
-        middleware: [
-          () => {
-            calls.push("optionalAuth");
-          },
-        ],
+        default: (): null => null,
+        config: {
+          prefix: "/users",
+          middleware: [
+            () => {
+              calls.push("optionalAuth");
+            },
+          ],
+        },
       },
       // No default export: a pure authorization boundary, the shape a
       // `middleware`-only layout has.
       [accountLayoutFile]: {
-        prefix: "/account",
-        middleware: [
-          () => {
-            calls.push("gate");
-          },
-        ],
+        config: {
+          prefix: "/account",
+          middleware: [
+            () => {
+              calls.push("gate");
+            },
+          ],
+        },
       },
     });
 
@@ -694,9 +707,9 @@ describe("installPageRoutes — the layout middleware chain", () => {
     const { run } = install(
       appSrcRoot,
       fakeVite({
-        [pageFile]: { route: "/settings" },
+        [pageFile]: { default: (): null => null, config: { route: "/settings" } },
         [outerFile]: {
-          default: () => null,
+          default: (): null => null,
           loader: ({ response }: any) => response.redirect("/login"),
         },
         [innerFile]: { loader: innerLoader },
@@ -706,7 +719,7 @@ describe("installPageRoutes — the layout middleware chain", () => {
     await run();
 
     const handler = captured[0];
-    const composed = (await handler.loadModule(handler.layoutFile as string)) as {
+    const composed = (await handler.loadComposedLayout?.()) as {
       loader?: (context: unknown) => unknown;
     };
     const result = await composed.loader?.({
@@ -732,15 +745,17 @@ describe("installPageRoutes — the layout middleware chain", () => {
     const calls: string[] = [];
 
     const vite = fakeVite({
-      [pageFile]: { route: "/settings" },
+      [pageFile]: { default: (): null => null, config: { route: "/settings" } },
       [layoutFile]: {
-        default: () => null,
-        prefix: "/admin",
-        middleware: [
-          () => {
-            calls.push("only");
-          },
-        ],
+        default: (): null => null,
+        config: {
+          prefix: "/admin",
+          middleware: [
+            () => {
+              calls.push("only");
+            },
+          ],
+        },
       },
     });
 
@@ -760,7 +775,9 @@ describe("installPageRoutes — the layout middleware chain", () => {
     const appSrcRoot = path.join(appRoot, "src");
     const pageFile = path.join(appSrcRoot, "web", "contact-us.page.tsx");
 
-    const vite = fakeVite({ [pageFile]: { route: "/contact-us" } });
+    const vite = fakeVite({
+      [pageFile]: { default: (): null => null, config: { route: "/contact-us" } },
+    });
 
     const captured = captureHandlerOptions();
     const { run, registered } = install(appSrcRoot, vite);
@@ -787,16 +804,18 @@ describe("installPageRoutes — the layout middleware chain", () => {
     const calls: string[] = [];
 
     const vite = fakeVite({
-      [pageFile]: { route: "/orders" },
+      [pageFile]: { default: (): null => null, config: { route: "/orders" } },
       // Renders, and declares nothing else at all.
-      [shopLayoutFile]: { default: () => null, prefix: "/shop" },
+      [shopLayoutFile]: { default: (): null => null, config: { prefix: "/shop" } },
       [adminLayoutFile]: {
-        prefix: "/admin",
-        middleware: [
-          () => {
-            calls.push("gate");
-          },
-        ],
+        config: {
+          prefix: "/admin",
+          middleware: [
+            () => {
+              calls.push("gate");
+            },
+          ],
+        },
       },
     });
 
@@ -822,9 +841,9 @@ describe("installPageRoutes — the layout middleware chain", () => {
     const pageFile = path.join(webRoot, "admin", "orders.page.tsx");
 
     const vite = fakeVite({
-      [pageFile]: { route: "/orders" },
-      [path.join(webRoot, "layout.tsx")]: { default: () => null },
-      [path.join(webRoot, "admin", "layout.tsx")]: { default: () => null },
+      [pageFile]: { default: (): null => null, config: { route: "/orders" } },
+      [path.join(webRoot, "layout.tsx")]: { default: (): null => null },
+      [path.join(webRoot, "admin", "layout.tsx")]: { default: (): null => null },
     });
 
     const { run } = install(appSrcRoot, vite);
@@ -841,19 +860,23 @@ describe("installPageRoutes — dev's URL is discovery's URL", () => {
     // Real sources: discovery PARSES these, so the fixture has to be the thing
     // it reads, not a module double.
     const appRoot = makeAppTree({
-      "src/web/layout.tsx": 'export const prefix = "/users";\nexport default () => null;\n',
-      "src/web/account/layout.tsx": 'export const prefix = "/account";\n',
+      "src/web/layout.tsx":
+        'export const config = { prefix: "/users" };\nexport default () => null;\n',
+      "src/web/account/layout.tsx": 'export const config = { prefix: "/account" };\n',
       "src/web/account/settings.page.tsx":
-        'export const route = "/settings";\nexport default () => null;\n',
+        'export const config = { route: "/settings" };\nexport default () => null;\n',
     });
     const appSrcRoot = path.join(appRoot, "src");
     const webRoot = path.join(appSrcRoot, "web");
     const pageFile = path.join(webRoot, "account", "settings.page.tsx");
 
     const vite = fakeVite({
-      [pageFile]: { route: "/settings" },
-      [path.join(webRoot, "layout.tsx")]: { prefix: "/users", default: () => null },
-      [path.join(webRoot, "account", "layout.tsx")]: { prefix: "/account" },
+      [pageFile]: { default: (): null => null, config: { route: "/settings" } },
+      [path.join(webRoot, "layout.tsx")]: {
+        default: (): null => null,
+        config: { prefix: "/users" },
+      },
+      [path.join(webRoot, "account", "layout.tsx")]: { config: { prefix: "/account" } },
     });
 
     const { run } = install(appSrcRoot, vite);
@@ -890,8 +913,9 @@ describe("installPageRoutes — a page module that fails to load", () => {
 
     const vite = {
       ssrLoadModule: vi.fn(async (id: string) => {
+        if (/[\\/]web[\\/]root\.tsx$/.test(id)) return { default: (): null => null };
         if (id === dashboardFile) throw cause;
-        if (id === homeFile) return { route: "/" };
+        if (id === homeFile) return { default: (): null => null, config: { route: "/" } };
 
         throw new Error(`fakeVite: no module registered for "${id}"`);
       }),
@@ -935,8 +959,8 @@ describe("installPageRoutes — a page module that fails to load", () => {
     const dashboardFile = path.join(appSrcRoot, "web", "dashboard.page.tsx");
 
     const vite = fakeVite({
-      [homeFile]: { route: "/" },
-      [dashboardFile]: { route: "/dashboard" },
+      [homeFile]: { default: (): null => null, config: { route: "/" } },
+      [dashboardFile]: { default: (): null => null, config: { route: "/dashboard" } },
     });
 
     const { run, registered } = install(appSrcRoot, vite);
@@ -958,8 +982,9 @@ describe("installPageRoutes — a page module that fails to load", () => {
 
     const vite = {
       ssrLoadModule: vi.fn(async (id: string) => {
+        if (/[\\/]web[\\/]root\.tsx$/.test(id)) return { default: (): null => null };
         if (id === undecidableFile) throw cause;
-        if (id === homeFile) return { route: "/" };
+        if (id === homeFile) return { default: (): null => null, config: { route: "/" } };
 
         throw new Error(`fakeVite: no module registered for "${id}"`);
       }),
@@ -999,9 +1024,9 @@ describe("installPageRoutes — the not-found page", () => {
     const notFoundFile = path.join(appSrcRoot, "web", "404.page.tsx");
 
     const vite = fakeVite({
-      [homeFile]: { route: "/" },
+      [homeFile]: { default: (): null => null, config: { route: "/" } },
       // No `route` export — the whole point.
-      [notFoundFile]: { default: () => null },
+      [notFoundFile]: { default: (): null => null },
     });
 
     const { run, registered, notFound } = install(appSrcRoot, vite);
@@ -1020,7 +1045,7 @@ describe("installPageRoutes — the not-found page", () => {
     const appSrcRoot = path.join(appRoot, "src");
     const notFoundFile = path.join(appSrcRoot, "web", "404.page.tsx");
 
-    const vite = fakeVite({ [notFoundFile]: { default: () => null } });
+    const vite = fakeVite({ [notFoundFile]: { default: (): null => null } });
 
     const { run, registered, notFound } = install(appSrcRoot, vite);
 
@@ -1044,9 +1069,9 @@ describe("installPageRoutes — the not-found page", () => {
     const notFoundFile = path.join(appSrcRoot, "web", "404.page.tsx");
 
     const vite = fakeVite({
-      [homeFile]: { route: "/" },
-      [notFoundFile]: { default: () => null },
-      [path.join(appSrcRoot, "web", "layout.tsx")]: { default: () => null },
+      [homeFile]: { default: (): null => null, config: { route: "/" } },
+      [notFoundFile]: { default: (): null => null },
+      [path.join(appSrcRoot, "web", "layout.tsx")]: { default: (): null => null },
     });
 
     const built: PageRouteHandlerOptions[] = [];
@@ -1077,7 +1102,12 @@ describe("installPageRoutes — the not-found page", () => {
     const appRoot = makeAppTree({ "src/web/home.page.tsx": "" });
     const appSrcRoot = path.join(appRoot, "src");
 
-    const vite = fakeVite({ [path.join(appSrcRoot, "web", "home.page.tsx")]: { route: "/" } });
+    const vite = fakeVite({
+      [path.join(appSrcRoot, "web", "home.page.tsx")]: {
+        default: (): null => null,
+        config: { route: "/" },
+      },
+    });
 
     const { run, notFound } = install(appSrcRoot, vite);
     await run();
@@ -1089,7 +1119,12 @@ describe("installPageRoutes — the not-found page", () => {
     const appRoot = makeAppTree({ "src/web/home.page.tsx": "" });
     const appSrcRoot = path.join(appRoot, "src");
 
-    const vite = fakeVite({ [path.join(appSrcRoot, "web", "home.page.tsx")]: { route: "/" } });
+    const vite = fakeVite({
+      [path.join(appSrcRoot, "web", "home.page.tsx")]: {
+        default: (): null => null,
+        config: { route: "/" },
+      },
+    });
 
     const { run, notFound } = install(appSrcRoot, vite);
     await run();
@@ -1145,7 +1180,9 @@ describe("installPageRoutes — the not-found page", () => {
     const appSrcRoot = path.join(appRoot, "src");
     const notFoundFile = path.join(appSrcRoot, "web", "404.page.tsx");
 
-    const vite = fakeVite({ [notFoundFile]: { default: () => null, route: "/404" } });
+    const vite = fakeVite({
+      [notFoundFile]: { default: (): null => null, config: { route: "/404" } },
+    });
 
     const { run, notFound } = install(appSrcRoot, vite);
 
@@ -1177,7 +1214,10 @@ describe("installPageRoutes — route-local CSS", () => {
     const pageFile = path.join(appSrcRoot, "web", "contact-us.page.tsx");
 
     const captured = captureHandlerOptions();
-    const { run } = install(appSrcRoot, fakeVite({ [pageFile]: { route: "/contact-us" } }));
+    const { run } = install(
+      appSrcRoot,
+      fakeVite({ [pageFile]: { default: (): null => null, config: { route: "/contact-us" } } }),
+    );
     await run();
 
     expect(captured[0]?.stylesheetUrls).toEqual([
@@ -1206,8 +1246,8 @@ describe("installPageRoutes — route-local CSS", () => {
     const { run } = install(
       appSrcRoot,
       fakeVite({
-        [pageFile]: { route: "/settings" },
-        [path.join(webRoot, "layout.tsx")]: { default: () => null },
+        [pageFile]: { default: (): null => null, config: { route: "/settings" } },
+        [path.join(webRoot, "layout.tsx")]: { default: (): null => null },
         [path.join(webRoot, "account", "layout.tsx")]: {},
       }),
     );
@@ -1232,7 +1272,10 @@ describe("installPageRoutes — route-local CSS", () => {
     const pageFile = path.join(appSrcRoot, "web", "home.page.tsx");
 
     const captured = captureHandlerOptions();
-    const { run } = install(appSrcRoot, fakeVite({ [pageFile]: { route: "/" } }));
+    const { run } = install(
+      appSrcRoot,
+      fakeVite({ [pageFile]: { default: (): null => null, config: { route: "/" } } }),
+    );
     await run();
 
     expect(captured[0]?.stylesheetUrls).toEqual([
@@ -1266,9 +1309,9 @@ describe("installPageRoutes — route-local CSS", () => {
     const { run } = install(
       appSrcRoot,
       fakeVite({
-        [homeFile]: { route: "/" },
-        [notFoundFile]: { default: () => null },
-        [path.join(appSrcRoot, "web", "layout.tsx")]: { default: () => null },
+        [homeFile]: { default: (): null => null, config: { route: "/" } },
+        [notFoundFile]: { default: (): null => null },
+        [path.join(appSrcRoot, "web", "layout.tsx")]: { default: (): null => null },
       }),
     );
     await run();
@@ -1297,7 +1340,10 @@ describe("installPageRoutes — the ignored src/app/**/web/** diagnostic fires a
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     try {
-      const { run } = install(appSrcRoot, fakeVite({ [homeFile]: { route: "/" } }));
+      const { run } = install(
+        appSrcRoot,
+        fakeVite({ [homeFile]: { default: (): null => null, config: { route: "/" } } }),
+      );
       await run();
 
       expect(warn).toHaveBeenCalledTimes(1);
@@ -1317,7 +1363,10 @@ describe("installPageRoutes — the ignored src/app/**/web/** diagnostic fires a
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     try {
-      const { run } = install(appSrcRoot, fakeVite({ [homeFile]: { route: "/" } }));
+      const { run } = install(
+        appSrcRoot,
+        fakeVite({ [homeFile]: { default: (): null => null, config: { route: "/" } } }),
+      );
       await run();
 
       expect(warn).not.toHaveBeenCalled();

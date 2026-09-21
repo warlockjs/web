@@ -77,11 +77,19 @@ function fakeVite(moduleByFile: Record<string, unknown>): InstallPageRoutesOptio
     ssrLoadModule: vi.fn(async (id: string) => {
       const found = moduleByFile[id];
 
+      if (found === undefined && /[\\/]web[\\/]root\.tsx$/.test(id)) {
+        return { default: () => null };
+      }
+
       if (found === undefined) throw new Error(`fakeVite: no module registered for "${id}"`);
 
       return found;
     }),
   } as unknown as InstallPageRoutesOptions["vite"];
+}
+
+function pageModule(config: Record<string, unknown> = {}) {
+  return { config, default: () => null };
 }
 
 function install(appSrcRoot: string, vite: InstallPageRoutesOptions["vite"]) {
@@ -158,7 +166,7 @@ describe("installPageRoutes — locale routing, prefix-except-default", () => {
     const appRoot = makeAppTree({ "src/web/posts.page.tsx": "" });
     const appSrcRoot = path.join(appRoot, "src");
     const postsFile = path.join(appSrcRoot, "web", "posts.page.tsx");
-    const vite = fakeVite({ [postsFile]: { route: "/posts" } });
+    const vite = fakeVite({ [postsFile]: pageModule({ route: "/posts" }) });
 
     const { run, registered } = install(appSrcRoot, vite);
     await run();
@@ -221,7 +229,7 @@ describe("installPageRoutes — locale routing, prefix-except-default", () => {
     const appRoot = makeAppTree({ "src/web/posts.page.tsx": "" });
     const appSrcRoot = path.join(appRoot, "src");
     const postsFile = path.join(appSrcRoot, "web", "posts.page.tsx");
-    const vite = fakeVite({ [postsFile]: { route: "/posts/:slug" } });
+    const vite = fakeVite({ [postsFile]: pageModule({ route: "/posts/:slug" }) });
 
     const { run, registered } = install(appSrcRoot, vite);
     await run();
@@ -246,7 +254,7 @@ describe("installPageRoutes — locale routing, prefix-except-default", () => {
     const appRoot = makeAppTree({ "src/web/home.page.tsx": "" });
     const appSrcRoot = path.join(appRoot, "src");
     const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
-    const vite = fakeVite({ [homeFile]: { route: "/" } });
+    const vite = fakeVite({ [homeFile]: pageModule({ route: "/" }) });
 
     const { run, registered } = install(appSrcRoot, vite);
     await run();
@@ -271,7 +279,7 @@ describe("installPageRoutes — locale routing, prefix-except-default", () => {
     const appRoot = makeAppTree({ "src/web/docs.page.tsx": "" });
     const appSrcRoot = path.join(appRoot, "src");
     const docsFile = path.join(appSrcRoot, "web", "docs.page.tsx");
-    const vite = fakeVite({ [docsFile]: { route: "/docs/*" } });
+    const vite = fakeVite({ [docsFile]: pageModule({ route: "/docs/*" }) });
 
     const { run, registered } = install(appSrcRoot, vite);
     await run();
@@ -296,7 +304,7 @@ describe("installPageRoutes — locale routing, prefix-except-default", () => {
     const appRoot = makeAppTree({ "src/web/docs.page.tsx": "" });
     const appSrcRoot = path.join(appRoot, "src");
     const docsFile = path.join(appSrcRoot, "web", "docs.page.tsx");
-    const vite = fakeVite({ [docsFile]: { route: "/docs/*" } });
+    const vite = fakeVite({ [docsFile]: pageModule({ route: "/docs/*" }) });
 
     const { run, registered } = install(appSrcRoot, vite);
     await run();
@@ -336,7 +344,7 @@ describe("installPageRoutes — locale routing, prefix", () => {
     const appRoot = makeAppTree({ "src/web/posts.page.tsx": "" });
     const appSrcRoot = path.join(appRoot, "src");
     const postsFile = path.join(appSrcRoot, "web", "posts.page.tsx");
-    const vite = fakeVite({ [postsFile]: { route: "/posts" } });
+    const vite = fakeVite({ [postsFile]: pageModule({ route: "/posts" }) });
 
     const { run, registered } = install(appSrcRoot, vite);
     await run();
@@ -361,7 +369,7 @@ describe("installPageRoutes — locale routing, prefix", () => {
     const appRoot = makeAppTree({ "src/web/posts/slug.page.tsx": "" });
     const appSrcRoot = path.join(appRoot, "src");
     const postFile = path.join(appSrcRoot, "web", "posts", "slug.page.tsx");
-    const vite = fakeVite({ [postFile]: { route: "/posts/:slug" } });
+    const vite = fakeVite({ [postFile]: pageModule({ route: "/posts/:slug" }) });
 
     const { run, registered } = install(appSrcRoot, vite);
     await run();
@@ -386,7 +394,7 @@ describe("installPageRoutes — locale routing, none (the innocent case)", () =>
     const appRoot = makeAppTree({ "src/web/posts.page.tsx": "" });
     const appSrcRoot = path.join(appRoot, "src");
     const postsFile = path.join(appSrcRoot, "web", "posts.page.tsx");
-    const vite = fakeVite({ [postsFile]: { route: "/posts" } });
+    const vite = fakeVite({ [postsFile]: pageModule({ route: "/posts" }) });
 
     const { run, registered } = install(appSrcRoot, vite);
     await run();
@@ -403,7 +411,7 @@ describe("installPageRoutes — locale routing, [locale] folder (card C)", () =>
     const appRoot = makeAppTree({ "src/web/[locale]/posts.page.tsx": "" });
     const appSrcRoot = path.join(appRoot, "src");
     const postsFile = path.join(appSrcRoot, "web", "[locale]", "posts.page.tsx");
-    const vite = fakeVite({ [postsFile]: {} });
+    const vite = fakeVite({ [postsFile]: pageModule() });
     const handlersByPageFile = stubTrackingPageRouteHandler();
 
     const { run, registered } = install(appSrcRoot, vite);
@@ -432,7 +440,7 @@ describe("installPageRoutes — locale routing, [locale] folder (card C)", () =>
     const appSrcRoot = path.join(appRoot, "src");
     const postsFile = path.join(appSrcRoot, "web", "[locale]", "posts.page.tsx");
     const notFoundFile = path.join(appSrcRoot, "web", "404.page.tsx");
-    const vite = fakeVite({ [postsFile]: {}, [notFoundFile]: {} });
+    const vite = fakeVite({ [postsFile]: pageModule(), [notFoundFile]: pageModule() });
     const handlersByPageFile = stubTrackingPageRouteHandler();
 
     const { run, registered } = install(appSrcRoot, vite);
@@ -460,7 +468,7 @@ describe("installPageRoutes — locale routing, [locale] folder (card C)", () =>
     const appRoot = makeAppTree({ "src/web/posts/[locale].page.tsx": "" });
     const appSrcRoot = path.join(appRoot, "src");
     const pageFile = path.join(appSrcRoot, "web", "posts", "[locale].page.tsx");
-    const vite = fakeVite({ [pageFile]: {} });
+    const vite = fakeVite({ [pageFile]: pageModule() });
     const handlersByPageFile = stubTrackingPageRouteHandler();
 
     const { run, registered } = install(appSrcRoot, vite);
@@ -490,7 +498,7 @@ describe("installPageRoutes — locale routing, [locale] folder (card C)", () =>
     const appRoot = makeAppTree({ "src/web/[locale]/posts.page.tsx": "" });
     const appSrcRoot = path.join(appRoot, "src");
     const postsFile = path.join(appSrcRoot, "web", "[locale]", "posts.page.tsx");
-    const vite = fakeVite({ [postsFile]: {} });
+    const vite = fakeVite({ [postsFile]: pageModule() });
 
     const { run } = install(appSrcRoot, vite);
 

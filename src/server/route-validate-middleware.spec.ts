@@ -25,12 +25,8 @@ import {
   executePageRequest,
   type PageRouteEntry,
 } from "./execute-page-request";
-import {
-  installPageRoutes,
-  RouteMiddlewareRemovedError,
-  RouteValidationRemovedError,
-  type InstallPageRoutesOptions,
-} from "./install-page-routes";
+import { installPageRoutes, type InstallPageRoutesOptions } from "./install-page-routes";
+import { InvalidPageModuleConfigError } from "./normalize-page-module";
 import { renderPageRequest } from "./render-page";
 import type { ErrorPageModule } from "./error-page";
 
@@ -43,7 +39,7 @@ beforeEach(() => {
   });
 });
 
-/** A fake request with the surface `route.validate` and its callers read. */
+/** A fake request with the validation surface its callers read. */
 function createHttp(params: Record<string, string>, query: Record<string, string>) {
   let validatedData: Record<string, unknown> = {};
   const response = new Response();
@@ -109,45 +105,6 @@ describe("page middleware — observed ordering", () => {
   });
 });
 
-describe("route.middleware — withdrawn, fails loudly instead of being dropped", () => {
-  it.skip("the runtime diagnostic moved to installation", async () => {
-    const entry: PageRouteEntry = {
-      path: "/orders/:id",
-      name: "orders.details",
-      triple: {
-        app: {},
-        layout: {},
-        page: {
-          route: {
-            path: "/orders/:id",
-            // @ts-expect-error — `route.middleware` was withdrawn; this is the shape a
-            // pre-5.6.0-migration page module still exports.
-            middleware: [() => undefined],
-          },
-        },
-      },
-    };
-
-    const { request, response } = createHttp({ id: "1" }, {});
-
-    await expect(
-      executePageRequest({
-        url: "/orders/1",
-        routes: [entry],
-        createHttp: () => ({ request, response }),
-      }),
-    ).rejects.toThrow(RouteMiddlewareRemovedError);
-
-    await expect(
-      executePageRequest({
-        url: "/orders/1",
-        routes: [entry],
-        createHttp: () => ({ request, response }),
-      }),
-    ).rejects.toThrow(/orders\.details.*\/orders\/:id.*top-level `middleware` export/s);
-  });
-});
-
 // ---------------------------------------------------------------------------
 // Red control — three observations against ONE page: valid input reaches the
 // loader typed (innocent), invalid input produces the 400 error page carrying
@@ -155,8 +112,8 @@ describe("route.middleware — withdrawn, fails loudly instead of being dropped"
 // input flows through to the page unchecked (the defect returning).
 // ---------------------------------------------------------------------------
 
-describe("route.middleware boot diagnostic", () => {
-  it("names the page source file and replacement export before any request", async () => {
+describe("config.route middleware diagnostic", () => {
+  it("refuses an unknown nested middleware key before any request", async () => {
     const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), "warlock-route-middleware-"));
     const appSrcRoot = path.join(appRoot, "src");
     const pageFile = path.join(appSrcRoot, "web", "orders.page.tsx");
@@ -164,9 +121,14 @@ describe("route.middleware boot diagnostic", () => {
     fs.writeFileSync(pageFile, "", "utf-8");
 
     const vite = {
-      ssrLoadModule: vi.fn(async () => ({
-        route: { path: "/orders", middleware: [() => undefined] },
-      })),
+      ssrLoadModule: vi.fn(async (id: string) =>
+        /[\\/]web[\\/]root\.tsx$/.test(id)
+          ? { default: (): null => null }
+          : {
+              config: { route: { path: "/orders", middleware: [() => undefined] } },
+              default: (): null => null,
+            },
+      ),
     } as unknown as InstallPageRoutesOptions["vite"];
     const options: InstallPageRoutesOptions = {
       router: {} as InstallPageRoutesOptions["router"],
@@ -176,10 +138,10 @@ describe("route.middleware boot diagnostic", () => {
     };
 
     try {
-      await expect(installPageRoutes(options)).rejects.toThrow(RouteMiddlewareRemovedError);
+      await expect(installPageRoutes(options)).rejects.toBeInstanceOf(InvalidPageModuleConfigError);
+      await expect(installPageRoutes(options)).rejects.toThrow(pageFile);
       await expect(installPageRoutes(options)).rejects.toThrow(
-        `"${pageFile}" declares \`route.middleware\`, which no longer runs — it was withdrawn after 5.6.0. ` +
-          "Move it to the page's own top-level `middleware` export instead: `export const middleware = [...]`.",
+        "config.route has unknown key(s): middleware.",
       );
     } finally {
       fs.rmSync(appRoot, { recursive: true, force: true });
@@ -188,8 +150,7 @@ describe("route.middleware boot diagnostic", () => {
 });
 
 const schema = v.object({
-  params: v.object({ id: v.string().minLength(2) }),
-  query: v.object({}).optional(),
+  id: v.string().minLength(2),
 });
 
 function pageEntry(withValidation: boolean, loaderSpy: (id: unknown) => void): PageRouteEntry {
@@ -202,13 +163,14 @@ function pageEntry(withValidation: boolean, loaderSpy: (id: unknown) => void): P
       page: {
         route: {
           path: "/products/:id",
-          ...(withValidation ? { validate: schema } : {}),
         },
+        ...(withValidation ? { validation: { schema } } : {}),
         loader: ({ request }) => {
-          loaderSpy(
-            (request.validated() as { params?: { id?: unknown } }).params?.id ?? request.params?.id,
-          );
-          return { id: (request.validated() as { params?: { id?: unknown } }).params?.id };
+          const id = withValidation
+            ? (request.validated() as { id?: unknown }).id
+            : request.params?.id;
+          loaderSpy(id);
+          return { id };
         },
         default: () => createElement("main", {}, "ok"),
       },
@@ -223,8 +185,8 @@ function fakeErrorPageModule(): ErrorPageModule {
   };
 }
 
-describe("route.validate — red control", () => {
-  it("INNOCENT: valid input reaches the loader typed, under request.validated().params", async () => {
+describe("page.validation internal pipeline control", () => {
+  it("valid input reaches the loader through request.validated()", async () => {
     const loaderSpy = vi.fn();
     const { request, response } = createHttp({ id: "42" }, {});
 
@@ -241,7 +203,7 @@ describe("route.validate — red control", () => {
     expect(rendered.html).toContain("ok");
   });
 
-  it("GUILTY: route.validate is refused at installation with its source file and replacement", async () => {
+  it("refuses an unknown nested validate key in config.route", async () => {
     const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), "warlock-route-validation-"));
     const appSrcRoot = path.join(appRoot, "src");
     const pageFile = path.join(appSrcRoot, "web", "products.page.tsx");
@@ -249,9 +211,14 @@ describe("route.validate — red control", () => {
     fs.writeFileSync(pageFile, "", "utf-8");
 
     const vite = {
-      ssrLoadModule: vi.fn(async () => ({
-        route: { path: "/products/:id", validate: schema },
-      })),
+      ssrLoadModule: vi.fn(async (id: string) =>
+        /[\\/]web[\\/]root\.tsx$/.test(id)
+          ? { default: (): null => null }
+          : {
+              config: { route: { path: "/products/:id", validate: schema } },
+              default: (): null => null,
+            },
+      ),
     } as unknown as InstallPageRoutesOptions["vite"];
     const options: InstallPageRoutesOptions = {
       router: {} as InstallPageRoutesOptions["router"],
@@ -261,17 +228,17 @@ describe("route.validate — red control", () => {
     };
 
     try {
-      await expect(installPageRoutes(options)).rejects.toThrow(RouteValidationRemovedError);
+      await expect(installPageRoutes(options)).rejects.toBeInstanceOf(InvalidPageModuleConfigError);
+      await expect(installPageRoutes(options)).rejects.toThrow(pageFile);
       await expect(installPageRoutes(options)).rejects.toThrow(
-        `"${pageFile}" declares \`route.validate\`, which no longer runs \u2014 it was withdrawn after 5.6.0. ` +
-          "Move it to the page's top-level `validation` export instead: `export const validation = { params: ..., query: ... }`.",
+        "config.route has unknown key(s): validate.",
       );
     } finally {
       fs.rmSync(appRoot, { recursive: true, force: true });
     }
   });
 
-  it("THE DEFECT RETURNING: with route.validate removed, bad input reaches the page unchecked", async () => {
+  it("without page.validation, bad input reaches the page unchecked", async () => {
     const loaderSpy = vi.fn();
     const { request, response } = createHttp({ id: "x" }, {});
 
