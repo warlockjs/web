@@ -2,7 +2,7 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
-## 5.17.0 - Unreleased
+## 5.17.0 - 2026-09-21
 
 ### Upgrading
 
