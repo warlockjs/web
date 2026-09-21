@@ -65,6 +65,8 @@ describe("page cache store — reachable across module graphs (dev's tsx graph +
   it("evicts, through one module-graph instance, an entry stored by another", async () => {
     // Re-transforming and re-evaluating this file's local module tree twice
     // per test (once per simulated graph) is slower than a normal unit test.
+    // A serialized run measured 59.31s against the former 60s limit. Keep both
+    // fresh graphs (the regression's premise) and scope headroom to this case.
     const graphA =
       await importAsFreshGraph<typeof import("./page-cache-store")>("./page-cache-store");
     const graphB =
@@ -84,5 +86,5 @@ describe("page cache store — reachable across module graphs (dev's tsx graph +
     // The renderer's own graph must now see a miss — a HIT here is exactly
     // the bug: "the post page stays a page-cache HIT afterwards" in dev.
     expect(await graphA.getPageCacheEntry(key)).toBeUndefined();
-  }, 60_000);
+  }, 120_000);
 });
