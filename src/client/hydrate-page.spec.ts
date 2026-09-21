@@ -1,7 +1,8 @@
-import { isValidElement, type ReactElement, type ReactNode } from "react";
+import { isValidElement, StrictMode, type ReactElement, type ReactNode } from "react";
 import { stringify } from "devalue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hydrateRoot } from "react-dom/client";
+import { DocumentContext } from "../components/document-context";
 import { HYDRATION_ROOT_ID, PAYLOAD_SCRIPT_ID } from "../components/document-context";
 import { hydratePage, type BuildHydratedTree } from "./hydrate-page";
 import { installStreamClosedRejection, prepareDeferredPageData } from "./runtime/defer-registry";
@@ -120,6 +121,14 @@ function mountedTree(): ReactNode {
   return (provider as ReactElement<{ children: ReactNode }>).props.children;
 }
 
+function mountedRootTree(): ReactNode {
+  const call = vi.mocked(hydrateRoot).mock.calls[0];
+
+  if (call === undefined) throw new Error("hydrateRoot was never called.");
+
+  return call[1];
+}
+
 beforeEach(() => {
   vi.mocked(hydrateRoot).mockClear();
   vi.mocked(prepareDeferredPageData).mockClear();
@@ -149,6 +158,29 @@ describe("hydratePage", () => {
     expect(hydrateRoot).toHaveBeenCalledTimes(1);
     expect(vi.mocked(hydrateRoot).mock.calls[0]?.[0]).toBe(root);
     expect(mountedTree()).toBe("tree");
+  });
+
+  it("wraps the complete hydration tree including DocumentContext in strict mode", () => {
+    installFakeDocument();
+
+    hydratePage(() => "tree", { strictMode: true });
+
+    const root = mountedRootTree();
+    expect(isValidElement(root)).toBe(true);
+    expect((root as ReactElement).type).toBe(StrictMode);
+    expect((root as ReactElement<{ children: ReactNode }>).props.children).toEqual(
+      expect.objectContaining({ type: DocumentContext.Provider }),
+    );
+  });
+
+  it("keeps the original DocumentContext root when strict mode is false or absent", () => {
+    installFakeDocument();
+    hydratePage(() => "tree");
+    expect(mountedRootTree()).toEqual(expect.objectContaining({ type: DocumentContext.Provider }));
+
+    vi.mocked(hydrateRoot).mockClear();
+    hydratePage(() => "tree", { strictMode: false });
+    expect(mountedRootTree()).toEqual(expect.objectContaining({ type: DocumentContext.Provider }));
   });
 
   it("awaits a buildTree that returns a Promise, then mounts it", async () => {

@@ -12,5 +12,5 @@ export const MODULE_EXPORT_NAMES = [
 export const MODULE_CONFIG_KEYS = {
   page: ["route", "cache", "middleware", "validation", "metadata", "sitemap"],
   layout: ["prefix", "middleware", "metadata", "sitemap"],
-  root: ["middleware"],
+  root: ["middleware", "strictMode"],
 } as const satisfies Record<PageModuleKind, readonly string[]>;

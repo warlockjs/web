@@ -44,3 +44,11 @@ type WarlockAssertLocaleRoutingExportName<Name extends WarlockClientLocaleRoutin
 
 type _WarlockVirtualLocaleRoutingExportNameCheck =
   WarlockAssertLocaleRoutingExportName<"localeRouting">;
+
+// The emitted root-config projection is declared ambiently as `strictMode`.
+type WarlockClientStrictModeExportName =
+  typeof import("../vite/page-registry-plugin").CLIENT_STRICT_MODE_EXPORT_NAME;
+
+type WarlockAssertStrictModeExportName<Name extends WarlockClientStrictModeExportName> = Name;
+
+type _WarlockVirtualStrictModeExportNameCheck = WarlockAssertStrictModeExportName<"strictMode">;

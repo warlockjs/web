@@ -11,7 +11,7 @@
  * therefore testable without a bundler.
  */
 import { createElement } from "react";
-import { localeRouting, pages } from "virtual:warlock/pages";
+import { localeRouting, pages, strictMode } from "virtual:warlock/pages";
 import { buildHydratedTree } from "../client/build-hydrated-tree";
 import { hydratePage } from "../client/hydrate-page";
 import { NavigationRoot } from "../client/navigation/navigation-root";
@@ -64,13 +64,16 @@ publishDocumentLocaleRouting(localeRouting);
   `conversations/2026-08-24-production-ssr-session.md`; it lands the moment that
   choice is made.
 */
-hydratePage(async (payload) => {
-  const tree = await buildHydratedTree(pages, payload);
+hydratePage(
+  async (payload) => {
+    const tree = await buildHydratedTree(pages, payload);
 
-  return createElement(NavigationRoot, {
-    pages,
-    initialPayload: payload,
-    initialTree: tree,
-    buildTree: buildHydratedTree,
-  });
-});
+    return createElement(NavigationRoot, {
+      pages,
+      initialPayload: payload,
+      initialTree: tree,
+      buildTree: buildHydratedTree,
+    });
+  },
+  { strictMode },
+);

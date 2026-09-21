@@ -125,8 +125,9 @@ A layout is projected for the browser the same way a page is: `config` and `load
 `sitemap` defaults (or `false`). It does not accept page routes, cache policy,
 validation, arbitrary metadata, or a sitemap supplier function. Descendant
 pages inherit the nearest explicit robots and sitemap policy; an unrelated
-page metadata field does not erase inherited robots. `RootConfig` has only
-middleware, so root metadata and sitemap defaults are not inherited.
+page metadata field does not erase inherited robots. `RootConfig` supports
+static `middleware` and `strictMode`; root metadata and sitemap defaults are
+not inherited.
 
 ## Gotchas
 

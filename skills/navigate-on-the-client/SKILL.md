@@ -72,7 +72,11 @@ const productUrl = href(
 );
 ```
 
-Unknown route names throw at runtime with the known names. Call `href()` after the route table has been published—during a page render, event, or request—not from an eager module initializer before boot.
+Unknown route names throw at runtime with the known names. `href()` accepts a
+string name, so an unknown name is not a TypeScript error. Generated route-name
+and parameter types are not available in 5.17. Call `href()` after the route
+table has been published—during a page render, event, or request—not from an
+eager module initializer before boot.
 
 ## Programmatic navigation
 

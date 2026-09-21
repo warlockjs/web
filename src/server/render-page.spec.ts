@@ -2,9 +2,10 @@ import config from "@mongez/config";
 import { Response, setEnvironment, type Request } from "@warlock.js/core";
 import { v } from "@warlock.js/seal";
 import { parse } from "devalue";
-import { createElement, type ReactNode } from "react";
+import { createElement, isValidElement, StrictMode, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PAYLOAD_SCRIPT_ID } from "../components/document-context";
+import DefaultApp from "../components/default-app";
 import { useLocale, useTrans } from "../localization";
 import type { RouteTranslationsResolver } from "./route-translations";
 import { buildHydrationPayload } from "./build-hydration-payload";
@@ -54,6 +55,50 @@ function createHttp(locale = "en") {
 
   return { request, response };
 }
+
+describe("root strictMode SSR composition", () => {
+  it.each([true, false, undefined])(
+    "wraps the page/layout subtree inside the document only when strictMode is %s",
+    async (strictMode) => {
+      let documentChildren: ReactNode;
+      const Layout = ({ children }: { children?: ReactNode }) =>
+        createElement("section", null, children);
+      const entry: PageRouteEntry = {
+        path: "/strict-mode",
+        name: "strict-mode",
+        triple: {
+          app: {
+            ...(strictMode === undefined ? {} : { strictMode }),
+            default: ({ children }: { children?: ReactNode }) => {
+              documentChildren = children;
+              return createElement(DefaultApp, { children });
+            },
+          },
+          layout: { default: Layout },
+          page: { default: () => createElement("p", null, "SSR content") },
+        },
+      };
+
+      const rendered = await renderPageRequest("/strict-mode", {
+        routes: [entry],
+        createHttp: () => createHttp(),
+      });
+
+      if (rendered instanceof Response) throw new Error("unexpected terminal Response");
+      expect(rendered.html).toContain(
+        '<div id="vessel"><section><p>SSR content</p></section></div>',
+      );
+      if (!isValidElement<{ children?: ReactNode }>(documentChildren)) {
+        throw new Error("document did not receive a React subtree");
+      }
+      expect(documentChildren.type).toBe(strictMode === true ? StrictMode : Layout);
+      if (strictMode === true) {
+        const layout = documentChildren.props.children;
+        expect(isValidElement(layout) && layout.type).toBe(Layout);
+      }
+    },
+  );
+});
 
 /**
  * ── `resolveServerErrorPageProps` — card c52d5653 ────────────────────────────

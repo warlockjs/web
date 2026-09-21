@@ -14,6 +14,7 @@ type ValueNode = ObjectProperty["value"];
 export type ModuleConfigRead = {
   route?: { path: string; name?: string };
   prefix?: string;
+  strictMode?: boolean;
   hasMiddleware: boolean;
   hasDefault: boolean;
 };
@@ -51,6 +52,11 @@ function stringLiteral(node: ValueNode): string | undefined {
     return value.quasis[0]?.value.cooked ?? value.quasis[0]?.value.raw;
   }
   return undefined;
+}
+
+function booleanLiteral(node: ValueNode): boolean | undefined {
+  const value = unwrap(node);
+  return value.type === "BooleanLiteral" ? value.value : undefined;
 }
 
 function propertyName(
@@ -104,7 +110,7 @@ function inspectConfig(
   declarator: { id: { type: string; name?: string }; init?: ValueNode | null },
   sourceFile: string,
   kind: ModuleKind,
-): Pick<ModuleConfigRead, "route" | "prefix" | "hasMiddleware"> {
+): Pick<ModuleConfigRead, "route" | "prefix" | "strictMode" | "hasMiddleware"> {
   if (declarator.id.type !== "Identifier" || declarator.id.name !== "config" || !declarator.init) {
     fail(sourceFile, "the \`config\` export cannot use an alias or destructuring");
   }
@@ -112,6 +118,7 @@ function inspectConfig(
   const seen = new Set<string>();
   let route: ModuleConfigRead["route"];
   let prefix: string | undefined;
+  let strictMode: boolean | undefined;
   let hasMiddleware = false;
 
   for (const member of object.properties) {
@@ -140,11 +147,17 @@ function inspectConfig(
       if (value === undefined) fail(sourceFile, "config.prefix must be a string literal");
       prefix = value;
     }
+    if (key === "strictMode") {
+      const value = booleanLiteral(member.value);
+      if (value === undefined) fail(sourceFile, "config.strictMode must be a boolean literal");
+      strictMode = value;
+    }
   }
 
   return {
     ...(route === undefined ? {} : { route }),
     ...(prefix === undefined ? {} : { prefix }),
+    ...(strictMode === undefined ? {} : { strictMode }),
     hasMiddleware,
   };
 }
@@ -172,6 +185,7 @@ export function readModuleConfig(
 
   let route: ModuleConfigRead["route"];
   let prefix: string | undefined;
+  let strictMode: boolean | undefined;
   let hasMiddleware = false;
   let hasDefault = false;
   let configSeen = false;
@@ -230,6 +244,7 @@ export function readModuleConfig(
       const read = inspectConfig(declarator, sourceFile, kind);
       route = read.route;
       prefix = read.prefix;
+      strictMode = read.strictMode;
       hasMiddleware = read.hasMiddleware;
     }
   }
@@ -239,6 +254,7 @@ export function readModuleConfig(
   return {
     ...(route === undefined ? {} : { route }),
     ...(prefix === undefined ? {} : { prefix }),
+    ...(strictMode === undefined ? {} : { strictMode }),
     hasMiddleware,
     hasDefault,
   };

@@ -128,9 +128,14 @@ describe("normalizePageModule", () => {
 
   it("enforces each kind's exact config schema", () => {
     expect(
-      normalizePageModule({ config: { middleware: [loader] } }, "root", "root.tsx"),
+      normalizePageModule(
+        { config: { middleware: [loader], strictMode: true } },
+        "root",
+        "root.tsx",
+      ),
     ).toMatchObject({
       middleware: [loader],
+      strictMode: true,
     });
     expect(
       normalizePageModule(
@@ -148,6 +153,15 @@ describe("normalizePageModule", () => {
     expect(() => normalizePageModule({ config: { route: "/" } }, "root", "root.tsx")).toThrow(
       "route",
     );
+    expect(() =>
+      normalizePageModule({ config: { strictMode: "true" } }, "root", "root.tsx"),
+    ).toThrow("config.strictMode must be a boolean");
+    expect(() => normalizePageModule(page({ strictMode: true }), "page", "page.tsx")).toThrow(
+      "strictMode",
+    );
+    expect(() =>
+      normalizePageModule({ config: { strictMode: true } }, "layout", "layout.tsx"),
+    ).toThrow("strictMode");
     expect(() =>
       normalizePageModule(
         { config: { cache: { public: true, maxAge: 1 } } },

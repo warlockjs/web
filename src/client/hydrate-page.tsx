@@ -1,4 +1,4 @@
-import { startTransition, type ReactNode } from "react";
+import { createElement, StrictMode, startTransition, type ReactNode } from "react";
 import { hydrateRoot, type RootOptions } from "react-dom/client";
 import {
   DocumentContext,
@@ -95,6 +95,12 @@ export type BuildHydratedTree = (
   payload: HydrationDocumentPayloadSource,
 ) => ReactNode | Promise<ReactNode>;
 
+/** Client-entry flags resolved from static build configuration. */
+export type HydratePageOptions = {
+  /** Apply React's development checks to the complete hydrated tree. */
+  strictMode?: boolean;
+};
+
 function isPromise(value: ReactNode | Promise<ReactNode>): value is Promise<ReactNode> {
   return (
     typeof value === "object" &&
@@ -160,7 +166,7 @@ function reportHydrationFailure(error: unknown): void {
  * only then is the tree built and, if it is a promise, awaited. Nothing is
  * cleared on any failure path.
  */
-export function hydratePage(buildTree: BuildHydratedTree): void {
+export function hydratePage(buildTree: BuildHydratedTree, options: HydratePageOptions = {}): void {
   installWindowErrorReporters();
 
   const payload = readHydrationPayload(document);
@@ -201,7 +207,15 @@ export function hydratePage(buildTree: BuildHydratedTree): void {
     startTransition(() => {
       hydrateRoot(
         mountElement,
-        <DocumentContext.Provider value={value}>{tree}</DocumentContext.Provider>,
+        options.strictMode === true ? (
+          createElement(
+            StrictMode,
+            undefined,
+            <DocumentContext.Provider value={value}>{tree}</DocumentContext.Provider>,
+          )
+        ) : (
+          <DocumentContext.Provider value={value}>{tree}</DocumentContext.Provider>
+        ),
         hydrationErrorHooks,
       );
     });

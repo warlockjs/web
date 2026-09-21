@@ -79,4 +79,6 @@ export type LayoutConfig = {
 export type RootConfig = {
   /** App guards run before layout and page guards. */
   readonly middleware?: readonly PipelineMiddleware[];
+  /** Render the application tree in React Strict Mode. */
+  readonly strictMode?: boolean;
 };

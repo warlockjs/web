@@ -1,4 +1,4 @@
-import { createElement, type ComponentType, type ReactNode } from "react";
+import { createElement, StrictMode, type ComponentType, type ReactNode } from "react";
 import type { PipeableStream, RenderToPipeableStreamOptions } from "react-dom/server";
 import {
   buildTracingContext,
@@ -403,8 +403,12 @@ function buildBoundaryElement(
   // framework default supplies the shell here even though the app's own
   // (broken) root is what's being bypassed.
   return boundary.boundaryLevel === "app"
-    ? createElement(DefaultApp, { children: wrapped })
+    ? createElement(DefaultApp, { children: strictPageTree(triple.app, wrapped) })
     : wrapped;
+}
+
+function strictPageTree(root: PageTripleModule, element: ReactNode): ReactNode {
+  return root.strictMode === true ? createElement(StrictMode, null, element) : element;
 }
 
 function buildLeaf(module: PageTripleModule, bundle: PageDataBundle): ReactNode {
@@ -431,6 +435,9 @@ function wrapRootward(
   let element = leaf;
 
   for (const level of wrappers) {
+    // The document owns #vessel; only its page/layout children are hydrated.
+    if (level === "app") element = strictPageTree(triple.app, element);
+
     const Component = triple[level].default as ((props: LevelProps) => ReactNode) | undefined;
 
     if (!Component) {
@@ -1058,7 +1065,7 @@ async function finishRender(
     };
     return renderWithContext(
       createElement(DefaultApp, {
-        children: createElement(FrameworkRootBoundary, {}),
+        children: strictPageTree(triple.app, createElement(FrameworkRootBoundary, {})),
       }),
     );
   };

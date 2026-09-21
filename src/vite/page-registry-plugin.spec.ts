@@ -228,6 +228,29 @@ describe("clientPageRegistry — virtual module id contract", () => {
     expect(source).not.toContain(`import("`);
   });
 
+  it.each([
+    ["true", 'import "./server-only";\nexport const config = { strictMode: true };', true],
+    ["false", "export const config = { strictMode: false };", false],
+    ["absent", "export const config = {};", false],
+  ])(
+    "projects root config strictMode %s as a literal without importing the root module",
+    (_label, rootSource, expected) => {
+      const appRoot = makeAppRoot();
+      writeFile(path.join(appRoot, "src/web/root.tsx"), rootSource);
+
+      const source = callHook<string>(
+        clientPageRegistry({ appRoot }),
+        "load",
+        RESOLVED_CLIENT_PAGE_REGISTRY_ID,
+      );
+
+      expect(source).toContain(`export const strictMode = ${expected};`);
+      expect(source).not.toContain("root.tsx");
+      expect(source).not.toContain("server-only");
+      expect(source).not.toContain("strictMode:");
+    },
+  );
+
   it("refuses a discovered page with no default export before dev emits its registry", () => {
     const appRoot = makeAppRoot();
     writeFile(
@@ -415,6 +438,49 @@ describe("clientPageRegistry — the server half wins: metadata edits force a fu
 
     expect(order).toEqual([`routes:update:${PAGE}`]);
     expect(sent).toEqual([]);
+    expect(result).toEqual([]);
+  });
+
+  it("invalidates and reloads the virtual registry when root strictMode changes", async () => {
+    const appRoot = makeAppRoot();
+    const rootFile = path.join(appRoot, "src/web/root.tsx");
+    const registryNode = { id: RESOLVED_CLIENT_PAGE_REGISTRY_ID };
+    const getModuleById = vi.fn(() => registryNode);
+    const invalidateModule = vi.fn();
+    const sent: unknown[] = [];
+    const beforePageHotUpdate = vi.fn(async () => false);
+    const plugin = clientPageRegistry({ appRoot, beforePageHotUpdate });
+
+    const result = await callHookWith<Promise<unknown>>(
+      plugin,
+      "hotUpdate",
+      { environment: { name: "client", mode: "dev", hot: { send: vi.fn() } } },
+      {
+        type: "update",
+        file: rootFile,
+        timestamp: 1,
+        modules: [],
+        read: vi.fn(),
+        server: {
+          environments: { client: { moduleGraph: { getModuleById, invalidateModule } } },
+          hot: { send: (message: unknown) => sent.push(message) },
+        },
+      },
+    );
+
+    const ssrResult = await callHookWith<Promise<unknown>>(
+      plugin,
+      "hotUpdate",
+      { environment: { name: "ssr", mode: "dev", hot: { send: vi.fn() } } },
+      { type: "update", file: rootFile },
+    );
+
+    expect(ssrResult).toEqual([]);
+    expect(beforePageHotUpdate).toHaveBeenCalledTimes(1);
+    expect(beforePageHotUpdate).toHaveBeenCalledWith({ file: rootFile, type: "update" });
+    expect(invalidateModule).toHaveBeenCalledTimes(1);
+    expect(invalidateModule).toHaveBeenCalledWith(registryNode);
+    expect(sent).toEqual([{ type: "full-reload", path: "*" }]);
     expect(result).toEqual([]);
   });
 

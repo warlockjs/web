@@ -33,6 +33,7 @@ export type NormalizedPageModule = {
   metadata?: PageMetadata<PipelineLoader> | { readonly robots?: string };
   sitemap?: SitemapPageExport | false | SitemapPageOptions;
   prefix?: string;
+  strictMode?: boolean;
 };
 
 const MODULE_EXPORTS = new Set<string>(MODULE_EXPORT_NAMES);
@@ -309,6 +310,11 @@ export function normalizePageModule(
       normalized.metadata = validateLayoutMetadata(configValue.metadata, sourceFile);
     if (configValue.sitemap !== undefined)
       normalized.sitemap = readLayoutSitemapDeclaration(configValue.sitemap, sourceFile);
+  } else if (configValue.strictMode !== undefined) {
+    if (typeof configValue.strictMode !== "boolean") {
+      fail(sourceFile, "config.strictMode must be a boolean.");
+    }
+    normalized.strictMode = configValue.strictMode;
   }
 
   return normalized;

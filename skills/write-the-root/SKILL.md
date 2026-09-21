@@ -8,7 +8,7 @@ description: 'Author `src/web/root.tsx`, the full-document application root that
 `src/web/root.tsx` is the application document. Its default export renders the complete `<html>` tree and contains the one DOM node the browser hydrates: `#vessel`.
 
 The root may export `config`, `loader`, `register`, `ErrorBoundary`, and its
-default component. `RootConfig` has one policy key only: `middleware`. Root
+default component. `RootConfig` owns `middleware` and `strictMode`. Root
 metadata, route/prefix, cache, validation, sitemap, and robots policy are not
 root exports. Keep sitewide sitemap and robots serving in `web.sitemap` and
 `web.robots`; page and layout policy belongs in their own `config` exports.
@@ -173,7 +173,7 @@ export default function App({ data, children }: AppProps<typeof loader>) {
 
 The App loader runs first and is awaited before the outermost layout loader starts; matched layout loaders then run outermost to innermost before the page loader. Its return is for the App component; use `shared` for request data that multiple levels need.
 
-## Root middleware
+## Root middleware and Strict Mode
 
 Use the optional root config for guards that must run before layout and page
 middleware:
@@ -183,11 +183,22 @@ import type { RootConfig } from "@warlock.js/web";
 
 export const config = {
   middleware: [attachRequestContext],
+  strictMode: true,
 } satisfies RootConfig;
 ```
 
 `loader`, `register`, and `ErrorBoundary` remain separate exports. Named
 `middleware`, `metadata`, `sitemap`, or route-policy exports are invalid.
+
+`strictMode` defaults to `false`, preserving existing applications. New Web
+scaffolds enable it with `strictMode: true`. The root owns this setting even
+though the document component is not mounted in the browser: Warlock projects
+the flag into hydration and wraps the complete page, layout, and navigation
+tree beneath `#vessel` in React `StrictMode`.
+
+Strict Mode's development checks can run effects and their cleanup an extra
+time, so make client setup and cleanup idempotent. These extra checks do not run
+in production.
 
 ## Gotchas
 

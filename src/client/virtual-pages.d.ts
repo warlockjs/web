@@ -33,4 +33,6 @@ declare module "virtual:warlock/pages" {
    * before mount, beside `publishRouteTable(pages, ...)`.
    */
   export const localeRouting: import("../routing/locale-routing").LocaleRouting;
+  /** A static root config flag emitted as a literal; the root module itself is never imported. */
+  export const strictMode: boolean;
 }

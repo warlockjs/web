@@ -51,6 +51,8 @@ export type PipelineLoader = (ctx: PipelineLoaderContext) => unknown | Promise<u
 
 export type PageTripleModule = {
   register?: () => unknown;
+  /** Root-owned React tree policy, retained by root module normalization. */
+  strictMode?: boolean;
   route?:
     | string
     | {

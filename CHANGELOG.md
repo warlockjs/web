@@ -6,13 +6,14 @@ All notable changes to `@warlock.js/web` are documented here.
 
 ### Upgrading
 
-- **BREAKING:** pages, layouts, and `root.tsx` now export one direct `config` object for server policy. Use `PageConfig<typeof loader>` for page `route`, `cache`, `middleware`, `validation`, `metadata`, and `sitemap`; `LayoutConfig` for `prefix`, `middleware`, `metadata.robots`, and sitemap defaults; `RootConfig` for `middleware` only. Keep `loader`, `register`, named `ErrorBoundary`, and the default component as separate exports. Old top-level policy exports, unknown config keys, spreads, and computed keys are rejected. Route paths/names and layout prefixes must be literal strings. Move cache policy from route declarations to `config.cache`; root metadata and sitemap inheritance are removed.
+- **BREAKING:** pages, layouts, and `root.tsx` now export one direct `config` object for server policy. Use `PageConfig<typeof loader>` for page `route`, `cache`, `middleware`, `validation`, `metadata`, and `sitemap`; `LayoutConfig` for `prefix`, `middleware`, `metadata.robots`, and sitemap defaults; `RootConfig` for `middleware` and `strictMode`. Keep `loader`, `register`, named `ErrorBoundary`, and the default component as separate exports. Old top-level policy exports, unknown config keys, spreads, and computed keys are rejected. Route paths/names and layout prefixes must be literal strings. Move cache policy from route declarations to `config.cache`; root metadata and sitemap inheritance are removed.
 - Core, Web, and newly scaffolded apps now require `@mongez/localization:^3.5.0`, whose scoped translation primitive does not mutate the global translation registry.
 - If your cache driver is redis, pg/database or file, and `globalPrefix` in `src/config/cache.ts` is a function, set `pageCache.namespace` to a value unique to each deployment (for example `"shop-production"`). The page cache now refuses to start on a shared backend without a stable deployment namespace. A static `globalPrefix`, or an in-process driver, needs no change.
 - Purge any `serverCache` page-cache entries (and any CDN cache fronting `config.cache.public` routes) stored by an earlier version — see Security, below. Expect fewer cache HITs afterward: a page visited by a browser carrying any cookie other than the framework locale cookie or a validated locale-preference cookie (a session cookie under an app-specific name, an analytics cookie, anything else) no longer HITs; it bypasses the page cache and gets `Cache-Control: private, no-store`.
 
 ### Features
 
+- Root `config.strictMode` enables React Strict Mode for the complete hydrated page, layout, and navigation tree below `#vessel`. It defaults to `false` for existing applications; new Web scaffolds set it to `true`. In development React may run effect setup and cleanup an extra time, so client effects must clean up correctly. Production has no extra Strict Mode checks.
 - Route-scoped `locales.json` dictionaries inherit through the `src/web` directory graph, with optional `$group` prefixes and unique ownership of each flattened key. Duplicate keys, including ancestor/child duplicates, are rejected. One selected-locale snapshot supplies request `t`/`trans`, SSR, hydration, navigation, and error rendering without merging route dictionaries into the global registry. Development and production consume artifacts from the same parsed graph; development handles JSON add/edit/delete and `$group` changes.
 - `warlock generate.typings` and development generation augment `TranslationKeyRegistry` with flattened route JSON keys plus existing literal `groupedTranslations` keys. Include `.warlock/typings/**/*.d.ts` in the app's TypeScript project. Runtime translations come from the locale artifact, not from declarations.
 - `useChangeLocaleCode()` returns `{ changeLocaleCode, isLoading }`, with `changeLocale` retained as a deprecated alias. Pending state is local to the hook instance, resets after its latest invocation settles, propagates failures, and avoids state updates after unmount.
@@ -575,8 +576,7 @@ from the release registry, so it had never reached npm.
   and Forward included.
 - React Fast Refresh in `warlock dev`, including a server render that reflects
   the edit rather than the pre-edit module.
-- Typed links: `href(name, params, query)`; an unknown route name is a compile
-  error.
+- Named links: `href(name, params, query)` validates the published route table at runtime; an unknown route name throws.
 - `revalidate()` — re-run the current route's loaders after a mutation.
 - MRR's navigation API mirrored by name (`navigateTo`, `navigateBack`,
   `currentRoute`, `queryString`, …) without depending on that package.

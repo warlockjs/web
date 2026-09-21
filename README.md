@@ -75,8 +75,9 @@ production.
   Back and Forward included.
 - **React Fast Refresh in dev.** Edit a component, keep your state, and the
   server renders the new output too.
-- **Typed links.** `href(name, params, query)` — an unknown route name is a
-  compile error.
+- **Named links.** `href(name, params, query)` validates the published route
+  table at runtime; an unknown route name throws. Generated route-name and
+  parameter types are not available in 5.17.
 - **Loaders that are controllers.** Full request context, guards, DI, and the
   ability to set headers, cookies and status during the render.
 - **`refresh()`.** POST to your own API, call it, and the page's loaders
@@ -94,8 +95,10 @@ In 5.17, declare server policy in one directly exported `config` object:
 
 - `PageConfig`: `route`, `cache`, `middleware`, `validation`, `metadata`, `sitemap`.
 - `LayoutConfig`: `prefix`, `middleware`, `metadata.robots`, `sitemap` defaults.
-- `RootConfig`: `middleware` only. Sitewide sitemap and robots.txt settings belong
-  in `src/config/web.ts`.
+- `RootConfig`: `middleware` and `strictMode`. `strictMode` is a literal boolean;
+  when absent it is `false`. New scaffolds set it to `true` so React development
+  checks run. Sitewide sitemap and robots.txt settings belong in
+  `src/config/web.ts`.
 
 `loader`, `register`, the default component, and a named `ErrorBoundary` remain
 separate exports. A named `ErrorBoundary` handles server pipeline failures at

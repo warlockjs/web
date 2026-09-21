@@ -31,7 +31,7 @@ const layoutConfig = {
   sitemap: false,
 } satisfies LayoutConfig;
 
-const rootConfig = { middleware: [] } satisfies RootConfig;
+const rootConfig = { middleware: [], strictMode: true } satisfies RootConfig;
 const boundaryProps: PageErrorBoundaryProps = { error: new Error("expected") };
 void layoutConfig;
 void rootConfig;
@@ -79,6 +79,12 @@ const invalidLayoutCache = {
 } satisfies LayoutConfig;
 void invalidLayoutCache;
 
+const invalidLayoutStrictMode = {
+  // @ts-expect-error Strict mode is root-only.
+  strictMode: true,
+} satisfies LayoutConfig;
+void invalidLayoutStrictMode;
+
 const invalidLayoutSupplier = {
   // @ts-expect-error Layout sitemaps cannot be dynamic suppliers.
   sitemap: () => [],
@@ -90,6 +96,18 @@ const invalidRoot = {
   metadata: { robots: "noindex" },
 } satisfies RootConfig;
 void invalidRoot;
+
+const invalidRootStrictMode = {
+  // @ts-expect-error Root strict mode must be a boolean.
+  strictMode: "true",
+} satisfies RootConfig;
+void invalidRootStrictMode;
+
+const invalidPageStrictMode = {
+  // @ts-expect-error Strict mode is root-only.
+  strictMode: true,
+} satisfies PageConfig;
+void invalidPageStrictMode;
 
 const invalidBoundary = {
   // @ts-expect-error ErrorBoundary remains a named module export.

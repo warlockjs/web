@@ -52,6 +52,16 @@ describe("readModuleConfig — accepted modules", () => {
       ),
     ).toEqual({ prefix: "/admin", hasMiddleware: true, hasDefault: false });
     expect(
+      readModuleConfig(
+        "root.tsx",
+        "export const config = { middleware: guard, strictMode: (true as const) };",
+        "root",
+      ),
+    ).toEqual({ strictMode: true, hasMiddleware: true, hasDefault: false });
+    expect(
+      readModuleConfig("root.tsx", "export const config = { strictMode: false };", "root"),
+    ).toEqual({ strictMode: false, hasMiddleware: false, hasDefault: false });
+    expect(
       readModuleConfig("root.tsx", "export const config = { middleware: guard };", "root"),
     ).toEqual({ hasMiddleware: true, hasDefault: false });
   });
@@ -112,6 +122,11 @@ describe("readModuleConfig — rejected modules", () => {
     [
       "an unknown config field",
       `${component} export const config = { route: "/x", prefix: "/x" }; export default Page;`,
+      "not allowed in a page module",
+    ],
+    [
+      "page strict mode",
+      `${component} export const config = { strictMode: true }; export default Page;`,
       "not allowed in a page module",
     ],
     [
@@ -183,5 +198,20 @@ describe("readModuleConfig — rejected modules", () => {
     expect(() =>
       readModuleConfig("layout.tsx", "export const config = { prefix: base };", "layout"),
     ).toThrow("config.prefix must be a string literal");
+  });
+
+  it.each([
+    ["a dynamic root strict mode", "export const config = { strictMode: enabled };"],
+    ["a non-boolean root strict mode", 'export const config = { strictMode: "true" };'],
+  ])("rejects %s", (_case, source) => {
+    expect(() => readModuleConfig("root.tsx", source, "root")).toThrow(
+      "config.strictMode must be a boolean literal",
+    );
+  });
+
+  it("rejects layout strict mode", () => {
+    expect(() =>
+      readModuleConfig("layout.tsx", "export const config = { strictMode: true };", "layout"),
+    ).toThrow("not allowed in a layout module");
   });
 });

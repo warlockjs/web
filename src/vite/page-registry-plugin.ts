@@ -13,11 +13,13 @@
  */
 import { parse } from "@babel/parser";
 import MagicString from "magic-string";
+import fs from "node:fs";
 import path from "node:path";
 import type { Plugin, ViteDevServer } from "vite";
 import { discoverPages } from "../build/discover-pages";
 import { generateClientRegistry } from "../build/generate-client-registry";
 import { generateLocaleRoutingSource } from "../build/generate-locale-routing";
+import { readModuleConfig } from "../build/read-module-config";
 import { resolveLocaleRouting } from "../server/locale-routing/resolve-locale-routing";
 import { toPosix } from "../shared/to-posix";
 import { isProjectableFile, SERVER_EXPORT_NAMES } from "./projection";
@@ -37,6 +39,9 @@ export const CLIENT_PAGE_REGISTRY_ID = "virtual:warlock/pages";
  * (and no filesystem watcher) mistakes it for a real path.
  */
 export const RESOLVED_CLIENT_PAGE_REGISTRY_ID = `\0${CLIENT_PAGE_REGISTRY_ID}`;
+
+/** The literal client flag emitted from the static root config projection. */
+export const CLIENT_STRICT_MODE_EXPORT_NAME = "strictMode";
 
 /**
  * Evicts the client registry so its next request re-runs page discovery, then
@@ -87,6 +92,24 @@ export type ClientPageRegistryPluginOptions = {
  */
 function toImportSpecifier(absoluteFilePath: string): string {
   return toPosix(path.resolve(absoluteFilePath));
+}
+
+function rootConfigFile(appRoot: string, srcDir: string | undefined): string {
+  return path.join(appRoot, srcDir ?? "src", "web", "root.tsx");
+}
+
+/**
+ * Reads only the root module's static config, never the root namespace.
+ *
+ * The virtual module may carry the boolean into the browser, but must not
+ * import `root.tsx`: that module can contain middleware and server-only
+ * dependencies. `readModuleConfig` parses source without evaluating it.
+ */
+function readClientStrictMode(appRoot: string, srcDir: string | undefined): boolean {
+  const rootFile = rootConfigFile(appRoot, srcDir);
+  if (!fs.existsSync(rootFile) || !fs.statSync(rootFile).isFile()) return false;
+
+  return readModuleConfig(rootFile, fs.readFileSync(rootFile, "utf-8"), "root").strictMode === true;
 }
 
 /**
@@ -451,9 +474,11 @@ export function clientPageRegistry(options: ClientPageRegistryPluginOptions = {}
       // never Vite's SSR module runner — see `routing/locale-routing.ts`'s
       // own header for why that graph split matters at all.
       const localeRouting = resolveLocaleRouting();
+      const strictMode = readClientStrictMode(appRoot, options.srcDir);
       const source = [
         generateClientRegistry({ pages, toImportSpecifier }),
         generateLocaleRoutingSource(localeRouting),
+        `export const ${CLIENT_STRICT_MODE_EXPORT_NAME} = ${strictMode};`,
       ].join("\n");
 
       return eraseTypes(source);
@@ -489,6 +514,27 @@ export function clientPageRegistry(options: ClientPageRegistryPluginOptions = {}
      * construction.
      */
     async hotUpdate(context) {
+      // The root is deliberately absent from the client registry: importing it
+      // would expose its middleware and server-only dependency graph. Its
+      // static strictMode projection instead lives in this virtual module, so
+      // an edit must invalidate that module and reload even though there is no
+      // client-side root transform skeleton to compare.
+      if (path.resolve(context.file) === rootConfigFile(appRoot, options.srcDir)) {
+        // Vite calls this hook for every environment. SSR was invalidated by
+        // its watcher already; only the client sends the document reload.
+        if (this.environment.name !== "client") return [];
+
+        const routeGraphHandled = await options.beforePageHotUpdate?.({
+          file: context.file,
+          type: context.type,
+        });
+
+        if (routeGraphHandled) return [];
+
+        invalidateClientPageRegistry(context.server);
+        return [];
+      }
+
       if (isProjectableFile(context.file) || path.basename(context.file) === "locales.json") {
         const routeGraphHandled = await options.beforePageHotUpdate?.({
           file: context.file,
