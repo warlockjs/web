@@ -35,6 +35,7 @@ import { readFileSync } from "node:fs";
 import type { ViteDevServer } from "vite";
 import {
   discoverPageFileGraph,
+  type DiscoveredPageFileGraph,
   ErrorPageDeclaresRouteError,
   isErrorPageFile,
   layoutChainFor,
@@ -47,10 +48,14 @@ import { resolveLayoutLevel as resolveComposedLayoutLevel } from "../routing/lay
 import { PageFileSegmentNotSupportedError } from "../routing/page-file-segment";
 import { toPosix } from "../shared/to-posix";
 import { resolvePageRouteIdentity, resolvePageRouteName } from "../routing/route-identity";
-import { publishRouteTable } from "../routing/route-table";
+import { prepareRouteTable } from "../routing/route-table";
 import { publishLocaleRouting } from "../routing/locale-routing";
 import { config, type FastifyInstance, type Router } from "@warlock.js/core";
-import { buildRouteLocaleManifest } from "../build/build-route-locale-manifest";
+import {
+  buildRouteLocaleManifest,
+  type RouteLocaleManifest,
+} from "../build/build-route-locale-manifest";
+import { prepareDevRouteLocaleArtifact } from "./dev-route-locale-artifact";
 import { composeLayoutModules } from "./compose-layout-modules";
 import { createPageRouteHandler, type PageRouteHandler } from "./create-page-route-handler";
 import { resolveLocaleRouting } from "./locale-routing/resolve-locale-routing";
@@ -345,6 +350,8 @@ export type InstallPageRoutesOptions = {
    * deployment, and overridable by a caller with a non-default layout.
    */
   appRoot?: string;
+  /** Dev connector's persisted raw locale graph, replaced after a successful installation. */
+  routeLocaleArtifactPath?: string;
   /** Browser module loaded after the server-rendered application and payload. */
   hydrationClientModuleUrl?: string;
   /**
@@ -391,6 +398,46 @@ export type InstallPageRoutesOptions = {
 export async function installPageRoutes(
   options: InstallPageRoutesOptions,
 ): Promise<InstalledPageRoute[]> {
+  normalizePageModule(await options.vite.ssrLoadModule(options.appFile), "root", options.appFile);
+  const discoveredGraph = discoverPageFileGraph(options.appSrcRoot);
+  const graph = {
+    pages: [
+      ...discoveredGraph.pages,
+      { pageFile: options.appFile, webRoot: path.dirname(options.appFile) },
+    ],
+    localeFiles: discoveredGraph.localeFiles,
+  };
+  const localeOptions = {
+    localeCodes: config.key<readonly string[] | undefined>("app.localeCodes"),
+    localeCode: config.key<string | undefined>("app.localeCode"),
+  };
+  const artifact =
+    options.routeLocaleArtifactPath === undefined
+      ? undefined
+      : prepareDevRouteLocaleArtifact({
+          graph,
+          appRoot: options.appRoot ?? path.dirname(options.appSrcRoot),
+          artifactPath: options.routeLocaleArtifactPath,
+          ...localeOptions,
+        });
+  try {
+    return await installDiscoveredPageRoutes(
+      options,
+      discoveredGraph,
+      artifact === undefined ? buildRouteLocaleManifest(graph, localeOptions) : artifact.manifest,
+      artifact?.commit,
+    );
+  } finally {
+    artifact?.dispose();
+  }
+}
+
+async function installDiscoveredPageRoutes(
+  options: InstallPageRoutesOptions,
+  discoveredGraph: DiscoveredPageFileGraph,
+  routeLocaleManifest: RouteLocaleManifest | undefined,
+  commitLocaleArtifact?: () => void,
+): Promise<InstalledPageRoute[]> {
   const { router, vite, appSrcRoot, appFile, hydrationClientModuleUrl, httpServer } = options;
   // Spread conditionally, never as a bare `httpServer,` property: an explicit
   // `httpServer: undefined` key is its own signal to `createPageRouteHandler`
@@ -399,10 +446,6 @@ export async function installPageRoutes(
   // a caller (this file's own unit tests, most callers) that never supplied
   // one and means to fall back to the container instead.
   const httpServerOption = httpServer === undefined ? {} : { httpServer };
-  // Validate the live root namespace before any route is registered. This is
-  // deliberately an ingress projection only: request handlers still load the
-  // raw namespace so registration retains its module identity across HMR.
-  normalizePageModule(await vite.ssrLoadModule(appFile), "root", appFile);
   // See `InstallPageRoutesOptions.appRoot` for why this default, not
   // `appSrcRoot` itself, is the root every handler's CSS is resolved against.
   const stylesheetRoot = options.appRoot ?? path.dirname(appSrcRoot);
@@ -415,22 +458,10 @@ export async function installPageRoutes(
   // catch-all's absence of them) are decided against this one value, and
   // publishing it once after the loop keeps it in step with `publishRouteTable`.
   const localeRouting = resolveLocaleRouting();
-  const discoveredGraph = discoverPageFileGraph(appSrcRoot);
   const discovered = [...discoveredGraph.pages].sort((left, right) =>
     left.pageFile < right.pageFile ? -1 : left.pageFile > right.pageFile ? 1 : 0,
   );
-  const getRouteTranslations = createRouteTranslationsResolver(
-    buildRouteLocaleManifest(
-      {
-        pages: [...discoveredGraph.pages, { pageFile: appFile, webRoot: path.dirname(appFile) }],
-        localeFiles: discoveredGraph.localeFiles,
-      },
-      {
-        localeCodes: config.key<readonly string[] | undefined>("app.localeCodes"),
-        localeCode: config.key<string | undefined>("app.localeCode"),
-      },
-    ),
-  );
+  const getRouteTranslations = createRouteTranslationsResolver(routeLocaleManifest);
 
   // THE NOT-FOUND PAGE IS TAKEN OUT OF THE ORDINARY LOOP, not filtered inside
   // it. It has no `route` export to read, no path to compose and no collision
@@ -701,7 +732,9 @@ export async function installPageRoutes(
     is why the table replaces wholesale instead of merging: a deleted page's
     name has to stop resolving.
   */
-  publishRouteTable(installed, "installPageRoutes (dev)");
+  const publishRoutes = prepareRouteTable(installed, "installPageRoutes (dev)");
+  commitLocaleArtifact?.();
+  publishRoutes();
   publishLocaleRouting(localeRouting);
 
   return installed;

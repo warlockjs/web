@@ -550,6 +550,11 @@ export class WebConnector extends BaseConnector {
         appFile: paths.appFile,
         appRoot: paths.appRoot,
         hydrationClientModuleUrl: this.resolveHydrationClientModuleUrl(paths.webRoot),
+        routeLocaleArtifactPath: path.join(
+          paths.appRoot,
+          ".warlock",
+          "route-locales.manifest.json",
+        ),
         // Resolved here, on the NODE side, and forwarded — see
         // `InstallPageRoutesOptions.httpServer` (`install-page-routes.ts`) for
         // why `createPageRouteHandler` cannot read this out of the container

@@ -405,7 +405,7 @@ describe("WebConnector live page routing", () => {
     const files = routeLocaleFixture();
     const capturedHandlers: PageRouteHandlerOptions[] = [];
     const vite = fakeVite({});
-    const modules = {
+    const modules: Record<string, unknown> = {
       [files.appFile]: { default: (): null => null },
       [files.pageFile]: { config: { route: "/settings" }, default: (): null => null },
     };
@@ -423,12 +423,15 @@ describe("WebConnector live page routing", () => {
     setConfig("app", { localeCodes: ["en", "ar"], localeCode: "en" });
     setConfig("web", {});
 
+    const artifactPath = path.join(files.appRoot, ".warlock", "route-locales.manifest.json");
+    const artifactSource = () => fs.readFileSync(artifactPath, "utf8");
     const install = () =>
       installPageRoutes({
         router: installerRouter(),
         vite: vite.vite,
         appSrcRoot: files.appSrcRoot,
         appFile: files.appFile,
+        routeLocaleArtifactPath: artifactPath,
       });
     const initialPages = await install();
     const connector = new LiveRoutingConnector();
@@ -451,25 +454,42 @@ describe("WebConnector live page routing", () => {
         ?.getRouteTranslations?.(files.pageFile, "en")?.keywords;
 
     expect(latestKeywords()).toBeUndefined();
+    expect(JSON.parse(artifactSource()).localeFiles).toEqual([]);
 
     fs.writeFileSync(files.localeFile, '{"copy":{"en":"First","ar":"أول"}}', "utf8");
     await expect(connector.hotUpdate(files.localeFile)).resolves.toBe(true);
     expect(latestKeywords()).toEqual({ copy: "First" });
+    expect(JSON.parse(artifactSource()).localeFiles[0].source).toContain("First");
 
     fs.writeFileSync(files.localeFile, '{"copy":{"en":"Second","ar":"ثان"}}', "utf8");
     await expect(connector.hotUpdate(files.localeFile)).resolves.toBe(true);
     expect(latestKeywords()).toEqual({ copy: "Second" });
     const lastUsablePages = connector.getInstalledPages();
     const lastUsableKeywords = latestKeywords();
+    const lastUsableArtifact = artifactSource();
 
     fs.writeFileSync(files.localeFile, '{"copy":{"en":"Broken"}', "utf8");
     await expect(connector.hotUpdate(files.localeFile)).rejects.toThrow(files.localeFile);
     expect(connector.getInstalledPages()).toEqual(lastUsablePages);
     expect(committedPages).toEqual(lastUsablePages);
     expect(latestKeywords()).toEqual(lastUsableKeywords);
+    expect(artifactSource()).toBe(lastUsableArtifact);
+
+    // Valid JSON still cannot replace the artifact when later page validation fails.
+    fs.writeFileSync(files.localeFile, '{"copy":{"en":"Uncommitted","ar":"Pending"}}', "utf8");
+    const notFoundFile = path.join(path.dirname(files.pageFile), "404.page.tsx");
+    fs.writeFileSync(notFoundFile, "export default function NotFound() { return null; }", "utf8");
+    modules[notFoundFile] = { config: { route: "/invalid-404" }, default: (): null => null };
+    await expect(connector.hotUpdate(files.localeFile)).rejects.toThrow();
+    expect(connector.getInstalledPages()).toEqual(lastUsablePages);
+    expect(artifactSource()).toBe(lastUsableArtifact);
+    expect(fs.readdirSync(path.dirname(artifactPath))).toEqual([path.basename(artifactPath)]);
+    fs.rmSync(notFoundFile);
+    delete modules[notFoundFile];
 
     fs.rmSync(files.localeFile);
     await expect(connector.hotUpdate(files.localeFile)).resolves.toBe(true);
     expect(latestKeywords()).toBeUndefined();
+    expect(JSON.parse(artifactSource()).localeFiles).toEqual([]);
   });
 });

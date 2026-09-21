@@ -29,7 +29,7 @@ import {
 /**
  * `installPageRoutes` no longer walks the filesystem itself — every subject
  * (which `*.page.tsx` files exist under `src/web/**`) comes from
- * {@link discoverPagesModule.discoverPageFiles}, the same enumeration
+ * {@link discoverPagesModule.discoverPageFileGraph}, the same enumeration
  * production's build shares. This file proves two things about that: the
  * shared enumerator is consulted exactly once per install; and the installer
  * has no fallback walk of its own — a real page file the enumerator does not
@@ -445,7 +445,7 @@ describe("installPageRoutes — the shared enumerator is called exactly once", (
   beforeEach(seedHttpServer);
   afterEach(() => container.delete("http.server"));
 
-  it("calls discoverPageFiles(appSrcRoot) exactly once and registers exactly its returned records", async () => {
+  it("calls discoverPageFileGraph(appSrcRoot) exactly once and registers exactly its returned records", async () => {
     const appRoot = makeAppTree({
       "src/web/dashboard.page.tsx": "",
       "src/web/home.page.tsx": "",
@@ -462,7 +462,7 @@ describe("installPageRoutes — the shared enumerator is called exactly once", (
       [itemsFile]: { default: (): null => null, config: { route: "/items" } },
     });
 
-    const spy = vi.spyOn(discoverPagesModule, "discoverPageFiles");
+    const spy = vi.spyOn(discoverPagesModule, "discoverPageFileGraph");
 
     const { run, registered } = install(appSrcRoot, vite);
     await run();
@@ -470,10 +470,12 @@ describe("installPageRoutes — the shared enumerator is called exactly once", (
     expect(spy).toHaveBeenCalledTimes(1);
     expect(spy).toHaveBeenCalledWith(appSrcRoot);
 
-    const returned = spy.mock.results[0]?.value as { pageFile: string; webRoot: string }[];
+    const returned = spy.mock.results[0]?.value as ReturnType<
+      typeof discoverPagesModule.discoverPageFileGraph
+    >;
 
     // Every discovered page came back in the one call...
-    expect(returned.map((record) => record.pageFile).sort()).toEqual(
+    expect(returned.pages.map((record) => record.pageFile).sort()).toEqual(
       [dashboardFile, homeFile, itemsFile].sort(),
     );
     // ...and every one of them, and only them, made it onto the router.
@@ -532,9 +534,10 @@ describe("installPageRoutes — no independent filesystem enumeration", () => {
       [homeFile]: { default: (): null => null, config: { route: "/" } },
     });
 
-    vi.spyOn(discoverPagesModule, "discoverPageFiles").mockReturnValue([
-      { pageFile: homeFile, webRoot: homeWebRoot },
-    ]);
+    vi.spyOn(discoverPagesModule, "discoverPageFileGraph").mockReturnValue({
+      pages: [{ pageFile: homeFile, webRoot: homeWebRoot }],
+      localeFiles: [],
+    });
 
     const { run, registered } = install(appSrcRoot, vite);
     const installed = await run();

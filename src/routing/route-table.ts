@@ -179,6 +179,14 @@ export function publishRouteTable(
   entries: readonly RouteTableEntry[],
   publishedBy = "unnamed",
 ): void {
+  prepareRouteTable(entries, publishedBy)();
+}
+
+/** Validate a candidate before publishing other installation artifacts. */
+export function prepareRouteTable(
+  entries: readonly RouteTableEntry[],
+  publishedBy: string,
+): () => void {
   const table = new Map<string, string>();
 
   for (const entry of entries) {
@@ -191,7 +199,9 @@ export function publishRouteTable(
     table.set(entry.name, entry.path);
   }
 
-  (globalThis as RouteTableHost)[ROUTE_TABLE_SLOT] = { table, publishedBy };
+  return () => {
+    (globalThis as RouteTableHost)[ROUTE_TABLE_SLOT] = { table, publishedBy };
+  };
 }
 
 /**

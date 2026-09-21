@@ -6,6 +6,7 @@ import {
   UnknownRouteNameError,
   UnknownRouteParameterError,
   href,
+  prepareRouteTable,
   publishRouteTable,
   resetRouteTable,
   routeTablePublisher,
@@ -22,6 +23,24 @@ beforeEach(() => {
 });
 
 describe("href — the name→URL primitive", () => {
+  it("validates a staged table without replacing the published names", () => {
+    publishRouteTable([{ name: "home", path: "/old" }]);
+    const publish = prepareRouteTable([{ name: "home", path: "/new" }], "candidate");
+    expect(href("home")).toBe("/old");
+    expect(() =>
+      prepareRouteTable(
+        [
+          { name: "home", path: "/a" },
+          { name: "home", path: "/b" },
+        ],
+        "invalid",
+      ),
+    ).toThrow("two routes both claim");
+    expect(href("home")).toBe("/old");
+    publish();
+    expect(href("home")).toBe("/new");
+  });
+
   it("resolves a name the OLD hardcoded six-route table never carried", () => {
     /*
       THE RED CASE, and the whole reason this module exists.
