@@ -35,6 +35,7 @@ import {
   type DeferredSettlement,
 } from "../runtime/defer-registry";
 import { createSettledThenable } from "../../loaders/settled-thenable";
+import { PROVISIONAL_LOCALE_REQUEST_HEADER } from "../../locale-preference";
 
 /**
  * The wire content type of the streaming (deferred-values) representation.
@@ -329,13 +330,23 @@ async function readNdjsonPageData(response: Response, url: string): Promise<Page
  * (ignored `signal`, or a race between abort and response) is dropped by the
  * ticket exactly as before this parameter existed.
  */
-export async function fetchPageData(url: string, signal?: AbortSignal): Promise<PageDataResult> {
+export type FetchPageDataOptions = {
+  /** Do not let the server persist its legacy locale cookie for this request. */
+  provisionalLocale?: boolean;
+};
+
+export async function fetchPageData(
+  url: string,
+  signal?: AbortSignal,
+  options: FetchPageDataOptions = {},
+): Promise<PageDataResult> {
   let response: Response;
 
   try {
     response = await fetch(url, {
       headers: {
         [WARLOCK_DATA_REQUEST_HEADER]: WARLOCK_DATA_REQUEST_VALUE,
+        ...(options.provisionalLocale ? { [PROVISIONAL_LOCALE_REQUEST_HEADER]: "1" } : {}),
         // NDJSON preferred, but a plain-JSON server is honoured just the
         // same — this list is a preference order, not a requirement.
         accept: `${NDJSON_CONTENT_TYPE}, ${DATA_RESPONSE_CONTENT_TYPE}`,

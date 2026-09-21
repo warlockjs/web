@@ -2,16 +2,24 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { router } from "@warlock.js/core";
+import { router, setConfig } from "@warlock.js/core";
 import type { ViteDevServer } from "vite";
+import * as createPageRouteHandlerModule from "./create-page-route-handler";
+import type { PageRouteHandler, PageRouteHandlerOptions } from "./create-page-route-handler";
 import type { InstalledPageRoute } from "./install-page-routes";
-import { FRAMEWORK_DEFAULT_NOT_FOUND_SOURCE_FILE } from "./install-page-routes";
+import {
+  FRAMEWORK_DEFAULT_NOT_FOUND_SOURCE_FILE,
+  installPageRoutes,
+  type InstallPageRoutesOptions,
+} from "./install-page-routes";
 import { WebConnector } from "./web-connector";
 
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
   vi.restoreAllMocks();
+  setConfig("app", {});
+  setConfig("web", {});
   while (temporaryDirectories.length > 0) {
     fs.rmSync(temporaryDirectories.pop() as string, { recursive: true, force: true });
   }
@@ -41,7 +49,7 @@ function page(file: string, overrides: Partial<InstalledPageRoute> = {}): Instal
 
 function fakeVite(pageModule: unknown | (() => unknown)) {
   const onFileChange = vi.fn();
-  const ssrLoadModule = vi.fn(async () =>
+  const ssrLoadModule = vi.fn(async (_sourceFile?: string) =>
     typeof pageModule === "function" ? pageModule() : pageModule,
   );
   const registryNode = { id: "\0virtual:warlock/pages" };
@@ -49,6 +57,10 @@ function fakeVite(pageModule: unknown | (() => unknown)) {
   const invalidateModule = vi.fn();
   const send = vi.fn();
   const vite = {
+    moduleGraph: {
+      getModulesByFile: () => undefined,
+      fileToModulesMap: new Map(),
+    },
     environments: {
       ssr: { moduleGraph: { onFileChange } },
       client: { moduleGraph: { getModuleById, invalidateModule } },
@@ -58,6 +70,36 @@ function fakeVite(pageModule: unknown | (() => unknown)) {
   } as unknown as ViteDevServer;
 
   return { vite, onFileChange, ssrLoadModule, registryNode, getModuleById, invalidateModule, send };
+}
+
+function installerRouter(): InstallPageRoutesOptions["router"] {
+  const value = {
+    get: vi.fn(() => value),
+    withSourceFile: async <T>(_sourceFile: string, callback: () => T | Promise<T>) => callback(),
+    removeRoutesBySourceFile: vi.fn(),
+  };
+
+  return value as unknown as InstallPageRoutesOptions["router"];
+}
+
+function routeLocaleFixture() {
+  const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), "warlock-live-route-locales-"));
+  temporaryDirectories.push(appRoot);
+  const appSrcRoot = path.join(appRoot, "src");
+  const webRoot = path.join(appSrcRoot, "web");
+  const appFile = path.join(webRoot, "root.tsx");
+  const pageFile = path.join(webRoot, "settings.page.tsx");
+  const localeFile = path.join(webRoot, "locales.json");
+
+  fs.mkdirSync(webRoot, { recursive: true });
+  fs.writeFileSync(appFile, "export default function Root() { return null; }", "utf8");
+  fs.writeFileSync(
+    pageFile,
+    "export const config = { route: '/settings' };\nexport default function Settings() { return null; }",
+    "utf8",
+  );
+
+  return { appRoot, appSrcRoot, appFile, pageFile, localeFile };
 }
 
 class LiveRoutingConnector extends WebConnector {
@@ -357,5 +399,77 @@ describe("WebConnector live page routing", () => {
     expect(vite.getModuleById).not.toHaveBeenCalled();
     expect(vite.invalidateModule).not.toHaveBeenCalled();
     expect(vite.send).not.toHaveBeenCalled();
+  });
+
+  it("atomically publishes locale JSON additions, edits, and removals while retaining the last table on invalid JSON", async () => {
+    const files = routeLocaleFixture();
+    const capturedHandlers: PageRouteHandlerOptions[] = [];
+    const vite = fakeVite({});
+    const modules = {
+      [files.appFile]: { default: (): null => null },
+      [files.pageFile]: { config: { route: "/settings" }, default: (): null => null },
+    };
+    vite.ssrLoadModule.mockImplementation(async (sourceFile?: string) => {
+      const module = modules[sourceFile as keyof typeof modules];
+      if (module === undefined) throw new Error(`No Vite module for ${sourceFile}.`);
+      return module;
+    });
+    vi.spyOn(createPageRouteHandlerModule, "createPageRouteHandler").mockImplementation(
+      (options) => {
+        capturedHandlers.push(options);
+        return (async () => undefined) as PageRouteHandler;
+      },
+    );
+    setConfig("app", { localeCodes: ["en", "ar"], localeCode: "en" });
+    setConfig("web", {});
+
+    const install = () =>
+      installPageRoutes({
+        router: installerRouter(),
+        vite: vite.vite,
+        appSrcRoot: files.appSrcRoot,
+        appFile: files.appFile,
+      });
+    const initialPages = await install();
+    const connector = new LiveRoutingConnector();
+    let committedPages: unknown = initialPages;
+    connector.seed({ ...files, vite: vite.vite, installedPages: initialPages, install });
+    vi.spyOn(router, "list").mockReturnValue([
+      { isPage: true, sourceFile: "src/web/settings.page.tsx" },
+      { isPage: true, sourceFile: FRAMEWORK_DEFAULT_NOT_FOUND_SOURCE_FILE },
+    ] as ReturnType<typeof router.list>);
+    vi.spyOn(router, "replaceRoutesBySourceFiles").mockImplementation(async (_owners, callback) => {
+      const stagedPages = await callback();
+      committedPages = stagedPages;
+      return stagedPages;
+    });
+
+    const latestKeywords = () =>
+      [...capturedHandlers]
+        .reverse()
+        .find((options) => options.pageFile === files.pageFile)
+        ?.getRouteTranslations?.(files.pageFile, "en")?.keywords;
+
+    expect(latestKeywords()).toBeUndefined();
+
+    fs.writeFileSync(files.localeFile, '{"copy":{"en":"First","ar":"أول"}}', "utf8");
+    await expect(connector.hotUpdate(files.localeFile)).resolves.toBe(true);
+    expect(latestKeywords()).toEqual({ copy: "First" });
+
+    fs.writeFileSync(files.localeFile, '{"copy":{"en":"Second","ar":"ثان"}}', "utf8");
+    await expect(connector.hotUpdate(files.localeFile)).resolves.toBe(true);
+    expect(latestKeywords()).toEqual({ copy: "Second" });
+    const lastUsablePages = connector.getInstalledPages();
+    const lastUsableKeywords = latestKeywords();
+
+    fs.writeFileSync(files.localeFile, '{"copy":{"en":"Broken"}', "utf8");
+    await expect(connector.hotUpdate(files.localeFile)).rejects.toThrow(files.localeFile);
+    expect(connector.getInstalledPages()).toEqual(lastUsablePages);
+    expect(committedPages).toEqual(lastUsablePages);
+    expect(latestKeywords()).toEqual(lastUsableKeywords);
+
+    fs.rmSync(files.localeFile);
+    await expect(connector.hotUpdate(files.localeFile)).resolves.toBe(true);
+    expect(latestKeywords()).toBeUndefined();
   });
 });

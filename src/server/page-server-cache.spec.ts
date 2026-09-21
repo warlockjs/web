@@ -927,6 +927,30 @@ describe("server-side page cache (route.cache.serverCache)", () => {
     expect(second.headers["cache-control"]).toBe("private, no-store");
   });
 
+  it("a provisional locale switch leaves the legacy cookie untouched on both MISS and HIT", async () => {
+    renderPageRequest.mockImplementation(async () => renderedJson());
+    const headers = {
+      [WARLOCK_DATA_REQUEST_HEADER]: WARLOCK_DATA_REQUEST_VALUE,
+      "x-warlock-locale-provisional": "1",
+    };
+
+    const miss = await server.inject({
+      method: "GET",
+      url: "/__scache-locale?locale=ar",
+      headers,
+    });
+    const hit = await server.inject({
+      method: "GET",
+      url: "/__scache-locale?locale=ar",
+      headers,
+    });
+
+    expect(miss.headers["x-warlock-cache"]).toBe("miss");
+    expect(hit.headers["x-warlock-cache"]).toBe("hit");
+    expect(miss.headers["set-cookie"]).toBeUndefined();
+    expect(hit.headers["set-cookie"]).toBeUndefined();
+  });
+
   it("a plain HIT with no `?locale=` on the request never persists anything: no Set-Cookie, public Cache-Control kept", async () => {
     const first = await server.inject({ method: "GET", url: "/__scache-basic" });
     expect(first.headers["x-warlock-cache"]).toBe("miss");

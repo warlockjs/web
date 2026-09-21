@@ -5,6 +5,7 @@ import { isPrefixedLocale, readLocaleRouting } from "../../routing/locale-routin
 import { routePathOf } from "../../routing/route-table";
 import { routerEvents, type NavigationMode } from "../../routing/router-events";
 import { hydrateShared } from "../../shared";
+import { LOCALE_PREFERENCE_COOKIE_NAME } from "../../locale-preference";
 import { fetchPageData } from "./fetch-page-data";
 import type { RefreshRuntime } from "./refresh";
 import { syncDocumentLocale } from "./sync-document-locale";
@@ -14,20 +15,17 @@ import { syncDocumentLocale } from "./sync-document-locale";
  *
  * ## Why this is a data request, not a navigation
  *
- * The server resolves a request's locale as the first
- * present of a `?locale=` query param, the `locale` cookie, then a `locale`
- * header (`core/src/http/request.ts:352-360`), with the query param
- * outranking everything else. There is no URL-prefix mode. Persisting the
- * choice is therefore the SERVER's job: a navigation data request whose
- * locale came from the query param has the server call
- * `response.setLocale(request.locale)`, which writes the (HttpOnly) cookie
- * the next full load will agree with — the client never writes it itself.
+ * Without locale routing, request locale precedence is query, browser
+ * preference cookie, legacy server cookie, then header. The data request is
+ * marked provisional so its response cannot persist a superseded choice.
+ * After the tree builds and the ticket is still current, the client writes
+ * and verifies the preference cookie before committing the page.
  *
  * So `changeLocaleCode` re-fetches the CURRENT route, exactly like
  * `refresh()`, but with `?locale=<code>` appended to the FETCH URL only. The
  * visible address bar is left alone, except that a `locale` param already
  * sitting in it is stripped — left in place it would keep outranking the
- * cookie the server just persisted, undoing the change on the next reload.
+ * committed preference cookie, undoing the change on the next reload.
  *
  * ## Locale ROUTING changes the shape of the above (design note §B.3)
  *
@@ -67,9 +65,9 @@ import { syncDocumentLocale } from "./sync-document-locale";
  *
  * Unlike a navigation, a failed locale change never hands the URL to
  * `window.location.assign` — the user is already where they want to be. It
- * also never writes anything: no history change, no tree swap, no cookie (the
- * client holds none to restore). The returned promise rejects so the caller
- * knows the switch did not happen.
+ * does not change history, the tree, or the preference when fetching or
+ * building fails. A blocked preference cookie also prevents the page commit.
+ * The returned promise rejects so the caller knows the switch did not happen.
  */
 
 /** A locale change is a "replace" for history and its listeners, same as `refresh()`. */
@@ -84,6 +82,21 @@ function withLocaleParam(href: string, code: string): string {
   url.searchParams.set("locale", code);
 
   return url.toString();
+}
+
+function writeLocalePreference(code: string): boolean {
+  try {
+    const secure = window.location.protocol === "https:" ? "; Secure" : "";
+    const value = encodeURIComponent(code);
+    document.cookie = `${LOCALE_PREFERENCE_COOKIE_NAME}=${value}; Path=/; SameSite=Lax${secure}`;
+
+    return document.cookie
+      .split(";")
+      .map((cookie) => cookie.trim())
+      .some((cookie) => cookie === `${LOCALE_PREFERENCE_COOKIE_NAME}=${value}`);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -227,7 +240,9 @@ export function createLocaleChanger(runtime: RefreshRuntime): LocaleChanger {
 
     routerEvents.emitNavigating({ url, mode });
 
-    const result = await fetchPageData(fetchUrl, signal);
+    const result = await fetchPageData(fetchUrl, signal, {
+      provisionalLocale: !pathCarriesLocale,
+    });
 
     // Superseded: a navigation or another locale change already answered this
     // question. Not an error — the operation that overtook this one emits its
@@ -257,6 +272,13 @@ export function createLocaleChanger(runtime: RefreshRuntime): LocaleChanger {
 
     if (!isCurrent()) return;
 
+    if (!pathCarriesLocale && !writeLocalePreference(result.payload.locale)) {
+      const error = new Error("Warlock changeLocaleCode could not persist the locale preference");
+
+      routerEvents.emitNavigationError({ url, mode, error });
+      throw error;
+    }
+
     // Shared state BEFORE the render that consumes it, exactly as a
     // navigation and a refresh do it.
     hydrateShared(result.payload.shared);
@@ -282,8 +304,8 @@ export function createLocaleChanger(runtime: RefreshRuntime): LocaleChanger {
       window.history.pushState(null, "", targetUrl);
     } else {
       // The visible URL is left alone UNLESS it already carried a `locale`
-      // query param — left in place, that param would outrank the cookie the
-      // server just persisted (`request.ts:352-360`) and silently revert the
+      // query param — left in place, that param would outrank the committed
+      // preference cookie and silently revert the
       // locale on the next reload.
       const cleanedUrl = withoutLocaleParam(url);
 
@@ -352,15 +374,16 @@ export function connectLocaleChanger(next: LocaleChanger | undefined): LocaleCha
  * to correct `<head>` after a swap, but that effect only runs on React's
  * NEXT commit, after this function has already returned; a caller checking
  * `document.documentElement` right after `await changeLocaleCode(...)` must
- * not see the OLD locale. The server persists the choice (the framework's
- * `locale` cookie) on that same request, so the next full load agrees.
+ * not see the OLD locale. Without locale routing, the client persists the
+ * preference after the tree builds and its request remains current, so the
+ * next full load agrees. Routed locales are persisted in the URL instead.
  *
  * Calling it with the locale already active is a no-op: no request is made.
  *
  * @throws when the network request fails, the server cannot be reached, or
- * the fresh page cannot be built. The active locale and any cookie already on
- * the browser are left exactly as they were — nothing here writes a cookie,
- * so there is nothing to roll back.
+ * the fresh page cannot be built, or the browser blocks the preference cookie.
+ * Fetch and build failures leave the current page and preference unchanged;
+ * superseded requests cannot commit either.
  *
  * @returns a promise that resolves once the new locale is on screen. Safe to
  * call anywhere: it resolves immediately, doing nothing, when no client

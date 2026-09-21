@@ -26,4 +26,15 @@ describe("hasCookieRequiringPageCacheBypass — header shape", () => {
   it("keeps a locale-only string header cacheable", () => {
     expect(hasCookieRequiringPageCacheBypass(requestWithCookie("locale=en"))).toBe(false);
   });
+
+  it("allows the matching preference cookie only, while retaining the mixed-cookie bypass", () => {
+    expect(
+      hasCookieRequiringPageCacheBypass(
+        requestWithCookie("warlock.locale-preference=ar; locale=en"),
+      ),
+    ).toBe(false);
+    expect(
+      hasCookieRequiringPageCacheBypass(requestWithCookie("warlock.locale-preference=ar; token=x")),
+    ).toBe(true);
+  });
 });

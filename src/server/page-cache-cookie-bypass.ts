@@ -5,7 +5,7 @@
  * `auth.cookie.name` check) rather than folded into it: that check depends on
  * `auth.cookie.name` and only recognizes ONE cookie name, while this one
  * depends on nothing configurable and recognizes every cookie name except the
- * framework's own locale cookie. `create-page-route-handler.ts` ORs the two
+ * framework's own locale cookies. `create-page-route-handler.ts` ORs the two
  * together at its one call site — neither predicate alone is the full
  * bypass rule any more.
  *
@@ -16,9 +16,10 @@
  * `auth.cookie.name` can never enumerate every cookie an application or a
  * browser extension might attach, so this predicate does not try to
  * recognize credentials at all: it treats ANY cookie other than the locale
- * cookie as a reason to bypass, unconditionally.
+ * cookies as a reason to bypass, unconditionally.
  */
 import type { CredentialReadableRequest } from "./page-cache-eligibility";
+import { LOCALE_PREFERENCE_COOKIE_NAME } from "../locale-preference";
 
 /**
  * The cookie name `Response.setLocale()`/`request.locale` share
@@ -106,7 +107,7 @@ export function hasCookieRequiringPageCacheBypass(request: CredentialReadableReq
   if (cookies === undefined || cookies.size === 0) return true;
 
   for (const name of cookies.keys()) {
-    if (name !== LOCALE_COOKIE_NAME) return true;
+    if (name !== LOCALE_COOKIE_NAME && name !== LOCALE_PREFERENCE_COOKIE_NAME) return true;
   }
 
   return false;

@@ -51,7 +51,9 @@ function payloadResponse(payload: HydrationDocumentPayloadSource, url: string) {
 
 /** Answer every request with the same payload, echoing back the request URL. */
 function respondWith(payload: HydrationDocumentPayloadSource) {
-  const fetchMock = vi.fn(async (url: string) => payloadResponse(payload, url));
+  const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
+    payloadResponse(payload, url),
+  );
 
   vi.stubGlobal("fetch", fetchMock);
 
@@ -66,26 +68,37 @@ type Browser = {
    * real full load in English leaves it in, the same seed
    * `navigation-root-document.spec.ts` uses. */
   documentElement: { lang: string; dir: string };
+  cookie: () => string;
 };
 
 function stubBrowser(href = HREF): Browser {
   const documentElement = { lang: "en", dir: "ltr" };
+  let cookie = "";
   const browser: Browser = {
     replaceState: vi.fn(),
     pushState: vi.fn(),
     assign: vi.fn(),
     documentElement,
+    cookie: () => cookie,
   };
 
   vi.stubGlobal("window", {
-    location: { href, assign: browser.assign },
+    location: { href, protocol: new URL(href).protocol, assign: browser.assign },
     history: { replaceState: browser.replaceState, pushState: browser.pushState },
   });
   // `syncDocumentLocale` reads/writes `document.documentElement` directly —
   // the environment is `"node"` (no real DOM), so this is the same kind of
   // bare stand-in `window` already gets above, just enough surface for
   // `syncDocumentLocale` to operate on.
-  vi.stubGlobal("document", { documentElement });
+  vi.stubGlobal("document", {
+    documentElement,
+    get cookie() {
+      return cookie;
+    },
+    set cookie(value: string) {
+      cookie = value.split(";")[0] ?? "";
+    },
+  });
 
   return browser;
 }
@@ -212,6 +225,9 @@ describe("changeLocaleCode — the happy path", () => {
     const [requestedUrl] = fetchMock.mock.calls[0] as [string];
 
     expect(requestedUrl).toBe("https://app.test/products?page=2&locale=ar#reviews");
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      headers: expect.objectContaining({ "x-warlock-locale-provisional": "1" }),
+    });
   });
 
   it("swaps in the fresh page so the rendered locale changes", async () => {
@@ -231,6 +247,24 @@ describe("changeLocaleCode — the happy path", () => {
     expect(browser.replaceState).not.toHaveBeenCalled();
     expect(browser.pushState).not.toHaveBeenCalled();
     expect(browser.assign).not.toHaveBeenCalled();
+    expect(browser.cookie()).toBe("warlock.locale-preference=ar");
+  });
+
+  it("rejects before mutating UI or history when the preference cookie is blocked", async () => {
+    const browser = stubBrowser();
+    Object.defineProperty(document, "cookie", { get: () => "", set: () => undefined });
+    respondWith(payloadOf("products.list", "ar"));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const onScreenBefore = pageOf(payloadOf("products.list", "en"));
+    const scenario = harness(onScreenBefore);
+
+    await expect(createLocaleChanger(scenario.runtime)("ar")).rejects.toThrow(
+      "persist the locale preference",
+    );
+
+    expect(scenario.onScreen()).toBe(onScreenBefore);
+    expect(browser.replaceState).not.toHaveBeenCalled();
+    expect(browser.pushState).not.toHaveBeenCalled();
   });
 
   it("announces itself the same way a refresh does, so a progress bar sees it", async () => {
