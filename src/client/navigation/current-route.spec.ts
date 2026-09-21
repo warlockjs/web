@@ -3,6 +3,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { HydrationDocumentPayloadSource } from "../../hydration-payload";
 
+// Preload the real graph during collection; freshModules still resets its state per test.
+import "../../localization";
+import "./navigation-root";
+
 /**
  * `currentRoute()` / `previousRoute()` — and specifically the claim that makes
  * them different from MRR's: they answer off the SERVER's match.
