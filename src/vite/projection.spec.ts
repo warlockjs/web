@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { webHomePageStub, webHomeRegisterStub } from "@warlock.js/core/src/generations/stubs";
 import type { Plugin } from "vite";
 import { describe, expect, it } from "vitest";
-import { projection } from "./projection";
+import { projectModule, projection } from "./projection";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -67,6 +67,10 @@ async function transformSource(source: string, baseName: string): Promise<string
   const result = await hook.call(pluginContext, source, id);
   if (result === null) throw new Error(`expected ${baseName} to be transformed, got null`);
   return typeof result === "string" ? result : result.code;
+}
+
+function projectSource(source: string, baseName: string): string {
+  return projectModule(source, path.join(FIXTURE_DIR, baseName)).code;
 }
 
 async function refusalMessage(source: string, baseName: string): Promise<string> {
@@ -184,6 +188,186 @@ describe("projection — strip server config (real transform hook, real output)"
     // fails on prose rather than on what projection removed.
     expect(code).not.toMatch(/from ["']\.\/server-only-helper["']/);
     expect(code).toContain('from "./helper"');
+  });
+});
+
+describe("projection — import binding liveness", () => {
+  it("drops a metadata-only Core import when client scopes shadow its local name", async () => {
+    const code = await transformSource(
+      [
+        `import { t } from "@warlock.js/core";`,
+        `import { useTrans } from "@warlock.js/web";`,
+        ``,
+        `export const config = { metadata: () => ({ title: t("posts.title") }) };`,
+        ``,
+        `export default function PostsPage() {`,
+        `  const t = useTrans();`,
+        `  const render = ({ t }: { t: (key: string) => string }) => <p>{t("posts.card")}</p>;`,
+        `  try { throw useTrans(); } catch ({ t }) { return <>{t("posts.error")}</>; }`,
+        `  return <section>{t("posts.heading")}{render({ t })}</section>;`,
+        `}`,
+      ].join("\n"),
+      "posts.page.tsx",
+    );
+
+    expect(code).not.toMatch(/from ["']@warlock\.js\/core["']/);
+    expect(code).toContain('from "@warlock.js/web"');
+    expect(code).toContain("const t = useTrans()");
+  });
+
+  it("keeps a genuinely read import, including property and JSX references", async () => {
+    const code = await transformSource(
+      [
+        `import { clientConfig, Card, Header, lookupKey } from "./client-safe";`,
+        ``,
+        `export const config = { metadata: () => ({ title: "server only" }) };`,
+        ``,
+        `export default function PostsPage() {`,
+        `  return <Card.Header title={clientConfig[lookupKey]} />;`,
+        `}`,
+      ].join("\n"),
+      "posts.page.tsx",
+    );
+
+    expect(code).toMatch(/from ["']\.\/client-safe["']/);
+    expect(code).toContain("clientConfig[lookupKey]");
+    expect(code).toContain("<Card.Header");
+  });
+
+  it("does not confuse block, parameter, or destructuring bindings with an import", async () => {
+    const code = await transformSource(
+      [
+        `import { t } from "@warlock.js/core";`,
+        `import { useTrans } from "@warlock.js/web";`,
+        ``,
+        `export const config = { metadata: () => ({ title: t("posts.title") }) };`,
+        ``,
+        `export default function PostsPage() {`,
+        `  const fromParameter = (t: (key: string) => string) => t("posts.parameter");`,
+        `  const fromDestructure = ({ t }: { t: (key: string) => string }) => t("posts.destructure");`,
+        `  if (true) { const t = useTrans(); return <>{t("posts.block")}</>; }`,
+        `  return <>{fromParameter(useTrans())}{fromDestructure({ t: useTrans() })}</>;`,
+        `}`,
+      ].join("\n"),
+      "posts.page.tsx",
+    );
+
+    expect(code).not.toMatch(/from ["']@warlock\.js\/core["']/);
+    expect(code).toContain('from "@warlock.js/web"');
+  });
+
+  it("treats a default parameter as its own binding scope", async () => {
+    const code = await transformSource(
+      [
+        `import { t } from "@warlock.js/core";`,
+        `import { useTrans } from "@warlock.js/web";`,
+        ``,
+        `export const config = { metadata: () => ({ title: t("posts.title") }) };`,
+        ``,
+        `export default function PostsPage(t = useTrans()) {`,
+        `  return <h1>{t("posts.parameter")}</h1>;`,
+        `}`,
+      ].join("\n"),
+      "posts.page.tsx",
+    );
+
+    expect(code).not.toMatch(/from ["']@warlock\.js\/core["']/);
+    expect(code).toContain('from "@warlock.js/web"');
+  });
+
+  it("keeps an imported local re-export and ignores a removed mixed config declarator", async () => {
+    const code = projectSource(
+      [
+        `import { configOnly } from "./config-only";`,
+        `import { x } from "./values";`,
+        ``,
+        `export const config = { metadata: () => configOnly("server") }, retained = x;`,
+        `export { x };`,
+        `export default function PostsPage() { return <p />; }`,
+      ].join("\n"),
+      "posts.page.tsx",
+    );
+
+    expect(code).not.toMatch(/from ["']\.\/config-only["']/);
+    expect(code).toMatch(/from ["']\.\/values["']/);
+    expect(code).toMatch(/export \{ x \}/);
+  });
+
+  it("keeps imports read by computed method and catch-pattern expressions", async () => {
+    const code = await transformSource(
+      [
+        `import { methodName, fallback } from "./client-safe";`,
+        ``,
+        `export const config = { metadata: () => "server only" };`,
+        ``,
+        `export default function PostsPage() {`,
+        `  const api = { [methodName]() { return "ok"; } };`,
+        `  try { throw {}; } catch ({ [fallback]: value = methodName }) { return <p>{api.default()} {value}</p>; }`,
+        `}`,
+      ].join("\n"),
+      "posts.page.tsx",
+    );
+
+    expect(code).toMatch(/from ["']\.\/client-safe["']/);
+    expect(code).toContain("[methodName]()");
+    expect(code).toContain("value = methodName");
+  });
+
+  it("uses Babel bindings for JSX attributes, hoisted vars, computed classes, and runtime TS expressions", () => {
+    const jsxAttribute = projectSource(
+      `import { placeholder } from "./server-only"; export const config = { metadata: () => placeholder }; export default function Page() { return <input placeholder="x" />; }`,
+      "page.page.tsx",
+    );
+    const hoistedVar = projectSource(
+      `import { Core } from "./server-only"; export const config = { metadata: () => Core }; export default function Page() { if (true) { var Core = { value: "local" }; } return <p>{Core.value}</p>; }`,
+      "page.page.tsx",
+    );
+    const computedClass = projectSource(
+      `import { Base } from "./client-safe"; export const config = { metadata: () => "server" }; export default class Widget { [Base.methodName]() { return 1; } }`,
+      "page.page.tsx",
+    );
+    const runtimeEnum = projectSource(
+      `import { Base } from "./client-safe"; export enum Level { Low = Base.LOW } export default function Page() { return <p />; }`,
+      "page.page.tsx",
+    );
+    const runtimeAssertion = projectSource(
+      `import { Base } from "./client-safe"; export const config = { metadata: () => "server" }; export default function Page() { return <p>{Base.value as string}</p>; }`,
+      "page.page.tsx",
+    );
+    const typeReexport = projectSource(
+      `import { Foo } from "./server-only"; export type { Foo }; export default function Page() { return <p />; }`,
+      "page.page.tsx",
+    );
+    const valueReexport = projectSource(
+      `import { Foo } from "./client-safe"; export { Foo }; export default function Page() { return <p />; }`,
+      "page.page.tsx",
+    );
+
+    expect(jsxAttribute).not.toMatch(/from ["']\.\/server-only["']/);
+    expect(hoistedVar).not.toMatch(/from ["']\.\/server-only["']/);
+    expect(computedClass).toMatch(/from ["']\.\/client-safe["']/);
+    expect(runtimeEnum).toMatch(/from ["']\.\/client-safe["']/);
+    expect(runtimeAssertion).toMatch(/from ["']\.\/client-safe["']/);
+    expect(typeReexport).not.toMatch(/from ["']\.\/server-only["']/);
+    expect(valueReexport).toMatch(/from ["']\.\/client-safe["']/);
+  });
+
+  it("keeps a true surviving Core use for Gate A to refuse", async () => {
+    const code = await transformSource(
+      [
+        `import { t } from "@warlock.js/core";`,
+        ``,
+        `export const config = { metadata: () => ({ title: "server only" }) };`,
+        ``,
+        `export default function PostsPage() {`,
+        `  return <h1>{t("posts.clientLeak")}</h1>;`,
+        `}`,
+      ].join("\n"),
+      "posts.page.tsx",
+    );
+
+    expect(code).toMatch(/from ["']@warlock\.js\/core["']/);
+    expect(code).toContain('t("posts.clientLeak")');
   });
 });
 

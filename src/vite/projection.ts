@@ -38,9 +38,15 @@
  */
 import { parse } from "@babel/parser";
 import MagicString from "magic-string";
+import traverseModule from "@babel/traverse";
 import path from "node:path";
 import type { Plugin } from "vite";
 import { readModuleConfig } from "../build/read-module-config";
+
+type BabelTraverse = typeof import("@babel/traverse").default;
+const traverse =
+  (traverseModule as unknown as { default?: BabelTraverse }).default ??
+  (traverseModule as unknown as BabelTraverse);
 
 /**
  * Exported so Gate C (`gate-c-verify.ts`) can re-derive "does the emitted
@@ -358,14 +364,12 @@ function isServerExportDeclaration(stmt: any): boolean {
 }
 
 /**
- * Generic duck-typed AST walk (no `@babel/traverse` dependency — this
- * package only needs `@babel/parser` + `@babel/types`-shaped nodes).
+ * Generic duck-typed AST walk for local declaration attribution.
  * Collects every `Identifier`/`JSXIdentifier` name reachable from `node`,
- * used to decide whether an import binding still has a reader once the 8
- * server exports are gone. Over-collecting (e.g. counting an object
- * property key as a "use") only ever biases toward KEEPING an import, never
- * toward dropping one that is still needed — the safe direction for a
- * heuristic that must not guess in the removal direction.
+ * used to retain local declarations referenced after server exports are
+ * removed. Import liveness is resolved separately through Babel bindings.
+ * Over-collecting a property key can retain an unnecessary local declaration,
+ * but cannot remove one that is still needed.
  */
 function collectIdentifierNames(node: unknown, names: Set<string>): void {
   if (!node || typeof node !== "object") return;
@@ -391,6 +395,38 @@ function collectIdentifierNames(node: unknown, names: Set<string>): void {
     }
     collectIdentifierNames(record[key], names);
   }
+}
+
+function runtimeImportReferences(code: string): Set<string> {
+  const ast = parse(code, { sourceType: "module", plugins: ["typescript", "jsx"] });
+  const references = new Set<string>();
+  traverse(ast, {
+    Program(program) {
+      for (const statement of program.get("body")) {
+        if (!statement.isImportDeclaration()) continue;
+        for (const specifier of statement.get("specifiers")) {
+          if ("importKind" in specifier.node && specifier.node.importKind === "type") continue;
+          const binding = program.scope.getBinding(specifier.node.local.name);
+          if (
+            binding?.referencePaths.some(
+              (reference) =>
+                !reference.findParent(
+                  (parent) =>
+                    parent.isTSType() ||
+                    parent.isTSTypeAnnotation() ||
+                    (parent.isExportSpecifier() && parent.node.exportKind === "type") ||
+                    (parent.isExportNamedDeclaration() && parent.node.exportKind === "type"),
+                ),
+            )
+          ) {
+            references.add(specifier.node.local.name);
+          }
+        }
+      }
+      program.stop();
+    },
+  });
+  return references;
 }
 
 /** A mixed `export const config = ..., register = ...` declaration. */
@@ -700,6 +736,11 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
   }
 
   const removedLocals = new Set<any>();
+  const importBindingNames = new Set(
+    importDeclarations.flatMap((declaration) =>
+      declaration.specifiers.map((specifier: any) => specifier.local?.name).filter(Boolean),
+    ),
+  );
   const configValidationDependencies = new Set<string>();
   for (const declarator of removedServerDeclarators) {
     if (declarator.id?.name !== "config") continue;
@@ -758,7 +799,9 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
         // sitemap } from "m"` names "x" as it exists in "m", not anything in
         // THIS file's scope, so it contributes no read here either way.
         if (!reexport.stmt.source) {
-          for (const specifier of reexport.keep) own.add(specifier.local.name);
+          for (const specifier of reexport.keep) {
+            own.add(specifier.local.name);
+          }
         }
       } else {
         collectIdentifierNames(stmt, own);
@@ -766,6 +809,8 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
           for (const name of declaredNames(stmt)) own.delete(name);
         }
       }
+      // Import liveness is decided from the effective projected program below.
+      for (const name of importBindingNames) own.delete(name);
       for (const name of own) names.add(name);
     }
     return names;
@@ -806,6 +851,26 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
     );
   }
 
+  for (const stmt of removedServerExports) removeStatement(s, code, stmt);
+  for (const stmt of removedLocals) removeStatement(s, code, stmt);
+  for (const edit of variableExportEdits) {
+    const declaration = edit.stmt.declaration;
+    const kept = edit.keep.map((declarator: any) => code.slice(declarator.start, declarator.end));
+    s.overwrite(declaration.start, declaration.end, `${declaration.kind} ${kept.join(", ")};`);
+  }
+  for (const edit of reexportEdits) {
+    if (edit.keep.length === 0) removeStatement(s, code, edit.stmt);
+    else {
+      const specifiers = edit.stmt.specifiers as any[];
+      s.overwrite(
+        specifiers[0].start,
+        specifiers[specifiers.length - 1].end,
+        edit.keep.map((specifier: any) => code.slice(specifier.start, specifier.end)).join(", "),
+      );
+    }
+  }
+  const referencedImports = runtimeImportReferences(s.toString());
+
   for (const decl of importDeclarations) {
     const source = decl.source.value as string;
     if (isKnownSafeAsset(source)) continue; // always survives, no orphan check
@@ -842,45 +907,8 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
       );
     }
 
-    const isUsed = decl.specifiers.some((spec: any) => survivingNames.has(spec.local.name));
+    const isUsed = decl.specifiers.some((spec: any) => referencedImports.has(spec.local.name));
     if (!isUsed) removeStatement(s, code, decl);
-  }
-
-  for (const stmt of removedServerExports) {
-    removeStatement(s, code, stmt);
-  }
-
-  for (const stmt of removedLocals) {
-    removeStatement(s, code, stmt);
-  }
-
-  for (const edit of variableExportEdits) {
-    const declaration = edit.stmt.declaration;
-    const kept = edit.keep.map((declarator: any) => code.slice(declarator.start, declarator.end));
-    // Babel's VariableDeclaration range includes its trailing semicolon. The
-    // replacement must provide one too, otherwise a following export joins
-    // the retained initializer and becomes invalid source.
-    s.overwrite(declaration.start, declaration.end, `${declaration.kind} ${kept.join(", ")};`);
-  }
-
-  for (const edit of reexportEdits) {
-    if (edit.keep.length === 0) {
-      // No specifier survives — a re-export WITH a source must not leave the
-      // source module imported for nothing, so the whole statement goes.
-      removeStatement(s, code, edit.stmt);
-      continue;
-    }
-    // Some specifiers survive (the innocent-co-export case, canon `77c18a77`)
-    // — rewrite the specifier list in place, keeping each surviving
-    // specifier's original source text (so an alias like `x as Helper`
-    // round-trips unchanged) and the statement's `from "m"` clause, if any.
-    const specifiers = edit.stmt.specifiers as any[];
-    const start = specifiers[0].start as number;
-    const end = specifiers[specifiers.length - 1].end as number;
-    const newText = edit.keep
-      .map((specifier: any) => code.slice(specifier.start, specifier.end))
-      .join(", ");
-    s.overwrite(start, end, newText);
   }
 
   return {

@@ -2,6 +2,12 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.17.1 - 2026-09-22
+
+### Fixed
+
+- Page projection now resolves import references by lexical binding after removing server configuration. A component-local variable such as `const t = useTrans()` no longer keeps an unrelated metadata-only Core import in the client view and causes development rendering to fail; genuine runtime references remain intact.
+
 ## 5.17.0 - 2026-09-21
 
 ### Upgrading
