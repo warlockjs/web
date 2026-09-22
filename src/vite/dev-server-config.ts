@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Alias, HttpServer, InlineConfig, PluginOption } from "vite";
+import type { DevelopmentModelModules } from "@warlock.js/core";
 import { appConventionAliases } from "./app-convention-aliases";
+import { coreModelModules } from "./core-model-modules";
 import { warlockClientBoundary } from "./index";
 import { resolveReactFastRefreshPlugins } from "./react-refresh-preamble";
 
@@ -186,6 +188,8 @@ export type WebConnectorViteConfigOptions = {
   handlePageHotUpdate: (file: string) => Promise<boolean>;
   /** Plugins that must run ahead of the client-boundary gates, e.g. `devErrorTransportPlugin`. */
   leadingPlugins: PluginOption[];
+  /** Internal Core-owned model identities, when running through its development loader. */
+  modelModules?: DevelopmentModelModules;
   resolveAlias?: Alias[];
   ssrExternal?: string[];
   plugins?: PluginOption[];
@@ -236,6 +240,7 @@ export async function createWebConnectorViteConfig(
         srcDir: path.relative(options.appRoot, options.appSrcRoot),
         beforePageHotUpdate: ({ file }) => options.handlePageHotUpdate(file),
       }),
+      coreModelModules(options.modelModules),
       // AFTER the boundary, and the order matters among `enforce: "pre"`
       // plugins (Vite keeps array order within an enforce bucket).
       // `warlock:projection` strips a page's server exports — `loader` and

@@ -905,6 +905,7 @@ export class WebConnector extends BaseConnector {
         hmrServer: fastify.server,
         handlePageHotUpdate: (file) => this.handlePageHotUpdate(file),
         leadingPlugins: [devErrorTransportPlugin({ isProductionRuntime, buildErrorMessage })],
+        modelModules: container.tryGet("development.modelModules"),
         resolveAlias: this.options.resolveAlias,
         ssrExternal: this.options.ssrExternal,
         plugins: this.options.plugins,
