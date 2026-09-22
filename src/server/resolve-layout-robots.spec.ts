@@ -30,28 +30,14 @@ describe("resolveLayoutRobots", () => {
     expect(resolveLayoutRobots([{}, { metadata: undefined }])).toBeUndefined();
   });
 
-  it.each([
-    ["a metadata function", () => ({ robots: "noindex" })],
-    ["null metadata", null],
-    ["an array", []],
-    ["an unknown key", { title: "Nope" }],
-    ["a non-string robots value", { robots: false }],
-  ])("refuses %s and names its source file", (_description, metadata) => {
-    const layouts = [{ metadata }] as unknown as LayoutModuleShape[];
-
-    expect(() => resolveLayoutRobots(layouts, ["src/web/admin/layout.tsx"])).toThrow(
-      "src/web/admin/layout.tsx",
-    );
-  });
-
-  it("validates every ancestor before choosing the nearest directive", () => {
+  it("only extracts static string robots and leaves metadata validation to normalization", () => {
     const layouts = [
+      { metadata: { title: "Outer" } },
+      { metadata: () => ({ robots: "noindex" }) },
       { metadata: { robots: false } },
       { metadata: { robots: "noindex" } },
     ] as unknown as LayoutModuleShape[];
 
-    expect(() => resolveLayoutRobots(layouts, ["outer/layout.tsx", "inner/layout.tsx"])).toThrow(
-      "outer/layout.tsx",
-    );
+    expect(resolveLayoutRobots(layouts, ["outer/layout.tsx", "inner/layout.tsx"])).toBe("noindex");
   });
 });

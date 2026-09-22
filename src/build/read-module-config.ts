@@ -132,8 +132,7 @@ function inspectConfig(
     if (member.type === "ObjectMethod") {
       if (
         member.kind !== "method" ||
-        kind !== "page" ||
-        (key !== "metadata" && key !== "sitemap")
+        (key !== "metadata" && (kind !== "page" || key !== "sitemap"))
       ) {
         fail(sourceFile, `config.${key} must be a property value, not an accessor or method`);
       }

@@ -45,6 +45,36 @@ export type MetadataOutput = {
   };
 };
 
+export type MetadataTitleInput =
+  | string
+  | { readonly absolute: string; readonly default?: never; readonly template?: never }
+  | { readonly absolute?: never; readonly default?: string; readonly template?: string };
+
+/** Author-facing metadata. Renderers only ever receive {@link MetadataOutput}. */
+export type MetadataInput = Omit<MetadataOutput, "title"> & { readonly title?: MetadataTitleInput };
+
+type DeepReadonlyMetadataValue<Value> = Value extends readonly (infer Item)[]
+  ? readonly DeepReadonlyMetadataValue<Item>[]
+  : Value extends object
+    ? Readonly<{ [Key in keyof Value]: DeepReadonlyMetadataValue<Value[Key]> }>
+    : Value;
+
+export type ResolvedMetadata = Readonly<{
+  [Key in keyof MetadataOutput]: DeepReadonlyMetadataValue<MetadataOutput[Key]>;
+}>;
+
+export type MetadataChild = Readonly<{
+  kind: "layout" | "page";
+  metadata: ResolvedMetadata;
+  child?: MetadataChild;
+}>;
+
+export type MetadataContext<TLoader> = Readonly<{
+  data: TLoader;
+  shared: Readonly<SharedContext>;
+  child?: MetadataChild;
+}>;
+
 /**
  * The SAME key set as {@link MetadataOutput}, as a value.
  *
@@ -135,5 +165,4 @@ export type TwitterKeysAreExact = [
  * threw a `TypeError` that replaced the loader's real error.
  */
 export type PageMetadata<TLoader extends LoaderFunction | undefined = undefined> =
-  | MetadataOutput
-  | ((context: { data: LoaderData<TLoader>; shared: Readonly<SharedContext> }) => MetadataOutput);
+  MetadataInput | ((context: MetadataContext<LoaderData<TLoader>>) => MetadataInput);

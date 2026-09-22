@@ -45,6 +45,7 @@ import {
 import { hydrateScrollPositions } from "./scroll-positions";
 import { scrollToFragment } from "./scroll-to-fragment";
 import { syncDocumentLocale } from "./sync-document-locale";
+import { beginNavigationPending } from "./navigation-pending-store";
 
 /**
  * Carry out a scroll decision (`scroll-restoration.ts`) once the target
@@ -150,6 +151,7 @@ export function NavigationRoot({
     causes.
   */
   const resetTokenRef = useRef(0);
+  const pendingCommit = useRef<{ next: Current; complete: () => void } | undefined>(undefined);
 
   // Set once the initial document's deferred scope has been released.
   const documentScopeReleased = useRef(false);
@@ -196,8 +198,9 @@ export function NavigationRoot({
     };
   }, [pages, current.payload.name]);
 
-  const applySwap = (next: Current): void => {
+  const applySwap = (next: Current, complete?: () => void): void => {
     resetTokenRef.current += 1;
+    pendingCommit.current = complete === undefined ? undefined : { next, complete };
 
     setCurrent(next);
   };
@@ -252,6 +255,7 @@ export function NavigationRoot({
       the moment something newer starts.
     */
     let activeController: AbortController | undefined;
+    let activePendingCompletion: (() => void) | undefined;
     /*
       The URL this runtime last put in the address bar, so `popstate` can tell a
       move BETWEEN pages from a move between two fragments of one page. Seeded
@@ -290,17 +294,19 @@ export function NavigationRoot({
       replace: boolean,
       kind: "navigate" | "popstate",
     ): Promise<void> => {
-      const { isCurrent, signal } = claimTicket();
-      /*
+      const { isCurrent, signal, complete } = claimTicket();
+      let completionWaitsForCommit = false;
+      try {
+        /*
         `"replace"` covers a Back/Forward press as well as an explicit
         `<Link replace>` — both calls into `apply` pass `replace: true` for
         exactly that reason (see `onPopState` below), and `NavigationMode`'s own
         doc records why a listener does not need the two told apart.
       */
-      const mode: NavigationMode = replace ? "replace" : "push";
+        const mode: NavigationMode = replace ? "replace" : "push";
 
-      routerEvents.emitNavigating({ url, mode });
-      /*
+        routerEvents.emitNavigating({ url, mode });
+        /*
         A prefetched response is CONSUMED, never merely read — `take` removes it,
         so the same speculative fetch can satisfy exactly one navigation and a
         second click on the same link goes to the network. That matters because
@@ -314,62 +320,62 @@ export function NavigationRoot({
         A prefetched hit is never aborted — there is no request in flight to
         abort — so `signal` is only ever consulted on the network path.
       */
-      const result = takePrefetchedPageData(url) ?? (await fetchPageData(url, signal));
+        const result = takePrefetchedPageData(url) ?? (await fetchPageData(url, signal));
 
-      if (disposed || !isCurrent()) return;
+        if (disposed || !isCurrent()) return;
 
-      if (result.type === "aborted") {
-        // Superseded — the ticket already told us so, and would have caught
-        // this even if aborting had done nothing (a test double that ignores
-        // `signal`, or a response that raced the abort). Not an error, not a
-        // fallback: the operation that overtook this one reports its own
-        // outcome.
-        return;
-      }
+        if (result.type === "aborted") {
+          // Superseded — the ticket already told us so, and would have caught
+          // this even if aborting had done nothing (a test double that ignores
+          // `signal`, or a response that raced the abort). Not an error, not a
+          // fallback: the operation that overtook this one reports its own
+          // outcome.
+          return;
+        }
 
-      if (result.type === "hard-navigate") {
-        // The documented degradation: hand the URL back to the browser. The
-        // user still gets the page — see `fetch-page-data.ts`. Announced as a
-        // navigation ERROR, not a navigated one: `NavigationErrorPayload`'s own
-        // doc names this exact case — the in-flight navigation is over, not
-        // completed within this document.
-        const error = new Error(
-          `Warlock navigation fell back to a full load (${result.reason}): ${url}`,
-        );
+        if (result.type === "hard-navigate") {
+          // The documented degradation: hand the URL back to the browser. The
+          // user still gets the page — see `fetch-page-data.ts`. Announced as a
+          // navigation ERROR, not a navigated one: `NavigationErrorPayload`'s own
+          // doc names this exact case — the in-flight navigation is over, not
+          // completed within this document.
+          const error = new Error(
+            `Warlock navigation fell back to a full load (${result.reason}): ${url}`,
+          );
 
-        console.warn(`Warlock navigation fell back to a full load (${result.reason}):`, url);
-        routerEvents.emitNavigationError({ url, mode, error });
-        window.location.assign(url);
+          console.warn(`Warlock navigation fell back to a full load (${result.reason}):`, url);
+          routerEvents.emitNavigationError({ url, mode, error });
+          window.location.assign(url);
 
-        return;
-      }
+          return;
+        }
 
-      let tree: ReactNode;
+        let tree: ReactNode;
 
-      try {
-        tree = await buildTree(pages, result.payload);
-      } catch (error) {
-        // The payload was fine but its page chunk would not load or compose —
-        // a stale bundle after a deploy is the realistic cause. A full load
-        // fetches the current bundle, which is also the fix.
-        console.warn("Warlock navigation could not build the page tree:", error);
-        routerEvents.emitNavigationError({ url, mode, error });
-        window.location.assign(url);
+        try {
+          tree = await buildTree(pages, result.payload);
+        } catch (error) {
+          // The payload was fine but its page chunk would not load or compose —
+          // a stale bundle after a deploy is the realistic cause. A full load
+          // fetches the current bundle, which is also the fix.
+          console.warn("Warlock navigation could not build the page tree:", error);
+          routerEvents.emitNavigationError({ url, mode, error });
+          window.location.assign(url);
 
-        return;
-      }
+          return;
+        }
 
-      if (disposed || !isCurrent()) return;
+        if (disposed || !isCurrent()) return;
 
-      /*
+        /*
         Shared state BEFORE the render that consumes it. `hydrateShared`
         installs the snapshot `useShared()` reads; swapping the tree first would
         render one frame of the new page against the previous page's shared
         state — locale, permissions, the current user.
       */
-      hydrateShared(result.payload.shared);
+        hydrateShared(result.payload.shared);
 
-      /*
+        /*
         The fragment PUT BACK. `result.url` comes from `response.url`, and a
         fragment is never sent to a server, so the URL a navigation would
         otherwise be written to history from has had it stripped — which is how
@@ -380,9 +386,9 @@ export function NavigationRoot({
         `result.url` back would delete the fragment from an entry the user is
         merely returning to.
       */
-      const finalUrl = withFragmentFrom(result.url, url);
+        const finalUrl = withFragmentFrom(result.url, url);
 
-      /*
+        /*
         History AFTER the fetch succeeded, never before. Pushing optimistically
         would leave the address bar pointing at a page that then failed to
         load, and a Back press would return to a URL the user never saw.
@@ -393,38 +399,42 @@ export function NavigationRoot({
         `history.state`, since this call is fixing the fragment back onto a URL
         the browser already navigated to, not creating a new entry.
       */
-      const entryKey = kind === "navigate" ? createEntryKey() : ensureEntryKey(window.history);
-      const state = kind === "navigate" ? withEntryKey(null, entryKey) : window.history.state;
+        const entryKey = kind === "navigate" ? createEntryKey() : ensureEntryKey(window.history);
+        const state = kind === "navigate" ? withEntryKey(null, entryKey) : window.history.state;
 
-      if (replace) {
-        window.history.replaceState(state, "", finalUrl);
-      } else {
-        window.history.pushState(state, "", finalUrl);
+        if (replace) {
+          window.history.replaceState(state, "", finalUrl);
+        } else {
+          window.history.pushState(state, "", finalUrl);
+        }
+
+        committedUrl = finalUrl;
+        activeEntryKey.current = entryKey;
+
+        // Handed to the layout effect, which runs once React has committed the
+        // tree below to the DOM — the first moment the target can exist.
+        pendingScroll.current =
+          kind === "navigate"
+            ? decideNewNavigationScroll(fragmentOf(finalUrl))
+            : decidePopStateScroll(entryKey, fragmentOf(finalUrl));
+
+        // A navigation IS the route moving, so the fetched payload is both the
+        // page and the route's identity.
+        applySwap({ payload: result.payload, tree, routeSource: result.payload }, complete);
+        completionWaitsForCommit = true;
+
+        // The initial document's deferred values have no stream reader of their
+        // own to release them, so the first page that replaces it does. By now
+        // the document stream has closed and every pending key has settled.
+        if (!documentScopeReleased.current) {
+          documentScopeReleased.current = true;
+          releaseDeferredScope(DOCUMENT_SCOPE);
+        }
+
+        routerEvents.emitNavigated({ url, resolvedUrl: finalUrl, mode });
+      } finally {
+        if (!completionWaitsForCommit) complete();
       }
-
-      committedUrl = finalUrl;
-      activeEntryKey.current = entryKey;
-
-      // Handed to the layout effect, which runs once React has committed the
-      // tree below to the DOM — the first moment the target can exist.
-      pendingScroll.current =
-        kind === "navigate"
-          ? decideNewNavigationScroll(fragmentOf(finalUrl))
-          : decidePopStateScroll(entryKey, fragmentOf(finalUrl));
-
-      // A navigation IS the route moving, so the fetched payload is both the
-      // page and the route's identity.
-      applySwap({ payload: result.payload, tree, routeSource: result.payload });
-
-      // The initial document's deferred values have no stream reader of their
-      // own to release them, so the first page that replaces it does. By now
-      // the document stream has closed and every pending key has settled.
-      if (!documentScopeReleased.current) {
-        documentScopeReleased.current = true;
-        releaseDeferredScope(DOCUMENT_SCOPE);
-      }
-
-      routerEvents.emitNavigated({ url, resolvedUrl: finalUrl, mode });
     };
 
     /*
@@ -441,7 +451,11 @@ export function NavigationRoot({
       is still what decides which response wins. Aborting only stops the
       browser doing work nobody will look at.
     */
-    const claimTicket = (): { isCurrent: () => boolean; signal: AbortSignal } => {
+    const claimTicket = (): {
+      isCurrent: () => boolean;
+      signal: AbortSignal;
+      complete: () => void;
+    } => {
       activeController?.abort();
 
       const controller = new AbortController();
@@ -449,8 +463,21 @@ export function NavigationRoot({
       activeController = controller;
 
       const ticket = ++token;
+      const completePending = beginNavigationPending();
+      let completed = false;
+      const complete = () => {
+        if (completed) return;
+        completed = true;
+        completePending();
+        if (activePendingCompletion === complete) activePendingCompletion = undefined;
+      };
+      activePendingCompletion = complete;
 
-      return { isCurrent: () => !disposed && ticket === token, signal: controller.signal };
+      return {
+        isCurrent: () => !disposed && ticket === token,
+        signal: controller.signal,
+        complete,
+      };
     };
 
     // Both the refresher and the locale changer are one seam, built from the
@@ -561,6 +588,9 @@ export function NavigationRoot({
     return () => {
       disposed = true;
       activeController?.abort();
+      activePendingCompletion?.();
+      pendingCommit.current?.complete();
+      pendingCommit.current = undefined;
       window.removeEventListener("popstate", onPopState);
       connectNavigator(previousNavigator);
       connectRefresher(previousRefresher);
@@ -598,6 +628,15 @@ export function NavigationRoot({
     (a refresh, a parent's state change) does not yank the page back to a
     position or an anchor the user has since scrolled away from.
   */
+  useLayoutEffect(() => {
+    const pending = pendingCommit.current;
+
+    if (pending?.next !== current) return;
+
+    pendingCommit.current = undefined;
+    pending.complete();
+  }, [current]);
+
   useLayoutEffect(() => {
     const decision = pendingScroll.current;
 

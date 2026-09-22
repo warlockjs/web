@@ -29,6 +29,39 @@ import {
   type MetadataOutput,
   type PageMetadata,
 } from "./metadata";
+import type { LayoutConfig, RootConfig } from "./page-config";
+
+const metadataContractLoader = async () => ({ locale: "en", title: "Home" });
+const metadataContractRoot: RootConfig<typeof metadataContractLoader> = {
+  metadata: ({ data }) => ({ title: data.locale }),
+};
+const metadataContractLayout: LayoutConfig<typeof metadataContractLoader> = {
+  metadata: ({ data, child }) => ({
+    title: child?.metadata.title ?? data.title,
+  }),
+};
+
+// Compile-only: metadata callbacks retain concrete own loader data and child is readonly.
+const metadataContractReadonlyChild: NonNullable<
+  LayoutConfig<typeof metadataContractLoader>["metadata"]
+> = ({ child }) => {
+  if (child) {
+    // @ts-expect-error child metadata cannot be mutated by an ancestor callback
+    child.metadata.title = "mutated";
+    if (child.metadata.openGraph) {
+      // @ts-expect-error optional nested metadata is readonly too
+      child.metadata.openGraph.title = "mutated";
+    }
+    if (child.metadata.twitter) {
+      // @ts-expect-error optional nested metadata is readonly too
+      child.metadata.twitter.title = "mutated";
+    }
+  }
+  return {};
+};
+
+void metadataContractRoot;
+void metadataContractReadonlyChild;
 
 describe("PageMetadata — the annotated half", () => {
   it("rejects an unknown key by name (checked by `yarn typecheck`, not by vitest)", () => {

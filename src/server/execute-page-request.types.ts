@@ -67,6 +67,8 @@ export type PageTripleModule = {
     | { params?: BaseValidator; query?: BaseValidator; schema?: never; validating?: never };
   loader?: PipelineLoader;
   metadata?: PageMetadata<PipelineLoader>;
+  /** Ordered outer-to-inner metadata retained by a composed layout module. */
+  layoutMetadata?: readonly (PageMetadata<PipelineLoader> | undefined)[];
   default?: unknown;
   ErrorBoundary?: unknown;
 };

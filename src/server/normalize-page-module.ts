@@ -8,7 +8,7 @@ import {
   METADATA_KEYS,
   OPEN_GRAPH_KEYS,
   TWITTER_KEYS,
-  type MetadataOutput,
+  type MetadataInput,
   type PageMetadata,
 } from "../metadata";
 import type { PageConfigValidation } from "../page-config";
@@ -174,16 +174,6 @@ function validateMiddleware(value: unknown, sourceFile: string): readonly Pipeli
   return value as readonly PipelineMiddleware[];
 }
 
-function validateLayoutMetadata(value: unknown, sourceFile: string): { readonly robots?: string } {
-  if (!plainObject(value))
-    return fail(sourceFile, "config.metadata must be a plain static object on a layout.");
-  assertExactKeys(value, ["robots"], sourceFile, "config.metadata");
-  if (value.robots !== undefined && typeof value.robots !== "string") {
-    fail(sourceFile, "config.metadata.robots must be a string when defined.");
-  }
-  return value as { readonly robots?: string };
-}
-
 function validateStringFields(
   value: unknown,
   keys: readonly string[],
@@ -200,12 +190,35 @@ function validateStringFields(
   }
 }
 
-/** Validate the concrete metadata object that SSR and client navigation consume. */
-function validatePageMetadataOutput(value: unknown, sourceFile: string): MetadataOutput {
+/** Validate author metadata before the request pipeline resolves its final output. */
+function validateMetadataInput(value: unknown, sourceFile: string): MetadataInput {
   if (!plainObject(value)) fail(sourceFile, "config.metadata must return a plain object.");
   assertExactKeys(value, METADATA_KEYS, sourceFile, "config.metadata");
 
-  for (const key of ["title", "description", "canonical", "robots"] as const) {
+  if (value.title !== undefined) {
+    if (typeof value.title !== "string") {
+      if (!plainObject(value.title)) {
+        fail(sourceFile, "config.metadata.title must be a string or a plain title object.");
+      }
+      const hasAbsolute = Object.hasOwn(value.title, "absolute");
+      assertExactKeys(
+        value.title,
+        hasAbsolute ? ["absolute"] : ["default", "template"],
+        sourceFile,
+        "config.metadata.title",
+      );
+      if (hasAbsolute && typeof value.title.absolute !== "string") {
+        fail(sourceFile, "config.metadata.title.absolute must be a string.");
+      }
+      for (const key of ["default", "template"] as const) {
+        if (value.title[key] !== undefined && typeof value.title[key] !== "string") {
+          fail(sourceFile, `config.metadata.title.${key} must be a string when defined.`);
+        }
+      }
+    }
+  }
+
+  for (const key of ["description", "canonical", "robots"] as const) {
     if (value[key] !== undefined && typeof value[key] !== "string") {
       fail(sourceFile, `config.metadata.${key} must be a string when defined.`);
     }
@@ -228,16 +241,16 @@ function validatePageMetadataOutput(value: unknown, sourceFile: string): Metadat
     validateStringFields(value.twitter, TWITTER_KEYS, sourceFile, "config.metadata.twitter");
   }
 
-  return value as MetadataOutput;
+  return value as MetadataInput;
 }
 
 function validatePageMetadata(value: unknown, sourceFile: string): PageMetadata<PipelineLoader> {
-  if (typeof value !== "function") return validatePageMetadataOutput(value, sourceFile);
+  if (typeof value !== "function") return validateMetadataInput(value, sourceFile);
 
   // Keep metadata evaluation in Stage 8. In particular, a loader-dependent
   // metadata function must not run while routes are installed or modules load.
-  return function validatedPageMetadata(this: unknown, context: unknown): MetadataOutput {
-    return validatePageMetadataOutput(value.call(this, context), sourceFile);
+  return function validatedPageMetadata(this: unknown, context: unknown): MetadataInput {
+    return validateMetadataInput(value.call(this, context), sourceFile);
   } as PageMetadata<PipelineLoader>;
 }
 
@@ -307,14 +320,18 @@ export function normalizePageModule(
       fail(sourceFile, "config.prefix must be a string.");
     if (configValue.prefix !== undefined) normalized.prefix = configValue.prefix;
     if (configValue.metadata !== undefined)
-      normalized.metadata = validateLayoutMetadata(configValue.metadata, sourceFile);
+      normalized.metadata = validatePageMetadata(configValue.metadata, sourceFile);
     if (configValue.sitemap !== undefined)
       normalized.sitemap = readLayoutSitemapDeclaration(configValue.sitemap, sourceFile);
-  } else if (configValue.strictMode !== undefined) {
-    if (typeof configValue.strictMode !== "boolean") {
-      fail(sourceFile, "config.strictMode must be a boolean.");
+  } else {
+    if (configValue.metadata !== undefined)
+      normalized.metadata = validatePageMetadata(configValue.metadata, sourceFile);
+    if (configValue.strictMode !== undefined) {
+      if (typeof configValue.strictMode !== "boolean") {
+        fail(sourceFile, "config.strictMode must be a boolean.");
+      }
+      normalized.strictMode = configValue.strictMode;
     }
-    normalized.strictMode = configValue.strictMode;
   }
 
   return normalized;

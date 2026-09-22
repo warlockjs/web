@@ -141,6 +141,28 @@ export function DeleteProductButton({ id }: { id: string }) {
 
 `refresh()` re-fetches the current URL's App, Layout, and Page loaders and swaps fresh data without pushing history. It returns `true` only when fresh data reached the screen. On network/build failure it returns `false` and leaves the current page intact.
 
+## Pending navigation state
+
+Use `useIsNavigating()` for reactive pending UI. It returns the router-owned
+boolean state for Link/navigation, `refresh()`, and locale changes. It is false
+during SSR, has no artificial delay, and a late-mounted component reads an
+already-active transition immediately. A superseded transition cannot clear the
+state for its replacement.
+
+```tsx
+import { useIsNavigating } from "@warlock.js/web";
+import "./navigation-progress.css";
+
+export function NavigationProgress() {
+  const isNavigating = useIsNavigating();
+  return <div className={isNavigating ? "navigation-progress is-active" : "navigation-progress"} />;
+}
+```
+
+This is pending/not-pending, never percent-complete. Keep CSS in the imported
+stylesheet; do not add an inline `<style>` tag. `routerEvents` remains for
+analytics and post-navigation observation, but it is not a pending-state API.
+
 This is an ordinary API mutation followed by a re-fetch. Server actions are not supported.
 
 ## Read the query string live — `useQueryString`

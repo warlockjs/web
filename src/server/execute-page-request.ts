@@ -11,6 +11,7 @@ import { enterSharedScope, sealShared } from "../shared";
 import { connectRequestSearch } from "../routing/query-string";
 import { enterAdditionalSharedScope, requireRunner } from "./page-context";
 import { createRequestAbortController } from "./request-abort-signal";
+import { beginLayoutLoaderCapture, endLayoutLoaderCapture } from "./layout-loader-capture";
 import { matchRoute } from "./match-page-route";
 import { resolvePageMetadata } from "./resolve-page-metadata";
 import { resolveValidationData } from "./resolve-validation-data";
@@ -307,6 +308,10 @@ export async function executePageRequest<TResult = PageDataBundle>(
           };
         };
     let signal: LoaderSignal | undefined;
+    // Never serialized: this exists only from the composed layout loader's
+    // completion through stage 8, where each metadata definition receives the
+    // value produced by its matching layout loader.
+    let capturedLayoutData: readonly unknown[] | undefined;
 
     // Card `904a04eb`, audit §5.1: the whole non-deferred loader chain below
     // (app → layout → page loaders, plus the page's own `validation`
@@ -399,20 +404,29 @@ export async function executePageRequest<TResult = PageDataBundle>(
 
       let value: unknown;
       const loaderStartedAt = tracingEnabled ? performance.now() : 0;
+      const loaderContext = {
+        request,
+        response: createBufferedResponse(buffers[level]),
+        shared: sealedShared,
+        signal: requestAbortController.signal,
+      };
+      const layoutValues =
+        level === "layout" && triple.layout.layoutMetadata !== undefined
+          ? new Array<unknown>(triple.layout.layoutMetadata.length)
+          : undefined;
+
+      if (layoutValues !== undefined) beginLayoutLoaderCapture(loaderContext, layoutValues);
 
       try {
-        value = await Promise.race([
-          loader({
-            request,
-            response: createBufferedResponse(buffers[level]),
-            shared: sealedShared,
-            signal: requestAbortController.signal,
-          }),
-          loaderTimeoutSignal,
-        ]);
+        value = await Promise.race([loader(loaderContext), loaderTimeoutSignal]);
       } catch (thrown) {
         signal = { kind: "throw", index, level, thrown };
         break;
+      } finally {
+        if (layoutValues !== undefined) {
+          capturedLayoutData = layoutValues;
+          endLayoutLoaderCapture(loaderContext);
+        }
       }
 
       if (tracingEnabled) {
@@ -619,12 +633,28 @@ export async function executePageRequest<TResult = PageDataBundle>(
       shared: sealedShared,
       deferredKeys: bundle.deferredKeys,
       pagePath: bundle.route.path,
+      ancestors: [
+        { kind: "root", metadata: triple.app.metadata, data: bundle.appData },
+        ...(triple.layout.layoutMetadata !== undefined
+          ? triple.layout.layoutMetadata.map((metadata, index) => ({
+              kind: "layout" as const,
+              metadata,
+              data: capturedLayoutData?.[index],
+            }))
+          : [
+              {
+                kind: "layout" as const,
+                metadata: triple.layout.metadata,
+                data: bundle.layoutData,
+              },
+            ]),
+      ],
     });
 
     bundle.metadata = resolved.metadata;
 
-    if (resolved.thrown !== undefined) {
-      const boundary = designateBoundary("page", triple);
+    if (Object.hasOwn(resolved, "thrown")) {
+      const boundary = designateBoundary(resolved.throwingLevel ?? "page", triple);
       bundle.error = buildErrorRecord(resolved.thrown, boundary, bundle.route.path, undefined, {
         routeName: matched.entry.name,
         routePath: matched.entry.path,

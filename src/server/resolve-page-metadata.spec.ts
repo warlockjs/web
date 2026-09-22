@@ -186,6 +186,7 @@ describe("resolvePageMetadata — a metadata function that throws", () => {
     expect(resolve({ metadata, data: {}, layoutRobots: "index, follow" })).toEqual({
       metadata: ERROR_PAGE_METADATA,
       thrown: boom,
+      throwingLevel: "page",
     });
   });
 

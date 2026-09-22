@@ -236,106 +236,118 @@ export function createLocaleChanger(runtime: RefreshRuntime): LocaleChanger {
         : url;
     const fetchUrl = pathCarriesLocale ? targetUrl : withLocaleParam(url, code);
     const mode: NavigationMode = pathCarriesLocale ? "push" : CHANGE_LOCALE_MODE;
-    const { isCurrent, signal } = runtime.claimTicket();
-
-    routerEvents.emitNavigating({ url, mode });
-
-    const result = await fetchPageData(fetchUrl, signal, {
-      provisionalLocale: !pathCarriesLocale,
-    });
-
-    // Superseded: a navigation or another locale change already answered this
-    // question. Not an error — the operation that overtook this one emits its
-    // own outcome. Covers `result.type === "aborted"` too, which `isCurrent()`
-    // catches on its own — the ticket, not the abort, is what decided this.
-    if (!isCurrent() || result.type === "aborted") return;
-
-    if (result.type === "hard-navigate") {
-      const error = new Error(`Warlock changeLocaleCode failed: ${result.reason}`);
-
-      console.warn("Warlock changeLocaleCode could not re-fetch the current page:", result.reason);
-      routerEvents.emitNavigationError({ url, mode, error });
-
-      throw error;
-    }
-
-    let tree: ReactNode;
+    const { isCurrent, signal, complete } = runtime.claimTicket();
+    let completionWaitsForCommit = false;
 
     try {
-      tree = await runtime.buildTree(result.payload);
-    } catch (error) {
-      console.warn("Warlock changeLocaleCode could not build the page tree:", error);
-      routerEvents.emitNavigationError({ url, mode, error });
+      routerEvents.emitNavigating({ url, mode });
 
-      throw error;
-    }
+      const result = await fetchPageData(fetchUrl, signal, {
+        provisionalLocale: !pathCarriesLocale,
+      });
 
-    if (!isCurrent()) return;
+      // Superseded: a navigation or another locale change already answered this
+      // question. Not an error — the operation that overtook this one emits its
+      // own outcome. Covers `result.type === "aborted"` too, which `isCurrent()`
+      // catches on its own — the ticket, not the abort, is what decided this.
+      if (!isCurrent() || result.type === "aborted") return;
 
-    if (!pathCarriesLocale && !writeLocalePreference(result.payload.locale)) {
-      const error = new Error("Warlock changeLocaleCode could not persist the locale preference");
+      if (result.type === "hard-navigate") {
+        const error = new Error(`Warlock changeLocaleCode failed: ${result.reason}`);
 
-      routerEvents.emitNavigationError({ url, mode, error });
-      throw error;
-    }
+        console.warn(
+          "Warlock changeLocaleCode could not re-fetch the current page:",
+          result.reason,
+        );
+        routerEvents.emitNavigationError({ url, mode, error });
 
-    // Shared state BEFORE the render that consumes it, exactly as a
-    // navigation and a refresh do it.
-    hydrateShared(result.payload.shared);
-
-    // Corrected HERE, synchronously, rather than left to `NavigationRoot`'s
-    // own `current.payload.locale`-keyed effect (`navigation-root.tsx`):
-    // that effect only runs on React's NEXT commit, after this function's
-    // own promise has already resolved, so a caller reading
-    // `document.documentElement` right after `await changeLocaleCode(...)`
-    // would still see the OLD locale. `NavigationRoot`'s effect still runs
-    // afterwards — its own write is a no-op once this one has already made
-    // `documentElement` agree (`syncDocumentLocale` skips a write that is
-    // already correct) — so the two never fight, this one just wins the race.
-    syncDocumentLocale(document, result.payload.locale);
-
-    const previous = runtime.readCurrent();
-    const sameEntry = result.payload.name === previous.payload.name;
-
-    if (pathCarriesLocale) {
-      // A REAL URL change: the new prefix is the address for this page now,
-      // not a fetch-only marker to clean up — `pushState`, same as a plain
-      // navigation, so Back returns to the previous locale's URL.
-      window.history.pushState(null, "", targetUrl);
-    } else {
-      // The visible URL is left alone UNLESS it already carried a `locale`
-      // query param — left in place, that param would outrank the committed
-      // preference cookie and silently revert the
-      // locale on the next reload.
-      const cleanedUrl = withoutLocaleParam(url);
-
-      if (cleanedUrl !== undefined) {
-        window.history.replaceState(null, "", cleanedUrl);
+        throw error;
       }
+
+      let tree: ReactNode;
+
+      try {
+        tree = await runtime.buildTree(result.payload);
+      } catch (error) {
+        console.warn("Warlock changeLocaleCode could not build the page tree:", error);
+        routerEvents.emitNavigationError({ url, mode, error });
+
+        throw error;
+      }
+
+      if (!isCurrent()) return;
+
+      if (!pathCarriesLocale && !writeLocalePreference(result.payload.locale)) {
+        const error = new Error("Warlock changeLocaleCode could not persist the locale preference");
+
+        routerEvents.emitNavigationError({ url, mode, error });
+        throw error;
+      }
+
+      // Shared state BEFORE the render that consumes it, exactly as a
+      // navigation and a refresh do it.
+      hydrateShared(result.payload.shared);
+
+      // Corrected HERE, synchronously, rather than left to `NavigationRoot`'s
+      // own `current.payload.locale`-keyed effect (`navigation-root.tsx`):
+      // that effect only runs on React's NEXT commit, after this function's
+      // own promise has already resolved, so a caller reading
+      // `document.documentElement` right after `await changeLocaleCode(...)`
+      // would still see the OLD locale. `NavigationRoot`'s effect still runs
+      // afterwards — its own write is a no-op once this one has already made
+      // `documentElement` agree (`syncDocumentLocale` skips a write that is
+      // already correct) — so the two never fight, this one just wins the race.
+      syncDocumentLocale(document, result.payload.locale);
+
+      const previous = runtime.readCurrent();
+      const sameEntry = result.payload.name === previous.payload.name;
+
+      if (pathCarriesLocale) {
+        // A REAL URL change: the new prefix is the address for this page now,
+        // not a fetch-only marker to clean up — `pushState`, same as a plain
+        // navigation, so Back returns to the previous locale's URL.
+        window.history.pushState(null, "", targetUrl);
+      } else {
+        // The visible URL is left alone UNLESS it already carried a `locale`
+        // query param — left in place, that param would outrank the committed
+        // preference cookie and silently revert the
+        // locale on the next reload.
+        const cleanedUrl = withoutLocaleParam(url);
+
+        if (cleanedUrl !== undefined) {
+          window.history.replaceState(null, "", cleanedUrl);
+        }
+      }
+
+      // This is not a move: the route the user is looking at did not change,
+      // only its locale did. Carrying the previous `routeSource` forward keeps
+      // `previousRoute()` from naming the page the user is already on — the same
+      // rule `refresh()` follows for the same reason.
+      runtime.writeCurrent(
+        {
+          payload: result.payload,
+          tree,
+          routeSource: sameEntry ? previous.routeSource : result.payload,
+        },
+        complete,
+      );
+      completionWaitsForCommit = true;
+
+      // `result.url` is the URL the response actually came from. Without a
+      // path-carried locale it is the FETCH url, which always carries the
+      // `?locale=` this module added — reporting it verbatim would announce a
+      // URL that was never, and is never meant to be, on the address bar, so
+      // it is stripped back off. With a path-carried locale the fetch URL IS
+      // the visible URL (no marker was ever added), so `result.url` is
+      // reported as-is.
+      const resolvedUrl = pathCarriesLocale
+        ? result.url
+        : (withoutLocaleParam(result.url) ?? result.url);
+
+      routerEvents.emitNavigated({ url, resolvedUrl, mode });
+    } finally {
+      if (!completionWaitsForCommit) complete?.();
     }
-
-    // This is not a move: the route the user is looking at did not change,
-    // only its locale did. Carrying the previous `routeSource` forward keeps
-    // `previousRoute()` from naming the page the user is already on — the same
-    // rule `refresh()` follows for the same reason.
-    runtime.writeCurrent({
-      payload: result.payload,
-      tree,
-      routeSource: sameEntry ? previous.routeSource : result.payload,
-    });
-
-    // `result.url` is the URL the response actually came from. Without a
-    // path-carried locale it is the FETCH url, which always carries the
-    // `?locale=` this module added — reporting it verbatim would announce a
-    // URL that was never, and is never meant to be, on the address bar, so
-    // it is stripped back off. With a path-carried locale the fetch URL IS
-    // the visible URL (no marker was ever added), so `result.url` is
-    // reported as-is.
-    const resolvedUrl = pathCarriesLocale
-      ? result.url
-      : (withoutLocaleParam(result.url) ?? result.url);
-
-    routerEvents.emitNavigated({ url, resolvedUrl, mode });
   };
 }
 

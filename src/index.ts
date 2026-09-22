@@ -39,7 +39,15 @@ export type {
   SerializedErrorPageProps,
   SerializedPageError,
 } from "./components/document-context";
-export type { PageMetadata } from "./metadata";
+export type {
+  MetadataChild,
+  MetadataContext,
+  MetadataInput,
+  MetadataOutput,
+  MetadataTitleInput,
+  PageMetadata,
+  ResolvedMetadata,
+} from "./metadata";
 export type {
   PageConfig,
   LayoutConfig,
@@ -180,6 +188,7 @@ export {
 } from "./routing/query-string";
 export type { RequestSearchResolver } from "./routing/query-string";
 export { useQueryString } from "./client/navigation/use-query-string";
+export { useIsNavigating } from "./client/navigation/use-is-navigating";
 export { Head } from "./components/head";
 export { Scripts } from "./components/scripts";
 

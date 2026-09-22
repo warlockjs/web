@@ -59,11 +59,37 @@ describe("readModuleConfig — accepted modules", () => {
       ),
     ).toEqual({ strictMode: true, hasMiddleware: true, hasDefault: false });
     expect(
-      readModuleConfig("root.tsx", "export const config = { strictMode: false };", "root"),
+      readModuleConfig(
+        "root.tsx",
+        'export const config = { strictMode: false, metadata: { title: { template: "%s | App" } } };',
+        "root",
+      ),
     ).toEqual({ strictMode: false, hasMiddleware: false, hasDefault: false });
     expect(
       readModuleConfig("root.tsx", "export const config = { middleware: guard };", "root"),
     ).toEqual({ hasMiddleware: true, hasDefault: false });
+  });
+
+  it("admits metadata callbacks on every module kind without evaluating them", () => {
+    expect(
+      page(
+        `${component} export const config = { metadata() { throw new Error("not evaluated"); } }; export default Page;`,
+      ),
+    ).toEqual({ hasMiddleware: false, hasDefault: true });
+    expect(
+      readModuleConfig(
+        "layout.tsx",
+        'export const config = { metadata() { throw new Error("not evaluated"); } };',
+        "layout",
+      ),
+    ).toEqual({ hasMiddleware: false, hasDefault: false });
+    expect(
+      readModuleConfig(
+        "root.tsx",
+        'export const config = { strictMode: true, metadata() { throw new Error("not evaluated"); } };',
+        "root",
+      ),
+    ).toEqual({ strictMode: true, hasMiddleware: false, hasDefault: false });
   });
 });
 
@@ -184,11 +210,11 @@ describe("readModuleConfig — rejected modules", () => {
     );
   });
 
-  it("rejects a layout metadata method", () => {
+  it("rejects a layout metadata accessor", () => {
     expect(() =>
       readModuleConfig(
         "layout.tsx",
-        "export const config = { metadata() { return {}; } };",
+        "export const config = { get metadata() { return {}; } };",
         "layout",
       ),
     ).toThrow("accessor or method");

@@ -128,11 +128,11 @@ A page is any `*.page.tsx` beneath `src/web/` — the page root. Its URL is eith
 ```tsx title="src/web/products/product-details.page.tsx"
 import type { PageConfig, PageLoader, PageProps } from "@warlock.js/web";
 
-export const config = {
+export const config: PageConfig<typeof loader> = {
   route: { path: "/products/:id", name: "products.details" },
   cache: { public: true, maxAge: 60 },
   metadata: { title: "Product details" },
-} satisfies PageConfig;
+};
 
 export const loader = (async ({ request }) => {
   const id = request.input("id");
@@ -456,7 +456,7 @@ Examples that fail include `/users/:id?`, `/users/:id(\\d+)`,
 ```tsx
 import type { PageConfig } from "@warlock.js/web";
 
-export const config = {
+export const config: PageConfig = {
   metadata: {
     title: "Products",
     description: "Browse the product catalogue",
@@ -466,10 +466,21 @@ export const config = {
       image: "/images/catalogue-card.png",
     },
   },
-} satisfies PageConfig;
+};
 ```
 
-Supported fields are `title`, `description`, `keywords`, `canonical`, `robots`, `openGraph`, and `twitter`. Function metadata runs after a successful loader. If a loader fails, Warlock uses error metadata instead of calling the page function with missing data.
+Supported fields are `title`, `description`, `keywords`, `canonical`, `robots`, `openGraph`, and `twitter`. A title may be a string, `{ default?, template? }`, or `{ absolute }`. Function metadata runs after a successful loader. If a loader fails, Warlock uses error metadata instead of calling the page function with missing data. Layout and root metadata use the same input shape; their callbacks receive readonly `{ data, shared, child? }` and run server-side only. A callback returns its complete level: explicit returned fields override `child`, and omitted child fields are not retained. Spread `child` when retaining descendant metadata:
+
+```tsx
+export const config: LayoutConfig = {
+  metadata: ({ data, child }) => ({
+    ...child,
+    title: `${data.sectionName} | ${child?.title ?? "Products"}`,
+  }),
+};
+```
+
+That callback may override the child title; an absolute child title remains authoritative. A supplied title resolves to a string in SSR and navigation output.
 
 ## The error boundary — `error.page.tsx`
 
@@ -1799,6 +1810,28 @@ export function DeleteProductButton({ id }: { id: string }) {
 
 `refresh()` re-fetches the current URL's App, Layout, and Page loaders and swaps fresh data without pushing history. It returns `true` only when fresh data reached the screen. On network/build failure it returns `false` and leaves the current page intact.
 
+## Pending navigation state
+
+Use `useIsNavigating()` for reactive pending UI. It returns the router-owned
+boolean state for Link/navigation, `refresh()`, and locale changes. It is false
+during SSR, has no artificial delay, and a late-mounted component reads an
+already-active transition immediately. A superseded transition cannot clear the
+state for its replacement.
+
+```tsx
+import { useIsNavigating } from "@warlock.js/web";
+import "./navigation-progress.css";
+
+export function NavigationProgress() {
+  const isNavigating = useIsNavigating();
+  return <div className={isNavigating ? "navigation-progress is-active" : "navigation-progress"} />;
+}
+```
+
+This is pending/not-pending, never percent-complete. Keep CSS in the imported
+stylesheet; do not add an inline `<style>` tag. `routerEvents` remains for
+analytics and post-navigation observation, but it is not a pending-state API.
+
 This is an ordinary API mutation followed by a re-fetch. Server actions are not supported.
 
 ## Read the query string live — `useQueryString`
@@ -2551,7 +2584,7 @@ A positional `layout.tsx` applies to pages in its directory and descendant direc
 ```tsx title="src/web/products/layout.tsx"
 import type { LayoutConfig, LayoutLoader, LayoutProps } from "@warlock.js/web";
 
-export const config = { prefix: "/products" } satisfies LayoutConfig;
+export const config: LayoutConfig = { prefix: "/products" };
 
 export const loader = (async () => {
   return {
@@ -2601,13 +2634,13 @@ Every positional layout on the page's directory ancestry may declare a literal `
 ```tsx title="src/web/users/layout.tsx"
 import type { LayoutConfig } from "@warlock.js/web";
 
-export const config = { prefix: "/users" } satisfies LayoutConfig;
+export const config: LayoutConfig = { prefix: "/users" };
 ```
 
 ```tsx title="src/web/users/account/layout.tsx"
 import type { LayoutConfig } from "@warlock.js/web";
 
-export const config = { prefix: "/account" } satisfies LayoutConfig;
+export const config: LayoutConfig = { prefix: "/account" };
 ```
 
 ```tsx title="src/web/users/account/settings.page.tsx"
@@ -2624,7 +2657,7 @@ export default function SettingsPage() {
 
 This page's effective URL is `/users/account/settings`.
 
-Like page routes, prefixes are read statically at build time. Write `export const config = { prefix: "/account" } satisfies LayoutConfig;` directly; computed prefixes are refused.
+Like page routes, prefixes are read statically at build time. Write `export const config: LayoutConfig = { prefix: "/account" };` directly; computed prefixes are refused.
 
 ## Rendering-layout limit
 
@@ -2660,13 +2693,28 @@ A layout is projected for the browser the same way a page is: `config` and `load
 
 ## Inherited policy
 
-`LayoutConfig` also accepts `middleware`, static `metadata.robots`, and static
-`sitemap` defaults (or `false`). It does not accept page routes, cache policy,
-validation, arbitrary metadata, or a sitemap supplier function. Descendant
-pages inherit the nearest explicit robots and sitemap policy; an unrelated
-page metadata field does not erase inherited robots. `RootConfig` supports
-static `middleware` and `strictMode`; root metadata and sitemap defaults are
-not inherited.
+`LayoutConfig` accepts `middleware`, static or callback `metadata`, and static
+`sitemap` defaults (or `false`). `RootConfig` accepts `middleware`,
+`strictMode`, and the same metadata shape. Metadata callbacks receive their own
+loader data, readonly shared state, and resolved child metadata; they run only
+on the server after loaders. Titles accept a string, `{ default?, template? }`,
+or `{ absolute }`. A callback returns that layout's complete metadata: explicit
+fields override `child`, and fields omitted from its result are not retained.
+Spread `child` when retaining descendant fields:
+
+```tsx
+export const config: LayoutConfig = {
+  metadata: ({ data, child }) => ({
+    ...child,
+    title: `${data.workspaceName} | ${child?.title ?? "Workspace"}`,
+  }),
+};
+```
+
+The callback may override a child title; an absolute child title remains
+authoritative. Static metadata defaults still merge with child metadata, and
+the nearest template applies once. Layouts still do not accept page routes,
+cache policy, validation, or a sitemap supplier.
 
 ## Gotchas
 
@@ -2696,9 +2744,9 @@ description: 'Author `src/web/root.tsx`, the full-document application root that
 `src/web/root.tsx` is the application document. Its default export renders the complete `<html>` tree and contains the one DOM node the browser hydrates: `#vessel`.
 
 The root may export `config`, `loader`, `register`, `ErrorBoundary`, and its
-default component. `RootConfig` owns `middleware` and `strictMode`. Root
-metadata, route/prefix, cache, validation, sitemap, and robots policy are not
-root exports. Keep sitewide sitemap and robots serving in `web.sitemap` and
+default component. `RootConfig` owns `middleware`, `strictMode`, and metadata.
+Route/prefix, cache, validation, sitemap, and robots-file policy are not root
+exports. Keep sitewide sitemap and robots serving in `web.sitemap` and
 `web.robots`; page and layout policy belongs in their own `config` exports.
 
 ## The shape
@@ -2869,14 +2917,30 @@ middleware:
 ```tsx
 import type { RootConfig } from "@warlock.js/web";
 
-export const config = {
+export const config: RootConfig = {
   middleware: [attachRequestContext],
   strictMode: true,
-} satisfies RootConfig;
+};
 ```
 
 `loader`, `register`, and `ErrorBoundary` remain separate exports. Named
-`middleware`, `metadata`, `sitemap`, or route-policy exports are invalid.
+`sitemap` or route-policy exports are invalid. Root metadata may be static or a
+server-only callback; it participates in title and field composition with
+layouts and the page. A callback returns the root's complete level: explicit
+fields override `child`, while omitted child fields are not retained. Preserve
+descendant metadata deliberately by spreading `child`:
+
+```tsx
+export const config: RootConfig = {
+  metadata: ({ data, child }) => ({
+    ...child,
+    title: `${data.applicationName} | ${child?.title ?? "Home"}`,
+  }),
+};
+```
+
+The callback may override a child title; an absolute child title remains
+authoritative. Static root metadata still merges with child metadata.
 
 `strictMode` defaults to `false`, preserving existing applications. New Web
 scaffolds enable it with `strictMode: true`. The root owns this setting even

@@ -2,7 +2,17 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
-## Unreleased
+## 5.18.0
+
+### Added
+
+- Pages, layouts, and `root.tsx` now share typed static or server-only callback
+  metadata. Titles accept a string, `{ default?, template? }`, or `{ absolute }`;
+  resolution produces the same string title for SSR and client navigation while
+  composing metadata from page through layouts to root.
+- `useIsNavigating()` exposes router-owned pending state for client navigation,
+  refreshes, and locale changes. It is safe during SSR and replaces event-based
+  guesses for reactive loading indicators.
 
 ### Fixed
 

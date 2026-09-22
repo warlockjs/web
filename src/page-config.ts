@@ -1,5 +1,5 @@
 import type { BaseValidator } from "@warlock.js/seal";
-import type { MetadataOutput, PageMetadata } from "./metadata";
+import type { PageMetadata } from "./metadata";
 import type { LoaderFunction } from "./props";
 import type { RouteDeclaration } from "./route";
 import type { PageCacheOptIn } from "./routing/route-identity";
@@ -61,24 +61,25 @@ export type PageConfig<TLoader extends LoaderFunction | undefined = undefined> =
  * prefix and inherited crawl defaults, but cannot declare a page route,
  * page cache policy, request validation, or sitemap URL supplier.
  */
-export type LayoutConfig = {
+export type LayoutConfig<TLoader extends LoaderFunction | undefined = undefined> = {
   /** A literal URL prefix composed with descendant page paths. */
   readonly prefix?: string;
   /** Guards inherited by descendant pages, outermost layout first. */
   readonly middleware?: readonly PipelineMiddleware[];
   /** Nearest-layout sitemap default; a supplier function is page-only. */
   readonly sitemap?: false | SitemapPageOptions;
-  /** HTML robots default; unrelated page metadata fields do not clear it. */
-  readonly metadata?: { readonly robots?: NonNullable<MetadataOutput["robots"]> };
+  /** Static metadata defaults or a callback composing resolved child metadata. */
+  readonly metadata?: PageMetadata<TLoader>;
 };
 
 /**
  * Root settings. The root has no URL identity or prefix; sitewide
  * robots.txt and sitemap generation stay in global web configuration.
  */
-export type RootConfig = {
+export type RootConfig<TLoader extends LoaderFunction | undefined = undefined> = {
   /** App guards run before layout and page guards. */
   readonly middleware?: readonly PipelineMiddleware[];
   /** Render the application tree in React Strict Mode. */
   readonly strictMode?: boolean;
+  readonly metadata?: PageMetadata<TLoader>;
 };

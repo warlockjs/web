@@ -17,6 +17,7 @@
  */
 import { Response } from "@warlock.js/core";
 import type { PipelineLoader } from "./execute-page-request";
+import { recordLayoutLoaderValue } from "./layout-loader-capture";
 import { isLoaderShortCircuit } from "./settle-page-response";
 
 export function foldLayoutLoaders(
@@ -30,6 +31,7 @@ export function foldLayoutLoaders(
       const value = await loaders[index]?.(context);
 
       if (value instanceof Response || isLoaderShortCircuit(value)) return value;
+      recordLayoutLoaderValue(context, index, value);
       if (index === hostIndex) hostData = value;
     }
 

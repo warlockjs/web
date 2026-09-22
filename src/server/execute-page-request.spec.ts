@@ -2,9 +2,10 @@ import { EventEmitter } from "node:events";
 import config from "@mongez/config";
 import { Request, Response } from "@warlock.js/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { resolvePageMetadata as ResolvePageMetadata } from "./resolve-page-metadata";
 
 const { resolvePageMetadata } = vi.hoisted(() => ({
-  resolvePageMetadata: vi.fn(() => ({ metadata: {} })),
+  resolvePageMetadata: vi.fn<typeof ResolvePageMetadata>((_input) => ({ metadata: {} })),
 }));
 
 vi.mock("./resolve-page-metadata", () => ({ resolvePageMetadata }));
@@ -18,6 +19,7 @@ import {
   executePageRequest,
   type PageRouteEntry,
 } from "./execute-page-request";
+import { composeLayoutModules } from "./compose-layout-modules";
 import { PageLoaderTimeoutError } from "./page-loader-timeout-error";
 
 const request = {
@@ -127,6 +129,52 @@ describe("executePageRequest loaders", () => {
       layoutData: 0,
       pageData: false,
     });
+  });
+
+  it("keeps composed layout values request-local for stage-8 metadata without adding them to the bundle", async () => {
+    const composedLayout = composeLayoutModules(
+      [
+        {
+          metadata: () => ({ title: "outer" }),
+          loader: () => ({ layout: "outer" }),
+        },
+        {
+          metadata: () => ({ title: "inner" }),
+          loader: () => ({ layout: "inner" }),
+        },
+      ],
+      1,
+    );
+    const entry: PageRouteEntry = {
+      path: "/account",
+      name: "account",
+      triple: {
+        app: {
+          metadata: () => ({ title: "root" }),
+          loader: () => ({ app: true }),
+        },
+        layout: composedLayout,
+        page: {
+          metadata: () => ({ title: "page" }),
+          loader: () => ({ page: true }),
+        },
+      },
+    };
+
+    const result = await executePageRequest({
+      url: "/account",
+      routes: [entry],
+      createHttp: () => ({ request, response: new Response() }),
+    });
+    const metadataInput = resolvePageMetadata.mock.calls[0]?.[0];
+
+    expect(metadataInput?.ancestors).toEqual([
+      { kind: "root", metadata: entry.triple.app.metadata, data: { app: true } },
+      { kind: "layout", metadata: composedLayout.layoutMetadata?.[0], data: { layout: "outer" } },
+      { kind: "layout", metadata: composedLayout.layoutMetadata?.[1], data: { layout: "inner" } },
+    ]);
+    expect(result).toMatchObject({ layoutData: { layout: "inner" } });
+    expect(result).not.toHaveProperty("capturedLayoutData");
   });
 });
 

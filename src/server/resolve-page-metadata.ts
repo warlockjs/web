@@ -1,151 +1,186 @@
-/**
- * Stage 8 of the page pipeline — METADATA.
- *
- * Its own file because the behaviour that matters here is about ERRORS, and
- * reaching an error path through the full ten-stage pipeline means standing up
- * a real Request/Response pair to observe a `try`/`catch`. See
- * `resolve-page-metadata.spec.ts`.
- *
- * ## Why a page's `metadata` never runs after a failed loader
- *
- * It used to. `design/request-lifecycle.md` said "exactly one of data/error
- * set", and stage 8 duly called `metadata({ data: undefined, error })` when a
- * loader rejected — while `PageMetadata` declared `data` as always present.
- * **The type lied**, so the natural way to write a metadata function was also
- * the broken way:
- *
- * ```ts
- * export const metadata: PageMetadata<typeof loader> = ({ data }) => ({
- *   title: "Home",
- *   description: `${data.products.length} products in stock`,
- * });
- * ```
- *
- * All three function-form metadata exports in the reference app were written
- * exactly like that, and all three turned a loader's real error — a
- * `MissingDataSourceError`, say — into `TypeError: Cannot read properties of
- * undefined`, reported against a different file in a different subsystem. The
- * cost was never the crash; it was that every future debugging session on a
- * failed loader would start by investigating the wrong thing.
- *
- * The alternative was to widen `data` to `| undefined` and make every author
- * handle a path almost none of them care about — and without a discriminant,
- * TypeScript cannot narrow `data` from `if (error)` anyway, so authors would
- * have reached for `data!` and re-created the lie with extra syntax.
- *
- * So: a page describes a page it actually has. When there is no data there is
- * no page-authored description, and the framework supplies
- * {@link ERROR_PAGE_METADATA} instead.
- *
- * ## Partial failure
- *
- * Stage 7 runs app, layout and page loaders root-to-leaf, so an ancestor
- * rejection prevents the page loader from starting. `failed` is still the
- * relevant guard here: any recorded error means a boundary renders instead of
- * the page, and metadata describes what is on screen. Describing a page the
- * visitor never received is the same defect in a quieter form.
- *
- * If per-page error metadata is ever wanted, it is a separate `errorMetadata`
- * export — a distinct signature for a distinct situation, not an arm of this
- * one. Nothing has asked for it.
- */
-
 import type { SharedContext } from "../index";
-import type { MetadataOutput, PageMetadata } from "../metadata";
+import type {
+  MetadataChild,
+  MetadataInput,
+  MetadataOutput,
+  MetadataTitleInput,
+  PageMetadata,
+  ResolvedMetadata,
+} from "../metadata";
 import type { PipelineLoader } from "./execute-page-request";
 import { guardMetadataAgainstDeferredKeys } from "./metadata-deferred-guard";
 
-/**
- * What `<head>` gets when the page did not render.
- *
- * `robots` is the load-bearing member, not `title`. An error render is a
- * transient server state that happens to be reachable at a real URL; letting a
- * crawler index it puts "Something went wrong" in a search result for a page
- * that works. `title` is a fallback a boundary is free to improve on.
- */
 export const ERROR_PAGE_METADATA: MetadataOutput = Object.freeze({
   title: "Something went wrong",
   robots: "noindex",
 });
-
-export type ResolvePageMetadataInput = {
-  /** The page module's `metadata` export — absent, object, or function. */
+type Ancestor = {
+  kind: "root" | "layout";
   metadata: PageMetadata<PipelineLoader> | undefined;
-  /** The composed layout's static metadata.robots, when it has one. */
-  layoutRobots?: string;
-  /** `bundle.pageData`. Read only when `failed` is false. */
   data: unknown;
-  /** The value an earlier stage already recorded. Diagnostics only. */
+};
+export type ResolvePageMetadataInput = {
+  metadata: PageMetadata<PipelineLoader> | undefined;
+  layoutRobots?: string;
+  ancestors?: readonly Ancestor[];
+  data: unknown;
   error: unknown;
-  /** Whether an earlier stage recorded an error at all. */
   failed: boolean;
   shared: Readonly<SharedContext>;
-  /**
-   * `bundle.deferredKeys` (Stage 2, contract rule 3) — the page loader's
-   * top-level `defer()`-ed key names, undefined for a page that never called
-   * `defer()`. Used only to build the guarded view `metadata()` reads `data`
-   * through; never read on the `failed` path, where `data` itself is not
-   * read either.
-   */
   deferredKeys?: readonly string[];
-  /**
-   * The matched page's route path — named in
-   * {@link DeferredKeyInMetadataError} when `metadata()` reads a deferred key.
-   */
   pagePath: string;
 };
-
 export type ResolvedPageMetadata = {
   metadata: MetadataOutput | undefined;
-  /**
-   * Set only when the page's own metadata function threw on the SUCCESS path.
-   * Returned rather than rethrown so the caller can record it the same way a
-   * loader throw is recorded — the boundary renders and the framework keeps
-   * ownership of the status, instead of an exception escaping stage 8.
-   *
-   * Never set on the error path: nothing runs there that could throw, and an
-   * error arriving at stage 8 has already won.
-   */
   thrown?: unknown;
+  throwingLevel?: "app" | "layout" | "page";
 };
+type TitleState = { value?: string; template?: string; applied: boolean; absolute: boolean };
+type Result = { metadata: MetadataOutput; title: TitleState };
+type MetadataFunction = Extract<PageMetadata<PipelineLoader>, (...args: never) => unknown>;
 
-/** The function arm of `PageMetadata`, for the one call this module makes. */
-type PageMetadataFunction = Extract<PageMetadata<PipelineLoader>, (...args: never) => unknown>;
-
-function withLayoutRobots(metadata: MetadataOutput | undefined, layoutRobots: string | undefined) {
-  if (layoutRobots === undefined || metadata?.robots !== undefined) return metadata;
-
-  return { ...metadata, robots: layoutRobots };
+function cloneFreeze(value: MetadataOutput): ResolvedMetadata {
+  return Object.freeze({
+    ...value,
+    ...(value.keywords
+      ? {
+          keywords: Array.isArray(value.keywords)
+            ? Object.freeze([...value.keywords])
+            : value.keywords,
+        }
+      : {}),
+    ...(value.openGraph ? { openGraph: Object.freeze({ ...value.openGraph }) } : {}),
+    ...(value.twitter ? { twitter: Object.freeze({ ...value.twitter }) } : {}),
+  }) as ResolvedMetadata;
 }
-
-export function resolvePageMetadata(input: ResolvePageMetadataInput): ResolvedPageMetadata {
-  if (input.failed) {
-    return { metadata: ERROR_PAGE_METADATA };
+function child(
+  kind: "layout" | "page",
+  value: MetadataOutput,
+  nested?: MetadataChild,
+): MetadataChild {
+  return Object.freeze({
+    kind,
+    metadata: cloneFreeze(value),
+    ...(nested ? { child: nested } : {}),
+  });
+}
+function titleOf(input: MetadataTitleInput | undefined): TitleState {
+  if (typeof input === "string") return { value: input, applied: false, absolute: false };
+  if (!input) return { applied: false, absolute: false };
+  if ("absolute" in input && input.absolute !== undefined)
+    return { value: input.absolute, applied: true, absolute: true };
+  return { value: input.default, template: input.template, applied: false, absolute: false };
+}
+function renderTitle(own: TitleState, descendant: TitleState, ownAbsoluteWins = false): TitleState {
+  if (descendant.absolute) return descendant;
+  if (own.absolute && (ownAbsoluteWins || descendant.value === undefined)) return own;
+  if (own.value !== undefined && descendant.value === undefined && own.template) {
+    return { ...own, applied: true };
   }
-
-  const { metadata } = input;
-
-  if (typeof metadata !== "function") {
-    return { metadata: withLayoutRobots(metadata, input.layoutRobots) };
-  }
-
-  try {
-    const guardedData = guardMetadataAgainstDeferredKeys(
-      input.data,
-      input.deferredKeys,
-      input.pagePath,
-    );
-
+  const value = descendant.value ?? own.value;
+  if (value === undefined) return { ...descendant, template: own.template ?? descendant.template };
+  if (descendant.applied)
+    return { ...descendant, value, template: own.template ?? descendant.template };
+  if (own.template)
     return {
-      metadata: withLayoutRobots(
-        (metadata as PageMetadataFunction)({
-          data: guardedData as Parameters<PageMetadataFunction>[0]["data"],
-          shared: input.shared,
-        }),
-        input.layoutRobots,
-      ),
+      value: own.template.replace(/%s/g, value),
+      template: own.template,
+      applied: true,
+      absolute: false,
+    };
+  return { ...descendant, value, template: own.template ?? descendant.template };
+}
+function composeStatic(own: MetadataInput, descendant?: Result): Result {
+  const { title: ownTitle, openGraph: ownOg, twitter: ownTwitter, ...ownRest } = own;
+  const lower = descendant?.metadata ?? {};
+  const title = renderTitle(
+    titleOf(ownTitle),
+    descendant?.title ?? { applied: false, absolute: false },
+  );
+  return {
+    title,
+    metadata: {
+      ...ownRest,
+      ...lower,
+      ...(ownOg || lower.openGraph ? { openGraph: { ...ownOg, ...lower.openGraph } } : {}),
+      ...(ownTwitter || lower.twitter ? { twitter: { ...ownTwitter, ...lower.twitter } } : {}),
+      ...(title.value === undefined ? {} : { title: title.value }),
+    },
+  };
+}
+function composeCallback(own: MetadataInput, descendant?: Result): Result {
+  const { title: ownTitle, ...ownRest } = own;
+  if (!descendant) {
+    const title = renderTitle(titleOf(ownTitle), { applied: false, absolute: false });
+    return {
+      metadata: { ...ownRest, ...(title.value === undefined ? {} : { title: title.value }) },
+      title,
+    };
+  }
+  if (descendant.title.absolute)
+    return { metadata: { ...ownRest, title: descendant.title.value }, title: descendant.title };
+  if (ownTitle === undefined)
+    return { metadata: ownRest, title: { applied: false, absolute: false } };
+  const title =
+    typeof ownTitle === "string"
+      ? {
+          value: ownTitle,
+          template: descendant.title.template,
+          applied: ownTitle === descendant.title.value && descendant.title.applied,
+          absolute: false,
+        }
+      : renderTitle(titleOf(ownTitle), descendant.title, true);
+  return {
+    metadata: { ...ownRest, ...(title.value === undefined ? {} : { title: title.value }) },
+    title,
+  };
+}
+function evaluate(
+  metadata: PageMetadata<PipelineLoader> | undefined,
+  data: unknown,
+  shared: Readonly<SharedContext>,
+  childMetadata?: MetadataChild,
+): { input: MetadataInput; callback: boolean } {
+  if (typeof metadata !== "function") return { input: metadata ?? {}, callback: false };
+  return {
+    input: (metadata as MetadataFunction)({
+      data: data as Parameters<MetadataFunction>[0]["data"],
+      shared,
+      ...(childMetadata ? { child: childMetadata } : {}),
+    }),
+    callback: true,
+  };
+}
+function withLayoutRobots(metadata: MetadataOutput, robots: string | undefined): MetadataOutput {
+  return robots === undefined || metadata.robots !== undefined ? metadata : { ...metadata, robots };
+}
+export function resolvePageMetadata(input: ResolvePageMetadataInput): ResolvedPageMetadata {
+  if (input.failed) return { metadata: ERROR_PAGE_METADATA };
+  let throwingLevel: "app" | "layout" | "page" = "page";
+  try {
+    const data = guardMetadataAgainstDeferredKeys(input.data, input.deferredKeys, input.pagePath);
+    const page = evaluate(input.metadata, data, input.shared);
+    let resolved = page.callback ? composeCallback(page.input) : composeStatic(page.input);
+    let nested: MetadataChild | undefined = child("page", resolved.metadata);
+    for (const ancestor of [...(input.ancestors ?? [])].reverse()) {
+      if (!ancestor.metadata) continue;
+      throwingLevel = ancestor.kind === "root" ? "app" : "layout";
+      const own = evaluate(ancestor.metadata, ancestor.data, input.shared, nested);
+      resolved = own.callback
+        ? composeCallback(own.input, resolved)
+        : composeStatic(own.input, resolved);
+      if (ancestor.kind === "layout") nested = child("layout", resolved.metadata, nested);
+    }
+    const hasDeclaredMetadata =
+      input.metadata !== undefined ||
+      (input.ancestors ?? []).some((ancestor) => ancestor.metadata !== undefined);
+    return {
+      metadata:
+        hasDeclaredMetadata || input.layoutRobots !== undefined
+          ? withLayoutRobots(resolved.metadata, input.layoutRobots)
+          : undefined,
     };
   } catch (thrown) {
-    return { metadata: ERROR_PAGE_METADATA, thrown };
+    return { metadata: ERROR_PAGE_METADATA, thrown, throwingLevel };
   }
 }

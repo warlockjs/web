@@ -98,6 +98,47 @@ describe("normalizePageModule", () => {
     expect(metadata).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["page", "layout", "root"] as const)(
+    "admits structured static metadata on a %s module",
+    (kind) => {
+      const raw =
+        kind === "page"
+          ? page({ metadata: { title: { default: "Products", template: "%s | Shop" } } })
+          : {
+              config: {
+                ...(kind === "root" ? { strictMode: true } : {}),
+                metadata: { title: { absolute: "Account" }, robots: "noindex" },
+              },
+            };
+
+      expect(normalizePageModule(raw, kind, `${kind}.tsx`).metadata).toEqual(raw.config.metadata);
+    },
+  );
+
+  it.each([
+    ["mixed absolute and template", { title: { absolute: "Account", template: "%s | App" } }],
+    ["unknown title key", { title: { default: "Account", suffix: "App" } }],
+    ["non-string default", { title: { default: 42 } }],
+  ])("rejects %s structured metadata titles", (_case, metadata) => {
+    expect(() => normalizePageModule(page({ metadata }), "page", "src/web/title.page.tsx")).toThrow(
+      "src/web/title.page.tsx",
+    );
+  });
+
+  it.each(["layout", "root"] as const)(
+    "keeps %s metadata callbacks unexecuted until the metadata stage",
+    (kind) => {
+      const metadata = vi.fn(() => ({ title: "later" }));
+      const raw = { config: { metadata } };
+
+      const normalized = normalizePageModule(raw, kind, `${kind}.tsx`);
+
+      expect(metadata).not.toHaveBeenCalled();
+      expect((normalized.metadata as Function)({})).toEqual({ title: "later" });
+      expect(metadata).toHaveBeenCalledOnce();
+    },
+  );
+
   it("names the page when a lazy metadata function returns malformed output", () => {
     const normalized = normalizePageModule(
       page({ metadata: () => ({ openGraph: { image: 42 } }) }),
@@ -169,8 +210,8 @@ describe("normalizePageModule", () => {
         "layout.tsx",
       ),
     ).toThrow("cache");
-    expect(() =>
-      normalizePageModule({ config: { metadata: { title: "nope" } } }, "layout", "layout.tsx"),
-    ).toThrow("metadata");
+    expect(
+      normalizePageModule({ config: { metadata: { title: "layout" } } }, "layout", "layout.tsx"),
+    ).toMatchObject({ metadata: { title: "layout" } });
   });
 });

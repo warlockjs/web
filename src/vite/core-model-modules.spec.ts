@@ -115,19 +115,21 @@ describe("coreModelModules", () => {
       expect(fourthVite.Model.revision).toBe(4);
 
       const plugin = coreModelModules(registry);
+      const transform = plugin.transform;
+      if (typeof transform !== "function") throw new Error("Expected a transform function");
       expect(
-        await plugin.transform?.call(
-          {},
+        await transform.call(
+          {} as never,
           "export const untouched = true",
           path.join(root, "other.mjs"),
           { ssr: true },
         ),
       ).toBeNull();
       expect(
-        await plugin.transform?.call({}, "export default 1", `${modelFile}?raw`, { ssr: true }),
+        await transform.call({} as never, "export default 1", `${modelFile}?raw`, { ssr: true }),
       ).toBeNull();
       expect(
-        await plugin.transform?.call({}, "export default 1", modelFile, { ssr: false }),
+        await transform.call({} as never, "export default 1", modelFile, { ssr: false }),
       ).toBeNull();
       expect(plugin.applyToEnvironment?.({ config: { consumer: "client" } } as never)).toBe(false);
       expect(plugin.applyToEnvironment?.({ config: { consumer: "server" } } as never)).toBe(true);

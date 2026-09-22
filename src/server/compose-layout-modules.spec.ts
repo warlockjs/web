@@ -61,17 +61,24 @@ describe("composeLayoutModules", () => {
     await expect(composed.loader?.({} as never)).resolves.toBe("host-data");
   });
 
-  it("adds the nearest defined static robots directive from the full layout chain", () => {
+  it("retains every layout metadata definition in outer-to-inner order", () => {
+    const outerMetadata = { title: "Outer", robots: "index,follow" };
+    const innerMetadata = () => ({ title: "Inner" });
     const composed = composeLayoutModules(
       [
-        { metadata: { robots: "index,follow" } },
-        { middleware: [], metadata: { robots: "noindex" } },
-        { default: function Host() {} },
+        { metadata: outerMetadata },
+        { middleware: [], metadata: innerMetadata },
+        { default: function Host() {}, metadata: { description: "Host" } },
       ],
       2,
       ["src/web/layout.tsx", "src/web/admin/layout.tsx", "src/web/admin/users/layout.tsx"],
     );
 
-    expect(composed.metadata).toEqual({ robots: "noindex" });
+    expect(composed.metadata).toEqual({ description: "Host" });
+    expect(composed.layoutMetadata).toEqual([
+      outerMetadata,
+      innerMetadata,
+      { description: "Host" },
+    ]);
   });
 });

@@ -70,7 +70,7 @@ export type RefreshRuntime = {
   /** The page on screen at the moment it is asked for, never a captured copy. */
   readCurrent: () => RefreshablePage;
   /** Put a page on screen. */
-  writeCurrent: (page: RefreshablePage) => void;
+  writeCurrent: (page: RefreshablePage, complete?: () => void) => void;
   /** How a payload becomes a tree, with the page registry already bound. */
   buildTree: (payload: HydrationDocumentPayloadSource) => Promise<ReactNode>;
   /**
@@ -84,7 +84,12 @@ export type RefreshRuntime = {
    * sooner — `isCurrent()` remains the one thing that decides which response
    * wins, abort or no abort.
    */
-  claimTicket: () => { isCurrent: () => boolean; signal: AbortSignal };
+  claimTicket: () => {
+    isCurrent: () => boolean;
+    signal: AbortSignal;
+    /** Internal completion for the pending-navigation snapshot. */
+    complete?: () => void;
+  };
 };
 
 /**
@@ -141,58 +146,60 @@ export function createRefresher(runtime: RefreshRuntime): Refresher {
     // The address bar IS the current route's URL — the runtime has already put
     // the resolved URL there — so there is no second copy to drift from it.
     const url = window.location.href;
-    const { isCurrent, signal } = runtime.claimTicket();
+    const { isCurrent, signal, complete } = runtime.claimTicket();
+    let completionWaitsForCommit = false;
 
-    routerEvents.emitNavigating({ url, mode: REFRESH_MODE });
+    try {
+      routerEvents.emitNavigating({ url, mode: REFRESH_MODE });
 
-    const result = await fetchPageData(url, signal);
+      const result = await fetchPageData(url, signal);
 
-    // Superseded, and silently: this is the answer to a question the user
-    // stopped asking. Not an error, and not an event — the operation that
-    // overtook this one emits its own outcome. Covers `result.type ===
-    // "aborted"` too, which `isCurrent()` catches on its own — the ticket,
-    // not the abort, is what actually decided this.
-    if (!isCurrent() || result.type === "aborted") return false;
+      // Superseded, and silently: this is the answer to a question the user
+      // stopped asking. Not an error, and not an event — the operation that
+      // overtook this one emits its own outcome. Covers `result.type ===
+      // "aborted"` too, which `isCurrent()` catches on its own — the ticket,
+      // not the abort, is what actually decided this.
+      if (!isCurrent() || result.type === "aborted") return false;
 
-    if (result.type === "hard-navigate") {
-      /*
+      if (result.type === "hard-navigate") {
+        /*
         NO `window.location.assign` HERE, and this line is the whole point of
         the file. `fetchPageData` reports a hard navigation because that is the
         correct degradation for GOING somewhere; for STAYING somewhere it would
         destroy the screen the user already has in order to deliver data they
         asked to update. The page stays; the error is announced.
       */
-      const error = new Error(`Warlock refresh failed: ${result.reason}`);
+        const error = new Error(`Warlock refresh failed: ${result.reason}`);
 
-      console.warn("Warlock refresh could not re-fetch the current page:", result.reason);
-      routerEvents.emitNavigationError({ url, mode: REFRESH_MODE, error });
+        console.warn("Warlock refresh could not re-fetch the current page:", result.reason);
+        routerEvents.emitNavigationError({ url, mode: REFRESH_MODE, error });
 
-      return false;
-    }
+        return false;
+      }
 
-    let tree: ReactNode;
+      let tree: ReactNode;
 
-    try {
-      tree = await runtime.buildTree(result.payload);
-    } catch (error) {
-      // A stale bundle after a deploy is the realistic cause. A navigation
-      // reloads to fix it; a refresh cannot, for the same reason as above.
-      console.warn("Warlock refresh could not build the page tree:", error);
-      routerEvents.emitNavigationError({ url, mode: REFRESH_MODE, error });
+      try {
+        tree = await runtime.buildTree(result.payload);
+      } catch (error) {
+        // A stale bundle after a deploy is the realistic cause. A navigation
+        // reloads to fix it; a refresh cannot, for the same reason as above.
+        console.warn("Warlock refresh could not build the page tree:", error);
+        routerEvents.emitNavigationError({ url, mode: REFRESH_MODE, error });
 
-      return false;
-    }
+        return false;
+      }
 
-    if (!isCurrent()) return false;
+      if (!isCurrent()) return false;
 
-    // Shared state BEFORE the render that consumes it, exactly as a navigation
-    // does it — a refresh can carry a changed locale or a changed user too.
-    hydrateShared(result.payload.shared);
+      // Shared state BEFORE the render that consumes it, exactly as a navigation
+      // does it — a refresh can carry a changed locale or a changed user too.
+      hydrateShared(result.payload.shared);
 
-    const previous = runtime.readCurrent();
-    const sameEntry = result.payload.name === previous.payload.name;
+      const previous = runtime.readCurrent();
+      const sameEntry = result.payload.name === previous.payload.name;
 
-    /*
+      /*
       Only when the server actually moved us — `result.url` is the absolute URL
       the response came from and `url` came from the address bar, so they differ
       only when a redirect was followed. REPLACE even then: a refresh is not a
@@ -203,19 +210,26 @@ export function createRefresher(runtime: RefreshRuntime): Refresher {
       URL on screen, and a redirect that stayed within one route entry
       (`?page=2` collapsing to `?page=1`) has still changed it.
     */
-    if (result.url !== url) {
-      window.history.replaceState(null, "", result.url);
+      if (result.url !== url) {
+        window.history.replaceState(null, "", result.url);
+      }
+
+      runtime.writeCurrent(
+        {
+          payload: result.payload,
+          tree,
+          routeSource: sameEntry ? previous.routeSource : result.payload,
+        },
+        complete,
+      );
+      completionWaitsForCommit = true;
+
+      routerEvents.emitNavigated({ url, resolvedUrl: result.url, mode: REFRESH_MODE });
+
+      return true;
+    } finally {
+      if (!completionWaitsForCommit) complete?.();
     }
-
-    runtime.writeCurrent({
-      payload: result.payload,
-      tree,
-      routeSource: sameEntry ? previous.routeSource : result.payload,
-    });
-
-    routerEvents.emitNavigated({ url, resolvedUrl: result.url, mode: REFRESH_MODE });
-
-    return true;
   };
 }
 

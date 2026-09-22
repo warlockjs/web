@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DevelopmentModelModules } from "@warlock.js/core";
-import { normalizePath, type ModuleNode, type Plugin, type ViteDevServer } from "vite";
+import { normalizePath, type EnvironmentModuleNode, type Plugin, type ViteDevServer } from "vite";
 
 const CODE_MODULE_EXTENSION = /\.[cm]?[jt]sx?$/;
 const ASSET_QUERY = /[?&](?:raw|url)(?:&|$)/;
@@ -47,8 +47,8 @@ function invalidateWithImporters(
   ids: ReadonlySet<string>,
 ): void {
   const graph = server.environments.ssr.moduleGraph;
-  const visited = new Set<ModuleNode>();
-  const invalidate = (current: ModuleNode) => {
+  const visited = new Set<EnvironmentModuleNode>();
+  const invalidate = (current: EnvironmentModuleNode) => {
     if (visited.has(current)) return;
     visited.add(current);
     graph.invalidateModule(current, new Set(), Date.now(), true);

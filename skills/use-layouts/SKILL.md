@@ -12,7 +12,7 @@ A positional `layout.tsx` applies to pages in its directory and descendant direc
 ```tsx title="src/web/products/layout.tsx"
 import type { LayoutConfig, LayoutLoader, LayoutProps } from "@warlock.js/web";
 
-export const config = { prefix: "/products" } satisfies LayoutConfig;
+export const config: LayoutConfig = { prefix: "/products" };
 
 export const loader = (async () => {
   return {
@@ -62,13 +62,13 @@ Every positional layout on the page's directory ancestry may declare a literal `
 ```tsx title="src/web/users/layout.tsx"
 import type { LayoutConfig } from "@warlock.js/web";
 
-export const config = { prefix: "/users" } satisfies LayoutConfig;
+export const config: LayoutConfig = { prefix: "/users" };
 ```
 
 ```tsx title="src/web/users/account/layout.tsx"
 import type { LayoutConfig } from "@warlock.js/web";
 
-export const config = { prefix: "/account" } satisfies LayoutConfig;
+export const config: LayoutConfig = { prefix: "/account" };
 ```
 
 ```tsx title="src/web/users/account/settings.page.tsx"
@@ -85,7 +85,7 @@ export default function SettingsPage() {
 
 This page's effective URL is `/users/account/settings`.
 
-Like page routes, prefixes are read statically at build time. Write `export const config = { prefix: "/account" } satisfies LayoutConfig;` directly; computed prefixes are refused.
+Like page routes, prefixes are read statically at build time. Write `export const config: LayoutConfig = { prefix: "/account" };` directly; computed prefixes are refused.
 
 ## Rendering-layout limit
 
@@ -121,13 +121,28 @@ A layout is projected for the browser the same way a page is: `config` and `load
 
 ## Inherited policy
 
-`LayoutConfig` also accepts `middleware`, static `metadata.robots`, and static
-`sitemap` defaults (or `false`). It does not accept page routes, cache policy,
-validation, arbitrary metadata, or a sitemap supplier function. Descendant
-pages inherit the nearest explicit robots and sitemap policy; an unrelated
-page metadata field does not erase inherited robots. `RootConfig` supports
-static `middleware` and `strictMode`; root metadata and sitemap defaults are
-not inherited.
+`LayoutConfig` accepts `middleware`, static or callback `metadata`, and static
+`sitemap` defaults (or `false`). `RootConfig` accepts `middleware`,
+`strictMode`, and the same metadata shape. Metadata callbacks receive their own
+loader data, readonly shared state, and resolved child metadata; they run only
+on the server after loaders. Titles accept a string, `{ default?, template? }`,
+or `{ absolute }`. A callback returns that layout's complete metadata: explicit
+fields override `child`, and fields omitted from its result are not retained.
+Spread `child` when retaining descendant fields:
+
+```tsx
+export const config: LayoutConfig = {
+  metadata: ({ data, child }) => ({
+    ...child,
+    title: `${data.workspaceName} | ${child?.title ?? "Workspace"}`,
+  }),
+};
+```
+
+The callback may override a child title; an absolute child title remains
+authoritative. Static metadata defaults still merge with child metadata, and
+the nearest template applies once. Layouts still do not accept page routes,
+cache policy, validation, or a sitemap supplier.
 
 ## Gotchas
 

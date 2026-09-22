@@ -8,9 +8,9 @@ description: 'Author `src/web/root.tsx`, the full-document application root that
 `src/web/root.tsx` is the application document. Its default export renders the complete `<html>` tree and contains the one DOM node the browser hydrates: `#vessel`.
 
 The root may export `config`, `loader`, `register`, `ErrorBoundary`, and its
-default component. `RootConfig` owns `middleware` and `strictMode`. Root
-metadata, route/prefix, cache, validation, sitemap, and robots policy are not
-root exports. Keep sitewide sitemap and robots serving in `web.sitemap` and
+default component. `RootConfig` owns `middleware`, `strictMode`, and metadata.
+Route/prefix, cache, validation, sitemap, and robots-file policy are not root
+exports. Keep sitewide sitemap and robots serving in `web.sitemap` and
 `web.robots`; page and layout policy belongs in their own `config` exports.
 
 ## The shape
@@ -181,14 +181,30 @@ middleware:
 ```tsx
 import type { RootConfig } from "@warlock.js/web";
 
-export const config = {
+export const config: RootConfig = {
   middleware: [attachRequestContext],
   strictMode: true,
-} satisfies RootConfig;
+};
 ```
 
 `loader`, `register`, and `ErrorBoundary` remain separate exports. Named
-`middleware`, `metadata`, `sitemap`, or route-policy exports are invalid.
+`sitemap` or route-policy exports are invalid. Root metadata may be static or a
+server-only callback; it participates in title and field composition with
+layouts and the page. A callback returns the root's complete level: explicit
+fields override `child`, while omitted child fields are not retained. Preserve
+descendant metadata deliberately by spreading `child`:
+
+```tsx
+export const config: RootConfig = {
+  metadata: ({ data, child }) => ({
+    ...child,
+    title: `${data.applicationName} | ${child?.title ?? "Home"}`,
+  }),
+};
+```
+
+The callback may override a child title; an absolute child title remains
+authoritative. Static root metadata still merges with child metadata.
 
 `strictMode` defaults to `false`, preserving existing applications. New Web
 scaffolds enable it with `strictMode: true`. The root owns this setting even

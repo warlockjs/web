@@ -12,11 +12,11 @@ A page is any `*.page.tsx` beneath `src/web/` — the page root. Its URL is eith
 ```tsx title="src/web/products/product-details.page.tsx"
 import type { PageConfig, PageLoader, PageProps } from "@warlock.js/web";
 
-export const config = {
+export const config: PageConfig<typeof loader> = {
   route: { path: "/products/:id", name: "products.details" },
   cache: { public: true, maxAge: 60 },
   metadata: { title: "Product details" },
-} satisfies PageConfig;
+};
 
 export const loader = (async ({ request }) => {
   const id = request.input("id");
@@ -340,7 +340,7 @@ Examples that fail include `/users/:id?`, `/users/:id(\\d+)`,
 ```tsx
 import type { PageConfig } from "@warlock.js/web";
 
-export const config = {
+export const config: PageConfig = {
   metadata: {
     title: "Products",
     description: "Browse the product catalogue",
@@ -350,10 +350,21 @@ export const config = {
       image: "/images/catalogue-card.png",
     },
   },
-} satisfies PageConfig;
+};
 ```
 
-Supported fields are `title`, `description`, `keywords`, `canonical`, `robots`, `openGraph`, and `twitter`. Function metadata runs after a successful loader. If a loader fails, Warlock uses error metadata instead of calling the page function with missing data.
+Supported fields are `title`, `description`, `keywords`, `canonical`, `robots`, `openGraph`, and `twitter`. A title may be a string, `{ default?, template? }`, or `{ absolute }`. Function metadata runs after a successful loader. If a loader fails, Warlock uses error metadata instead of calling the page function with missing data. Layout and root metadata use the same input shape; their callbacks receive readonly `{ data, shared, child? }` and run server-side only. A callback returns its complete level: explicit returned fields override `child`, and omitted child fields are not retained. Spread `child` when retaining descendant metadata:
+
+```tsx
+export const config: LayoutConfig = {
+  metadata: ({ data, child }) => ({
+    ...child,
+    title: `${data.sectionName} | ${child?.title ?? "Products"}`,
+  }),
+};
+```
+
+That callback may override the child title; an absolute child title remains authoritative. A supplied title resolves to a string in SSR and navigation output.
 
 ## The error boundary — `error.page.tsx`
 
