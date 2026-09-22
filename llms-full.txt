@@ -31,7 +31,7 @@ src/
 warlock.config.ts
 ```
 
-The generated index page declares `route = { path: "/", name: "index" }`, so the server payload and client registry consume one explicit identity. Universal localization setup is inside its synchronous `register()` hook. The generated root owns the document, renders `<Head />`, keeps `{children}` inside `#vessel`, and renders `<Scripts />`. `warlock dev` turns literal `groupedTranslations` registrations into typed `useTrans()` keys; it accepts `string` until the first generated typing file exists.
+The generated index page declares `export const config = { route: { path: "/", name: "index" } } satisfies PageConfig`, so the server payload and client registry consume one explicit identity. Universal localization setup is inside its synchronous `register()` hook. The generated root owns the document, renders `<Head />`, keeps `{children}` inside `#vessel`, and renders `<Scripts />`. `warlock dev` turns literal `groupedTranslations` registrations into typed `useTrans()` keys; it accepts `string` until the first generated typing file exists.
 
 Every added `@warlock.js/*` package is saved at the exact version of the Core CLI executing the command. Third-party dependency ranges stay as declared by the feature.
 
@@ -80,7 +80,7 @@ Indented `router.get("/", ...)` declarations inside a prefixed group are not roo
 - Exactly one recognized top-level `GET "/"` and no top-level `GET "/welcome"`: move it to `/welcome`, then create the home page.
 - More than one top-level `GET "/"`, an existing top-level `GET "/welcome"`, an unreadable/unwritable routes file, or an unrecognized rewrite: create `root.tsx`, do not create `index.page.tsx`, set a failing exit code, and still register the connector.
 
-On the refusal path, free `/` yourself and create a page with either `route = { path: "/", name: "index" }` or another literal route.
+On the refusal path, free `/` yourself and create a page with either `export const config = { route: { path: "/", name: "index" } } satisfies PageConfig` or another literal `config.route`.
 
 ## Re-running the command
 
