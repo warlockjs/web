@@ -81,7 +81,10 @@ import { consumePageManifest, type PageManifest } from "./page-manifest";
 import { registerProductionPublicFiles } from "./register-production-public-files";
 import { createManifestSitemapPageSource } from "../sitemap/manifest-sitemap-page-source";
 import { setProductionSitemapPageSource } from "../sitemap/production-sitemap-page-source";
-import { registerWebHttpRoutes } from "../sitemap/register-web-http-routes";
+import {
+  regenerateSitemapOnStartup,
+  registerWebHttpRoutes,
+} from "../sitemap/register-web-http-routes";
 import {
   createUnregisteredPageReporter,
   type UnregisteredPageReporter,
@@ -313,6 +316,9 @@ export class WebConnector extends BaseConnector {
 
   protected installedPages: InstalledPageRoute[] = [];
 
+  /** The app root resolved during boot and used by the one startup sitemap job. */
+  protected sitemapAppRoot?: string;
+
   /**
    * The build→runtime handoff table, read once at boot.
    *
@@ -449,16 +455,12 @@ export class WebConnector extends BaseConnector {
       // Sitemap page source (v5.16 defect fix): production has no `app/`
       // tree beside the bundle and no Vite, so `listRoutablePages`'s
       // `import()` of each page's SOURCE file — dev's own source — cannot
-      // work here. Registering the manifest-derived source BEFORE
-      // `registerWebHttpRoutes` runs its boot-time generation (below) is
-      // what lets both that call and every later `regenerateSitemap()` read
-      // pages from the already-imported manifest instead.
+      // work here. This source is installed before route registration. The first
+      // generation runs later from `start()`, after the database is ready.
       setProductionSitemapPageSource(createManifestSitemapPageSource(this.pageManifest));
 
-      // Sitemap Part B (v5.16 contract Part 6 rule 1): production boot
-      // produces the artifact set that `/sitemap.xml` and `/robots.txt` will
-      // serve from. See `../sitemap/register-web-http-routes.ts`.
-      await registerWebHttpRoutes(router, { appRoot: this.options.appRoot ?? process.cwd() });
+      this.sitemapAppRoot = this.options.appRoot ?? process.cwd();
+      await registerWebHttpRoutes(router, { appRoot: this.sitemapAppRoot });
 
       return;
     }
@@ -565,9 +567,8 @@ export class WebConnector extends BaseConnector {
 
     this.installedPages = await this.installDevPageRoutes();
 
-    // Same lifecycle as production (Part 6 rule 1) — a dev boot also needs a
-    // real artifact for `/sitemap.xml` to serve, not just the route.
-    await registerWebHttpRoutes(router, { appRoot: paths.appRoot });
+    this.sitemapAppRoot = paths.appRoot;
+    await registerWebHttpRoutes(router, { appRoot: this.sitemapAppRoot });
   }
 
   /**
@@ -655,14 +656,13 @@ export class WebConnector extends BaseConnector {
   }
 
   /**
-   * Activate. There is nothing to listen on — `HttpConnector.start()` owns the
-   * single `listen()` for the whole process — so this only marks the connector
-   * live once `boot()` has wired everything.
+   * Run the initial sitemap job after database startup. There is nothing to
+   * listen on here: `HttpConnector.start()` owns the process listener.
    */
   public async start(): Promise<void> {
-    if (!this.vite) return;
+    await regenerateSitemapOnStartup({ appRoot: this.sitemapAppRoot });
 
-    this.active = true;
+    if (this.vite) this.active = true;
   }
 
   /**

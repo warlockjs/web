@@ -2,6 +2,12 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## Unreleased
+
+### Fixed
+
+- Initial sitemap generation now runs during connector startup, after database initialization. Registration-only commands such as `warlock doctor` register sitemap routes without invoking suppliers that require a database connection.
+
 ## 5.17.1 - 2026-09-22
 
 ### Fixed

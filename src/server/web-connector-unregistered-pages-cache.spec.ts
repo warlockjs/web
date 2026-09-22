@@ -8,6 +8,7 @@ import * as unregisteredPagesModule from "./unregistered-pages";
 import type { UnregisteredPageReporter } from "./unregistered-pages";
 import { providePageManifest } from "./page-manifest";
 import { WebConnector } from "./web-connector";
+import { regenerateSitemapOnStartup } from "../sitemap/register-web-http-routes";
 
 // Everything a production `boot()` does BESIDES the dev-only discovery cache
 // this file is about — mocked out so the production-mode spec below stays
@@ -22,6 +23,7 @@ vi.mock("./register-production-public-files", () => ({
 }));
 vi.mock("../sitemap/register-web-http-routes", () => ({
   registerWebHttpRoutes: vi.fn(async () => undefined),
+  regenerateSitemapOnStartup: vi.fn(async () => undefined),
 }));
 
 const temporaryDirectories: string[] = [];
@@ -117,6 +119,8 @@ describe("WebConnector production boot leaves the dev 404 discovery cache untouc
 
     const createReporter = vi.spyOn(unregisteredPagesModule, "createUnregisteredPageReporter");
     const connector = new BootObservableConnector();
+    const regenerate = vi.mocked(regenerateSitemapOnStartup);
+    regenerate.mockClear();
 
     // No `http.server` is ever registered in the container. If production
     // boot took even one step down the dev branch — `resolveFastify()` is
@@ -127,5 +131,15 @@ describe("WebConnector production boot leaves the dev 404 discovery cache untouc
 
     expect(createReporter).not.toHaveBeenCalled();
     expect(connector.reporter()).toBeUndefined();
+    expect(regenerate).not.toHaveBeenCalled();
+
+    await connector.start();
+
+    expect(regenerate).toHaveBeenCalledOnce();
+    expect(regenerate).toHaveBeenCalledWith({ appRoot: process.cwd() });
+
+    await connector.restart();
+
+    expect(regenerate).toHaveBeenCalledOnce();
   });
 });

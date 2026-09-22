@@ -1,11 +1,8 @@
 /**
  * The web adapter's one call into `WebConnector.boot()` (Part B). Registers
  * `/robots.txt` and, when the sitemap is enabled, `<sitemap path>` plus the
- * shard-file routes — then, unless `regenerate.onBoot` is `false`, triggers
- * the first generation so there is something to serve.
- *
- * Generation happens here, at boot, never inside a route handler — Part 6
- * rule 1/5.
+ * shard-file routes. Generation is a startup job: WebConnector runs it after
+ * the database connector has started, never from route registration.
  */
 import path from "node:path";
 import { publicPath, type Router } from "@warlock.js/core";
@@ -33,14 +30,19 @@ export async function registerWebHttpRoutes(
   if (!sitemapConfig.enabled) return;
 
   registerSitemapRoutes(router, { path: sitemapConfig.path, warn });
+}
 
-  if (sitemapConfig.regenerate.onBoot) {
-    // Awaited: Part 6 rule 1 is "boot PRODUCES an artifact set" (never
-    // `warlock build`), not "kicks one off". Failure must not fail the boot,
-    // though — the app
-    // still has to come up and serve everything else; `regenerateSitemap`
-    // already reported the error unconditionally, and requests fall to the
-    // 503 path (Part 6 rule 5) until a later regeneration succeeds.
-    await regenerateSitemap({ appRoot: options.appRoot }).catch(() => undefined);
-  }
+/**
+ * Produces the first sitemap artifact set after all connectors have booted and
+ * the database connector has started. `onBoot` remains the user-facing opt-out
+ * for this startup job; a failed generation remains non-fatal to app startup.
+ */
+export async function regenerateSitemapOnStartup(
+  options: { appRoot?: string } = {},
+): Promise<void> {
+  const sitemapConfig = resolveSitemapConfig();
+
+  if (!sitemapConfig.enabled || !sitemapConfig.regenerate.onBoot) return;
+
+  await regenerateSitemap({ appRoot: options.appRoot }).catch(() => undefined);
 }
