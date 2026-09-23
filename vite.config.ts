@@ -3,6 +3,7 @@ import { defineConfig } from "vite";
 
 const entryFiles = {
   index: fileURLToPath(new URL("./src/index.ts", import.meta.url)),
+  "form/index": fileURLToPath(new URL("./src/form/index.ts", import.meta.url)),
   "connector/index": fileURLToPath(new URL("./src/connector/index.ts", import.meta.url)),
   "vite/index": fileURLToPath(new URL("./src/vite/index.ts", import.meta.url)),
 };
@@ -11,6 +12,8 @@ const peerPackages = [
   "@warlock.js/cache",
   "@warlock.js/core",
   "@warlock.js/seal",
+  "@mongez/http",
+  "@mongez/react-form",
   "react",
   "react-dom",
   "vite",

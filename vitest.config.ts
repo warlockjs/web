@@ -67,7 +67,7 @@ export default defineConfig({
         test: {
           name: "web",
           environment: "node",
-          include: ["src/**/*.spec.ts"],
+          include: ["src/**/*.spec.{ts,tsx}"],
           exclude: ["src/vite/**/*.spec.ts"],
         },
       },
