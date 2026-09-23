@@ -25,6 +25,10 @@ export type PageManifestLayoutEntry = {
   module: Record<string, unknown>;
   /** App-root-relative POSIX source path, e.g. "src/web/layout.tsx". */
   sourceFile: string;
+  /** Optional setup namespace, kept separate so the UI source identity remains stable. */
+  setupModule?: Record<string, unknown>;
+  /** App-root-relative setup source path. */
+  setupSourceFile?: string;
 };
 
 export type PageManifestPageEntry = {
@@ -39,6 +43,8 @@ export type PageManifestPageEntry = {
    * turns a lookup miss into a silent mis-match.
    */
   sourceFile: string;
+  setupModule?: Record<string, unknown>;
+  setupSourceFile?: string;
   /** Layout chain, outermost first. */
   layouts: readonly PageManifestLayoutEntry[];
 };
@@ -47,6 +53,8 @@ export type PageManifestPageEntry = {
 export type PageManifestErrorPageEntry = {
   module: Record<string, unknown>;
   sourceFile: string;
+  setupModule?: Record<string, unknown>;
+  setupSourceFile?: string;
 };
 
 /** A validated route-locales source artifact retained verbatim for boot-time locale assembly. */
@@ -99,7 +107,12 @@ export type PageManifest = {
    * the generator's, and a consumer that assumes it without checking turns a
    * malformed manifest into a crash deep in rendering instead of a named error.
    */
-  app?: { module: Record<string, unknown>; sourceFile: string };
+  app?: {
+    module: Record<string, unknown>;
+    sourceFile: string;
+    setupModule?: Record<string, unknown>;
+    setupSourceFile?: string;
+  };
   /** An application-owned error boundary. It has no route name or path. */
   errorPage?: PageManifestErrorPageEntry;
   /**

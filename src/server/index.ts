@@ -15,6 +15,7 @@
  * dropping it from either broke `warlock dev`.
  */
 export { connectSharedStore } from "../shared";
+export { resolveNamedApiRoutes } from "./named-api-routes";
 export {
   escapePayload,
   PAYLOAD_SCRIPT_ID,
@@ -43,6 +44,7 @@ export {
   type PipelineStore,
 } from "./execute-page-request";
 export { createPageModuleLoader, PageModuleNotInManifestError } from "./create-page-module-loader";
+export { composePageModule, PageSetupModuleExportError } from "./compose-page-module";
 export {
   installPageRoutesFromManifest,
   type InstalledManifestPageRoute,

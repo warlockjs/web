@@ -347,7 +347,8 @@ function quote(value: string): string {
 type BarrelPage = {
   identifier: string;
   sourceFile: string;
-  layouts: { identifier: string; sourceFile: string }[];
+  setupFile?: string;
+  layouts: { identifier: string; sourceFile: string; setupFile?: string }[];
 };
 
 /** Header of every generated barrel — the banner plus the one runtime import. */
@@ -455,7 +456,7 @@ export async function generatePagesBarrel(
     );
   }
 
-  const layoutIdentifiers = new Map<string, string>();
+  const layoutIdentifiers = new Map<string, { identifier: string; setupFile?: string }>();
   const pages: BarrelPage[] = [];
   // Persisted paths run through the ROUTER's own `normalizeRoutePath`, the
   // single definition of a route path's canonical form. Discovery derives these
@@ -488,37 +489,50 @@ export async function generatePagesBarrel(
   };
 
   for (const [index, page] of routablePages.entries()) {
-    const layouts = page.layouts.map((layoutFile) => {
-      let identifier = layoutIdentifiers.get(layoutFile);
+    const layouts = page.layouts.map((layoutFile, index) => {
+      let layout = layoutIdentifiers.get(layoutFile);
 
-      if (identifier === undefined) {
-        identifier = `l${layoutIdentifiers.size}`;
-        layoutIdentifiers.set(layoutFile, identifier);
+      if (layout === undefined) {
+        layout = {
+          identifier: `l${layoutIdentifiers.size}`,
+          setupFile: page.layoutSetupFiles?.[index],
+        };
+        layoutIdentifiers.set(layoutFile, layout);
       }
 
-      return { identifier, sourceFile: layoutFile };
+      return { ...layout, sourceFile: layoutFile };
     });
 
-    pages.push({ identifier: `p${index}`, sourceFile: page.pageFile, layouts });
+    pages.push({ identifier: `p${index}`, sourceFile: page.pageFile, setupFile: page.setupFile, layouts });
   }
 
   const importLines = [
     ...(routablePages.length === 0
       ? []
       : [`import * as app from ${quote(importSpecifierFor(productionDir, appFile))};`]),
+    ...(routablePages[0]?.appSetupFile === undefined
+      ? []
+      : [`import * as appSetup from ${quote(importSpecifierFor(productionDir, routablePages[0].appSetupFile))};`]),
     ...(errorPage === undefined
       ? []
       : [
           `import * as errorPage from ${quote(importSpecifierFor(productionDir, errorPage.pageFile))};`,
+          ...(errorPage.setupFile === undefined
+            ? []
+            : [`import * as errorPageSetup from ${quote(importSpecifierFor(productionDir, errorPage.setupFile))};`]),
         ]),
-    ...[...layoutIdentifiers.entries()].map(
-      ([layoutFile, identifier]) =>
-        `import * as ${identifier} from ${quote(importSpecifierFor(productionDir, layoutFile))};`,
-    ),
-    ...pages.map(
-      (page) =>
-        `import * as ${page.identifier} from ${quote(importSpecifierFor(productionDir, page.sourceFile))};`,
-    ),
+    ...[...layoutIdentifiers.entries()].flatMap(([layoutFile, layout]) => [
+      `import * as ${layout.identifier} from ${quote(importSpecifierFor(productionDir, layoutFile))};`,
+      ...(layout.setupFile === undefined
+        ? []
+        : [`import * as ${layout.identifier}Setup from ${quote(importSpecifierFor(productionDir, layout.setupFile))};`]),
+    ]),
+    ...pages.flatMap((page) => [
+      `import * as ${page.identifier} from ${quote(importSpecifierFor(productionDir, page.sourceFile))};`,
+      ...(page.setupFile === undefined
+        ? []
+        : [`import * as ${page.identifier}Setup from ${quote(importSpecifierFor(productionDir, page.setupFile))};`]),
+    ]),
   ];
 
   const relativeToApp = (file: string) => quote(toPosix(path.relative(appRoot, file)));
@@ -527,7 +541,11 @@ export async function generatePagesBarrel(
     const layouts = page.layouts
       .map(
         (layout) =>
-          `{ module: ${layout.identifier}, sourceFile: ${relativeToApp(layout.sourceFile)} }`,
+          `{ module: ${layout.identifier}, sourceFile: ${relativeToApp(layout.sourceFile)}${
+            layout.setupFile === undefined
+              ? ""
+              : `, setupModule: ${layout.identifier}Setup, setupSourceFile: ${relativeToApp(layout.setupFile)}`
+          } }`,
       )
       .join(", ");
 
@@ -535,6 +553,12 @@ export async function generatePagesBarrel(
       "  {",
       `    module: ${page.identifier},`,
       `    sourceFile: ${relativeToApp(page.sourceFile)},`,
+      ...(page.setupFile === undefined
+        ? []
+        : [
+            `    setupModule: ${page.identifier}Setup,`,
+            `    setupSourceFile: ${relativeToApp(page.setupFile)},`,
+          ]),
       `    layouts: [${layouts}],`,
       "  },",
     ].join("\n");
@@ -552,10 +576,22 @@ export async function generatePagesBarrel(
     ...(localeFiles.length === 0 ? [] : [`  localeFiles: ${JSON.stringify(localeFiles)},`]),
     ...(routablePages.length === 0
       ? []
-      : [`  app: { module: app, sourceFile: ${relativeToApp(appFile)} },`]),
+      : [
+          `  app: { module: app, sourceFile: ${relativeToApp(appFile)}${
+            routablePages[0]?.appSetupFile === undefined
+              ? ""
+              : `, setupModule: appSetup, setupSourceFile: ${relativeToApp(routablePages[0].appSetupFile)}`
+          } },`,
+        ]),
     ...(errorPage === undefined
       ? []
-      : [`  errorPage: { module: errorPage, sourceFile: ${relativeToApp(errorPage.pageFile)} },`]),
+      : [
+          `  errorPage: { module: errorPage, sourceFile: ${relativeToApp(errorPage.pageFile)}${
+            errorPage.setupFile === undefined
+              ? ""
+              : `, setupModule: errorPageSetup, setupSourceFile: ${relativeToApp(errorPage.setupFile)}`
+          } },`,
+        ]),
     "  pages: [",
     ...pageEntries.map((entry) =>
       entry

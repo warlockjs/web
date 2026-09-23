@@ -140,6 +140,42 @@ describe("discoverPages — the recipe", () => {
     expect(page.routeName).toBe("users.account.settings");
   });
 
+  it("records optional setup companions without making them UI graph entries", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/web/root.setup.ts": "export const config = { strictMode: true };",
+      "src/web/layout.tsx": LAYOUT,
+      "src/web/layout.setup.ts": 'export const config = { prefix: "/shop" };',
+      "src/web/products.page.tsx": routed("/products"),
+      "src/web/products.setup.ts": "export const loader = () => [];",
+    });
+
+    const [page] = discoverPages({ appRoot });
+    if (page.type !== "page") expect.unreachable("expected a routable page");
+
+    expect(relative(appRoot, [page.pageFile, page.setupFile as string])).toEqual([
+      "src/web/products.page.tsx",
+      "src/web/products.setup.ts",
+    ]);
+    expect(relative(appRoot, (page.layoutSetupFiles ?? []).filter(Boolean) as string[])).toEqual([
+      "src/web/layout.setup.ts",
+    ]);
+    expect(relative(appRoot, [page.appSetupFile as string])).toEqual(["src/web/root.setup.ts"]);
+  });
+
+  it("reads a paired setup file for static route declarations", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/web/catalog.page.tsx": pageDeclaring(""),
+      "src/web/catalog.setup.ts": 'export const config = { route: "/products" };',
+    });
+
+    const [page] = discoverPages({ appRoot });
+
+    expect(page.type).toBe("page");
+    if (page.type === "page") expect(page.routePath).toBe("/products");
+  });
+
   it("discovers src/web pages and ignores page-like files under src/app", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,

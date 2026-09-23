@@ -17,6 +17,7 @@ import { hydratePage } from "../client/hydrate-page";
 import { NavigationRoot } from "../client/navigation/navigation-root";
 import { publishRouteTable } from "../routing/route-table";
 import { publishDocumentLocaleRouting } from "./publish-document-locale-routing";
+import { publishDocumentNamedApiRoutes } from "./publish-document-named-api-routes";
 
 /*
   BEFORE the mount, not after: `<Link>` resolves its URL through the route table
@@ -46,6 +47,7 @@ publishRouteTable(pages, "hydration client entry");
   build-time value only when that meta is absent or malformed.
 */
 publishDocumentLocaleRouting(localeRouting);
+publishDocumentNamedApiRoutes();
 
 /*
   The hydrated tree is wrapped in `NavigationRoot` so the page can be REPLACED

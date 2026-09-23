@@ -37,6 +37,7 @@ import { config, type Router } from "@warlock.js/core";
 import path from "node:path";
 import { buildRouteLocaleManifest } from "../build/build-route-locale-manifest";
 import { composeLayoutModules } from "./compose-layout-modules";
+import { composePageModule } from "./compose-page-module";
 import { createPageModuleLoader } from "./create-page-module-loader";
 import { resolveLocaleRouting } from "./locale-routing/resolve-locale-routing";
 import { localePageRegistrations } from "./locale-routing/locale-page-registrations";
@@ -60,6 +61,15 @@ import {
 import type { PageManifest, PageManifestLayoutEntry, PageManifestPageEntry } from "./page-manifest";
 import type { PageRouteExport } from "./page-module-shapes";
 import { createRouteTranslationsResolver } from "./route-translations";
+
+function manifestModule(entry: {
+  module: Record<string, unknown>;
+  sourceFile: string;
+  setupModule?: Record<string, unknown>;
+  setupSourceFile?: string;
+}): Record<string, unknown> {
+  return composePageModule(entry.module, entry.setupModule, entry.sourceFile, entry.setupSourceFile);
+}
 
 /** The exports this module reads off a layout module namespace. */
 /**
@@ -160,7 +170,7 @@ function layoutPrefixesOf(page: PageManifestPageEntry): Record<string, string> {
 
       return {
         directory,
-        prefix: normalizePageModule(layout.module, "layout", layout.sourceFile).prefix,
+        prefix: normalizePageModule(manifestModule(layout), "layout", layout.sourceFile).prefix,
       };
     }),
   );
@@ -220,9 +230,9 @@ function layoutLevelOf(page: PageManifestPageEntry): LayoutLevel {
     page.layouts.map((layout) => ({
       id: layout.sourceFile,
       renders:
-        typeof normalizePageModule(layout.module, "layout", layout.sourceFile).default !==
+        typeof normalizePageModule(manifestModule(layout), "layout", layout.sourceFile).default !==
         "undefined",
-      prefix: normalizePageModule(layout.module, "layout", layout.sourceFile).prefix,
+      prefix: normalizePageModule(manifestModule(layout), "layout", layout.sourceFile).prefix,
     })),
   );
 
@@ -253,7 +263,7 @@ function composeLayoutLevel(
   const hostIndex = page.layouts.indexOf(host);
 
   return composeLayoutModules(
-    page.layouts.map((layout) => normalizePageModule(layout.module, "layout", layout.sourceFile)),
+    page.layouts.map((layout) => normalizePageModule(manifestModule(layout), "layout", layout.sourceFile)),
     hostIndex,
     page.layouts.map((layout) => layout.sourceFile),
   );
@@ -329,7 +339,7 @@ export function installPageRoutesFromManifest(
 
   if (manifest.errorPage !== undefined) {
     const errorPage = normalizePageModule(
-      manifest.errorPage.module,
+      manifestModule(manifest.errorPage),
       "page",
       manifest.errorPage.sourceFile,
     );
@@ -374,7 +384,7 @@ export function installPageRoutesFromManifest(
     );
   }
 
-  normalizePageModule(app.module, "root", app.sourceFile);
+  normalizePageModule(manifestModule(app), "root", app.sourceFile);
 
   // Ids are the manifest's own `sourceFile` strings and are passed on untouched:
   // the loader below matches them by exact string equality, so resolving,
@@ -386,7 +396,7 @@ export function installPageRoutesFromManifest(
   const loadErrorPage =
     manifest.errorPage === undefined
       ? undefined
-      : async () => manifest.errorPage!.module as ErrorPageModule;
+      : async () => manifestModule(manifest.errorPage!) as ErrorPageModule;
 
   // Same partition development makes, on the same rule (the filename), so the
   // two modes cannot disagree about which file is the not-found page. It is
@@ -403,7 +413,7 @@ export function installPageRoutesFromManifest(
 
   if (
     notFoundPage !== undefined &&
-    normalizePageModule(notFoundPage.module, "page", notFoundPage.sourceFile).route !== undefined
+    normalizePageModule(manifestModule(notFoundPage), "page", notFoundPage.sourceFile).route !== undefined
   ) {
     throw new NotFoundPageDeclaresRouteError(notFoundPage.sourceFile);
   }
@@ -442,7 +452,7 @@ export function installPageRoutesFromManifest(
 
   for (const page of pages) {
     const { host: layout, prefix: layoutPrefix } = layoutLevelOf(page);
-    const pageModule = normalizePageModule(page.module, "page", page.sourceFile);
+    const pageModule = normalizePageModule(manifestModule(page), "page", page.sourceFile);
     const routeExport = pageModule.route;
 
     const { path: routePath, name } = resolveRoute(routeExport, page.sourceFile);

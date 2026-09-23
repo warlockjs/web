@@ -170,6 +170,7 @@ export function readModuleConfig(
   sourceFile: string,
   source: string,
   kind: ModuleKind,
+  options: { allowMissingDefault?: boolean } = {},
 ): ModuleConfigRead {
   let program: ReturnType<typeof parse>["program"];
   try {
@@ -248,7 +249,7 @@ export function readModuleConfig(
     }
   }
 
-  if (kind === "page" && !hasDefault)
+  if (kind === "page" && !hasDefault && options.allowMissingDefault !== true)
     fail(sourceFile, "a page module requires a runtime default export");
   return {
     ...(route === undefined ? {} : { route }),

@@ -7,6 +7,11 @@ description: 'Author `src/web/root.tsx`, the full-document application root that
 
 `src/web/root.tsx` is the application document. Its default export renders the complete `<html>` tree and contains the one DOM node the browser hydrates: `#vessel`.
 
+Use optional `root.setup.ts` for root `config`, loader, or universal
+`register()` while `root.tsx` remains the document component. `strictMode` is
+statically projected from the setup file. Do not value-import setup from the UI;
+type-only imports are allowed, and duplicate exports fail.
+
 The root may export `config`, `loader`, `register`, `ErrorBoundary`, and its
 default component. `RootConfig` owns `middleware`, `strictMode`, and metadata.
 Route/prefix, cache, validation, sitemap, and robots-file policy are not root
@@ -180,6 +185,11 @@ middleware:
 
 ```tsx
 import type { RootConfig } from "@warlock.js/web";
+import type { Middleware } from "@warlock.js/core";
+
+const attachRequestContext: Middleware = ({ request }) => {
+  request.locals.startedAt = Date.now();
+};
 
 export const config: RootConfig = {
   middleware: [attachRequestContext],

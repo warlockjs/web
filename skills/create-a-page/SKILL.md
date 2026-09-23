@@ -9,14 +9,41 @@ A page is any `*.page.tsx` beneath `src/web/` — the page root. Its URL is eith
 
 ## The shape
 
+## Optional server setup module
+
+Pair `product-details.page.tsx` with `product-details.setup.ts` when the React
+component should stay UI-only. The setup file may own `config`, `loader`, and
+universal `register()`. Do not value-import it from the component; type-only
+imports preserve loader inference:
+
+```ts title="src/web/products/paired-product.setup.ts"
+import type { PageLoader } from "@warlock.js/web";
+
+export const loader = (async () => ({
+  product: { name: "Example product" },
+})) satisfies PageLoader;
+```
+
+```tsx title="src/web/products/paired-product.page.tsx"
+import type { loader } from "./paired-product.setup";
+import type { PageProps } from "@warlock.js/web";
+
+export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
+  return <h1>{data.product.name}</h1>;
+}
+```
+
+Every export has one owner. Duplicate `config`, `loader`, or `register` exports
+fail; `register()` remains browser-safe and runs on server and client.
+
 ```tsx title="src/web/products/product-details.page.tsx"
 import type { PageConfig, PageLoader, PageProps } from "@warlock.js/web";
 
-export const config: PageConfig<typeof loader> = {
+export const config = {
   route: { path: "/products/:id", name: "products.details" },
   cache: { public: true, maxAge: 60 },
   metadata: { title: "Product details" },
-};
+} satisfies PageConfig;
 
 export const loader = (async ({ request }) => {
   const id = request.input("id");

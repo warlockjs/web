@@ -943,6 +943,74 @@ export function isProjectableFile(id: string): boolean {
   return false;
 }
 
+/** The framework-only query that exposes a setup module's browser-safe register hook. */
+export function isSetupRegisterProjectionFile(id: string): boolean {
+  const [file, query] = id.split("?", 2);
+  return query === "warlock-setup-register" && path.basename(file ?? "").endsWith(".setup.ts");
+}
+
+function assertNoRawSetupValueImport(code: string, filePath: string): void {
+  const program = parse(code, { sourceType: "module", plugins: ["typescript", "jsx"] }).program;
+  for (const statement of program.body as any[]) {
+    const source = statement.source?.value as string | undefined;
+    if (
+      source !== undefined &&
+      (source.endsWith(".setup") || source.endsWith(".setup.ts")) &&
+      statement.importKind !== "type" &&
+      statement.exportKind !== "type"
+    ) {
+      throw new Error(
+        `Projection refused "${filePath}": UI modules may import a setup file only with \`import type\`. The framework loads its projected register hook itself.`,
+      );
+    }
+
+    if (statement.type === "ImportDeclaration" || statement.type === "ExportNamedDeclaration") continue;
+  }
+
+  const visit = (node: unknown): void => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      node.forEach(visit);
+      return;
+    }
+    const record = node as Record<string, unknown>;
+    if (
+      record.type === "ImportExpression" &&
+      (record.source as any)?.type === "StringLiteral" &&
+      /\.setup(?:\.ts)?$/.test((record.source as any).value)
+    ) {
+      throw new Error(
+        `Projection refused "${filePath}": UI modules cannot dynamically import a setup file.`,
+      );
+    }
+    for (const value of Object.values(record)) visit(value);
+  };
+
+  visit(program);
+}
+
+function assertSetupRegisterSurface(code: string, filePath: string): void {
+  const program = parse(code, { sourceType: "module", plugins: ["typescript", "jsx"] }).program;
+  for (const statement of program.body as any[]) {
+    if (statement.type === "ExportDefaultDeclaration") {
+      throw new Error(`Projection refused "${filePath}": setup files cannot export a default component.`);
+    }
+    if (statement.type !== "ExportNamedDeclaration" || statement.exportKind === "type") continue;
+    const names = statement.declaration
+      ? statement.declaration.type === "VariableDeclaration"
+        ? statement.declaration.declarations.map((declaration: any) => declaration.id?.name)
+        : [statement.declaration.id?.name]
+      : statement.specifiers.map((specifier: any) => specifier.exported?.name);
+    for (const name of names) {
+      if (name !== undefined && name !== "config" && name !== "loader" && name !== "register") {
+        throw new Error(
+          `Projection refused "${filePath}": setup files may expose only config, loader, or register; found "${name}".`,
+        );
+      }
+    }
+  }
+}
+
 const HMR_RUNTIME_SPECIFIER = "@warlock.js/web/client/runtime";
 
 /**
@@ -974,13 +1042,21 @@ export function projection(): Plugin {
     name: "warlock:projection",
     enforce: "pre",
     transform(code, id, options) {
-      if (!isProjectableFile(id)) return null;
+      const setupProjection = isSetupRegisterProjectionFile(id);
+      if (!setupProjection && !isProjectableFile(id)) return null;
 
       try {
+        if (!setupProjection) assertNoRawSetupValueImport(code, id);
+        if (setupProjection) assertSetupRegisterSurface(code, id);
         // Discovery and the client compiler must share the same closed public
         // surface. Do this before the SSR return: Vite's dev server otherwise
         // lets old `route`/`middleware` exports slip through unexamined.
-        readModuleConfig(id, code, projectableModuleKind(id));
+        // A setup sidecar's config belongs to its paired owner: roots accept
+        // `strictMode`, layouts accept `prefix`, and pages accept route keys.
+        // Discovery validates that owner-specific shape before this virtual
+        // client projection is requested. Parsing it here as a page would
+        // reject valid root/layout sidecars during hydration.
+        if (!setupProjection) readModuleConfig(id, code, projectableModuleKind(id));
         if (options?.ssr) return null;
 
         const configExported = hasConfigExport(code);

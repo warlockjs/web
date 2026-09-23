@@ -2,6 +2,7 @@ import type { Keywords } from "@mongez/localization";
 import { createContext, useContext } from "react";
 import type { MetadataOutput } from "../metadata";
 import type { LocaleRouting } from "../routing/locale-routing";
+import type { NamedApiRouteMetadata } from "../routing/named-api-routes";
 
 /**
  * The JSON-safe error shape carried from the server document to browser
@@ -295,6 +296,8 @@ export type DocumentContextValue = {
    * gate, so `undefined` here means the page is not locale-routed at all.
    */
   localeRouting?: LocaleRouting;
+  /** Optional, browser-safe snapshot of Core's currently registered named API routes. */
+  namedApiRoutes?: NamedApiRouteMetadata;
 };
 
 export const DocumentContext = createContext<DocumentContextValue | undefined>(undefined);

@@ -38,8 +38,10 @@ import {
   type DiscoveredPageFileGraph,
   ErrorPageDeclaresRouteError,
   isErrorPageFile,
+  isFile,
   layoutChainFor,
 } from "../build/discover-pages";
+import { pageSetupFileFor } from "../build/page-setup-file";
 import { readModuleConfig } from "../build/read-module-config";
 import { composeRoutePath } from "../routing/compose-route-path";
 import { duplicateRoutePathMessage } from "../routing/duplicate-route-path";
@@ -64,6 +66,7 @@ import type { ErrorPageModule } from "./error-page";
 import { layoutPrefixesByDirectory } from "./layout-prefixes";
 import { notFoundPageHandlerOptions } from "./not-found-handler-options";
 import { normalizePageModule } from "./normalize-page-module";
+import { composePageModule } from "./compose-page-module";
 import { devDeclaredStylesheetUrls, devHandlerStylesheetUrls } from "./stylesheet-urls";
 import type { RequestStylesheetUrlResolver } from "./document-stylesheet-urls";
 import {
@@ -79,6 +82,17 @@ export type { LayoutModuleShape, PageModuleShape, PageRouteExport } from "./page
 
 /** Re-exported so `web/src/server/index.ts`'s existing barrel export keeps resolving. */
 export { composeRoutePath };
+
+async function loadComposedModule(vite: ViteDevServer, moduleFile: string): Promise<Record<string, unknown>> {
+  const setupCandidate = pageSetupFileFor(moduleFile);
+  const setupFile = setupCandidate !== undefined && isFile(setupCandidate) ? setupCandidate : undefined;
+  const [uiModule, setupModule] = await Promise.all([
+    vite.ssrLoadModule(moduleFile),
+    setupFile === undefined ? undefined : vite.ssrLoadModule(setupFile),
+  ]);
+
+  return composePageModule(uiModule, setupModule, moduleFile, setupFile);
+}
 
 /** Raised at boot when a page still uses the withdrawn `route.middleware` export. */
 export class RouteMiddlewareRemovedError extends Error {
@@ -398,7 +412,7 @@ export type InstallPageRoutesOptions = {
 export async function installPageRoutes(
   options: InstallPageRoutesOptions,
 ): Promise<InstalledPageRoute[]> {
-  normalizePageModule(await options.vite.ssrLoadModule(options.appFile), "root", options.appFile);
+  normalizePageModule(await loadComposedModule(options.vite, options.appFile), "root", options.appFile);
   const discoveredGraph = discoverPageFileGraph(options.appSrcRoot);
   const graph = {
     pages: [
@@ -485,17 +499,21 @@ async function installDiscoveredPageRoutes(
   // Parse only: the error boundary must remain lazy until a request actually
   // fails, while a route export is still rejected at install time.
   if (errorPageFile !== undefined) {
+    const setupCandidate = pageSetupFileFor(errorPageFile);
+    const declarationFile =
+      setupCandidate !== undefined && isFile(setupCandidate) ? setupCandidate : errorPageFile;
     const declarations = readModuleConfig(
-      errorPageFile,
-      readFileSync(errorPageFile, "utf-8"),
+      declarationFile,
+      readFileSync(declarationFile, "utf-8"),
       "page",
+      { allowMissingDefault: declarationFile !== errorPageFile },
     );
     if (declarations.route !== undefined) throw new ErrorPageDeclaresRouteError(errorPageFile);
   }
   const loadErrorPage =
     errorPageFile === undefined
       ? undefined
-      : () => vite.ssrLoadModule(errorPageFile) as Promise<ErrorPageModule>;
+      : () => loadComposedModule(vite, errorPageFile) as Promise<ErrorPageModule>;
 
   if (notFoundPageFiles.length > 1) {
     throw new DuplicateNotFoundPageError(notFoundPageFiles.map((page) => page.pageFile));
@@ -517,7 +535,7 @@ async function installDiscoveredPageRoutes(
     let rawPageModule: unknown;
 
     try {
-      rawPageModule = await vite.ssrLoadModule(pageFile);
+      rawPageModule = await loadComposedModule(vite, pageFile);
     } catch (loadError) {
       // THE PAGE ITSELF MUST NOT ABORT THE INSTALL: every other page still
       // needs to install and serve. Layout loading is deliberately NOT
@@ -544,7 +562,7 @@ async function installDiscoveredPageRoutes(
     const cache = pageModule.cache;
 
     const loadLayout: LoadLayout = async (layoutFile) =>
-      normalizePageModule(await vite.ssrLoadModule(layoutFile), "layout", layoutFile);
+      normalizePageModule(await loadComposedModule(vite, layoutFile), "layout", layoutFile);
     const layoutLevel = await resolveLayoutLevel(pageFile, webRoot, loadLayout);
     const { layoutFile, prefix: layoutPrefix } = layoutLevel;
 
@@ -598,7 +616,7 @@ async function installDiscoveredPageRoutes(
       // The layout slot's id resolves to the COMPOSED level — every layout's
       // middleware, in chain order, and its validated static metadata — while
       // every other id goes straight to Vite.
-      loadModule: (moduleId) => vite.ssrLoadModule(moduleId),
+      loadModule: (moduleId) => loadComposedModule(vite, moduleId),
       loadComposedLayout:
         layoutFile === undefined
           ? undefined
@@ -608,7 +626,7 @@ async function installDiscoveredPageRoutes(
       // Vite hand over a replacement namespace after an HMR update; the
       // helper's WeakSet then gives that new identity its one invocation.
       loadRegistrationLayouts: () =>
-        Promise.all(layoutLevel.chain.map((layoutFile) => vite.ssrLoadModule(layoutFile))),
+        Promise.all(layoutLevel.chain.map((layoutFile) => loadComposedModule(vite, layoutFile))),
       hydrationClientModuleUrl,
       loadErrorPage,
       errorPageFile,
@@ -673,7 +691,7 @@ async function installDiscoveredPageRoutes(
     // misses, which is the one request nobody is watching.
     if (notFoundPageFile !== undefined) {
       const notFoundModule = normalizePageModule(
-        await vite.ssrLoadModule(notFoundPageFile),
+        await loadComposedModule(vite, notFoundPageFile),
         "page",
         notFoundPageFile,
       );
@@ -693,7 +711,7 @@ async function installDiscoveredPageRoutes(
             ...notFoundPageHandlerOptions({
               appFile,
               pageFile: notFoundPageFile,
-              loadModule: (moduleId) => vite.ssrLoadModule(moduleId),
+              loadModule: (moduleId) => loadComposedModule(vite, moduleId),
               hydrationClientModuleUrl,
               loadErrorPage,
               errorPageFile,

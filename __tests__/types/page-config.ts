@@ -3,12 +3,17 @@ import type {
   PageConfig,
   PageConfigValidation,
   PageErrorBoundaryProps,
+  PageProps,
   RootConfig,
 } from "@warlock.js/web";
 import type { BaseValidator } from "@warlock.js/seal";
+import type { loader as setupLoader } from "./loader.setup";
 
 const validator = {} as BaseValidator;
 const loader = async () => ({ product: { name: "Warlock", price: 12 } });
+
+const setupProps = {} as PageProps<typeof setupLoader>;
+setupProps.data.product.name;
 
 const pageConfig = {
   route: { path: "/products/:id", name: "products.detail" },
@@ -92,7 +97,6 @@ const invalidLayoutSupplier = {
 void invalidLayoutSupplier;
 
 const invalidRoot = {
-  // @ts-expect-error Root config has no metadata policy.
   metadata: { robots: "noindex" },
 } satisfies RootConfig;
 void invalidRoot;

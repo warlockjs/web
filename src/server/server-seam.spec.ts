@@ -93,5 +93,6 @@ describe("server-seam", () => {
     expect(typeof barrel.connectSharedStore).toBe("function");
     expect(typeof barrel.connectPageContext).toBe("function");
     expect(typeof barrel.installPageRoutes).toBe("function");
+    expect(typeof barrel.resolveNamedApiRoutes).toBe("function");
   });
 });

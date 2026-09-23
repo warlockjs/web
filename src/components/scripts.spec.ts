@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { DocumentContext, PAYLOAD_SCRIPT_ID, type DocumentContextValue } from "./document-context";
 import { markNonHydrating } from "../server/page-render-bundle";
 import { Scripts } from "./scripts";
+import { NAMED_API_ROUTES_SCRIPT_ID } from "../entry/publish-document-named-api-routes";
 
 /** Pulls the devalue-serialized payload back out of the rendered `<script>` tag. */
 function readPayloadFromHtml(html: string): unknown {
@@ -88,5 +89,12 @@ describe("Scripts", () => {
     );
 
     expect(html).toBe("");
+  });
+
+  it("emits only browser-safe named API metadata in its dedicated escaped channel", () => {
+    const html = render(documentValue({ namedApiRoutes: { "orders.get": { path: "/orders/<id>", method: "GET" } } }));
+    expect(html).toContain(NAMED_API_ROUTES_SCRIPT_ID);
+    expect(html).not.toContain('/orders/<id>');
+    expect(html).not.toContain("handler");
   });
 });

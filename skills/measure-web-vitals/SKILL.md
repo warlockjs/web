@@ -25,9 +25,11 @@ scope in anything reachable from the server render — a page, layout, or
 and evaluated during SSR, so `web-vitals`' own `window` access at call time
 would need guarding anyway. The two supported places to call it:
 
-**A root-level effect component rendered inside `#vessel`.** Add a small
-client component to `root.tsx` (below `#vessel`, so it hydrates with the
-rest of the tree) that fires the registration from a `useEffect`:
+**An effect component in the top-level layout.** `root.tsx` is the document
+shell and is not hydrated, so a reporter rendered there never runs in the
+browser. Put the small client component in `src/web/layout.tsx`, which renders
+under `#vessel` and is hydrated with every page. It fires the registration
+from a `useEffect`:
 
 ```tsx title="src/web/vitals-reporter.tsx"
 import { useEffect } from "react";
@@ -41,25 +43,16 @@ export function VitalsReporter() {
 }
 ```
 
-```tsx title="src/web/root.tsx"
-import { Head, Scripts } from "@warlock.js/web";
-import type { AppProps } from "@warlock.js/web";
+```tsx title="src/web/layout.tsx"
+import type { LayoutProps } from "@warlock.js/web";
 import { VitalsReporter } from "./vitals-reporter";
 
-export default function App({ children }: AppProps) {
+export default function AppLayout({ children }: LayoutProps) {
   return (
-    <html lang="en">
-      <head>
-        <Head />
-      </head>
-      <body>
-        <div id="vessel">
-          {children}
-          <VitalsReporter />
-        </div>
-        <Scripts />
-      </body>
-    </html>
+    <>
+      <VitalsReporter />
+      {children}
+    </>
   );
 }
 ```
@@ -70,7 +63,7 @@ the page has already hydrated, which matters because the reporter must never
 compete with the page's own critical path for bandwidth.
 
 **Or `<ClientOnly>`**, if reporting lives next to other client-only widgets
-rather than the root — see
+rather than the top-level layout — see
 [render-client-only](../render-client-only/SKILL.md). Either placement is
 fine; what matters is that the `web-vitals` import and every `on*` call stay
 inside a client-only effect, never at module scope, and that the effect has

@@ -2,6 +2,24 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.19.0
+
+### Added
+
+- Optional paired `*.setup.ts` modules for pages, layouts, root, and the error
+  boundary. Server setup composes with the UI component, projects safe
+  `register()` behavior to both runtimes, preserves type-only loader inference,
+  rejects duplicate exports, and is watched during development.
+- `useSubmitForm` from the optional `@warlock.js/web/form` entry submits an
+  existing `@mongez/react-form` through the configured HTTP singleton or an
+  injected client. It resolves named API route metadata before hydration,
+  supports direct paths, FormData, cancellation, lifecycle callbacks, and
+  validation-error mapping without exposing server handlers or policy.
+
+
+### Changed
+
+- Refined package skill-discovery descriptions and regenerated the llms projections.
 ## 5.18.0 - 2026-09-22
 
 ### Added

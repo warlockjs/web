@@ -1,7 +1,7 @@
-// @vitest-environment jsdom
 import { act, createElement } from "react";
 import { hydrateRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
+import { JSDOM } from "jsdom";
 import { afterEach, describe, expect, it } from "vitest";
 import type { DiscoveredPageGraph } from "./build/discover-pages";
 import { buildRouteLocaleManifest } from "./build/build-route-locale-manifest";
@@ -11,6 +11,15 @@ import { createRouteTranslationsResolver } from "./server/route-translations";
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
+
+const dom = new JSDOM("<!doctype html><html><body></body></html>");
+Object.assign(globalThis, {
+  window: dom.window,
+  document: dom.window.document,
+  HTMLElement: dom.window.HTMLElement,
+  Node: dom.window.Node,
+});
+Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
 
 const webRoot = "/app/src/web";
 const pageFile = `${webRoot}/account/settings/page.page.tsx`;

@@ -20,6 +20,7 @@ import { discoverPages } from "../build/discover-pages";
 import { generateClientRegistry } from "../build/generate-client-registry";
 import { generateLocaleRoutingSource } from "../build/generate-locale-routing";
 import { readModuleConfig } from "../build/read-module-config";
+import { pageSetupFileFor, pageSetupOwnerFileFor } from "../build/page-setup-file";
 import { resolveLocaleRouting } from "../server/locale-routing/resolve-locale-routing";
 import { toPosix } from "../shared/to-posix";
 import { isProjectableFile, SERVER_EXPORT_NAMES } from "./projection";
@@ -98,6 +99,15 @@ function rootConfigFile(appRoot: string, srcDir: string | undefined): string {
   return path.join(appRoot, srcDir ?? "src", "web", "root.tsx");
 }
 
+function isRootSetupFile(file: string, appRoot: string, srcDir: string | undefined): boolean {
+  const rootFile = rootConfigFile(appRoot, srcDir);
+  return path.resolve(file) === pageSetupFileFor(rootFile);
+}
+
+function isSetupFile(file: string): boolean {
+  return pageSetupOwnerFileFor(file) !== undefined;
+}
+
 /**
  * Reads only the root module's static config, never the root namespace.
  *
@@ -108,8 +118,13 @@ function rootConfigFile(appRoot: string, srcDir: string | undefined): string {
 function readClientStrictMode(appRoot: string, srcDir: string | undefined): boolean {
   const rootFile = rootConfigFile(appRoot, srcDir);
   if (!fs.existsSync(rootFile) || !fs.statSync(rootFile).isFile()) return false;
+  const setupCandidate = pageSetupFileFor(rootFile);
+  const configFile =
+    setupCandidate !== undefined && fs.existsSync(setupCandidate) && fs.statSync(setupCandidate).isFile()
+      ? setupCandidate
+      : rootFile;
 
-  return readModuleConfig(rootFile, fs.readFileSync(rootFile, "utf-8"), "root").strictMode === true;
+  return readModuleConfig(configFile, fs.readFileSync(configFile, "utf-8"), "root").strictMode === true;
 }
 
 /**
@@ -519,7 +534,10 @@ export function clientPageRegistry(options: ClientPageRegistryPluginOptions = {}
       // static strictMode projection instead lives in this virtual module, so
       // an edit must invalidate that module and reload even though there is no
       // client-side root transform skeleton to compare.
-      if (path.resolve(context.file) === rootConfigFile(appRoot, options.srcDir)) {
+      if (
+        path.resolve(context.file) === rootConfigFile(appRoot, options.srcDir) ||
+        isRootSetupFile(context.file, appRoot, options.srcDir)
+      ) {
         // Vite calls this hook for every environment. SSR was invalidated by
         // its watcher already; only the client sends the document reload.
         if (this.environment.name !== "client") return [];
@@ -532,6 +550,17 @@ export function clientPageRegistry(options: ClientPageRegistryPluginOptions = {}
         if (routeGraphHandled) return [];
 
         invalidateClientPageRegistry(context.server);
+        return [];
+      }
+
+      if (isSetupFile(context.file)) {
+        const routeGraphHandled = await options.beforePageHotUpdate?.({
+          file: context.file,
+          type: context.type,
+        });
+
+        if (routeGraphHandled) return [];
+        if (this.environment.name === "client") invalidateClientPageRegistry(context.server);
         return [];
       }
 

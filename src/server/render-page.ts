@@ -59,6 +59,7 @@ import {
 import type { DeferSettlement } from "./defer-settlement";
 import { createSettledThenable } from "../loaders/settled-thenable";
 import { bindRequestRouteTranslations } from "./request-route-translations";
+import { resolveNamedApiRoutes } from "./named-api-routes";
 
 export { escapePayload, PAYLOAD_SCRIPT_ID };
 export type { BufferedCookie };
@@ -1018,6 +1019,7 @@ async function finishRender(
     hydrationClientModulePreloadUrls: streamOptions.hydrationClientModulePreloadUrls,
     localeAlternates,
     localeRouting,
+    namedApiRoutes: resolveNamedApiRoutes(),
   };
 
   const wrapWithContext = (element: ReactNode): ReactNode =>

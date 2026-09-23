@@ -36,6 +36,27 @@ describe("production page module loader", () => {
     await expect(loadModule("src/web/root.tsx")).resolves.toBe(appModule);
   });
 
+  it("composes an optional setup namespace under the UI source id", async () => {
+    const loader = () => [];
+    const loadModule = createPageModuleLoader({
+      pages: [
+        {
+          module: { default: pageModule.default },
+          setupModule: { config: { route: "/from-setup" }, loader },
+          sourceFile: "src/web/home.page.tsx",
+          setupSourceFile: "src/web/home.setup.ts",
+          layouts: [],
+        },
+      ],
+    });
+
+    await expect(loadModule("src/web/home.page.tsx")).resolves.toEqual({
+      default: pageModule.default,
+      config: { route: "/from-setup" },
+      loader,
+    });
+  });
+
   it("throws and names the id it was asked for when the manifest has no such module", async () => {
     const loadModule = createPageModuleLoader(manifest);
 

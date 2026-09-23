@@ -48,7 +48,7 @@ In development, add, edit, and delete `locales.json` normally. HMR rebuilds the 
 
 ## Change locale from a component
 
-```tsx
+```tsx title="src/web/components/locale-picker.tsx"
 import { useState } from "react";
 import { useChangeLocaleCode } from "@warlock.js/web";
 

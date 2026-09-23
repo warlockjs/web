@@ -125,14 +125,41 @@ A page is any `*.page.tsx` beneath `src/web/` — the page root. Its URL is eith
 
 ## The shape
 
+## Optional server setup module
+
+Pair `product-details.page.tsx` with `product-details.setup.ts` when the React
+component should stay UI-only. The setup file may own `config`, `loader`, and
+universal `register()`. Do not value-import it from the component; type-only
+imports preserve loader inference:
+
+```ts title="src/web/products/paired-product.setup.ts"
+import type { PageLoader } from "@warlock.js/web";
+
+export const loader = (async () => ({
+  product: { name: "Example product" },
+})) satisfies PageLoader;
+```
+
+```tsx title="src/web/products/paired-product.page.tsx"
+import type { loader } from "./paired-product.setup";
+import type { PageProps } from "@warlock.js/web";
+
+export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
+  return <h1>{data.product.name}</h1>;
+}
+```
+
+Every export has one owner. Duplicate `config`, `loader`, or `register` exports
+fail; `register()` remains browser-safe and runs on server and client.
+
 ```tsx title="src/web/products/product-details.page.tsx"
 import type { PageConfig, PageLoader, PageProps } from "@warlock.js/web";
 
-export const config: PageConfig<typeof loader> = {
+export const config = {
   route: { path: "/products/:id", name: "products.details" },
   cache: { public: true, maxAge: 60 },
   metadata: { title: "Product details" },
-};
+} satisfies PageConfig;
 
 export const loader = (async ({ request }) => {
   const id = request.input("id");
@@ -1169,7 +1196,7 @@ In development, add, edit, and delete `locales.json` normally. HMR rebuilds the 
 
 ## Change locale from a component
 
-```tsx
+```tsx title="src/web/components/locale-picker.tsx"
 import { useState } from "react";
 import { useChangeLocaleCode } from "@warlock.js/web";
 
@@ -1277,9 +1304,11 @@ scope in anything reachable from the server render — a page, layout, or
 and evaluated during SSR, so `web-vitals`' own `window` access at call time
 would need guarding anyway. The two supported places to call it:
 
-**A root-level effect component rendered inside `#vessel`.** Add a small
-client component to `root.tsx` (below `#vessel`, so it hydrates with the
-rest of the tree) that fires the registration from a `useEffect`:
+**An effect component in the top-level layout.** `root.tsx` is the document
+shell and is not hydrated, so a reporter rendered there never runs in the
+browser. Put the small client component in `src/web/layout.tsx`, which renders
+under `#vessel` and is hydrated with every page. It fires the registration
+from a `useEffect`:
 
 ```tsx title="src/web/vitals-reporter.tsx"
 import { useEffect } from "react";
@@ -1293,25 +1322,16 @@ export function VitalsReporter() {
 }
 ```
 
-```tsx title="src/web/root.tsx"
-import { Head, Scripts } from "@warlock.js/web";
-import type { AppProps } from "@warlock.js/web";
+```tsx title="src/web/layout.tsx"
+import type { LayoutProps } from "@warlock.js/web";
 import { VitalsReporter } from "./vitals-reporter";
 
-export default function App({ children }: AppProps) {
+export default function AppLayout({ children }: LayoutProps) {
   return (
-    <html lang="en">
-      <head>
-        <Head />
-      </head>
-      <body>
-        <div id="vessel">
-          {children}
-          <VitalsReporter />
-        </div>
-        <Scripts />
-      </body>
-    </html>
+    <>
+      <VitalsReporter />
+      {children}
+    </>
   );
 }
 ```
@@ -1322,7 +1342,7 @@ the page has already hydrated, which matters because the reporter must never
 compete with the page's own critical path for bandwidth.
 
 **Or `<ClientOnly>`**, if reporting lives next to other client-only widgets
-rather than the root — see
+rather than the top-level layout — see
 [render-client-only](../render-client-only/SKILL.md). Either placement is
 fine; what matters is that the `web-vitals` import and every `on*` call stay
 inside a client-only effect, never at module scope, and that the effect has
@@ -2437,14 +2457,15 @@ production, unconditionally:
 
 ```tsx
 import type { PageConfig, PageLoader } from "@warlock.js/web";
+import { defer } from "@warlock.js/web";
 
 export const loader = (async () =>
-  defer({ product: await getProduct(id), reviews: getReviews(id) })) satisfies PageLoader;
+  defer({ product: { name: "Example product" }, reviews: Promise.resolve([{ text: "Great" }]) })) satisfies PageLoader;
 
 // Wrong — "reviews" is a defer()-ed key:
 const invalidConfig = {
   metadata: ({ data }) => ({
-    title: `${data.reviews.length} reviews`, // throws DeferredKeyInMetadataError
+    title: String(data.reviews), // throws DeferredKeyInMetadataError
   }),
 } satisfies PageConfig<typeof loader>;
 
@@ -2568,6 +2589,42 @@ cache never serves one representation to a client that asked for the other.
 - [`load-page-data/SKILL.md`](../load-page-data/SKILL.md) — the rest of the loader contract `defer()` builds on.
 - [`navigate-on-the-client/SKILL.md`](../navigate-on-the-client/SKILL.md) — the NDJSON data request this streams over.
 
+## submit-a-form  `@warlock.js/web/submit-a-form/SKILL.md`
+
+---
+name: submit-a-form
+description: "Submit a @mongez/react-form through a named Core API route or explicit path with useSubmitForm from @warlock.js/web/form. Triggers: useSubmitForm, FormData API submit, beforeSubmit, mapFieldErrors, formErrors, named API route."
+---
+
+# Submit a form
+
+Import the optional form integration from `@warlock.js/web/form`, not the Web root barrel. It requires peer packages `@mongez/http:^3.5.0` and `@mongez/react-form:^4.0.0`.
+
+```tsx
+import { Form } from "@mongez/react-form";
+import { useSubmitForm } from "@warlock.js/web/form";
+
+export default function Login() {
+  const login = useSubmitForm({
+    route: "auth.login",
+    beforeSubmit: ({ values }) => Boolean(values.email),
+    onSuccess: async result => console.log(result.data),
+  });
+
+  return <Form onSubmit={login.submit}>{/* fields */}</Form>;
+}
+```
+
+Provide exactly one target. `route` resolves the server-registered API name and its declared method; `path` is direct and defaults to `POST` unless `method` is supplied. Supply `params` for `:segments` and `query` for URL parameters. GET and HEAD serialize form values into the query; other methods send the Form's native `FormData`.
+
+The default client is the configured `@mongez/http` singleton, so its base URL and interceptors remain active. Pass `client` only to use another configured `Http` instance.
+
+`response`, `data`, and `error` start as `null`; `onSuccess`, `onError`, and `onComplete` receive the full `HttpResult`. Duplicate calls share the active submission. `cancel()` cancels it, and `reset()` clears hook state and errors assigned by the hook.
+
+Validation mapping is on by default. Known server field errors are assigned to controls; unknown fields and general messages go to `formErrors`. Set `mapFieldErrors: false` to leave controls untouched or provide a mapper returning `{ [field]: message }`.
+
+Named route metadata contains only name, path, and method. A route declared with method `all` cannot select a browser verb: use a direct `path` and explicit `method`.
+
 ## use-layouts  `@warlock.js/web/use-layouts/SKILL.md`
 
 ---
@@ -2578,6 +2635,10 @@ description: 'Wrap pages with positional `layout.tsx` modules, compose literal `
 # Warlock — use layouts
 
 A positional `layout.tsx` applies to pages in its directory and descendant directories. Its default export wraps the page; its optional `config.prefix` contributes to every descendant page's effective URL.
+
+`layout.setup.ts` is an optional companion for its server configuration, loader,
+or universal `register()`. The component must not value-import the setup file.
+Development detects setup add/edit/delete changes and rederives affected routes.
 
 ## The shape
 
@@ -2742,6 +2803,11 @@ description: 'Author `src/web/root.tsx`, the full-document application root that
 # Warlock — write the root
 
 `src/web/root.tsx` is the application document. Its default export renders the complete `<html>` tree and contains the one DOM node the browser hydrates: `#vessel`.
+
+Use optional `root.setup.ts` for root `config`, loader, or universal
+`register()` while `root.tsx` remains the document component. `strictMode` is
+statically projected from the setup file. Do not value-import setup from the UI;
+type-only imports are allowed, and duplicate exports fail.
 
 The root may export `config`, `loader`, `register`, `ErrorBoundary`, and its
 default component. `RootConfig` owns `middleware`, `strictMode`, and metadata.
@@ -2916,6 +2982,11 @@ middleware:
 
 ```tsx
 import type { RootConfig } from "@warlock.js/web";
+import type { Middleware } from "@warlock.js/core";
+
+const attachRequestContext: Middleware = ({ request }) => {
+  request.locals.startedAt = Date.now();
+};
 
 export const config: RootConfig = {
   middleware: [attachRequestContext],

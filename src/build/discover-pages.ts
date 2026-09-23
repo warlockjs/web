@@ -54,6 +54,7 @@ import { canonicalizeRouteExport, resolvePageRouteName } from "../routing/route-
 import { assertPageHasDefaultExport } from "./page-default-export";
 import { UnknownMetadataKeyError, readMetadataKeys } from "./read-metadata-keys";
 import { readModuleConfig, type ModuleConfigRead } from "./read-module-config";
+import { pageSetupFileFor } from "./page-setup-file";
 import { toPosix } from "../shared/to-posix";
 
 export type DiscoverPagesOptions = {
@@ -83,10 +84,14 @@ export type DiscoveredRoutablePage = {
   routePath: string;
   /** Absolute path to the `*.page.tsx` file. */
   pageFile: string;
+  /** Optional `*.setup.ts` companion for the page's server exports. */
+  setupFile?: string;
   /** The web root this page was found under — the root its layout chain climbs to. */
   webRoot: string;
   /** Absolute paths of every `layout.tsx` from the web root down to the page's own directory, OUTERMOST FIRST. */
   layouts: string[];
+  /** Optional setup companions aligned with {@link layouts}, outermost first. */
+  layoutSetupFiles?: Array<string | undefined>;
   /**
    * The page's middleware chain: the subset of {@link layouts} whose modules
    * export `middleware`, OUTERMOST FIRST — the order they must run in.
@@ -102,6 +107,8 @@ export type DiscoveredRoutablePage = {
   middlewareLayouts: string[];
   /** Absolute path to the global `root.tsx` every page renders inside, when it exists. */
   appFile?: string;
+  /** Optional `root.setup.ts` companion for the application root. */
+  appSetupFile?: string;
 };
 
 /** The one application error boundary. It deliberately has no route identity. */
@@ -109,8 +116,11 @@ export type DiscoveredErrorPage = {
   type: "error";
   /** Absolute path to the sole `error.page.tsx` beneath `src/web`. */
   pageFile: string;
+  /** Optional `error.setup.ts` companion for the error page's server exports. */
+  setupFile?: string;
   webRoot: string;
   appFile?: string;
+  appSetupFile?: string;
 };
 
 /** The complete static web graph: routable leaves plus the optional error boundary. */
@@ -610,12 +620,15 @@ function readDeclarations(
   sourceFile: string,
   cache: Map<string, ModuleConfigRead>,
   source?: string,
+  kind: "page" | "layout" | "root" = path.basename(sourceFile) === "layout.tsx" ? "layout" : "page",
+  allowMissingDefault = false,
 ) {
   let result = cache.get(sourceFile);
 
   if (result === undefined) {
-    const kind = path.basename(sourceFile) === "layout.tsx" ? "layout" : "page";
-    result = readModuleConfig(sourceFile, source ?? fs.readFileSync(sourceFile, "utf-8"), kind);
+    result = readModuleConfig(sourceFile, source ?? fs.readFileSync(sourceFile, "utf-8"), kind, {
+      allowMissingDefault,
+    });
     cache.set(sourceFile, result);
   }
 
@@ -656,8 +669,13 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
   const srcRoot = path.join(appRoot, options.srcDir ?? "src");
   const appFile = path.join(srcRoot, "web", "root.tsx");
   const hasAppFile = isFile(appFile);
+  const appSetupCandidate = pageSetupFileFor(appFile);
+  const appSetupFile = appSetupCandidate !== undefined && isFile(appSetupCandidate) ? appSetupCandidate : undefined;
   const declarations = new Map<string, ModuleConfigRead>();
-  if (hasAppFile) readModuleConfig(appFile, fs.readFileSync(appFile, "utf-8"), "root");
+  if (hasAppFile) {
+    const declarationFile = appSetupFile ?? appFile;
+    readModuleConfig(declarationFile, fs.readFileSync(declarationFile, "utf-8"), "root");
+  }
   const relativeToApp = (file: string) => toPosix(path.relative(appRoot, file));
 
   const pages: DiscoveredPage[] = [];
@@ -666,9 +684,19 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
   let errorPage: DiscoveredErrorPage | undefined;
 
   for (const { pageFile, webRoot } of sourceGraph.pages) {
+    const setupCandidate = pageSetupFileFor(pageFile);
+    const setupFile = setupCandidate !== undefined && isFile(setupCandidate) ? setupCandidate : undefined;
     const pageSource = fs.readFileSync(pageFile, "utf-8");
     assertPageHasDefaultExport(relativeToApp(pageFile), pageSource);
-    const { route } = readDeclarations(pageFile, declarations, pageSource);
+    const declarationFile = setupFile ?? pageFile;
+    const declarationSource = setupFile === undefined ? pageSource : fs.readFileSync(setupFile, "utf-8");
+    const { route } = readDeclarations(
+      declarationFile,
+      declarations,
+      declarationSource,
+      "page",
+      setupFile !== undefined,
+    );
     if (isErrorPageFile(pageFile)) {
       if (route !== undefined) throw new ErrorPageDeclaresRouteError(relativeToApp(pageFile));
 
@@ -679,7 +707,14 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
         );
       }
 
-      errorPage = { type: "error", pageFile, webRoot, ...(hasAppFile ? { appFile } : {}) };
+      errorPage = {
+        type: "error",
+        pageFile,
+        webRoot,
+        ...(setupFile === undefined ? {} : { setupFile }),
+        ...(hasAppFile ? { appFile } : {}),
+        ...(appSetupFile === undefined ? {} : { appSetupFile }),
+      };
       continue;
     }
     const isNotFoundPage = isNotFoundPageFile(pageFile);
@@ -706,7 +741,7 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
     //
     // AFTER the reserved-404 route check on purpose: an impossible 404 route
     // contract is more fundamental than a malformed `<head>` declaration.
-    const unknownMetadataKeys = readMetadataKeys(relativeToApp(pageFile), pageSource);
+    const unknownMetadataKeys = readMetadataKeys(relativeToApp(declarationFile), declarationSource);
 
     if (unknownMetadataKeys.length > 0) {
       throw new UnknownMetadataKeyError(relativeToApp(pageFile), unknownMetadataKeys);
@@ -719,7 +754,10 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
     // renders anything at all.
     const layouts = layoutChainFor(pageFile, webRoot);
     const layoutFacts = layouts.map((layout) => {
-      const declaration = readDeclarations(layout, declarations);
+      const setupCandidate = pageSetupFileFor(layout);
+      const declarationFile =
+        setupCandidate !== undefined && isFile(setupCandidate) ? setupCandidate : layout;
+      const declaration = readDeclarations(declarationFile, declarations, undefined, "layout");
       return {
         layout,
         renders: declaration.hasDefault,
@@ -750,15 +788,25 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
     // still a segment of the URL, and composing only the rendering layout's
     // would serve the subtree from a path nobody declared.
     const layoutPrefix = layouts.reduce(
-      (composed, layoutFile) =>
-        composeRoutePath(composed, readDeclarations(layoutFile, declarations).prefix ?? "/"),
+      (composed, layoutFile) => {
+        const setupCandidate = pageSetupFileFor(layoutFile);
+        const declarationFile =
+          setupCandidate !== undefined && isFile(setupCandidate) ? setupCandidate : layoutFile;
+        return composeRoutePath(
+          composed,
+          readDeclarations(declarationFile, declarations, undefined, "layout").prefix ?? "/",
+        );
+      },
       "/",
     );
 
     const relativePageFile = toPosix(path.relative(webRoot, pageFile));
     const layoutPrefixes = Object.fromEntries(
       layouts.flatMap((layoutFile) => {
-        const prefix = readDeclarations(layoutFile, declarations).prefix;
+        const setupCandidate = pageSetupFileFor(layoutFile);
+        const declarationFile =
+          setupCandidate !== undefined && isFile(setupCandidate) ? setupCandidate : layoutFile;
+        const prefix = readDeclarations(declarationFile, declarations, undefined, "layout").prefix;
         if (prefix === undefined) return [];
 
         const directory = toPosix(path.relative(webRoot, path.dirname(layoutFile)));
@@ -797,6 +845,7 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
       // did, and never in preference to a real page.
       routePath: effectiveRoutePath,
       pageFile,
+      ...(setupFile === undefined ? {} : { setupFile }),
       webRoot,
       // THE NOT-FOUND PAGE RENDERS INSIDE THE APPLICATION ROOT AND NOTHING
       // ELSE — an EMPTY chain, not the one enumerated above.
@@ -820,8 +869,13 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
       // layout on this page's path is refused at build time exactly as it is
       // everywhere else — what changes is only what the page renders inside.
       layouts: isNotFoundPage ? [] : layouts,
+      layoutSetupFiles: (isNotFoundPage ? [] : layouts).map((layoutFile) => {
+        const candidate = pageSetupFileFor(layoutFile);
+        return candidate !== undefined && isFile(candidate) ? candidate : undefined;
+      }),
       middlewareLayouts: isNotFoundPage ? [] : middlewareLayouts,
       ...(hasAppFile ? { appFile } : {}),
+      ...(appSetupFile === undefined ? {} : { appSetupFile }),
     });
   }
 

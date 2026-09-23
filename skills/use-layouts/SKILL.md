@@ -7,6 +7,10 @@ description: 'Wrap pages with positional `layout.tsx` modules, compose literal `
 
 A positional `layout.tsx` applies to pages in its directory and descendant directories. Its default export wraps the page; its optional `config.prefix` contributes to every descendant page's effective URL.
 
+`layout.setup.ts` is an optional companion for its server configuration, loader,
+or universal `register()`. The component must not value-import the setup file.
+Development detects setup add/edit/delete changes and rederives affected routes.
+
 ## The shape
 
 ```tsx title="src/web/products/layout.tsx"

@@ -5,6 +5,7 @@ import {
   hasPageFileChanges,
   isPageLayoutFilePath,
   isPageFilePath,
+  isPageSetupFilePath,
 } from "./page-file-change";
 
 const appRoot = path.resolve("/app");
@@ -125,6 +126,39 @@ describe("classifyPageFileChanges", () => {
     expect(hasPageFileChanges(changes)).toBe(false);
   });
 
+  it("reinstalls an installed page when its setup changes, appears, or disappears", () => {
+    const setup = path.join(webRoot, "home.setup.ts");
+    for (const present of [true, false]) {
+      expect(
+        classifyPageFileChanges([setup], {
+          appRoot,
+          appSrcRoot,
+          installedPageFiles: [homePage],
+          fileExists: present ? existing(homePage, setup) : existing(homePage),
+        }),
+      ).toEqual({ added: [], removed: [], inspectionNeeded: [setup] });
+    }
+  });
+
+  it("rederives every route for root and layout setup changes", () => {
+    const rootSetup = path.join(webRoot, "root.setup.ts");
+    const layoutSetup = path.join(webRoot, "nested", "layout.setup.ts");
+    const changes = classifyPageFileChanges([rootSetup, layoutSetup], {
+      appRoot,
+      appSrcRoot,
+      installedPageFiles: [homePage],
+      fileExists: existing(
+        homePage,
+        path.join(webRoot, "root.tsx"),
+        rootSetup,
+        layoutSetup,
+        path.join(webRoot, "nested", "layout.tsx"),
+      ),
+    });
+
+    expect(changes.added).toEqual([rootSetup, layoutSetup]);
+  });
+
   it("reports work when any category is non-empty", () => {
     expect(hasPageFileChanges({ added: [], removed: [], inspectionNeeded: [homePage] })).toBe(true);
   });
@@ -153,5 +187,12 @@ describe("isPageLayoutFilePath", () => {
     expect(
       isPageLayoutFilePath(path.join(appSrcRoot, "app", "main", "web", "layout.tsx"), appSrcRoot),
     ).toBe(false);
+  });
+});
+
+describe("isPageSetupFilePath", () => {
+  it("accepts paired setup files only below src/web", () => {
+    expect(isPageSetupFilePath(path.join(webRoot, "home.setup.ts"), appSrcRoot)).toBe(true);
+    expect(isPageSetupFilePath(path.join(appSrcRoot, "app", "home.setup.ts"), appSrcRoot)).toBe(false);
   });
 });

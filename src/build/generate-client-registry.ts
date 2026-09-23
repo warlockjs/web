@@ -121,6 +121,7 @@ function assertUniqueNames(pages: readonly DiscoveredRoutablePage[]): void {
 function loadSource(
   page: DiscoveredRoutablePage,
   errorPageFile: string | undefined,
+  errorSetupFile: string | undefined,
   toImportSpecifier: (file: string) => string,
 ): string[] {
   // These bindings deliberately retain the REAL module namespace objects
@@ -128,6 +129,11 @@ function loadSource(
   // namespaces before the tree builder extracts their default components.
   const bindings = ["PageModule"];
   const specifiers = [toImportSpecifier(page.pageFile)];
+
+  if (page.setupFile !== undefined) {
+    bindings.push("PageSetupModule");
+    specifiers.push(`${toImportSpecifier(page.setupFile)}?warlock-setup-register`);
+  }
 
   // Outermost first, exactly as discovery enumerated the chain — the order IS
   // the nesting, so reordering it would silently reparent the page.
@@ -142,23 +148,49 @@ function loadSource(
     bindings.push(`layoutModule${index}`);
     specifiers.push(toImportSpecifier(layoutFile));
 
-    return `layoutModule${index}`;
+    const setupFile = page.layoutSetupFiles?.[index];
+    if (setupFile === undefined) return `layoutModule${index}`;
+
+    bindings.push(`layoutSetupModule${index}`);
+    specifiers.push(`${toImportSpecifier(setupFile)}?warlock-setup-register`);
+    return `{ ...layoutModule${index}, ...(layoutSetupModule${index}.register === undefined ? {} : { register: layoutSetupModule${index}.register }) }`;
   });
 
+  let appModule = "";
   if (page.appFile !== undefined) {
     bindings.push("AppModule");
     specifiers.push(toImportSpecifier(page.appFile));
+    if (page.appSetupFile !== undefined) {
+      bindings.push("AppSetupModule");
+      specifiers.push(`${toImportSpecifier(page.appSetupFile)}?warlock-setup-register`);
+      appModule = '{ ...AppModule, ...(AppSetupModule.register === undefined ? {} : { register: AppSetupModule.register }) }';
+    } else {
+      appModule = "AppModule";
+    }
   }
 
+  let errorModule = "";
   if (errorPageFile !== undefined) {
     bindings.push("ErrorPageModule");
     specifiers.push(toImportSpecifier(errorPageFile));
+    if (errorSetupFile !== undefined) {
+      bindings.push("ErrorPageSetupModule");
+      specifiers.push(`${toImportSpecifier(errorSetupFile)}?warlock-setup-register`);
+      errorModule = '{ ...ErrorPageModule, ...(ErrorPageSetupModule.register === undefined ? {} : { register: ErrorPageSetupModule.register }) }';
+    } else {
+      errorModule = "ErrorPageModule";
+    }
   }
 
   // `App` is OMITTED, never emitted as `App: undefined`: the runtime validator
   // reads an own `App` key as a promise that a module namespace is behind it.
-  const app = page.appFile === undefined ? "" : ", App: AppModule";
-  const errorPage = errorPageFile === undefined ? "" : ", ErrorPage: ErrorPageModule";
+  const app = page.appFile === undefined ? "" : `, App: ${appModule}`;
+  const errorPage = errorPageFile === undefined ? "" : `, ErrorPage: ${errorModule}`;
+
+  const pageModule =
+    page.setupFile === undefined
+      ? "PageModule"
+      : '{ ...PageModule, ...(PageSetupModule.register === undefined ? {} : { register: PageSetupModule.register }) }';
 
   return [
     "    load: async () => {",
@@ -166,7 +198,7 @@ function loadSource(
     ...specifiers.map((specifier) => `        import(${quote(specifier)}),`),
     "      ]);",
     "",
-    `      return { Page: PageModule, layouts: [${layoutBindings.join(", ")}]${app}${errorPage} };`,
+    `      return { Page: ${pageModule}, layouts: [${layoutBindings.join(", ")}]${app}${errorPage} };`,
     "    },",
   ];
 }
@@ -174,6 +206,7 @@ function loadSource(
 function entrySource(
   page: DiscoveredRoutablePage,
   errorPageFile: string | undefined,
+  errorSetupFile: string | undefined,
   toImportSpecifier: (file: string) => string,
 ): string[] {
   return [
@@ -185,7 +218,7 @@ function entrySource(
     // convention waiting to disagree with the server's.
     `    name: ${quote(page.routeName)},`,
     `    path: ${quote(page.routePath)},`,
-    ...loadSource(page, errorPageFile, toImportSpecifier),
+    ...loadSource(page, errorPageFile, errorSetupFile, toImportSpecifier),
     "  },",
   ];
 }
@@ -200,7 +233,9 @@ function entrySource(
 export function generateClientRegistry(options: GenerateClientRegistryOptions): string {
   const { pages, toImportSpecifier } = options;
   const routablePages = pages.filter(isDiscoveredRoutablePage);
-  const errorPageFile = pages.find((page) => page.type === "error")?.pageFile;
+  const errorPage = pages.find((page) => page.type === "error");
+  const errorPageFile = errorPage?.pageFile;
+  const errorSetupFile = errorPage?.setupFile;
 
   assertUniqueNames(routablePages);
 
@@ -214,7 +249,7 @@ export function generateClientRegistry(options: GenerateClientRegistryOptions): 
     ...HEADER,
     "",
     `${declaration} [`,
-    ...routablePages.flatMap((page) => entrySource(page, errorPageFile, toImportSpecifier)),
+    ...routablePages.flatMap((page) => entrySource(page, errorPageFile, errorSetupFile, toImportSpecifier)),
     "];",
     "",
   ].join("\n");

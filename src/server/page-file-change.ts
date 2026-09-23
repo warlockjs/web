@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { pageSetupOwnerFileFor } from "../build/page-setup-file";
 
 const PAGE_FILE_SUFFIX = ".page.tsx";
 
@@ -75,6 +76,18 @@ export function isErrorPageFilePath(file: string): boolean {
   return path.basename(file) === "error.page.tsx";
 }
 
+export function isPageSetupFilePath(file: string, appSrcRoot: string): boolean {
+  const relative = path.relative(appSrcRoot, file);
+  return (
+    relative !== "" &&
+    !relative.startsWith(`..${path.sep}`) &&
+    relative !== ".." &&
+    !path.isAbsolute(relative) &&
+    relative.split(path.sep)[0] === "web" &&
+    path.basename(file).endsWith(".setup.ts")
+  );
+}
+
 /** Route locale JSON participates in the same atomic page-table replacement. */
 export function isRouteLocaleFilePath(file: string, appSrcRoot: string): boolean {
   const relative = path.relative(path.join(appSrcRoot, "web"), file);
@@ -116,6 +129,23 @@ export function classifyPageFileChanges(
     // it does not claim the layout itself owns a newly-added route.
     if (isPageLayoutFilePath(file, pageRoot) || isRouteLocaleFilePath(file, pageRoot)) {
       (fileExists(file) ? classified.added : classified.removed).push(file);
+      continue;
+    }
+
+    if (isPageSetupFilePath(file, pageRoot)) {
+      const owner = pageSetupOwnerFileFor(file);
+      const ownerExists = owner !== undefined && fileExists(owner);
+      const ownerIsLayout = owner !== undefined && isPageLayoutFilePath(owner, pageRoot);
+      const ownerIsRoot = owner !== undefined && path.basename(owner) === "root.tsx";
+      const ownerIsError = owner !== undefined && isErrorPageFilePath(owner);
+      if (!ownerExists && !ownerIsError) continue;
+      if (ownerIsLayout || ownerIsRoot || ownerIsError) {
+        (fileExists(file) ? classified.added : classified.removed).push(file);
+      } else if (owner !== undefined && installed.has(pathKey(owner))) {
+        classified.inspectionNeeded.push(file);
+      } else {
+        (fileExists(file) ? classified.added : classified.removed).push(file);
+      }
       continue;
     }
 

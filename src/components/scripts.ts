@@ -2,6 +2,7 @@ import { createElement, Fragment, type ReactElement } from "react";
 import { stringify } from "devalue";
 import { escapePayload, PAYLOAD_SCRIPT_ID, useDocumentContext } from "./document-context";
 import { isNonHydrating } from "../server/page-render-bundle";
+import { NAMED_API_ROUTES_SCRIPT_ID } from "../entry/publish-document-named-api-routes";
 
 export type ScriptsProps = {
   /** Per-request CSP nonce for the inline payload script (root.tsx:119). */
@@ -20,7 +21,7 @@ export type ScriptsProps = {
  * and both disappear together on a non-hydrating document.
  */
 export function Scripts(props: ScriptsProps): ReactElement {
-  const { payload, nonce, hydrationClientModuleUrl } = useDocumentContext("Scripts");
+  const { payload, nonce, hydrationClientModuleUrl, namedApiRoutes } = useDocumentContext("Scripts");
 
   // `renderPageFailure` marks its payload non-hydrating (page-render-bundle.ts):
   // a module-load/registration throw happens before any triple exists, so
@@ -51,6 +52,12 @@ export function Scripts(props: ScriptsProps): ReactElement {
       type: "application/json",
       nonce: resolvedNonce,
       dangerouslySetInnerHTML: { __html: escapePayload(stringify(payload)) },
+    }),
+    namedApiRoutes === undefined ? null : createElement("script", {
+      id: NAMED_API_ROUTES_SCRIPT_ID,
+      type: "application/json",
+      nonce: resolvedNonce,
+      dangerouslySetInnerHTML: { __html: escapePayload(stringify(namedApiRoutes)) },
     }),
     hydrationClientModuleUrl !== undefined
       ? createElement("script", {

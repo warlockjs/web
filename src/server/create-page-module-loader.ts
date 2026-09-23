@@ -11,6 +11,7 @@
  * are already in memory, and this file is that lookup and nothing else.
  */
 import type { PageModuleLoader } from "./create-page-route-handler";
+import { composePageModule } from "./compose-page-module";
 import type { PageManifest } from "./page-manifest";
 
 /**
@@ -54,18 +55,45 @@ export function createPageModuleLoader(manifest: PageManifest): PageModuleLoader
   const modulesById = new Map<string, Record<string, unknown>>();
 
   if (manifest.app) {
-    modulesById.set(manifest.app.sourceFile, manifest.app.module);
+    modulesById.set(
+      manifest.app.sourceFile,
+      composePageModule(
+        manifest.app.module,
+        manifest.app.setupModule,
+        manifest.app.sourceFile,
+        manifest.app.setupSourceFile,
+      ),
+    );
   }
 
   if (manifest.errorPage) {
-    modulesById.set(manifest.errorPage.sourceFile, manifest.errorPage.module);
+    modulesById.set(
+      manifest.errorPage.sourceFile,
+      composePageModule(
+        manifest.errorPage.module,
+        manifest.errorPage.setupModule,
+        manifest.errorPage.sourceFile,
+        manifest.errorPage.setupSourceFile,
+      ),
+    );
   }
 
   for (const page of manifest.pages) {
-    modulesById.set(page.sourceFile, page.module);
+    modulesById.set(
+      page.sourceFile,
+      composePageModule(page.module, page.setupModule, page.sourceFile, page.setupSourceFile),
+    );
 
     for (const layout of page.layouts) {
-      modulesById.set(layout.sourceFile, layout.module);
+      modulesById.set(
+        layout.sourceFile,
+        composePageModule(
+          layout.module,
+          layout.setupModule,
+          layout.sourceFile,
+          layout.setupSourceFile,
+        ),
+      );
     }
   }
 

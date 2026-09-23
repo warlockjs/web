@@ -193,14 +193,15 @@ production, unconditionally:
 
 ```tsx
 import type { PageConfig, PageLoader } from "@warlock.js/web";
+import { defer } from "@warlock.js/web";
 
 export const loader = (async () =>
-  defer({ product: await getProduct(id), reviews: getReviews(id) })) satisfies PageLoader;
+  defer({ product: { name: "Example product" }, reviews: Promise.resolve([{ text: "Great" }]) })) satisfies PageLoader;
 
 // Wrong — "reviews" is a defer()-ed key:
 const invalidConfig = {
   metadata: ({ data }) => ({
-    title: `${data.reviews.length} reviews`, // throws DeferredKeyInMetadataError
+    title: String(data.reviews), // throws DeferredKeyInMetadataError
   }),
 } satisfies PageConfig<typeof loader>;
 
