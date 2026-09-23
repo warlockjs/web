@@ -1,6 +1,11 @@
 import type { Plugin } from "vite";
 import { describe, expect, it } from "vitest";
-import { clientEnvironmentOnly, type SsrBoundaryState } from "./ssr-client-view";
+import { gateAResolve } from "./gate-a-resolve";
+import {
+  clientEnvironmentOnly,
+  collectImportSpecifiers,
+  type SsrBoundaryState,
+} from "./ssr-client-view";
 
 const APP_ROOT = "C:/fixture";
 const SETUP_FILE = `${APP_ROOT}/src/web/layout.setup.ts`;
@@ -38,7 +43,71 @@ const serverContext = {
   environment: { config: { consumer: "server" } },
 };
 
+const gateAContext = {
+  ...serverContext,
+  error(message: string) {
+    throw new Error(message);
+  },
+  async resolve() {
+    return null;
+  },
+};
+
 describe("clientEnvironmentOnly setup-register projection", () => {
+  it("keeps direct UI layout type edges out of Gate A while retaining runtime edges", async () => {
+    const resolved: string[] = [];
+    const boundaryState: SsrBoundaryState = {
+      appRoot: APP_ROOT,
+      clientBoundModules: new Set(),
+      clientImportsByModule: new Map(),
+    };
+    const plugin = clientEnvironmentOnly(
+      gate(resolved, new Set(["./layout.setup"])),
+      boundaryState,
+    );
+    const transform = transformOf(plugin);
+    const layoutFile = `${APP_ROOT}/src/web/layout.tsx`;
+
+    await expect(
+      transform.call(
+        serverContext as any,
+        [
+          `import type { loader } from "./layout.setup";`,
+          `import { type LoaderInput } from "./layout.setup";`,
+          `export type { LoaderOutput } from "./layout.setup";`,
+          `export { type LoaderResult } from "./layout.setup";`,
+          `export default function Layout(_: typeof loader) { return null; }`,
+        ].join("\n"),
+        layoutFile,
+        {},
+      ),
+    ).resolves.toBeDefined();
+    expect(resolved).toEqual([]);
+    expect(boundaryState.clientImportsByModule.get(layoutFile)).toEqual(new Set());
+  });
+
+  it("keeps mixed, side-effect, and empty imports as runtime graph edges", () => {
+    const layoutEdges = collectImportSpecifiers(
+      [
+        `import type { Loader } from "./layout.setup";`,
+        `import { type LoaderInput } from "./layout.setup";`,
+        `export type { LoaderOutput } from "./layout.setup";`,
+        `export { type LoaderResult } from "./layout.setup";`,
+        `import { type Theme, mountLayout } from "./layout-runtime";`,
+        `export { type LayoutProps, mountLayout as mount } from "./layout-exports";`,
+        `import "./layout-effects";`,
+        `import {} from "./layout-empty";`,
+      ].join("\n"),
+    );
+
+    expect([...layoutEdges]).toEqual([
+      "./layout-runtime",
+      "./layout-exports",
+      "./layout-effects",
+      "./layout-empty",
+    ]);
+  });
+
   it("keeps declaration-level and all-specifier type edges out of Gate A while preserving the register edge", async () => {
     const resolved: string[] = [];
     const boundaryState = state();
@@ -79,12 +148,12 @@ describe("clientEnvironmentOnly setup-register projection", () => {
       `export function register() { registerLayout(); }`,
     ].join("\n");
 
-    await expect(transform.call(serverContext as any, code, SETUP_FILE, {})).resolves.toBeNull();
-    expect(resolved).toEqual([]);
-
     await expect(
       transform.call(serverContext as any, code, SETUP_REGISTER_ID, {}),
     ).resolves.toBeDefined();
+    expect(resolved).toEqual(["./register-layout"]);
+
+    await expect(transform.call(serverContext as any, code, SETUP_FILE, {})).resolves.toBeNull();
     expect(resolved).toEqual(["./register-layout"]);
   });
 
@@ -104,5 +173,22 @@ describe("clientEnvironmentOnly setup-register projection", () => {
         {},
       ),
     ).rejects.toThrow("server-only edge: @warlock.js/auth");
+  });
+
+  it("passes register edges through the actual Gate A server-only resolver", async () => {
+    const plugin = clientEnvironmentOnly(gateAResolve({ appRoot: APP_ROOT }), state());
+    const transform = transformOf(plugin);
+
+    await expect(
+      transform.call(
+        gateAContext as any,
+        [
+          `import { registerLayout } from "./register.server";`,
+          `export function register() { registerLayout(); }`,
+        ].join("\n"),
+        SETUP_REGISTER_ID,
+        {},
+      ),
+    ).rejects.toThrow("Gate A refused an import");
   });
 });

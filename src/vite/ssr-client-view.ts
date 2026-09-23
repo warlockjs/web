@@ -63,7 +63,11 @@ function isStatelessClientSurface(id: string, appRoot: string): boolean {
   return isProjectableFile(bare) || isRecognizedUniversalSurface(bare);
 }
 
-function collectImportSpecifiers(code: string): Set<string> {
+/**
+ * Returns only runtime graph edges. Type declarations are not browser
+ * dependencies, whereas an empty import still evaluates its module.
+ */
+export function collectImportSpecifiers(code: string): Set<string> {
   const ast = parse(code, {
     sourceType: "module",
     plugins: ["typescript", "jsx"],

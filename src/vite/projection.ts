@@ -953,11 +953,21 @@ function assertNoRawSetupValueImport(code: string, filePath: string): void {
   const program = parse(code, { sourceType: "module", plugins: ["typescript", "jsx"] }).program;
   for (const statement of program.body as any[]) {
     const source = statement.source?.value as string | undefined;
+    const allSpecifiersAreTypeOnly =
+      statement.specifiers?.length > 0 &&
+      statement.specifiers.every((specifier: any) =>
+        statement.type === "ImportDeclaration"
+          ? specifier.importKind === "type"
+          : specifier.exportKind === "type",
+      );
+    const isTypeOnly =
+      statement.importKind === "type" ||
+      statement.exportKind === "type" ||
+      allSpecifiersAreTypeOnly;
     if (
       source !== undefined &&
       (source.endsWith(".setup") || source.endsWith(".setup.ts")) &&
-      statement.importKind !== "type" &&
-      statement.exportKind !== "type"
+      !isTypeOnly
     ) {
       throw new Error(
         `Projection refused "${filePath}": UI modules may import a setup file only with \`import type\`. The framework loads its projected register hook itself.`,
