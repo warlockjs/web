@@ -2,6 +2,14 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.19.1
+
+### Fixed
+
+- Development SSR retains the framework-projected `register()` hook for a
+  paired setup module when the UI references its loader only with `import type`,
+  without exposing server-only setup exports or requiring a UI value import.
+
 ## 5.19.0 - 2026-09-23
 
 ### Added
