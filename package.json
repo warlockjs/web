@@ -112,6 +112,7 @@
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "@types/babel__traverse": "^7.28.0",
+    "@types/jsdom": "^30.0.0",
     "@types/node": "^20.19.43",
     "@vitejs/plugin-react": "^5.2.0",
     "@warlock.js/cache": "workspace:^",
