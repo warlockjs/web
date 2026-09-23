@@ -6,7 +6,12 @@ import {
   isRecognizedUniversalSurface,
   isServerFile,
 } from "./gate-a-resolve";
-import { isProjectableFile, projectModule } from "./projection";
+import {
+  isProjectableFile,
+  isSetupRegisterProjectionFile,
+  projectModule,
+  projectSetupRegisterModule,
+} from "./projection";
 import { moduleKey } from "../shared/module-key";
 
 export type SsrBoundaryState = {
@@ -16,6 +21,17 @@ export type SsrBoundaryState = {
 };
 
 const CODE_MODULE_EXTENSION = /\.([cm]?[jt]sx?)$/;
+
+/**
+ * A setup sidecar has two deliberately different module views. Its ordinary
+ * id is server-only, while the framework-owned query exposes only `register`
+ * to the client. Retaining that query here prevents the latter from making a
+ * later raw `ssrLoadModule(setupFile)` look client-bound.
+ */
+function clientBoundaryKey(id: string): string {
+  const bare = moduleKey(id);
+  return isSetupRegisterProjectionFile(id) ? `${bare}?warlock-setup-register` : bare;
+}
 
 /**
  * Whether `id` is a client surface WITHOUT having to be reached through the
@@ -62,13 +78,23 @@ function collectImportSpecifiers(code: string): Set<string> {
     }
 
     const record = node as Record<string, any>;
-    if (
-      (record.type === "ImportDeclaration" ||
+    if (record.source?.type === "StringLiteral") {
+      if (record.type === "ImportDeclaration") {
+        const fullyTypeOnly =
+          record.importKind === "type" ||
+          (record.specifiers.length > 0 &&
+            record.specifiers.every((specifier: any) => specifier.importKind === "type"));
+        if (!fullyTypeOnly) imports.add(record.source.value);
+      } else if (
         record.type === "ExportNamedDeclaration" ||
-        record.type === "ExportAllDeclaration") &&
-      record.source?.type === "StringLiteral"
-    ) {
-      imports.add(record.source.value);
+        record.type === "ExportAllDeclaration"
+      ) {
+        const fullyTypeOnly =
+          record.exportKind === "type" ||
+          (record.specifiers?.length > 0 &&
+            record.specifiers.every((specifier: any) => specifier.exportKind === "type"));
+        if (!fullyTypeOnly) imports.add(record.source.value);
+      }
     }
     if (
       record.type === "CallExpression" &&
@@ -102,18 +128,28 @@ function collectImportSpecifiers(code: string): Set<string> {
 }
 
 function clientViewOf(state: SsrBoundaryState, code: string, id: string): string | undefined {
-  const key = moduleKey(id);
-  if (!state.clientBoundModules.has(key) && !isStatelessClientSurface(key, state.appRoot)) {
+  const key = clientBoundaryKey(id);
+  const bare = moduleKey(id);
+  const setupRegisterProjection = isSetupRegisterProjectionFile(id);
+  if (
+    !state.clientBoundModules.has(key) &&
+    !setupRegisterProjection &&
+    !isStatelessClientSurface(bare, state.appRoot)
+  ) {
     return undefined;
   }
 
   state.clientBoundModules.add(key);
-  if (!CODE_MODULE_EXTENSION.test(key)) {
+  if (!CODE_MODULE_EXTENSION.test(bare)) {
     state.clientImportsByModule.set(key, new Set());
     return code;
   }
 
-  const clientCode = isProjectableFile(key) ? projectModule(code, key).code : code;
+  const clientCode = setupRegisterProjection
+    ? projectSetupRegisterModule(code, id).code
+    : isProjectableFile(bare)
+      ? projectModule(code, bare).code
+      : code;
   state.clientImportsByModule.set(key, collectImportSpecifiers(clientCode));
   return clientCode;
 }
@@ -124,7 +160,7 @@ function markResolvedClientModule(
 ): void {
   if (!resolved) return;
   const id = typeof resolved === "string" ? resolved : resolved.id;
-  if (!id.includes("\0")) state.clientBoundModules.add(moduleKey(id));
+  if (!id.includes("\0")) state.clientBoundModules.add(clientBoundaryKey(id));
 }
 
 function isServerEnvironment(context: {
@@ -226,7 +262,7 @@ export function clientEnvironmentOnly(plugin: Plugin, ssrState: SsrBoundaryState
           // wait for that walk: validate every import that survived projection
           // now, while the original TypeScript source and importer are known.
           if (plugin.name === "warlock:gate-a-resolve" && originalResolveId) {
-            for (const source of ssrState.clientImportsByModule.get(moduleKey(id)) ?? []) {
+            for (const source of ssrState.clientImportsByModule.get(clientBoundaryKey(id)) ?? []) {
               const resolved = await originalResolveId.call(this, source, id, {
                 attributes: {},
                 isEntry: false,
@@ -246,7 +282,7 @@ export function clientEnvironmentOnly(plugin: Plugin, ssrState: SsrBoundaryState
           }
 
           if (!importer) return null;
-          const importerKey = moduleKey(importer);
+          const importerKey = clientBoundaryKey(importer);
           const isClientBound =
             ssrState.clientBoundModules.has(importerKey) ||
             isStatelessClientSurface(importerKey, ssrState.appRoot);

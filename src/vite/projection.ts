@@ -964,7 +964,8 @@ function assertNoRawSetupValueImport(code: string, filePath: string): void {
       );
     }
 
-    if (statement.type === "ImportDeclaration" || statement.type === "ExportNamedDeclaration") continue;
+    if (statement.type === "ImportDeclaration" || statement.type === "ExportNamedDeclaration")
+      continue;
   }
 
   const visit = (node: unknown): void => {
@@ -993,7 +994,9 @@ function assertSetupRegisterSurface(code: string, filePath: string): void {
   const program = parse(code, { sourceType: "module", plugins: ["typescript", "jsx"] }).program;
   for (const statement of program.body as any[]) {
     if (statement.type === "ExportDefaultDeclaration") {
-      throw new Error(`Projection refused "${filePath}": setup files cannot export a default component.`);
+      throw new Error(
+        `Projection refused "${filePath}": setup files cannot export a default component.`,
+      );
     }
     if (statement.type !== "ExportNamedDeclaration" || statement.exportKind === "type") continue;
     const names = statement.declaration
@@ -1009,6 +1012,19 @@ function assertSetupRegisterSurface(code: string, filePath: string): void {
       }
     }
   }
+}
+
+/**
+ * Produces the one browser-visible surface of a setup sidecar. The server
+ * continues to load the unmodified module for its loader/config exports; this
+ * helper is exclusively for the framework's `?warlock-setup-register` edge.
+ */
+export function projectSetupRegisterModule(
+  code: string,
+  filePath: string,
+): ReturnType<typeof projectModule> {
+  assertSetupRegisterSurface(code, filePath);
+  return projectModule(code, filePath);
 }
 
 const HMR_RUNTIME_SPECIFIER = "@warlock.js/web/client/runtime";
