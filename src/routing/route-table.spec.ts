@@ -110,7 +110,7 @@ describe("href — the name→URL primitive", () => {
   it("supports a catch-all segment through the `*` parameter", () => {
     publishRouteTable([{ name: "docs.any", path: "/docs/*" }]);
 
-    expect(href("docs.any", { "*": "a/b" })).toBe("/docs/a%2Fb");
+    expect(href("docs.any", { "*": "a/b" })).toBe("/docs/a/b");
   });
 });
 

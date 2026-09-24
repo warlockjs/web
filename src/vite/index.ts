@@ -68,6 +68,8 @@ export type WarlockClientBoundaryOptions = Parameters<typeof gateAResolve>[0] & 
 export type BuildWarlockHydrationClientOptions = Readonly<{
   appRoot: string;
   webRoot: string;
+  /** Forwarded to {@link warlockClientBoundary}; must match the server's `build.srcDir`. */
+  srcDir?: WarlockClientBoundaryOptions["srcDir"];
   /** Absolute client output dir — threaded to `buildHydrationClient` (`<outdir>/client`). */
   outDir: string;
   resolveAliases: BuildHydrationClientOptions["resolveAliases"];
@@ -207,6 +209,10 @@ export async function buildWarlockHydrationClient(
     outDir: options.outDir,
     resolveAliases: options.resolveAliases,
     external: options.external,
-    plugins: [...warlockClientBoundary({ appRoot: options.appRoot }), ...(options.plugins ?? [])],
+    cssModulesRoot: options.appRoot,
+    plugins: [
+      ...warlockClientBoundary({ appRoot: options.appRoot, srcDir: options.srcDir }),
+      ...(options.plugins ?? []),
+    ],
   });
 }

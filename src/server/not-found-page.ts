@@ -61,7 +61,7 @@
 import type { HttpContext } from "@warlock.js/core";
 import type { PageRouteHandler } from "./create-page-route-handler";
 import type { Router } from "@warlock.js/core";
-import { buildFrameworkDefaultNotFoundStylesheetUrl } from "./framework-default-not-found-stylesheet";
+import { FRAMEWORK_DEFAULT_NOT_FOUND_STYLESHEET } from "./framework-default-not-found-stylesheet";
 
 /**
  * The one filename that makes a page THE not-found page.
@@ -255,7 +255,7 @@ function resolveDefaultNotFoundDocumentLocale(locale: unknown): {
   }
 }
 
-export function frameworkDefaultNotFoundDocument(locale?: string): string {
+export function frameworkDefaultNotFoundDocument(locale?: string, nonce?: string): string {
   const { lang, dir } = resolveDefaultNotFoundDocumentLocale(locale);
 
   return `<!doctype html>
@@ -264,14 +264,14 @@ export function frameworkDefaultNotFoundDocument(locale?: string): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
-  <title>404 | Warlock</title>
-  <link rel="stylesheet" href="${buildFrameworkDefaultNotFoundStylesheetUrl()}">
+  <title>404 | Page not found</title>
+  <style${nonce === undefined ? "" : ` nonce="${nonce}"`}>${FRAMEWORK_DEFAULT_NOT_FOUND_STYLESHEET}</style>
 </head>
 <body>
   <main>
     <div class="rule" aria-hidden="true"></div>
     <h1>404</h1>
-    <p dir="auto">This page is outside the spellbook.</p>
+    <p dir="auto">This page could not be found.</p>
     <a href="/" dir="auto">Return home</a>
   </main>
 </body>
@@ -290,6 +290,12 @@ export type NotFoundRouteHandlerOptions = {
    * manifest-backed one, and neither difference is visible here.
    */
   renderPage?: PageRouteHandler;
+  /**
+   * Known locale codes under `prefix` / `prefix-except-default` routing. A
+   * leading path segment matching one pins `request.locale` before the 404
+   * renders, so `/ar/missing` answers in `ar`.
+   */
+  localeCodes?: readonly string[];
 };
 
 /**
@@ -300,7 +306,7 @@ export type NotFoundRouteHandlerOptions = {
  * API request can reach a React render even if the page module is broken.
  */
 export function createNotFoundRouteHandler(options: NotFoundRouteHandlerOptions): PageRouteHandler {
-  const { renderPage } = options;
+  const { renderPage, localeCodes } = options;
 
   return async (context: HttpContext) => {
     const { request, response } = context;
@@ -331,8 +337,14 @@ export function createNotFoundRouteHandler(options: NotFoundRouteHandlerOptions)
       return;
     }
 
+    const leadingSegment = request.path.split("?")[0]?.split("/")[1];
+
+    if (leadingSegment !== undefined && localeCodes?.includes(leadingSegment)) {
+      request.locale = leadingSegment;
+    }
+
     if (renderPage === undefined) {
-      await response.html(frameworkDefaultNotFoundDocument(request.locale), 404);
+      await response.html(frameworkDefaultNotFoundDocument(request.locale, request.nonce), 404);
 
       return;
     }
@@ -345,10 +357,14 @@ export function createNotFoundRouteHandler(options: NotFoundRouteHandlerOptions)
 export function registerNotFoundPageRoute(options: {
   router: Router;
   renderPage?: PageRouteHandler;
+  localeCodes?: readonly string[];
 }): void {
   options.router.get(
     NOT_FOUND_ROUTE_PATH,
-    createNotFoundRouteHandler({ renderPage: options.renderPage }),
+    createNotFoundRouteHandler({
+      renderPage: options.renderPage,
+      localeCodes: options.localeCodes,
+    }),
     { name: NOT_FOUND_ROUTE_NAME, isPage: true },
   );
 }

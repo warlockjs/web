@@ -20,6 +20,12 @@ export type StoredPageCacheEntry = {
   contentType: string;
   /** Whether the page called `defer()`, replayed as `Vary: User-Agent` on a HIT. */
   usesDefer: boolean;
+  /**
+   * Non-cookie headers the MISS committed (`X-Robots-Tag`, `Link`,
+   * `Content-Language`, custom ones), replayed on a HIT. Absent on entries
+   * written before this field existed.
+   */
+  headers?: Record<string, string>;
 };
 
 /**

@@ -60,6 +60,8 @@ export type ReplyShim = {
   raw: PassThrough & { writeHead(statusCode: number, headers?: Record<string, unknown>): void };
   /** Applied headers, lowercased key → value. */
   appliedHeaders: Record<string, unknown>;
+  /** The slice of `reply.server` core's `flushPendingCookies` reads. */
+  server: { serializeCookie(name: string, value: string): string };
   /** Applied cookies in application order (fastify's setCookie signature). */
   cookies: { name: string; value: string; options?: Record<string, unknown> }[];
   /**
@@ -107,7 +109,15 @@ export function createReplyShim(): ReplyShim {
     shim.sent = true;
   });
 
-  const shim: ReplyShim = {
+  // Mirrors @fastify/cookie@10: `setCookie` parks cookies in a map keyed by a
+  // private symbol, and core's `flushPendingCookies` serialises them for raw writers.
+  const parkedCookies = new Map<string, { name: string; value: string; opts?: unknown }>();
+
+  const shim: ReplyShim & Record<symbol, unknown> = {
+    [Symbol("fastify.reply.setCookies")]: parkedCookies,
+    server: {
+      serializeCookie: (name: string, value: string) => `${name}=${value}`,
+    },
     raw,
     appliedHeaders: {},
     cookies: [],
@@ -141,6 +151,7 @@ export function createReplyShim(): ReplyShim {
 
     setCookie(name, value, options) {
       shim.cookies.push({ name, value, options });
+      parkedCookies.set(name, { name, value, opts: options });
       return shim;
     },
 

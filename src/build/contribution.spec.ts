@@ -148,6 +148,21 @@ describe("web build contribution — zero pages", () => {
     log.mockRestore();
   });
 
+  it("contributes the CSS Modules esbuild plugin", async () => {
+    const appRoot = makeTree({ "src/web/root.tsx": APP });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    stubGeneratedPages(0);
+
+    const result = await createWebBuildContribution().generate?.(buildContext(appRoot));
+
+    expect(result?.esbuild?.plugins?.map((plugin) => plugin.name)).toEqual([
+      "warlock-css-modules-ssr",
+    ]);
+
+    log.mockRestore();
+  });
+
   it("skips the client build when there are no pages — nothing to hydrate", async () => {
     const appRoot = makeTree({ "src/web/root.tsx": APP });
     const context = buildContext(appRoot);

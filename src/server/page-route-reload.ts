@@ -4,9 +4,10 @@ import type { Router } from "@warlock.js/core";
 import type { ViteDevServer } from "vite";
 import {
   filesystemPageFileFor,
+  loadComposedModule,
   type InstalledPageRoute,
-  type PageModuleShape,
 } from "./install-page-routes";
+import { normalizePageModule } from "./normalize-page-module";
 import { isNotFoundPageFile } from "./not-found-page";
 import type { PageFileChanges } from "./page-file-change";
 import { isErrorPageFilePath } from "./page-file-change";
@@ -73,11 +74,22 @@ export async function pageRoutesNeedReplacement(
     if (isErrorPageFilePath(file)) return true;
 
     options.vite.environments.ssr.moduleGraph.onFileChange(file);
-    const pageModule = (await options.vite.ssrLoadModule(file)) as PageModuleShape;
+    // Composed with its setup file, then normalized: the declared route lives
+    // in `config.route`, and a raw `route` export is illegal.
+    const rawModule = await loadComposedModule(options.vite, file);
+    let pageModule: ReturnType<typeof normalizePageModule>;
+
+    try {
+      pageModule = normalizePageModule(rawModule, "page", file);
+    } catch {
+      // An invalid module must enter the transaction so the installer rejects
+      // it without touching live routes.
+      replace = true;
+      continue;
+    }
 
     // A valid 404 page has no route identity. Its component body remains Vite
-    // HMR territory; adding an illegal route export must still enter the
-    // transaction so the installer can reject it without touching live routes.
+    // HMR territory.
     if (isNotFoundPageFile(file)) {
       if (pageModule.route !== undefined) replace = true;
       continue;

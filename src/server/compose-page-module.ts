@@ -2,6 +2,8 @@ type ModuleNamespace = Readonly<Record<string, unknown>>;
 
 const SETUP_EXPORT_NAMES = new Set(["config", "loader", "register"]);
 
+const composedModules = new WeakMap<ModuleNamespace, WeakMap<ModuleNamespace, ModuleNamespace>>();
+
 export class PageSetupModuleExportError extends Error {
   public constructor(
     public readonly exportName: string,
@@ -29,6 +31,10 @@ export function composePageModule(
 ): ModuleNamespace {
   if (setupModule === undefined) return uiModule;
 
+  const cached = composedModules.get(uiModule)?.get(setupModule);
+
+  if (cached !== undefined) return cached;
+
   const source = setupFile ?? "setup module";
 
   for (const exportName of Object.keys(setupModule)) {
@@ -51,5 +57,20 @@ export function composePageModule(
     }
   }
 
-  return { ...uiModule, ...setupModule };
+  const composed = { ...uiModule, ...setupModule };
+
+  // Memoized so repeated loads of an unchanged pair keep ONE namespace
+  // identity; `registerModules` dedupes by that identity, so a fresh spread per
+  // request would re-run `register()` every time. HMR yields new namespaces and
+  // therefore a new entry.
+  let bySetup = composedModules.get(uiModule);
+
+  if (bySetup === undefined) {
+    bySetup = new WeakMap();
+    composedModules.set(uiModule, bySetup);
+  }
+
+  bySetup.set(setupModule, composed);
+
+  return composed;
 }

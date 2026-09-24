@@ -18,10 +18,10 @@ describe("interpolateRoutePath", () => {
     publishRouteTable([{ name: "files.show", path: "/files/:id/*" }]);
 
     expect(href("files.show", { id: "a b", "*": "nested/path" })).toBe(
-      "/files/a%20b/nested%2Fpath",
+      "/files/a%20b/nested/path",
     );
     expect(interpolateFormPath("/files/:id/*", { id: "a b", "*": "nested/path" })).toBe(
-      "/files/a%20b/nested%2Fpath",
+      "/files/a%20b/nested/path",
     );
 
     resetRouteTable();

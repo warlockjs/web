@@ -199,6 +199,7 @@ export function createWebBuildContribution(
       const { generatePagesBarrel, WEB_ENTRY_IMPORT, WEB_ESBUILD_PATCH } =
         await import("./generate-pages-barrel");
       const { collectPublicFiles } = await import("./public-files");
+      const { cssModulesServerPlugin } = await import("./css-module-esbuild-plugin");
 
       // Sitemap (v5.16 contract Part 6 rule 1, revised): `warlock build` does
       // NOT generate the sitemap. It cannot: the application's config is not
@@ -259,7 +260,14 @@ export function createWebBuildContribution(
       // the runtime. Withholding this line on zero pages would leave the
       // manifest absent, which is the runtime's signal for "never built with
       // web" — the exact confusion the always-written barrel removes.
-      return { entryImports: [WEB_ENTRY_IMPORT], esbuild: WEB_ESBUILD_PATCH };
+      //
+      // The CSS Modules plugin takes the SAME root the client build passes as
+      // `cssModulesRoot` (`buildWarlockHydrationClient`'s `appRoot`), so the
+      // server class map and the client stylesheet hash identically.
+      return {
+        entryImports: [WEB_ENTRY_IMPORT],
+        esbuild: { ...WEB_ESBUILD_PATCH, plugins: [cssModulesServerPlugin(context.appRoot)] },
+      };
     },
 
     async emit(context: ConnectorBuildContext): Promise<void> {
@@ -279,6 +287,7 @@ export function createWebBuildContribution(
         await buildWarlockHydrationClient({
           appRoot: context.appRoot,
           webRoot: await resolveWebPackageRoot(options.webRoot),
+          srcDir: options.srcDir,
           outDir: resolveClientOutDir(context),
           resolveAliases: [
             ...callerAliases,

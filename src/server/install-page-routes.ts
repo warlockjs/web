@@ -83,7 +83,7 @@ export type { LayoutModuleShape, PageModuleShape, PageRouteExport } from "./page
 /** Re-exported so `web/src/server/index.ts`'s existing barrel export keeps resolving. */
 export { composeRoutePath };
 
-async function loadComposedModule(vite: ViteDevServer, moduleFile: string): Promise<Record<string, unknown>> {
+export async function loadComposedModule(vite: ViteDevServer, moduleFile: string): Promise<Record<string, unknown>> {
   const setupCandidate = pageSetupFileFor(moduleFile);
   const setupFile = setupCandidate !== undefined && isFile(setupCandidate) ? setupCandidate : undefined;
   const [uiModule, setupModule] = await Promise.all([
@@ -92,28 +92,6 @@ async function loadComposedModule(vite: ViteDevServer, moduleFile: string): Prom
   ]);
 
   return composePageModule(uiModule, setupModule, moduleFile, setupFile);
-}
-
-/** Raised at boot when a page still uses the withdrawn `route.middleware` export. */
-export class RouteMiddlewareRemovedError extends Error {
-  public constructor(public readonly pageFile: string) {
-    super(
-      `"${pageFile}" declares \`route.middleware\`, which no longer runs — it was withdrawn after 5.6.0. ` +
-        "Move it to the page's own top-level `middleware` export instead: `export const middleware = [...]`.",
-    );
-    this.name = "RouteMiddlewareRemovedError";
-  }
-}
-
-/** Raised at boot when a page still uses the withdrawn `route.validate` export. */
-export class RouteValidationRemovedError extends Error {
-  public constructor(public readonly pageFile: string) {
-    super(
-      `"${pageFile}" declares \`route.validate\`, which no longer runs — it was withdrawn after 5.6.0. ` +
-        "Move it to the page's top-level `validation` export instead: `export const validation = { params: ..., query: ... }`.",
-    );
-    this.name = "RouteValidationRemovedError";
-  }
 }
 
 export type InstalledPageRoute = {
@@ -730,7 +708,11 @@ async function installDiscoveredPageRoutes(
           });
 
     const registerNotFoundRoute = () =>
-      registerNotFoundPageRoute({ router, renderPage: notFoundPageHandler });
+      registerNotFoundPageRoute({
+        router,
+        renderPage: notFoundPageHandler,
+        localeCodes: localeRouting.strategy === "none" ? undefined : localeRouting.codes,
+      });
 
     if (notFoundPageFile === undefined) {
       await router.withSourceFile(FRAMEWORK_DEFAULT_NOT_FOUND_SOURCE_FILE, registerNotFoundRoute);

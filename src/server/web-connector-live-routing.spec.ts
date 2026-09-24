@@ -153,7 +153,7 @@ describe("WebConnector live page routing", () => {
     "publishes an %s page set without restarting Vite",
     async (change) => {
       const files = fixture();
-      const vite = fakeVite({ route: "/settings" });
+      const vite = fakeVite({ config: { route: "/settings" }, default: (): null => null });
       const oldPages = change === "removed" ? [page(files.pageFile)] : [];
       const nextPages = change === "added" ? [page(files.pageFile)] : [];
       const install = vi.fn(async () => nextPages);
@@ -228,7 +228,7 @@ describe("WebConnector live page routing", () => {
 
   it("leaves a component-only page edit to HMR", async () => {
     const files = fixture();
-    const vite = fakeVite({ route: { path: "/settings" } });
+    const vite = fakeVite({ config: { route: { path: "/settings" } }, default: (): null => null });
     const install = vi.fn(async () => [page(files.pageFile)]);
     const connector = new LiveRoutingConnector();
 
@@ -251,7 +251,7 @@ describe("WebConnector live page routing", () => {
 
   it("atomically replaces routes, then invalidates the client registry for a route edit", async () => {
     const files = fixture();
-    const vite = fakeVite({ route: { path: "/profile", name: "profile" } });
+    const vite = fakeVite({ config: { route: { path: "/profile", name: "profile" } }, default: (): null => null });
     const next = page(files.pageFile, {
       declaredPath: "/profile",
       path: "/admin/profile",
@@ -295,7 +295,7 @@ describe("WebConnector live page routing", () => {
     const files = fixture();
     let currentRoute = { path: "/profile", name: "profile" };
     fs.writeFileSync(files.pageFile, "export const route = '/profile';");
-    const vite = fakeVite(() => ({ route: currentRoute }));
+    const vite = fakeVite(() => ({ config: { route: currentRoute }, default: (): null => null }));
     const install = vi.fn(async () => [
       page(files.pageFile, {
         declaredPath: currentRoute.path,
@@ -343,7 +343,7 @@ describe("WebConnector live page routing", () => {
     const files = fixture();
     let currentRoute = { path: "/profile", name: "profile" };
     fs.writeFileSync(files.pageFile, "export const route = '/profile';");
-    const vite = fakeVite(() => ({ route: currentRoute }));
+    const vite = fakeVite(() => ({ config: { route: currentRoute }, default: (): null => null }));
     const install = vi.fn(async () => [
       page(files.pageFile, {
         declaredPath: currentRoute.path,
@@ -390,7 +390,7 @@ describe("WebConnector live page routing", () => {
   it("keeps installed state and sends no reload when the staged install rejects", async () => {
     const files = fixture();
     const old = page(files.pageFile);
-    const vite = fakeVite({ route: "/profile" });
+    const vite = fakeVite({ config: { route: "/profile" }, default: (): null => null });
     const failure = new Error("duplicate page path");
     const install = vi.fn(async () => {
       throw failure;

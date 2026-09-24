@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { HydrationDocumentPayloadSource } from "../../hydration-payload";
 import { routerEvents } from "../../routing/router-events";
+import { withFragmentFrom, withoutFragment } from "../../routing/url-fragment";
 import { hydrateShared } from "../../shared";
 import { fetchPageData } from "./fetch-page-data";
 import { clearPrefetchCache } from "./prefetch";
@@ -218,9 +219,14 @@ export function createRefresher(runtime: RefreshRuntime): Refresher {
       URL on screen, and a redirect that stayed within one route entry
       (`?page=2` collapsing to `?page=1`) has still changed it.
     */
-      if (result.url !== url) {
-        if (runtime.commitUrl) runtime.commitUrl(result.url, "replace");
-        else window.history.replaceState(null, "", result.url);
+      // The address bar may carry a `#fragment` that `response.url` never does:
+      // compare without it, and write the destination WITH it, so a refresh on
+      // `/docs#install` neither strips the hash nor wipes the entry's state.
+      if (result.url !== withoutFragment(url)) {
+        const destination = withFragmentFrom(result.url, url);
+
+        if (runtime.commitUrl) runtime.commitUrl(destination, "replace");
+        else window.history.replaceState(window.history.state, "", destination);
       }
 
       runtime.writeCurrent(

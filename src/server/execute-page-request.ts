@@ -52,32 +52,6 @@ export {
   type LoaderShortCircuitKind,
   type PageResponseCommit,
 } from "./settle-page-response";
-export { RouteMiddlewareRemovedError } from "./install-page-routes";
-
-/**
- * `route.middleware` shipped in 5.6.0 and was withdrawn (owner ruling,
- * 2026-09-08): a page declares middleware in exactly one place, the
- * top-level `middleware` export. Thrown the first time a matched route's
- * page module still carries a `middleware` key on `route` — loud, not a
- * silent no-op, so the guard the author thinks is running is never quietly
- * dropped.
- */
-/* RouteMiddlewareRemovedError moved to install-page-routes.ts, where pageFile is available.
-export class RouteMiddlewareRemovedError extends Error {
-  public constructor(
-    public readonly routeName: string,
-    public readonly routePath: string,
-  ) {
-    super(
-      `Warlock route "${routeName}" (${routePath}) declares \`route.middleware\`, which no ` +
-        "longer runs — it was withdrawn after 5.6.0. Move it to the page's own top-level " +
-        "`middleware` export instead: `export const middleware = [...]`.",
-    );
-    this.name = "RouteMiddlewareRemovedError";
-  }
-}
-*/
-
 /** Widens `PageDataBundle` with the two fields stage 6/7 populate. */
 type Bundle = PageDataBundle & {
   commit?: PageResponseCommit;
@@ -168,6 +142,106 @@ async function validatePageInput(
   return { valid: true };
 }
 
+type MiddlewareChainOptions = {
+  triple: PageRouteMatch["entry"]["triple"];
+  request: Request;
+  response: Response;
+  pathname: string;
+  routeName: string;
+  routePath: string;
+};
+
+type MiddlewareHalt = Pick<Bundle, "error" | "shortCircuit">;
+
+/**
+ * Runs app, layout and page middleware, outermost first (`LEVEL_ORDER`), and
+ * reports why the chain stopped: a thrown middleware (status already forced
+ * to 500) or a middleware that returned a value. `undefined` means every
+ * middleware passed.
+ */
+async function runMiddlewareChain(
+  options: MiddlewareChainOptions,
+): Promise<MiddlewareHalt | undefined> {
+  const { triple, request, response, pathname, routeName, routePath } = options;
+
+  for (const level of LEVEL_ORDER) {
+    for (const middleware of triple[level].middleware ?? []) {
+      let output: unknown;
+
+      try {
+        output = await middleware({ request, response });
+      } catch (thrown) {
+        // Same rule as a loader throw: a thrown core `HttpError` owns its
+        // status, and a 4xx is the visitor's affair — never reported.
+        const resolvedStatus = resolveThrownHttpStatus(thrown);
+        const isClientError = resolvedStatus !== undefined && resolvedStatus < 500;
+        const error = buildErrorRecord(
+          thrown,
+          designateBoundary(level, triple),
+          pathname,
+          resolvedStatus,
+          { routeName, routePath, method: request.method, requestId: request.id },
+          !isClientError,
+        );
+
+        response.setStatusCode(resolvedStatus ?? 500);
+
+        return { error };
+      }
+
+      if (output !== undefined) {
+        return {
+          shortCircuit: {
+            stage: "middleware",
+            level,
+            value: output,
+            statusCode: response.statusCode,
+            // Read AFTER the middleware ran (it already resolved above) — a
+            // middleware that called `response.redirect()`/`.forbidden()`/
+            // `.send()` itself has already written the real reply by now.
+            responseSent: response.sent,
+          },
+        };
+      }
+    }
+  }
+
+  return undefined;
+}
+
+export type PageMiddlewareGateOutcome = "passed" | "sent" | "blocked";
+
+/**
+ * The middleware gate for a page-cache HIT (`serverCache`): the cache sits
+ * BEHIND middleware, so a HIT must not be served to a request an app, layout or
+ * page middleware would have stopped. `passed` = serve the HIT; `sent` = a
+ * middleware already wrote the whole reply; `blocked` = a middleware halted
+ * without replying, so the caller falls through to the full pipeline (which
+ * renders that outcome exactly as it does on a MISS).
+ */
+export async function runPageMiddlewareGate(
+  options: MiddlewareChainOptions,
+): Promise<PageMiddlewareGateOutcome> {
+  const { request, response } = options;
+  const runner = requireRunner();
+  const store: PipelineStore = runner.buildStore
+    ? runner.buildStore({ request, response })
+    : { request, response };
+
+  return runner.run(store, async () => {
+    enterSharedScope(store);
+    enterAdditionalSharedScope(store);
+
+    const halted = await runMiddlewareChain(options);
+
+    if (halted === undefined) return "passed";
+
+    const circuit = halted.shortCircuit;
+
+    return circuit?.stage === "middleware" && circuit.responseSent === true ? "sent" : "blocked";
+  });
+}
+
 export async function executePageRequest<TResult = PageDataBundle>(
   options: ExecutePageRequestOptions<TResult>,
 ): Promise<TResult | Response | undefined> {
@@ -234,45 +308,18 @@ export async function executePageRequest<TResult = PageDataBundle>(
      * the loader. A layout's auth gate can therefore never be bypassed by a
      * page's own middleware.
      */
-    for (const level of LEVEL_ORDER) {
-      const middlewareForLevel = triple[level].middleware ?? [];
+    const halted = await runMiddlewareChain({
+      triple,
+      request,
+      response,
+      pathname,
+      routeName: matched.entry.name,
+      routePath: matched.entry.path,
+    });
 
-      for (const middleware of middlewareForLevel) {
-        let output: unknown;
-
-        try {
-          output = await middleware({ request, response });
-        } catch (thrown) {
-          bundle.error = buildErrorRecord(
-            thrown,
-            designateBoundary(level, triple),
-            pathname,
-            undefined,
-            {
-              routeName: matched.entry.name,
-              routePath: matched.entry.path,
-              method: request.method,
-              requestId: request.id,
-            },
-          );
-          response.setStatusCode(500);
-          return finish(bundle);
-        }
-
-        if (output !== undefined) {
-          bundle.shortCircuit = {
-            stage: "middleware",
-            level,
-            value: output,
-            statusCode: response.statusCode,
-            // Read AFTER the middleware ran (it already resolved above) — a
-            // middleware that called `response.redirect()`/`.forbidden()`/
-            // `.send()` itself has already written the real reply by now.
-            responseSent: response.sent,
-          };
-          return finish(bundle);
-        }
-      }
+    if (halted) {
+      Object.assign(bundle, halted);
+      return finish(bundle);
     }
 
     const sealedShared = await sealShared(store);
@@ -589,6 +636,7 @@ export async function executePageRequest<TResult = PageDataBundle>(
           method: request.method,
           requestId: request.id,
         },
+        false,
       );
     } else {
       // Short-circuit: the signalling level's OWN buffer commits too

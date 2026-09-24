@@ -702,7 +702,12 @@ export function gateBSecrets(gateBOptions: { tracker?: PublicEnvTracker } = {}):
 
         for (const key of unreadKeys) {
           const inlinedValue = JSON.stringify(tracker.declaredEnv[key]);
-          if (!file.code.includes(inlinedValue)) continue;
+          // Only a serialised env object puts the key name next to the value;
+          // a bare value like `""` or `"en"` appears in nearly every chunk.
+          // Minifiers may unquote the key, so accept both spellings.
+          const quotedPair = `${JSON.stringify(key)}:${inlinedValue}`;
+          const barePair = `${key}:${inlinedValue}`;
+          if (!file.code.includes(quotedPair) && !file.code.includes(barePair)) continue;
 
           this.error(
             [

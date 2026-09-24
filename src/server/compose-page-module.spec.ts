@@ -52,4 +52,13 @@ describe("composePageModule", () => {
       ),
     ).toThrow('setup files may export only config, loader, or register');
   });
+
+  it("returns the same namespace for the same ui/setup pair so register() runs once", () => {
+    const ui = { default: () => null };
+    const setup = { register: () => undefined };
+
+    expect(composePageModule(ui, setup, "a.tsx", "a.setup.ts")).toBe(
+      composePageModule(ui, setup, "a.tsx", "a.setup.ts"),
+    );
+  });
 });

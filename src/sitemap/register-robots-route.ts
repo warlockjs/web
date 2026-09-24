@@ -9,6 +9,12 @@ export type RegisterRobotsRouteOptions = {
   /** The app's source `public/` directory — where a hand-written `robots.txt` would live. */
   publicDir: string;
   warn?: (message: string) => void;
+  /**
+   * Production build manifest's `publicFiles`. When given, it (not the source
+   * `public/` directory, absent from `dist/`-only deployments) decides whether
+   * the app ships its own `robots.txt`.
+   */
+  publicFiles?: readonly string[];
 };
 
 /**
@@ -25,7 +31,11 @@ export function registerRobotsRoute(router: Router, options: RegisterRobotsRoute
   const warn = options.warn ?? console.warn;
   const ownRobotsFile = path.join(options.publicDir, "robots.txt");
 
-  if (fs.existsSync(ownRobotsFile)) {
+  const shipsOwnRobots = options.publicFiles
+    ? options.publicFiles.includes("robots.txt")
+    : fs.existsSync(ownRobotsFile);
+
+  if (shipsOwnRobots) {
     warn(
       "[warlock:web] public/robots.txt exists — web will not register /robots.txt, and the " +
         "automatic `Sitemap:` line is not injected into it. Add it yourself if the sitemap is enabled.",

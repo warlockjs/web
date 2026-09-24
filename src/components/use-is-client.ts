@@ -1,20 +1,33 @@
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 /**
- * Whether this render is happening in the browser, after mount.
+ * Flips once, after the first client commit, and stays `true` for the life of
+ * the page: hydration is over for every later mount (a client navigation), so
+ * those mounts must not replay the server snapshot.
+ */
+let hydrated = false;
+
+function subscribe(onChange: () => void): () => void {
+  // Subscribing happens in the commit phase, after hydration has matched.
+  if (!hydrated) {
+    hydrated = true;
+    onChange();
+  }
+
+  return () => undefined;
+}
+
+const getClientSnapshot = (): boolean => hydrated;
+const getServerSnapshot = (): boolean => false;
+
+/**
+ * Whether this render is happening in the browser, after hydration.
  *
  * `false` on the server AND during the render that hydrates the
- * server-rendered markup; `true` from the next render onward, once mounted.
- *
- * Deliberately built on `useState` + `useEffect` rather than
- * `useSyncExternalStore`: the initial state is the constant `false`, so the
- * FIRST render always returns it — on the server, and again on the client's
- * hydration pass — with no `typeof window` branch that the two environments
- * could evaluate differently. `useEffect` never runs during server rendering
- * and never runs during the render React reconciles against the server HTML,
- * so the flip to `true` can only happen after hydration has already matched;
- * there is no window where this hook's return value could disagree with what
- * was sent down the wire.
+ * server-rendered markup (React uses the server snapshot there, so the two
+ * cannot disagree); `true` afterwards. Backed by a module-level flag rather
+ * than per-mount state, so a component mounted by a later client navigation
+ * gets `true` on its first render and does not flash its fallback for a frame.
  *
  * See `<ClientOnly>` ({@link "./client-only"}) for the common case — most
  * call sites want fallback/children switching, not the raw boolean.
@@ -28,11 +41,5 @@ import { useEffect, useState } from "react";
  * ```
  */
 export function useIsClient(): boolean {
-  const [isClient, setIsClient] = useState(false);
-
-  useEffect(() => {
-    setIsClient(true);
-  }, []);
-
-  return isClient;
+  return useSyncExternalStore(subscribe, getClientSnapshot, getServerSnapshot);
 }

@@ -189,7 +189,7 @@ describe("hydratePage — hydration error hooks handed to hydrateRoot", () => {
 
     expect(callback).toHaveBeenCalledTimes(3);
     const kinds = callback.mock.calls.map(([event]) => (event as ClientErrorEvent).kind);
-    expect(kinds).toEqual(["hydration", "hydration", "hydration"]);
+    expect(kinds).toEqual(["hydration", "boundary", "hydration"]);
     const errors = callback.mock.calls.map(([event]) => (event as ClientErrorEvent).error);
     expect(errors).toEqual([recoverable, caught, uncaught]);
   });

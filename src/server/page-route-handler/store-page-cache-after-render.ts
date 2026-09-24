@@ -35,6 +35,34 @@ export function resolveCacheTags(
   return typeof tags === "function" ? tags(data, { shared: shared ?? {} }) : tags;
 }
 
+/** Headers a HIT sets itself, or that belong to one specific send, so never stored in or replayed from an entry. */
+export const PAGE_CACHE_REPLAY_SKIPPED_HEADERS = new Set([
+  "cache-control",
+  "vary",
+  "set-cookie",
+  "content-type",
+  "content-length",
+  "content-encoding",
+  "transfer-encoding",
+  "x-warlock-cache",
+]);
+
+/** The committed headers a HIT may replay, or `undefined` when there are none. */
+function replayableHeaders(
+  headers: Record<string, unknown> | undefined,
+): Record<string, string> | undefined {
+  const kept: Record<string, string> = {};
+
+  for (const [name, value] of Object.entries(headers ?? {})) {
+    if (PAGE_CACHE_REPLAY_SKIPPED_HEADERS.has(name.toLowerCase())) continue;
+    if (typeof value !== "string") continue;
+
+    kept[name.toLowerCase()] = value;
+  }
+
+  return Object.keys(kept).length > 0 ? kept : undefined;
+}
+
 const CACHE_FAILURE_LOG_INTERVAL_MS = 60_000;
 let lastCacheFailureLoggedAt = 0;
 
@@ -127,6 +155,7 @@ export async function storePageCacheAfterRender(options: {
   const ttl = cache.ttl ?? cache.maxAge;
   const tags = resolveCacheTags(cache.tags, rendered.data, rendered.bundle?.shared);
   const maxEntryBytes = resolvePageCacheMaxEntryBytes();
+  const headers = replayableHeaders(rendered.headers);
 
   if (pageCacheVariant === "html") {
     // Store the STREAMED document (already forced to `onAllReady` by
@@ -160,6 +189,7 @@ export async function storePageCacheAfterRender(options: {
               status: 200,
               contentType: "text/html",
               usesDefer: rendered.usesDefer ?? false,
+              headers,
             },
             ttl,
             tags,
@@ -180,6 +210,7 @@ export async function storePageCacheAfterRender(options: {
           status: 200,
           contentType: "text/html",
           usesDefer: rendered.usesDefer ?? false,
+          headers,
         },
         ttl,
         tags,
@@ -204,6 +235,7 @@ export async function storePageCacheAfterRender(options: {
         status: 200,
         contentType: DATA_RESPONSE_CONTENT_TYPE,
         usesDefer: rendered.usesDefer ?? false,
+        headers,
       },
       ttl,
       tags,

@@ -96,7 +96,9 @@ const corpus: readonly CorpusCase[] = [
     expectedEntry: pages.usersCatchAll,
     params: { "*": overlongParameter },
   },
-  { pathname: "/CASE/path", expectedEntry: pages.caseSensitiveSpelling, params: {} },
+  { pathname: "/Case/Path", expectedEntry: pages.caseSensitiveSpelling, params: {} },
+  // The server router is case-sensitive, so a different spelling is not this page.
+  { pathname: "/CASE/path", expectedEntry: pages.rootCatchAll, params: { "*": "CASE/path" } },
   { pathname: "/trailing/", expectedEntry: pages.trailing, params: {} },
 ];
 
@@ -268,7 +270,6 @@ describe("matchClientRoute", () => {
 
   it.each([
     [entry("first", "/users/:id"), entry("second", "/users/:slug")],
-    [entry("first", "/Users"), entry("second", "/users")],
     [entry("first", "/users"), entry("second", "/users/")],
   ])("rejects routes that collide under server matching", (first, second) => {
     expect(() => matchClientRoute([first, second], "/users/42")).toThrow();

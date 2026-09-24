@@ -46,7 +46,10 @@ export type CollectedSitemapEntries = {
   readonly declaredRoutes: ReadonlySet<string>;
 };
 
-const isDynamicRoute = (routePath: string): boolean => routePath.includes(":");
+// A `[locale]` folder yields a literal `:locale` param that `expandLocaleEntries`
+// substitutes per locale, so it alone does not make a page dynamic.
+const isDynamicRoute = (routePath: string): boolean =>
+  routePath.replace(/(^|\/):locale(?=\/|$)/g, "$1").includes(":");
 
 async function resolveSupplier(supplier: SitemapPageSupplier): Promise<SitemapPageUrl[]> {
   return [...(await supplier())];

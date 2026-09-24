@@ -16,6 +16,13 @@ export type RoutePathInterpolationOptions = {
 
 const LEGACY_PARAMETER_PATTERN = /:([A-Za-z0-9_]+)|\*/g;
 
+/** A wildcard spans segments, so its `/` separators stay literal. */
+function encodeParameterValue(name: string, value: unknown): string {
+  if (name !== "*") return encodeURIComponent(String(value));
+
+  return String(value).split("/").map(encodeURIComponent).join("/");
+}
+
 function legacyParameterNames(path: string): readonly string[] {
   const names: string[] = [];
 
@@ -55,7 +62,7 @@ function interpolateLegacyPath(
   return path.replace(LEGACY_PARAMETER_PATTERN, (segment, name: string | undefined) => {
     const value = parameters?.[name ?? "*"];
     if (isMissing(value)) return options.onMissingParameter(name ?? "*");
-    return encodeURIComponent(String(value));
+    return encodeParameterValue(name ?? "*", value);
   });
 }
 
@@ -93,7 +100,7 @@ export function interpolateRoutePath(
     const value = parameters?.[parameter.name];
     if (parameter.optional && (value === undefined || value === null)) return [];
     if (isMissing(value)) return options.onMissingParameter(parameter.name);
-    return [encodeURIComponent(String(value))];
+    return [encodeParameterValue(parameter.name, value)];
   });
   const result = interpolated.join("/");
 

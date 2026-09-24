@@ -3,6 +3,7 @@ import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MissingHydrationErrorPageError,
+  LevelErrorBoundary,
   UnknownHydrationPageNameError,
   buildHydratedTree,
 } from "./build-hydrated-tree";
@@ -71,7 +72,16 @@ function asElement<Props extends object = LevelProps>(node: ReactNode): ReactEle
     throw new Error(`Expected a React element, received ${String(node)}.`);
   }
 
+  // Boundaries render no DOM; specs about structure look through them.
+  if ((node as ReactElement).type === LevelErrorBoundary) {
+    return asElement<Props>((node as ReactElement<LevelProps>).props.children);
+  }
+
   return node as ReactElement<Props>;
+}
+
+function rawElement(node: ReactNode): ReactElement<LevelProps & Record<string, unknown>> {
+  return node as ReactElement<LevelProps & Record<string, unknown>>;
 }
 
 /**
@@ -83,7 +93,7 @@ function levelTypesOf(node: ReactNode): unknown[] {
 
   for (let current = node; isValidElement(current);) {
     const element = current as ReactElement<LevelProps>;
-    types.push(element.type);
+    if (element.type !== LevelErrorBoundary) types.push(element.type);
     current = element.props.children as ReactNode;
   }
 
@@ -91,6 +101,42 @@ function levelTypesOf(node: ReactNode): unknown[] {
 }
 
 describe("buildHydratedTree", () => {
+  it("wraps a layout that exports ErrorBoundary and keeps the outer layout outside it", async () => {
+    const LayoutBoundary = (_props: { error: unknown }): null => null;
+    const pages = [
+      entry("main.home", () => ({
+        Page: moduleOf(Page),
+        layouts: [moduleOf(OuterLayout), { default: InnerLayout, ErrorBoundary: LayoutBoundary }],
+      })),
+    ];
+
+    const outer = rawElement(await buildHydratedTree(pages, payloadFor("main.home")));
+    expect(outer.type).toBe(OuterLayout);
+
+    const boundary = rawElement(outer.props.children);
+    expect(boundary.type).toBe(LevelErrorBoundary);
+    expect(boundary.props.Boundary).toBe(LayoutBoundary);
+    expect(rawElement(boundary.props.children).type).toBe(InnerLayout);
+  });
+
+  it("wraps the page leaf inside the layouts, with its own ErrorBoundary when exported", async () => {
+    const PageBoundary = (_props: { error: unknown }): null => null;
+    const pages = [
+      entry("main.home", () => ({
+        Page: { default: Page, ErrorBoundary: PageBoundary },
+        layouts: [moduleOf(OuterLayout)],
+      })),
+    ];
+
+    const outer = rawElement(await buildHydratedTree(pages, payloadFor("main.home")));
+    const boundary = rawElement(outer.props.children);
+
+    expect(outer.type).toBe(OuterLayout);
+    expect(boundary.type).toBe(LevelErrorBoundary);
+    expect(boundary.props.Boundary).toBe(PageBoundary);
+    expect(rawElement(boundary.props.children).type).toBe(Page);
+  });
+
   it("composes ordered layouts -> Page, outermost first, with the payload's props", async () => {
     const pages = [
       entry("main.home", () => ({

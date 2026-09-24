@@ -48,3 +48,19 @@ describe("computePageCacheKey — tenant isolation", () => {
     );
   });
 });
+
+describe("computePageCacheKey — query bounds", () => {
+  const base = { host: "a.test", path: "/p", locale: "en", variant: "html" } as const;
+
+  it("ignores tracking params by default", () => {
+    expect(computePageCacheKey({ ...base, query: { utm_source: "x", fbclid: "1", page: "2" } })).toBe(
+      computePageCacheKey({ ...base, query: { page: "2" } }),
+    );
+  });
+
+  it("keeps only allowlisted keys when an allowlist is set", () => {
+    expect(
+      computePageCacheKey({ ...base, query: { x: "random", page: "2" }, queryAllowlist: ["page"] }),
+    ).toBe(computePageCacheKey({ ...base, query: { page: "2" }, queryAllowlist: ["page"] }));
+  });
+});

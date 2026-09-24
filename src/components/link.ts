@@ -209,6 +209,13 @@ export type LinkProps = AnchorProps &
      * which is not a thing a link component may decide to do.
      */
     prefetch?: boolean;
+    /**
+     * Locale prefixing for a LITERAL in-app path. `false` leaves the path
+     * exactly as written (an API route, a generated file); a locale code
+     * prefixes with that code instead of the current one. Ignored for route
+     * names, which are always localized.
+     */
+    locale?: false | string;
   };
 
 const DESTINATION_PROPS = ["to", "href", "email", "tel"] as const;
@@ -358,12 +365,12 @@ function assertNotARouteName(url: string): void {
  * begins with SOME routed code — never double-prefixed, whether or not that
  * code is the active one.
  */
-function prefixForActiveLocale(url: string): string {
+function prefixForActiveLocale(url: string, localeOverride?: string): string {
   const routing = readLocaleRouting();
 
   if (routing.strategy === "none") return url;
 
-  const locale = readCurrentLocale();
+  const locale = localeOverride ?? readCurrentLocale();
 
   if (locale === undefined || !isPrefixedLocale(routing, locale)) return url;
 
@@ -405,9 +412,23 @@ function fillLocaleParam(
   return { ...params, locale };
 }
 
+/**
+ * A path whose last segment carries a file extension (`/uploads/report.pdf`,
+ * `/sitemap.xml`) addresses a file, never a page, so it is not locale-prefixed
+ * and not worth a page-data fetch.
+ */
+function looksLikeFile(url: string): boolean {
+  const pathname = url.split(/[?#]/)[0] ?? "";
+
+  return /\.[a-z0-9]+$/i.test(pathname.split("/").pop() ?? "");
+}
+
 const ROUTE_ARGUMENT_PROPS = ["params", "query"] as const;
 
-function resolveDestination(props: LinkDestinationProps): Destination {
+function resolveDestination(
+  props: LinkDestinationProps,
+  locale?: false | string,
+): Destination {
   const provided = DESTINATION_PROPS.filter((name) => props[name] !== undefined);
 
   if (provided.length > 1) throw new AmbiguousLinkDestinationError(provided);
@@ -437,7 +458,13 @@ function resolveDestination(props: LinkDestinationProps): Destination {
 
     const isInApp = addressesThisApp(destination);
 
-    return { url: isInApp ? prefixForActiveLocale(destination) : destination, isInApp };
+    const isFile = looksLikeFile(destination);
+    const skipPrefix = !isInApp || locale === false || isFile;
+
+    return {
+      url: skipPrefix ? destination : prefixForActiveLocale(destination, locale),
+      isInApp: isInApp && !isFile,
+    };
   }
 
   /*
@@ -448,11 +475,27 @@ function resolveDestination(props: LinkDestinationProps): Destination {
     linked, and nothing said so at the call site.
   */
   return {
-    url: prefixForActiveLocale(
-      href(destination as PageRouteName, fillLocaleParam(destination, props.params), props.query),
-    ),
+    url: localizedHref(destination as PageRouteName, props.params, props.query),
     isInApp: true,
   };
+}
+
+/**
+ * The URL for a route NAME exactly as `<Link>` renders it: `:locale` param
+ * filled, then the active locale prefix applied. The one path shared by the
+ * declarative (`<Link>`) and programmatic (`navigateTo`) forms.
+ */
+export function localizedHref(
+  name: PageRouteName,
+  params?: LinkDestinationProps["params"],
+  query?: LinkDestinationProps["query"],
+): string {
+  return prefixForActiveLocale(href(name, fillLocaleParam(name, params), query));
+}
+
+/** Prefixes an in-app literal PATH for the active locale; anything else is returned untouched. */
+export function localizedPath(path: string): string {
+  return path.startsWith("/") && !path.startsWith("//") ? prefixForActiveLocale(path) : path;
 }
 
 /**
@@ -499,19 +542,16 @@ export function Link({
   query,
   newTab,
   prefetch,
+  locale,
   component: Component = "a",
   children,
   onClick,
   ...elementProps
 }: LinkProps): ReactElement {
-  const { url, isInApp } = resolveDestination({
-    to,
-    href: hrefAlias,
-    email,
-    tel,
-    params,
-    query,
-  });
+  const { url, isInApp } = resolveDestination(
+    { to, href: hrefAlias, email, tel, params, query },
+    locale,
+  );
 
   const target = elementProps.target ?? (newTab === true ? "_blank" : undefined);
 
@@ -531,6 +571,9 @@ export function Link({
     // this page standing. The runtime is not consulted at all — asking it would
     // spend a page-data fetch on a click that was never going to navigate here.
     if (!isInApp || opensAnotherContext(target)) return;
+
+    // `download` means "save this resource", never "navigate to it".
+    if (elementProps.download !== undefined && elementProps.download !== false) return;
 
     if (!isPlainLeftClick(event)) return;
 

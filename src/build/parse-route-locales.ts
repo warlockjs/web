@@ -42,6 +42,9 @@ class StrictJsonParser {
   ) {}
 
   public parse(): JsonValue {
+    // Windows editors often save a UTF-8 BOM; it is not part of the JSON text.
+    if (this.source.charCodeAt(0) === 0xfeff) this.offset = 1;
+
     const value = this.value("$");
     this.whitespace();
 

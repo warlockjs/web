@@ -917,6 +917,13 @@ export function projectModule(code: string, filePath: string): ProjectionResult 
   };
 }
 
+/** A leading `;` in `mappings` adds one unmapped generated line at the top. */
+function shiftMapByOneLine(map: ProjectionResult["map"]): ProjectionResult["map"] {
+  const shifted = JSON.parse(map.toString()) as { mappings: string };
+  shifted.mappings = `;${shifted.mappings}`;
+  return shifted as unknown as ProjectionResult["map"];
+}
+
 export function isProjectableFile(id: string): boolean {
   const base = path.basename(id.split("?", 1)[0] ?? id);
   if (/\.page\.tsx?$/.test(base)) return true;
@@ -1093,12 +1100,15 @@ export function projection(): Plugin {
           );
         }
         const registerModules = hmrRegisterModulesBinding(transformed);
+        // The prepended import shifts every line down by one, so the map from
+        // `projectModule` is re-based by a leading empty mappings segment.
+        const prefixLine = `import { registerModules as ${registerModules} } from "${HMR_RUNTIME_SPECIFIER}";\n`;
         return {
           code:
-            `import { registerModules as ${registerModules} } from "${HMR_RUNTIME_SPECIFIER}";\n` +
+            prefixLine +
             `${transformed}\n` +
             `if (import.meta.hot) import.meta.hot.accept((replacement) => { if (replacement) ${registerModules}([replacement]); });\n`,
-          map,
+          map: shiftMapByOneLine(map),
         };
       } catch (error) {
         if (error instanceof ProjectionAmbiguityError) {

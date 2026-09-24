@@ -1,3 +1,5 @@
+import { createElement } from "react";
+import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as sharedModule from "../../src/shared";
 import { hydrateShared, useShared } from "../../src/shared";
@@ -17,7 +19,7 @@ describe("hydrateShared — browser snapshot install", () => {
 
     vi.stubGlobal("window", {});
 
-    const view = useShared() as Record<string, any>;
+    const view = readSharedInComponent();
 
     expect(view.locale).toBe("en");
     expect(view.user).toEqual({ name: "hasan" });
@@ -28,3 +30,17 @@ describe("hydrateShared — browser snapshot install", () => {
     expect(Object.getOwnPropertyNames(sharedModule)).not.toContain("installBrowserSharedSnapshot");
   });
 });
+
+/** `useShared()` is a hook (W3:B15), so it must run inside a component render. */
+function readSharedInComponent(): Record<string, any> {
+  let view: Record<string, any> | undefined;
+
+  function Probe() {
+    view = useShared() as Record<string, any>;
+    return null;
+  }
+
+  renderToString(createElement(Probe));
+
+  return view!;
+}

@@ -3,6 +3,7 @@ import path from "node:path";
 import type { Alias, HttpServer, InlineConfig, PluginOption } from "vite";
 import type { DevelopmentModelModules } from "@warlock.js/core";
 import { appConventionAliases } from "./app-convention-aliases";
+import { cssModulesConfig } from "./css-modules-config";
 import { coreModelModules } from "./core-model-modules";
 import { warlockClientBoundary } from "./index";
 import { resolveReactFastRefreshPlugins } from "./react-refresh-preamble";
@@ -232,6 +233,7 @@ export async function createWebConnectorViteConfig(
   return {
     root: options.appRoot,
     appType: "custom",
+    css: cssModulesConfig(options.appRoot),
     plugins: [
       // FIRST, and dev-only by construction: this method is reachable only
       // from `boot()`'s Vite branch, past the `isProductionRuntime()` guard.

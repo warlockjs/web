@@ -18,12 +18,20 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { parse as devalueParse } from "devalue";
 import Fastify, { type FastifyInstance } from "fastify";
-import { registerHttpPlugins, router, setConfig, type Request } from "@warlock.js/core";
+import {
+  registerHttpPlugins,
+  requestContext,
+  router,
+  setConfig,
+  type Request,
+} from "@warlock.js/core";
 import { WARLOCK_DATA_REQUEST_HEADER, WARLOCK_DATA_REQUEST_VALUE } from "../routing/data-request";
 import { NDJSON_CONTENT_TYPE } from "./write-deferred-ndjson-response";
 import type { PageCacheOptIn } from "../routing/route-identity";
 import type { BufferedCookie } from "./execute-page-request";
 import type { RouteTranslations } from "./route-translations";
+import { connectPageContext } from "./page-context";
+import type { PageContextRunner } from "./execute-page-request.types";
 
 const { renderPageRequest, fakeCache, fakeCacheStore, fakeCacheTagIndex } = vi.hoisted(() => {
   const store = new Map<string, unknown>();
@@ -173,10 +181,26 @@ function renderedJson(
   };
 }
 
+/** Flipped by a test to make the guarded route's middleware refuse the request. */
+let guardBlocks = false;
+const guardCalls = vi.fn();
+
 const moduleById: Record<string, unknown> = {
   "app.tsx": {},
   "layout.tsx": {},
   "page.tsx": { default: (): null => null },
+  "guarded-page.tsx": {
+    default: (): null => null,
+    config: {
+      middleware: [
+        ({ response }: { response: { send: (body: unknown, status: number) => unknown } }) => {
+          guardCalls();
+
+          if (guardBlocks) return response.send({ error: "blocked" }, 403);
+        },
+      ],
+    },
+  },
 };
 
 function registerRoute(
@@ -193,7 +217,7 @@ function registerRoute(
     name: urlPath,
     appFile: "app.tsx",
     layoutFile: "layout.tsx",
-    pageFile: "page.tsx",
+    pageFile: urlPath === "/__scache-guarded" ? "guarded-page.tsx" : "page.tsx",
     loadModule: async (moduleId) => moduleById[moduleId],
     httpServer: server,
     cache,
@@ -210,6 +234,7 @@ let touchAuth: (request: Request) => void = () => {};
 
 describe("server-side page cache (route.cache.serverCache)", () => {
   const server = Fastify();
+  let previousRunner: PageContextRunner | undefined;
   let translationRevision = "one";
   let englishKeyword = "English one";
   let arabicKeyword = "Arabic one";
@@ -220,7 +245,18 @@ describe("server-side page cache (route.cache.serverCache)", () => {
   });
 
   beforeAll(async () => {
+    // Production boot hands core's own request context to the pipeline; a HIT
+    // runs the middleware gate through it, so the harness must connect it too.
+    previousRunner = connectPageContext(requestContext as unknown as PageContextRunner);
+
     await registerHttpPlugins(server);
+
+    registerRoute("/__scache-guarded", server, {
+      public: true,
+      maxAge: 60,
+      serverCache: true,
+      tags: ["guarded"],
+    });
 
     registerRoute("/__scache-basic", server, {
       public: true,
@@ -314,6 +350,8 @@ describe("server-side page cache (route.cache.serverCache)", () => {
 
   beforeEach(() => {
     renderPageRequest.mockReset();
+    guardBlocks = false;
+    guardCalls.mockClear();
     touchAuth = () => {};
     translationRevision = "one";
     englishKeyword = "English one";
@@ -333,9 +371,11 @@ describe("server-side page cache (route.cache.serverCache)", () => {
   afterEach(() => {
     setConfig("auth.cookie.name", undefined as never);
     setConfig("pageCache.maxEntryBytes", undefined as never);
+    setConfig("app.url", undefined as never);
   });
 
   afterAll(async () => {
+    connectPageContext(previousRunner);
     await server.close();
   });
 
@@ -359,6 +399,67 @@ describe("server-side page cache (route.cache.serverCache)", () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers["x-warlock-cache"]).toBeUndefined();
     expect(fakeCacheStore.size).toBe(0);
+  });
+
+  it("a guarded middleware blocks a cache HIT exactly as it blocks a render", async () => {
+    const first = await server.inject({ method: "GET", url: "/__scache-guarded" });
+    expect(first.headers["x-warlock-cache"]).toBe("miss");
+
+    const hit = await server.inject({ method: "GET", url: "/__scache-guarded" });
+    expect(hit.headers["x-warlock-cache"]).toBe("hit");
+    expect(guardCalls).toHaveBeenCalledTimes(1); // the mocked render never runs it; only the HIT gate does
+
+    guardBlocks = true;
+
+    const blocked = await server.inject({ method: "GET", url: "/__scache-guarded" });
+    expect(blocked.statusCode).toBe(403);
+    expect(blocked.headers["x-warlock-cache"]).not.toBe("hit");
+    expect(blocked.body).not.toBe(first.body);
+    expect(renderPageRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("stores the committed non-cookie headers and replays them on a HIT", async () => {
+    renderPageRequest.mockReset();
+    renderPageRequest.mockImplementationOnce(async () => ({
+      ...renderedHtml(),
+      headers: { "x-robots-tag": "noindex", "content-language": "en", "content-length": "9" },
+    }));
+
+    await server.inject({ method: "GET", url: "/__scache-basic" });
+
+    const [entry] = [...fakeCacheStore.values()] as Array<{ headers?: Record<string, string> }>;
+    expect(entry?.headers).toEqual({ "x-robots-tag": "noindex", "content-language": "en" });
+
+    const hit = await server.inject({ method: "GET", url: "/__scache-basic" });
+    expect(hit.headers["x-warlock-cache"]).toBe("hit");
+    expect(hit.headers["x-robots-tag"]).toBe("noindex");
+    expect(hit.headers["content-language"]).toBe("en");
+  });
+
+  it("with app.url set, a foreign Host shares the configured host's entry instead of minting its own", async () => {
+    setConfig("app.url", "https://example.test");
+
+    await server.inject({ method: "GET", url: "/__scache-basic", headers: { host: "example.test" } });
+
+    const foreign = await server.inject({
+      method: "GET",
+      url: "/__scache-basic",
+      headers: { host: "evil.test" },
+    });
+    expect(foreign.headers["x-warlock-cache"]).toBe("hit");
+    expect(fakeCacheStore.size).toBe(1);
+  });
+
+  it("without app.url, each request host keeps its own entry", async () => {
+    await server.inject({ method: "GET", url: "/__scache-basic", headers: { host: "a.test" } });
+
+    const other = await server.inject({
+      method: "GET",
+      url: "/__scache-basic",
+      headers: { host: "b.test" },
+    });
+    expect(other.headers["x-warlock-cache"]).toBe("miss");
+    expect(fakeCacheStore.size).toBe(2);
   });
 
   // ── Key discrimination ───────────────────────────────────────────────────

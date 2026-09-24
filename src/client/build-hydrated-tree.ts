@@ -13,14 +13,19 @@
  * markup. `matchClientRoute` is for client-side NAVIGATION, where no server
  * answer exists yet.
  */
-import { createElement, type ComponentType, type ReactNode } from "react";
+import { Component, createElement, type ComponentType, type ReactNode } from "react";
 import type {
   HydrationDocumentPayloadSource,
   SerializedErrorPageProps,
 } from "../hydration-payload";
 import { registerModules } from "../register-modules";
+import { renderBuiltInFallback } from "./built-in-error-fallback";
+import { statusOf } from "./client-error-status";
+import { ErrorPageRenderGuard } from "./error-page-render-guard";
 import { installPayloadTranslations } from "./install-payload-translations";
+import { reportClientError } from "./report-client-error";
 import { loadClientRouteComposition } from "./runtime";
+import { sanitizeClientError } from "./sanitize-client-error";
 import type { ClientPageEntry, ClientProjectedModule } from "./runtime/types";
 
 /** What every composed level receives — the shape `render-page.ts` uses server-side. */
@@ -115,6 +120,77 @@ function componentOf<Props extends object>(
   return typeof component === "function" ? (component as ComponentType<Props>) : undefined;
 }
 
+/** Advances per built tree, so a boundary can tell a fresh swap from a re-render. */
+let builtTreeCount = 0;
+
+type LevelErrorBoundaryProps = {
+  readonly children?: ReactNode;
+  /** Moves on every built tree; clears a caught error without remounting the subtree. */
+  readonly resetToken: number;
+  readonly routeName: string;
+  /** The level's own exported `ErrorBoundary`, when it has one. */
+  readonly Boundary?: ComponentType<{ error: unknown }>;
+  /** The route's app `error.page.tsx`, used by the page-leaf floor only. */
+  readonly ErrorPage?: ComponentType<SerializedErrorPageProps>;
+};
+
+/**
+ * The client half of a page/layout `ErrorBoundary` export. Mirrors the server:
+ * the nearest boundary renders IN PLACE of the level it covers, while every
+ * level rootward of it (the layouts) stays mounted. It renders no DOM of its
+ * own, so wrapping never changes the markup being hydrated.
+ */
+export class LevelErrorBoundary extends Component<
+  LevelErrorBoundaryProps,
+  { error: unknown; caught: boolean }
+> {
+  public state = { error: undefined as unknown, caught: false };
+
+  public static getDerivedStateFromError(error: unknown) {
+    return { error, caught: true };
+  }
+
+  public componentDidCatch(error: unknown): void {
+    reportClientError("an error was caught by a page/layout boundary", error, {
+      kind: "boundary",
+      pathname: typeof window === "undefined" ? undefined : window.location.pathname,
+      routeName: this.props.routeName,
+    });
+  }
+
+  public componentDidUpdate(previousProps: LevelErrorBoundaryProps): void {
+    if (previousProps.resetToken !== this.props.resetToken && this.state.caught) {
+      this.setState({ error: undefined, caught: false });
+    }
+  }
+
+  public render(): ReactNode {
+    if (!this.state.caught) return this.props.children;
+
+    const { Boundary, ErrorPage } = this.props;
+    const { error } = this.state;
+
+    if (Boundary !== undefined) return createElement(Boundary, { error });
+
+    if (ErrorPage !== undefined) {
+      return createElement(ErrorPageRenderGuard, {
+        ErrorPage,
+        errorPageProps: { error: sanitizeClientError(error), status: statusOf(error) },
+      });
+    }
+
+    return renderBuiltInFallback();
+  }
+}
+
+function boundaryOf(module: ClientProjectedModule): ComponentType<{ error: unknown }> | undefined {
+  const boundary = module.ErrorBoundary;
+
+  return typeof boundary === "function"
+    ? (boundary as ComponentType<{ error: unknown }>)
+    : undefined;
+}
+
 function wrap(
   module: ClientProjectedModule,
   data: unknown,
@@ -191,6 +267,8 @@ export async function buildHydratedTree(
   ]);
 
   const { shared } = payload;
+  const resetToken = (builtTreeCount += 1);
+  const routeName = payload.name;
   let element: ReactNode;
 
   if (errorPageProps === undefined) {
@@ -208,9 +286,38 @@ export async function buildHydratedTree(
     element = ErrorPage === undefined ? null : createElement(ErrorPage, errorPageProps);
   }
 
+  // The page leaf gets its own boundary (its `ErrorBoundary` export, else the
+  // framework floor) INSIDE the layouts, so a page-level failure keeps them.
+  // The error-page leaf is not wrapped: it is already the fallback.
+  if (errorPageProps === undefined) {
+    element = createElement(
+      LevelErrorBoundary,
+      {
+        resetToken,
+        routeName,
+        Boundary: boundaryOf(selectedPageModule),
+        ErrorPage:
+          composition.ErrorPage === undefined
+            ? undefined
+            : componentOf<SerializedErrorPageProps>(composition.ErrorPage),
+      },
+      element,
+    );
+  }
+
   // Innermost layout wraps the page, so walk the outermost-first list backwards.
   for (let index = composition.layouts.length - 1; index >= 0; index -= 1) {
-    element = wrap(composition.layouts[index]!, payload.layoutData, shared, element);
+    const layout = composition.layouts[index]!;
+
+    element = wrap(layout, payload.layoutData, shared, element);
+
+    const Boundary = boundaryOf(layout);
+
+    // Like the server, a layout's own `ErrorBoundary` replaces that layout and
+    // everything under it, still inside the layouts rootward of it.
+    if (Boundary !== undefined) {
+      element = createElement(LevelErrorBoundary, { resetToken, routeName, Boundary }, element);
+    }
   }
 
   return element;

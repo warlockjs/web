@@ -42,7 +42,7 @@ import {
   type EnvironmentClassifierOptions,
 } from "./gate-a-resolve";
 import { createPublicEnvTracker, type PublicEnvTracker } from "./gate-b-secrets";
-import { SERVER_EXPORT_NAMES } from "./projection";
+import { isProjectableFile, SERVER_EXPORT_NAMES } from "./projection";
 
 function serverExportNamesDescription(): string {
   return [...SERVER_EXPORT_NAMES].join(", ");
@@ -84,6 +84,7 @@ type BundleLike = Record<
     fileName?: string;
     code?: string;
     moduleIds?: readonly string[];
+    facadeModuleId?: string | null;
   }
 >;
 
@@ -186,6 +187,11 @@ export function findLeakedServerExports(bundle: BundleLike): ServerExportLeak[] 
     } catch (error) {
       throw new UnverifiableChunkError(file.fileName ?? "(unnamed chunk)", error);
     }
+
+    // Only chunks born from a projectable file carry server exports; a
+    // dynamic chunk of a plain helper module may legitimately export `validation`.
+    // A chunk with no facade id is still checked (fail closed).
+    if (file.facadeModuleId && !isProjectableFile(file.facadeModuleId)) continue;
 
     for (const stmt of ast.program.body) {
       for (const match of collectServerExportNames(stmt)) {

@@ -1,6 +1,7 @@
 import { statSync } from "node:fs";
 import path from "node:path";
 import type { AliasOptions, PluginOption, Rollup } from "vite";
+import { cssModulesConfig } from "./css-modules-config";
 import { createHydrationClientEntry, type HydrationClientEntry } from "./hydration-entries";
 
 export interface BuildHydrationClientOptions {
@@ -21,6 +22,11 @@ export interface BuildHydrationClientOptions {
   resolveAliases: AliasOptions;
   /** Optional peers that must remain external to this bundler pipeline. */
   external?: Rollup.ExternalOption;
+  /**
+   * Project root the CSS Modules class names are hashed against — the same root
+   * the server bundle uses, so SSR and client class names match.
+   */
+  cssModulesRoot?: string;
 }
 
 export type HydrationClientBuildOutput = Rollup.RollupOutput | Rollup.RollupOutput[];
@@ -166,7 +172,9 @@ export async function buildHydrationClient(
     appType: "custom",
     configFile: false,
     plugins: [...options.plugins],
-    resolve: { alias: options.resolveAliases },
+    // Mirrors dev-server-config: one React copy for entry and pages.
+    resolve: { alias: options.resolveAliases, dedupe: ["react", "react-dom"] },
+    ...(options.cssModulesRoot === undefined ? {} : { css: cssModulesConfig(options.cssModulesRoot) }),
     build: {
       copyPublicDir: false,
       emptyOutDir: true,

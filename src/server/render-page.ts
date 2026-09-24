@@ -831,6 +831,7 @@ async function finishRender(
         method: request.method,
         requestId: request.id,
       },
+      false,
     );
   }
 

@@ -594,14 +594,17 @@ function assertUniqueRoutePaths(
   for (const page of pages) {
     if (page.routePath === NOT_FOUND_ROUTE_PATH) continue;
 
-    const existing = fileByRoutePath.get(page.routePath);
+    // `/blog/:id` and `/blog/:slug` answer the same URLs, so compare the
+    // shape with every param name normalised.
+    const shape = page.routePath.replace(/(^|\/):[^/?*+]+/g, "$1:_");
+    const existing = fileByRoutePath.get(shape);
     const relative = toPosix(path.relative(appRoot, page.pageFile));
 
     if (existing !== undefined && !(explicitFiles.has(existing) && explicitFiles.has(relative))) {
       throw new DuplicatePageRoutePathError(page.routePath, existing, relative);
     }
 
-    if (existing === undefined) fileByRoutePath.set(page.routePath, relative);
+    if (existing === undefined) fileByRoutePath.set(shape, relative);
   }
 }
 

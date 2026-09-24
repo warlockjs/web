@@ -464,7 +464,10 @@ export class WebConnector extends BaseConnector {
       setProductionSitemapPageSource(createManifestSitemapPageSource(this.pageManifest));
 
       this.sitemapAppRoot = this.options.appRoot ?? process.cwd();
-      await registerWebHttpRoutes(router, { appRoot: this.sitemapAppRoot });
+      await registerWebHttpRoutes(router, {
+        appRoot: this.sitemapAppRoot,
+        publicFiles: this.pageManifest.publicFiles,
+      });
 
       return;
     }

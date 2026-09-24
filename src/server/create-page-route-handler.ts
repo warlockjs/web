@@ -46,6 +46,7 @@ import { pageVaryHeader } from "./page-vary-header";
 import { reportServerError } from "./report-server-error";
 import { pathnameFromRequest } from "./error-reporting-config";
 import { ensureSetCookieCacheFloorHook, markPageResponse } from "./set-cookie-cache-floor-hook";
+import { runPageMiddlewareGate } from "./execute-page-request";
 import type { BufferedCookie, PageRouteEntry, PageTripleModule } from "./execute-page-request";
 import { renderPageRequest } from "./render-page";
 import { NDJSON_CONTENT_TYPE } from "./write-deferred-ndjson-response";
@@ -391,23 +392,6 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     const cacheLookupTranslationsRevision = routeTranslations?.revision;
 
     try {
-      if (cache?.serverCache === true) {
-        const outcome = await resolvePageCacheHitOrMiss({
-          request,
-          response,
-          cache,
-          credentialedRequest,
-          pageCacheVariant,
-          translationsRevision: routeTranslations?.revision,
-        });
-
-        if (outcome.served) return;
-
-        cacheHeaderValue = outcome.cacheHeaderValue;
-        cacheKey = outcome.cacheKey;
-        attemptStorageAfterRender = outcome.attemptStorageAfterRender;
-      }
-
       const [rawAppModule, layoutModule, rawPageModule, registrationLayouts] = await Promise.all([
         loadModule(appFile),
         layoutFile
@@ -474,6 +458,34 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       // page deliberately has no wildcard param: its virtual path is the
       // missed URL itself, so it remains the named `not-found` route with `{}`.
       const params = matchPath === undefined ? (request.params as Record<string, string>) : {};
+
+      // The cache lookup runs AFTER the modules load so a HIT can be gated by
+      // the app, layout and page middleware first (the cache sits behind them).
+      if (cache?.serverCache === true) {
+        const outcome = await resolvePageCacheHitOrMiss({
+          request,
+          response,
+          cache,
+          credentialedRequest,
+          pageCacheVariant,
+          translationsRevision: routeTranslations?.revision,
+          middlewareGate: () =>
+            runPageMiddlewareGate({
+              triple,
+              request,
+              response,
+              pathname: requestPathname,
+              routeName: name,
+              routePath: entry.path,
+            }),
+        });
+
+        if (outcome.served) return;
+
+        cacheHeaderValue = outcome.cacheHeaderValue;
+        cacheKey = outcome.cacheKey;
+        attemptStorageAfterRender = outcome.attemptStorageAfterRender;
+      }
 
       // A DATA request runs everything above and below this line identically —
       // it is the same route, the same match and the same pipeline — and differs

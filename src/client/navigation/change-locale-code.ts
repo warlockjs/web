@@ -74,6 +74,9 @@ import { syncDocumentLocale } from "./sync-document-locale";
 /** A locale change is a "replace" for history and its listeners, same as `refresh()`. */
 const CHANGE_LOCALE_MODE = "replace" as const;
 
+/** One year, in seconds: a language picker is expected to outlive the browser session. */
+const LOCALE_PREFERENCE_MAX_AGE = 31536000;
+
 export type LocaleChanger = (code: string) => Promise<void>;
 
 /** `href` with its `locale` query param set to `code`, every other part kept. */
@@ -89,7 +92,7 @@ function writeLocalePreference(code: string): boolean {
   try {
     const secure = window.location.protocol === "https:" ? "; Secure" : "";
     const value = encodeURIComponent(code);
-    document.cookie = `${LOCALE_PREFERENCE_COOKIE_NAME}=${value}; Path=/; SameSite=Lax${secure}`;
+    document.cookie = `${LOCALE_PREFERENCE_COOKIE_NAME}=${value}; Path=/; Max-Age=${LOCALE_PREFERENCE_MAX_AGE}; SameSite=Lax${secure}`;
 
     return document.cookie
       .split(";")

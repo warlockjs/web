@@ -105,7 +105,10 @@ function isRootSetupFile(file: string, appRoot: string, srcDir: string | undefin
 }
 
 function isSetupFile(file: string): boolean {
-  return pageSetupOwnerFileFor(file) !== undefined;
+  const owner = pageSetupOwnerFileFor(file);
+  // `tests/vitest.setup.ts` or `users.setup.ts` without a `users.page.tsx`
+  // is not a page setup sidecar.
+  return owner !== undefined && fs.existsSync(owner);
 }
 
 /**

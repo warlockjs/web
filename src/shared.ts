@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from "react";
 import type { SharedContext } from "./index";
 
 /**
@@ -322,6 +323,15 @@ function deepFreeze(value: unknown): void {
 
 let browserSharedSnapshot: Readonly<SharedContext> | undefined;
 let browserSharedInstalled = false;
+const browserSharedListeners = new Set<() => void>();
+
+function subscribeBrowserShared(listener: () => void): () => void {
+  browserSharedListeners.add(listener);
+
+  return () => {
+    browserSharedListeners.delete(listener);
+  };
+}
 
 function freezeBrowserSnapshot(value: object, seen: Set<object>): void {
   if (seen.has(value)) return;
@@ -351,6 +361,8 @@ export function hydrateShared(value: unknown): void {
 
   browserSharedSnapshot = value as Readonly<SharedContext>;
   browserSharedInstalled = true;
+
+  for (const listener of [...browserSharedListeners]) listener();
 }
 
 function readBrowserSharedSnapshot(): Readonly<SharedContext> {
@@ -548,7 +560,16 @@ export const shared: SharedContext = new Proxy({} as SharedContext, {
  * process-wide fallback.
  */
 export function useShared(): Readonly<SharedContext> {
-  if (typeof window !== "undefined") return readBrowserSharedSnapshot();
+  if (typeof window !== "undefined") {
+    // Subscribed so memoized consumers re-render when hydrateShared() installs
+    // a new snapshot after a refresh/navigation. `window` is constant per
+    // environment, so the hook order is stable.
+    return useSyncExternalStore(
+      subscribeBrowserShared,
+      readBrowserSharedSnapshot,
+      readBrowserSharedSnapshot,
+    );
+  }
 
   requireScope("read `shared` via useShared()");
 

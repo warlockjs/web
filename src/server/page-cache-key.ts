@@ -29,9 +29,17 @@ export type PageCacheKeyInput = {
   variant: PageCacheVariant;
   /** The route's own `cache.varyBy(request)` result, when it declares one. */
   vary?: string;
+  /**
+   * The route's `cache.query` allowlist. When set, ONLY these query keys enter
+   * the key; when absent, every key except {@link IGNORED_TRACKING_PARAMS}.
+   */
+  queryAllowlist?: readonly string[];
   /** Content identity of route-owned translations, absent for legacy registration. */
   translationsRevision?: string;
 };
+
+/** Tracking params that never change the rendered bytes; ignored when no allowlist is set. */
+const IGNORED_TRACKING_PARAMS = /^(utm_[a-z0-9_]*|fbclid|gclid|msclkid|mc_eid|_ga)$/i;
 
 /**
  * Normalises a pathname the same way `create-page-route-handler.ts` already
@@ -56,8 +64,15 @@ function normalisePathname(path: string): string {
  * Array values are serialized in their given order — only the KEYS are
  * sorted, not each value's contents.
  */
-function normaliseQuery(query: Record<string, unknown>): string {
-  const keys = Object.keys(query).sort();
+function normaliseQuery(
+  query: Record<string, unknown>,
+  allowlist: readonly string[] | undefined,
+): string {
+  const keys = Object.keys(query)
+    .filter((key) =>
+      allowlist === undefined ? !IGNORED_TRACKING_PARAMS.test(key) : allowlist.includes(key),
+    )
+    .sort();
   const params = new URLSearchParams();
 
   for (const key of keys) {
@@ -85,7 +100,7 @@ function normaliseQuery(query: Record<string, unknown>): string {
  */
 export function computePageCacheKey(input: PageCacheKeyInput): string {
   const pathname = normalisePathname(input.path);
-  const query = normaliseQuery(input.query);
+  const query = normaliseQuery(input.query, input.queryAllowlist);
 
   const host = input.host.toLowerCase();
   const vary = input.vary === undefined ? "" : `|vary=${encodeURIComponent(input.vary)}`;

@@ -52,6 +52,9 @@ function createServingState(
     store: active.store,
     cacheControl,
     getManifest: async () => {
+      // A local publication is visible immediately, before the poll throttle.
+      const local = active.currentManifest;
+      if (local && (!observed || local.fence > observed.fence)) observed = local;
       if (Date.now() - lastPoll < pollMs) return observed;
       lastPoll = Date.now();
       const discovered = await active.store.readLatestManifest();
@@ -83,9 +86,11 @@ export async function startSitemapRuntime(options: GenerateSitemapOptions = {}):
     legacyOutputDir: config.legacyOutputDir,
   });
   if (config.coordination === "shared" && !store.supportsSharedClaims()) {
-    throw new Error(
+    const unsupported = new Error(
       "web.sitemap.coordination=shared requires storage with atomic putIfAbsent and consistent listing.",
     );
+    reportFailure(unsupported);
+    throw unsupported;
   }
 
   const active = createSitemapLocalRuntime({
@@ -98,25 +103,33 @@ export async function startSitemapRuntime(options: GenerateSitemapOptions = {}):
         : {}),
     },
   });
-  runtime = active;
-  await active.initialize();
-  servingState = createServingState(active, config.cacheControl, config.manifestPollMs);
+  try {
+    await active.initialize();
+    runtime = active;
+    servingState = createServingState(active, config.cacheControl, config.manifestPollMs);
 
-  scheduler = new SitemapRefreshScheduler({
-    trigger: async (reason) => {
-      if (
-        reason === "interval" &&
-        config.coordination === "shared" &&
-        (await sharedIntervalIsFresh(active, config.regenerateEveryMs))
-      )
-        return;
-      await regenerateSitemap(options);
-    },
-    intervalMs: config.regenerateEveryMs,
-    reportError: reportFailure,
-  });
-  await refreshSitemapModelSubscriptions(options);
-  scheduler.start();
+    scheduler = new SitemapRefreshScheduler({
+      trigger: async (reason) => {
+        if (
+          reason === "interval" &&
+          config.coordination === "shared" &&
+          (await sharedIntervalIsFresh(active, config.regenerateEveryMs))
+        )
+          return;
+        await regenerateSitemap(options);
+      },
+      intervalMs: config.regenerateEveryMs,
+      reportError: reportFailure,
+    });
+    await refreshSitemapModelSubscriptions(options);
+    scheduler.start();
+  } catch (error) {
+    // Roll back so a later start can retry instead of serving 503 forever.
+    if (runtime === active) await shutdownSitemapRuntime();
+    else active.dispose();
+    reportFailure(error);
+    throw error;
+  }
 
   if (!config.regenerate.onBoot) return;
   if (active.currentManifest) {

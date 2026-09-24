@@ -37,7 +37,7 @@ function fakeVite(pageModule: unknown) {
 
 describe("pageRoutesNeedReplacement", () => {
   it("treats add/remove as definite graph changes without evaluating modules", async () => {
-    const harness = fakeVite({ route: "/settings" });
+    const harness = fakeVite({ config: { route: "/settings" }, default: (): null => null });
 
     await expect(
       pageRoutesNeedReplacement(
@@ -52,11 +52,11 @@ describe("pageRoutesNeedReplacement", () => {
 
   it("invalidates before loading but keeps a semantically equal route edit in HMR", async () => {
     const order: string[] = [];
-    const harness = fakeVite({ route: { path: "/settings" } });
+    const harness = fakeVite({ config: { route: { path: "/settings" } }, default: (): null => null });
     harness.onFileChange.mockImplementation(() => order.push("invalidate"));
     harness.ssrLoadModule.mockImplementation(async () => {
       order.push("load");
-      return { route: { path: "/settings" } };
+      return { config: { route: { path: "/settings" } }, default: (): null => null };
     });
 
     await expect(
@@ -70,7 +70,7 @@ describe("pageRoutesNeedReplacement", () => {
   });
 
   it("refreshes edited SSR modules even when add/remove already requires replacement", async () => {
-    const harness = fakeVite({ route: "/settings" });
+    const harness = fakeVite({ config: { route: "/settings" }, default: (): null => null });
 
     await expect(
       pageRoutesNeedReplacement(
@@ -88,8 +88,8 @@ describe("pageRoutesNeedReplacement", () => {
   });
 
   it.each([
-    ["declared path", { route: "/profile" }],
-    ["resolved name", { route: { path: "/settings", name: "account.settings" } }],
+    ["declared path", { config: { route: "/profile" }, default: (): null => null }],
+    ["resolved name", { config: { route: { path: "/settings", name: "account.settings" } }, default: (): null => null }],
   ])("requests replacement for a changed %s", async (_label, pageModule) => {
     const harness = fakeVite(pageModule);
 

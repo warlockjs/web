@@ -1,12 +1,38 @@
-import type { Request, Response } from "@warlock.js/core";
+import { config, type Request, type Response } from "@warlock.js/core";
 
 import type { PageCacheOptIn } from "../../routing/route-identity";
 import { computePageCacheKey, type PageCacheVariant } from "../page-cache-key";
 import { getPageCacheEntry } from "../page-cache-store";
 import { markPageResponse } from "../set-cookie-cache-floor-hook";
 import { pageVaryHeader } from "../page-vary-header";
-import { isNoncedDocumentCache, reportPageCacheFailure } from "./store-page-cache-after-render";
+import {
+  isNoncedDocumentCache,
+  PAGE_CACHE_REPLAY_SKIPPED_HEADERS,
+  reportPageCacheFailure,
+} from "./store-page-cache-after-render";
 import { persistRequestedLocale } from "./persist-requested-locale";
+
+/**
+ * With `app.url` configured, a request host outside it must not mint its own
+ * cache entries (a forged `Host` would fill the cache and poison reflected-host
+ * renders), so it is keyed as the configured host. Without `app.url` the
+ * request host is used as before.
+ */
+export function resolvePageCacheHost(requestHost: string): string {
+  const configured = config.get("app.url") as string | undefined;
+
+  if (!configured) return requestHost;
+
+  let configuredHost: string;
+
+  try {
+    configuredHost = new URL(configured).host.toLowerCase();
+  } catch {
+    return requestHost;
+  }
+
+  return requestHost.toLowerCase() === configuredHost ? requestHost : configuredHost;
+}
 
 export type PageCacheLookupOutcome =
   | { served: true }
@@ -34,7 +60,9 @@ export async function resolvePageCacheHitOrMiss(options: {
   credentialedRequest: boolean;
   pageCacheVariant: PageCacheVariant;
   translationsRevision?: string;
-}): Promise<PageCacheLookupOutcome> {
+  /** Runs app, layout and page middleware; called only when a HIT was found. */
+  middlewareGate?: () => Promise<"passed" | "sent" | "blocked">;
+}):Promise<PageCacheLookupOutcome> {
   const { request, response, cache, credentialedRequest, pageCacheVariant } = options;
 
   if (request.method !== "GET") {
@@ -71,10 +99,11 @@ export async function resolvePageCacheHitOrMiss(options: {
   }
 
   const cacheKey = computePageCacheKey({
-    host: String(request.header("host", "") ?? ""),
+    host: resolvePageCacheHost(String(request.header("host", "") ?? "")),
     vary: cache.varyBy?.(request),
     path: request.path,
     query: request.query as Record<string, unknown>,
+    queryAllowlist: (cache as PageCacheOptIn & { query?: string[] }).query,
     locale: request.locale,
     variant: pageCacheVariant,
     translationsRevision: options.translationsRevision,
@@ -93,6 +122,26 @@ export async function resolvePageCacheHitOrMiss(options: {
 
   if (hit === undefined) {
     return { served: false, cacheHeaderValue: "miss", cacheKey, attemptStorageAfterRender: true };
+  }
+
+  // Middleware is the gate; the cache sits behind it. An allowlist, geo-block
+  // or maintenance middleware must stop a HIT exactly as it stops a render.
+  if (options.middlewareGate !== undefined) {
+    const gate = await options.middlewareGate();
+
+    // The middleware wrote the whole reply itself.
+    if (gate === "sent") return { served: true };
+
+    // It halted without replying: the full pipeline renders that outcome, and
+    // nothing rendered for a blocked visitor is ever stored under this key.
+    if (gate === "blocked") {
+      return {
+        served: false,
+        cacheHeaderValue: "bypass",
+        cacheKey: undefined,
+        attemptStorageAfterRender: false,
+      };
+    }
   }
 
   // A HIT is always served buffered, straight from the store, with no loader
@@ -119,6 +168,14 @@ export async function resolvePageCacheHitOrMiss(options: {
   // whatever got stored).
   response.header("Cache-Control", `public, max-age=${cache.maxAge}`);
   response.header("x-warlock-cache", "hit");
+
+  // Headers the MISS committed (robots, preload links, content-language...).
+  // Those set explicitly here and per-response framing headers win.
+  for (const [name, value] of Object.entries(hit.headers ?? {})) {
+    if (PAGE_CACHE_REPLAY_SKIPPED_HEADERS.has(name.toLowerCase())) continue;
+
+    response.header(name, value);
+  }
 
   // ONE `header()` call for the whole response — see `pageVaryHeader`'s doc
   // comment on why a second call would silently overwrite this one instead of

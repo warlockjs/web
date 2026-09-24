@@ -445,7 +445,7 @@ describe("refresh — and previousRoute()", () => {
     expect(scenario.writes[0].routeSource).not.toBe(onScreenBefore.routeSource);
     // The address bar has to follow the page, and REPLACE — a refresh never
     // pushes.
-    expect(browser.replaceState).toHaveBeenCalledWith(null, "", "https://app.test/login");
+    expect(browser.replaceState).toHaveBeenCalledWith(undefined, "", "https://app.test/login");
     expect(browser.pushState).not.toHaveBeenCalled();
   });
 
@@ -465,7 +465,7 @@ describe("refresh — and previousRoute()", () => {
 
     await expect(createRefresher(scenario.runtime)()).resolves.toBe(true);
 
-    expect(browser.replaceState).toHaveBeenCalledWith(null, "", "https://app.test/products?page=1");
+    expect(browser.replaceState).toHaveBeenCalledWith(undefined, "", "https://app.test/products?page=1");
     expect(browser.pushState).not.toHaveBeenCalled();
     expect(scenario.writes[0].routeSource).toBe(onScreenBefore.routeSource);
   });

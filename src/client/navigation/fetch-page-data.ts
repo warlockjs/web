@@ -392,6 +392,10 @@ export async function fetchPageData(
   }
 
   if (!isPayloadResponse(response)) {
+    // The browser is about to hard-navigate to this URL itself; stop this
+    // copy of the body (a file, an API export) from downloading in the background.
+    void response.body?.cancel().catch(() => undefined);
+
     return {
       type: "hard-navigate",
       url,

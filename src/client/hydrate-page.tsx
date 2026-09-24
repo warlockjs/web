@@ -7,6 +7,8 @@ import {
 } from "../components/document-context";
 import { readHydrationPayload, type HydrationDocumentPayloadSource } from "../hydration-payload";
 import { hydrateShared } from "../shared";
+import { LevelErrorBoundary } from "./build-hydrated-tree";
+import { DefaultErrorBoundary } from "./default-error-boundary";
 import { reportClientError } from "./report-client-error";
 import { installStreamClosedRejection, prepareDeferredPageData } from "./runtime/defer-registry";
 
@@ -65,9 +67,16 @@ const hydrationErrorHooks: Pick<
       pathname: typeof window === "undefined" ? undefined : window.location.pathname,
     });
   },
-  onCaughtError: (error) => {
-    reportClientError("an error was caught by a boundary during hydration", error, {
-      kind: "hydration",
+  onCaughtError: (error, errorInfo) => {
+    // Root options live for the root's WHOLE lifetime. The framework's own
+    // boundaries already report from `componentDidCatch`, so reporting them
+    // here too would log every floor catch twice.
+    const boundary = errorInfo?.errorBoundary;
+
+    if (boundary instanceof LevelErrorBoundary || boundary instanceof DefaultErrorBoundary) return;
+
+    reportClientError("an error was caught by an app boundary", error, {
+      kind: "boundary",
       pathname: typeof window === "undefined" ? undefined : window.location.pathname,
     });
   },

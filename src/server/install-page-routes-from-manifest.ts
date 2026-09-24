@@ -521,7 +521,7 @@ export function installPageRoutesFromManifest(
       loadModule: loadModule,
       loadComposedLayout:
         composedLayout === undefined ? undefined : () => Promise.resolve(composedLayout),
-      loadRegistrationLayouts: () => Promise.resolve(page.layouts.map((layout) => layout.module)),
+      loadRegistrationLayouts: () => Promise.resolve(page.layouts.map((layout) => manifestModule(layout))),
       hydrationClientModuleUrl,
       hydrationClientModulePreloadUrls,
       loadErrorPage,

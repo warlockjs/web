@@ -171,7 +171,7 @@ function parsePattern(entry: ClientPageEntry): CompiledRoute {
 
   const collisionKey = tokens
     .map((token) => {
-      if (token.type === "static") return `s:${token.value.toLowerCase()}`;
+      if (token.type === "static") return `s:${token.value}`;
       if (token.type === "parameter") return "p";
       return "w";
     })
@@ -181,7 +181,7 @@ function parsePattern(entry: ClientPageEntry): CompiledRoute {
     entry,
     tokens,
     parameterNames,
-    expression: new RegExp(source, "i"),
+    expression: new RegExp(source),
     collisionKey,
   };
 }

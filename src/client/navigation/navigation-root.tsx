@@ -543,7 +543,11 @@ export function NavigationRoot({
       // which `activeEntryKey` still names the outgoing one.
       captureScrollPosition(activeEntryKey.current);
 
-      void apply(url, replace, "navigate");
+      // Same page, no fragment: browsers treat this as a replace, so a
+      // duplicate entry never makes Back need two presses.
+      const samePage = withoutFragment(url) === withoutFragment(window.location.href);
+
+      void apply(url, replace || samePage, "navigate");
 
       // Accepted: the caller suppresses the browser's default. Returning `true`
       // before the fetch resolves is deliberate — the decision to handle a link

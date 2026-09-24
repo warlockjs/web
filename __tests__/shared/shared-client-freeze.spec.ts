@@ -1,3 +1,5 @@
+import { createElement } from "react";
+import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   connectSharedStore,
@@ -90,8 +92,22 @@ describe("shared — frozen on the client", () => {
     // `navigation-root.tsx` and `refresh.ts` do.
     hydrateShared({ locale: "en" });
 
-    const view = useShared() as Record<string, any>;
+    const view = readSharedInComponent();
     expect(view.locale).toBe("en");
     expect(view.locale).not.toBe("fr");
   });
 });
+
+/** `useShared()` is a hook (W3:B15), so it must run inside a component render. */
+function readSharedInComponent(): Record<string, any> {
+  let view: Record<string, any> | undefined;
+
+  function Probe() {
+    view = useShared() as Record<string, any>;
+    return null;
+  }
+
+  renderToString(createElement(Probe));
+
+  return view!;
+}

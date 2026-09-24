@@ -1,5 +1,6 @@
 import { currentNavigator } from "../../routing/navigator";
-import { href, type RouteQuery } from "../../routing/route-table";
+import { localizedHref, localizedPath } from "../../components/link";
+import type { RouteQuery } from "../../routing/route-table";
 import type { PageRouteTarget } from "../../routing/route-types";
 
 /**
@@ -52,8 +53,8 @@ export function navigateTo(
 
   const path =
     typeof destination === "string"
-      ? destination
-      : href(destination.name, destination.params, destination.query);
+      ? localizedPath(destination)
+      : localizedHref(destination.name, destination.params, destination.query);
 
   return navigator(path, options);
 }

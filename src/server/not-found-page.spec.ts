@@ -242,12 +242,14 @@ describe("the framework default document", () => {
     expect(html).toContain("<body>");
     expect(html).toContain("</html>");
     expect(html).toContain("<h1>404</h1>");
-    expect(html).toContain('<p dir="auto">This page is outside the spellbook.</p>');
+    expect(html).toContain('<p dir="auto">This page could not be found.</p>');
     expect(html).toContain('<a href="/" dir="auto">Return home</a>');
-    expect(html.match(/<link rel="stylesheet" href="data:text\/css[^\"]+">/g)).toHaveLength(1);
-    // CSS ships with the document: there is no external fetch, inline style, or script.
+    // CSP-safe: an inline <style> (nonce'd when given), never a data: URL.
+    expect(html).not.toContain("data:text/css");
+    expect(html).toContain("<style>");
+    expect(frameworkDefaultNotFoundDocument("en", "abc")).toContain('<style nonce="abc">');
+    expect(html).not.toContain("Warlock");
     expect(html).not.toContain("framework-default-not-found.css");
-    expect(html).not.toContain("<style");
     expect(html).not.toMatch(/\sstyle=/);
     expect(html).not.toContain("<script");
     expect(html).not.toContain("404.page.tsx");
