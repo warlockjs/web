@@ -18,6 +18,21 @@ const SAFE_GENERATION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const SAFE_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/;
 
 type SitemapRouteContext = Pick<HttpContext, "request" | "response">;
+type SitemapRouteHandler = (context: SitemapRouteContext) => Promise<ReturnedResponse>;
+
+/**
+ * Core's router does not infer a HEAD route from GET. Every sitemap artifact
+ * is conditionally readable, so register the same manifest handler for both
+ * methods instead of leaving HEAD to a framework-specific fallback.
+ */
+function registerReadableRoute(
+  router: Router,
+  routePath: string,
+  handler: SitemapRouteHandler,
+): void {
+  router.get(routePath, handler);
+  router.head(routePath, handler);
+}
 
 function serveNotGeneratedYet(
   response: Response,
@@ -183,7 +198,7 @@ export function registerSitemapRoutes(router: Router, options: RegisterSitemapRo
   const warn = options.warn ?? console.warn;
   const getServingState = options.getServingState ?? getSitemapServingState;
 
-  router.get(options.path, async (context: SitemapRouteContext) => {
+  const currentManifestHandler: SitemapRouteHandler = async (context) => {
     const state = getServingState();
 
     if (!state) return serveNotGeneratedYet(context.response, warn);
@@ -197,14 +212,20 @@ export function registerSitemapRoutes(router: Router, options: RegisterSitemapRo
     if (!file) return context.response.notFound() as ReturnedResponse;
 
     return serveManifestFile(context, state, manifest, file, state.cacheControl);
-  });
+  };
 
-  router.get(
+  registerReadableRoute(router, options.path, currentManifestHandler);
+  registerReadableRoute(
+    router,
     "/sitemaps/:sitemapGenerationId/:sitemapGenerationFile",
     generationRequestHandler(getServingState, warn),
   );
 
   // Backwards compatibility for existing generated index XML. It can only
   // serve a basename listed in the current manifest, never arbitrary storage.
-  router.get("/:sitemapArtifactFile", latestBareShardHandler(getServingState, warn));
+  registerReadableRoute(
+    router,
+    "/:sitemapArtifactFile",
+    latestBareShardHandler(getServingState, warn),
+  );
 }

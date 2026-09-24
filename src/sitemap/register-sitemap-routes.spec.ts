@@ -1,6 +1,6 @@
 ﻿import { Readable } from "node:stream";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { HttpContext, Router } from "@warlock.js/core";
+import { RouteRegistry, type HttpContext, type Route, type Router } from "@warlock.js/core";
 import type { SitemapGenerationManifest } from "@warlock.js/sitemap";
 import { registerSitemapRoutes } from "./register-sitemap-routes";
 import type { SitemapServingState } from "./sitemap-serving-state";
@@ -27,13 +27,44 @@ function manifest(overrides: Partial<SitemapGenerationManifest> = {}): SitemapGe
 
 function capturingRouter() {
   const routes = new Map<string, (context: HttpContext) => unknown>();
+  const headRoutes = new Map<string, (context: HttpContext) => unknown>();
   const router = {
     get: vi.fn((routePath: string, handler: (context: HttpContext) => unknown) => {
       routes.set(routePath, handler);
     }),
+    head: vi.fn((routePath: string, handler: (context: HttpContext) => unknown) => {
+      headRoutes.set(routePath, handler);
+    }),
   } as unknown as Router;
 
-  return { router, routes };
+  return { router, routes, headRoutes };
+}
+
+function dispatchingRegistry(
+  routes: ReadonlyMap<string, (context: HttpContext) => unknown>,
+  headRoutes: ReadonlyMap<string, (context: HttpContext) => unknown>,
+): RouteRegistry {
+  const registry = new RouteRegistry();
+  const route = (
+    method: "GET" | "HEAD",
+    routePath: string,
+    handler: (context: HttpContext) => unknown,
+  ): Route =>
+    ({
+      method,
+      path: routePath,
+      handler: handler as Route["handler"],
+      sourceFile: "sitemap-route.spec.ts",
+      $prefix: "",
+      $prefixStack: [],
+    }) as Route;
+
+  registry.register([
+    ...[...routes].map(([routePath, handler]) => route("GET", routePath, handler)),
+    ...[...headRoutes].map(([routePath, handler]) => route("HEAD", routePath, handler)),
+  ]);
+
+  return registry;
 }
 
 function fakeResponse() {
@@ -109,13 +140,29 @@ function stateFor(current: SitemapGenerationManifest | undefined) {
 describe("registerSitemapRoutes — manifest-backed serving", () => {
   beforeEach(() => vi.restoreAllMocks());
 
-  it("registers the configured main route, generation route, and compatibility basename route", () => {
-    const { router, routes } = capturingRouter();
+  it("registers GET and HEAD dispatch handlers for every readable sitemap artifact route", () => {
+    const { router, routes, headRoutes } = capturingRouter();
     registerSitemapRoutes(router, { path: "/sitemap.xml", getServingState: () => undefined });
 
-    expect(routes.has("/sitemap.xml")).toBe(true);
-    expect(routes.has("/sitemaps/:sitemapGenerationId/:sitemapGenerationFile")).toBe(true);
-    expect(routes.has("/:sitemapArtifactFile")).toBe(true);
+    const expectedPaths = [
+      "/sitemap.xml",
+      "/sitemaps/:sitemapGenerationId/:sitemapGenerationFile",
+      "/:sitemapArtifactFile",
+    ];
+
+    expect([...routes.keys()]).toEqual(expectedPaths);
+    expect([...headRoutes.keys()]).toEqual(expectedPaths);
+
+    const dispatcher = dispatchingRegistry(routes, headRoutes);
+
+    for (const path of [
+      "/sitemap.xml",
+      "/sitemaps/current_3/sitemap-0001.xml",
+      "/sitemap-0001.xml",
+    ]) {
+      expect(dispatcher.find("GET", path)?.route.method).toBe("GET");
+      expect(dispatcher.find("HEAD", path)?.route.method).toBe("HEAD");
+    }
   });
 
   it("returns 503 with Retry-After before a serving state exists", async () => {
@@ -162,7 +209,7 @@ describe("registerSitemapRoutes — manifest-backed serving", () => {
 
   it("treats Core Request's null absent conditional headers as absent", async () => {
     const { state, store } = stateFor(manifest());
-    const { router, routes } = capturingRouter();
+    const { router, routes, headRoutes } = capturingRouter();
     registerSitemapRoutes(router, { path: "/sitemap.xml", getServingState: () => state });
 
     const get = fakeResponse();
@@ -172,7 +219,7 @@ describe("registerSitemapRoutes — manifest-backed serving", () => {
     expect(get.calls.header).toContainEqual(["ETag", `"${digest}"`]);
 
     const head = fakeResponse();
-    await routes.get("/sitemap.xml")!(context(head.response, {}, {}, "HEAD", null));
+    await headRoutes.get("/sitemap.xml")!(context(head.response, {}, {}, "HEAD", null));
 
     expect(head.calls.send).toEqual([[]]);
     expect(store.getArtifactStream).toHaveBeenCalledTimes(1);
@@ -180,11 +227,11 @@ describe("registerSitemapRoutes — manifest-backed serving", () => {
 
   it("answers HEAD with validators and no artifact stream", async () => {
     const { state, store } = stateFor(manifest());
-    const { router, routes } = capturingRouter();
+    const { router, headRoutes } = capturingRouter();
     registerSitemapRoutes(router, { path: "/sitemap.xml", getServingState: () => state });
     const { response, calls } = fakeResponse();
 
-    await routes.get("/sitemap.xml")!(context(response, {}, {}, "HEAD"));
+    await headRoutes.get("/sitemap.xml")!(context(response, {}, {}, "HEAD"));
 
     expect(calls.header).toContainEqual(["Content-Type", "application/xml"]);
     expect(calls.send).toEqual([[]]);

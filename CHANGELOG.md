@@ -7,6 +7,8 @@ All notable changes to `@warlock.js/web` are documented here.
 ### Fixed
 
 - Normalize conditional-request header values before sitemap validator comparisons.
+- Register explicit HEAD handlers for sitemap documents and immutable shard URLs.
+
 ## 5.20.0 - 2026-09-24
 
 ### Added
@@ -49,10 +51,10 @@ All notable changes to `@warlock.js/web` are documented here.
   supports direct paths, FormData, cancellation, lifecycle callbacks, and
   validation-error mapping without exposing server handlers or policy.
 
-
 ### Changed
 
 - Refined package skill-discovery descriptions and regenerated the llms projections.
+
 ## 5.18.0 - 2026-09-22
 
 ### Added
