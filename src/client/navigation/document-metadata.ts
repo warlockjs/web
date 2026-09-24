@@ -1,5 +1,6 @@
 import type { MetadataOutput } from "../../metadata";
 import {
+  MANAGED_DYNAMIC_ATTRIBUTE,
   MANAGED_METADATA_KEYS,
   resolveMetadataDescriptors,
   type MetadataDescriptor,
@@ -22,8 +23,9 @@ function writeDescriptor(element: Element, descriptor: MetadataDescriptor): void
       element.setAttribute("content", descriptor.attrs.content);
       return;
     case "link":
-      element.setAttribute("rel", descriptor.attrs.rel);
-      element.setAttribute("href", descriptor.attrs.href);
+      for (const [name, value] of Object.entries(descriptor.attrs)) {
+        if (value !== undefined) element.setAttribute(name, value);
+      }
       return;
   }
 }
@@ -68,6 +70,7 @@ export function applyDocumentMetadata(
     resolveMetadataDescriptors(metadata).map((descriptor) => [descriptor.key, descriptor]),
   );
 
+  // Fixed slots first. `metadata.meta` / `metadata.links` tags are handled below.
   for (const key of MANAGED_METADATA_KEYS) {
     const existing = documentNode.querySelector(key);
     const descriptor = descriptorsByKey.get(key);
@@ -82,5 +85,34 @@ export function applyDocumentMetadata(
     writeDescriptor(element, descriptor);
 
     if (existing === null) documentNode.head.appendChild(element);
+  }
+
+  // `metadata.meta` / `metadata.links` tags have no fixed slots. They carry
+  // MANAGED_DYNAMIC_ATTRIBUTE, so tags root.tsx wrote are never matched: stale
+  // ones are removed, current ones replaced in place (attributes cleared first,
+  // so a link that lost its `media` does not keep it).
+  const dynamicDescriptors = [...descriptorsByKey.values()].filter((d) => d.dynamic === true);
+  const wanted = new Set(dynamicDescriptors.map((descriptor) => descriptor.key));
+  const present = new Map<string, Element>();
+
+  for (const element of Array.from(
+    documentNode.querySelectorAll(`[${MANAGED_DYNAMIC_ATTRIBUTE}]`),
+  )) {
+    const key = element.getAttribute(MANAGED_DYNAMIC_ATTRIBUTE) ?? "";
+
+    if (!wanted.has(key) || present.has(key)) element.remove();
+    else present.set(key, element);
+  }
+
+  for (const descriptor of dynamicDescriptors) {
+    const existing = present.get(descriptor.key);
+    const element = existing ?? createElementFor(documentNode, descriptor.key);
+
+    for (const name of element.getAttributeNames()) element.removeAttribute(name);
+
+    writeDescriptor(element, descriptor);
+    element.setAttribute(MANAGED_DYNAMIC_ATTRIBUTE, descriptor.key);
+
+    if (existing === undefined) documentNode.head.appendChild(element);
   }
 }

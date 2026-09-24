@@ -103,64 +103,150 @@ describe("PageMetadata — the annotated half", () => {
 function renderHead(metadata: MetadataOutput): string {
   const value = { metadata, payload: {} } as unknown as DocumentContextValue;
 
+  // The framework marks `meta[]`/`links[]` and multi-valued tags with
+  // `data-warlock-metadata` so client navigation can find them; strip it so
+  // assertions compare the tag itself.
   return renderToStaticMarkup(
     createElement(DocumentContext.Provider, { value }, createElement(Head)),
-  );
+  ).replace(/ data-warlock-metadata="[^"]*"/g, "");
 }
 
 /**
- * Every declared key, and the tag it must produce.
+ * Every declared key, and the tag it must produce — rendered ALONE, so a key
+ * that only works next to another one still fails here.
  *
- * These strings are not composed from the type — they were READ OFF A REAL
- * RESPONSE. A page exporting this exact metadata object was served over
- * node:http and the bytes that came back carried precisely these tags, in this
- * order, with `og:title`/`og:description` filled from the top-level fields
- * exactly as `metadata.ts` documents. Asserting on the rendered output rather
- * than on the source is the difference between "the field exists" and "the
- * field reaches the browser".
+ * Asserting on the rendered output rather than on the source is the difference
+ * between "the field exists" and "the field reaches the browser". Each case is
+ * a metadata object that sets exactly that key (plus what it needs to be
+ * emitted) and the tag that must appear in the head.
  */
-const FULL_METADATA: MetadataOutput = {
-  title: "Products",
-  description: "Everything in stock",
-  keywords: ["shop", "products"],
-  canonical: "https://example.com/products",
-  robots: "index,follow",
-  openGraph: { image: "og-image", url: "og-url", type: "website" },
-  twitter: { card: "summary", title: "tw-title", description: "tw-desc", image: "tw-image" },
+type RenderCase = { metadata: MetadataOutput; tag: string };
+
+const CASE_FOR_KEY: Record<string, RenderCase> = {
+  title: { metadata: { title: "Products" }, tag: "<title>Products</title>" },
+  description: {
+    metadata: { description: "Everything in stock" },
+    tag: '<meta name="description" content="Everything in stock"/>',
+  },
+  keywords: {
+    metadata: { keywords: ["shop", "products"] },
+    tag: '<meta name="keywords" content="shop, products"/>',
+  },
+  image: {
+    metadata: { image: "og-image" },
+    tag: '<meta property="og:image" content="og-image"/>',
+  },
+  authors: {
+    metadata: { authors: ["Ada", "Grace"] },
+    tag: '<meta name="author" content="Ada, Grace"/>',
+  },
+  canonical: {
+    metadata: { canonical: "https://example.com/products" },
+    tag: '<link rel="canonical" href="https://example.com/products"/>',
+  },
+  robots: {
+    metadata: { robots: "index,follow" },
+    tag: '<meta name="robots" content="index,follow"/>',
+  },
+  openGraph: {
+    metadata: { openGraph: { type: "website" } },
+    tag: '<meta property="og:type" content="website"/>',
+  },
+  twitter: {
+    metadata: { twitter: { card: "summary" } },
+    tag: '<meta name="twitter:card" content="summary"/>',
+  },
+  meta: {
+    metadata: { meta: [{ name: "generator", content: "warlock" }] },
+    tag: '<meta name="generator" content="warlock"',
+  },
+  links: {
+    metadata: { links: [{ rel: "icon", href: "/favicon.ico" }] },
+    tag: '<link rel="icon" href="/favicon.ico"',
+  },
 };
 
-const TAG_FOR_KEY: Record<string, string> = {
-  title: "<title>Products</title>",
-  description: '<meta name="description" content="Everything in stock"/>',
-  keywords: '<meta name="keywords" content="shop, products"/>',
-  canonical: '<link rel="canonical" href="https://example.com/products"/>',
-  robots: '<meta name="robots" content="index,follow"/>',
-  openGraph: '<meta property="og:type" content="website"/>',
-  twitter: '<meta name="twitter:card" content="summary"/>',
+const CASE_FOR_OPEN_GRAPH_KEY: Record<string, RenderCase> = {
+  // `title` and `description` fall back to the top-level fields, so they are
+  // proven by overriding them.
+  title: {
+    metadata: { title: "T", openGraph: { title: "OG title" } },
+    tag: '<meta property="og:title" content="OG title"/>',
+  },
+  description: {
+    metadata: { description: "d", openGraph: { description: "OG description" } },
+    tag: '<meta property="og:description" content="OG description"/>',
+  },
+  image: {
+    metadata: { openGraph: { image: "og-image" } },
+    tag: '<meta property="og:image" content="og-image"/>',
+  },
+  images: {
+    metadata: { openGraph: { images: [{ url: "a.png", width: 1200 }] } },
+    tag: '<meta property="og:image" content="a.png"/><meta property="og:image:width" content="1200"/>',
+  },
+  url: {
+    metadata: { openGraph: { url: "og-url" } },
+    tag: '<meta property="og:url" content="og-url"/>',
+  },
+  type: {
+    metadata: { openGraph: { type: "product" } },
+    tag: '<meta property="og:type" content="product"/>',
+  },
+  siteName: {
+    metadata: { openGraph: { siteName: "Shop" } },
+    tag: '<meta property="og:site_name" content="Shop"/>',
+  },
+  locale: {
+    metadata: { openGraph: { locale: "en_US" } },
+    tag: '<meta property="og:locale" content="en_US"/>',
+  },
+  alternateLocales: {
+    metadata: { openGraph: { alternateLocales: ["ar"] } },
+    tag: '<meta property="og:locale:alternate" content="ar"',
+  },
+  article: {
+    metadata: { openGraph: { type: "article", article: { section: "News" } } },
+    tag: '<meta property="article:section" content="News"/>',
+  },
 };
 
-const TAG_FOR_OPEN_GRAPH_KEY: Record<string, string> = {
-  // `title` and `description` fall back to the top-level fields — the only two
-  // fallbacks the type declares, and they are why this object omits them.
-  title: '<meta property="og:title" content="Products"/>',
-  description: '<meta property="og:description" content="Everything in stock"/>',
-  image: '<meta property="og:image" content="og-image"/>',
-  url: '<meta property="og:url" content="og-url"/>',
-  type: '<meta property="og:type" content="website"/>',
-};
-
-const TAG_FOR_TWITTER_KEY: Record<string, string> = {
-  card: '<meta name="twitter:card" content="summary"/>',
-  title: '<meta name="twitter:title" content="tw-title"/>',
-  description: '<meta name="twitter:description" content="tw-desc"/>',
-  image: '<meta name="twitter:image" content="tw-image"/>',
+const CASE_FOR_TWITTER_KEY: Record<string, RenderCase> = {
+  card: {
+    metadata: { twitter: { card: "player" } },
+    tag: '<meta name="twitter:card" content="player"/>',
+  },
+  title: {
+    metadata: { twitter: { title: "tw-title" } },
+    tag: '<meta name="twitter:title" content="tw-title"/>',
+  },
+  description: {
+    metadata: { twitter: { description: "tw-desc" } },
+    tag: '<meta name="twitter:description" content="tw-desc"/>',
+  },
+  image: {
+    metadata: { twitter: { image: "tw-image" } },
+    tag: '<meta name="twitter:image" content="tw-image"/>',
+  },
+  imageAlt: {
+    metadata: { twitter: { imageAlt: "A shelf" } },
+    tag: '<meta name="twitter:image:alt" content="A shelf"/>',
+  },
+  site: {
+    metadata: { twitter: { site: "@shop" } },
+    tag: '<meta name="twitter:site" content="@shop"/>',
+  },
+  creator: {
+    metadata: { twitter: { creator: "@ada" } },
+    tag: '<meta name="twitter:creator" content="@ada"/>',
+  },
 };
 
 describe("MetadataOutput — every declared key is a key something reads", () => {
   it.each([
-    ["metadata", METADATA_KEYS, TAG_FOR_KEY],
-    ["openGraph", OPEN_GRAPH_KEYS, TAG_FOR_OPEN_GRAPH_KEY],
-    ["twitter", TWITTER_KEYS, TAG_FOR_TWITTER_KEY],
+    ["metadata", METADATA_KEYS, CASE_FOR_KEY],
+    ["openGraph", OPEN_GRAPH_KEYS, CASE_FOR_OPEN_GRAPH_KEY],
+    ["twitter", TWITTER_KEYS, CASE_FOR_TWITTER_KEY],
   ] as const)("covers every %s key with a rendered tag", (_name, keys, table) => {
     // The guard on the guard: a key added to the type and the list without a
     // tag beside it fails HERE, before anyone discovers by shipping that the
@@ -168,27 +254,14 @@ describe("MetadataOutput — every declared key is a key something reads", () =>
     expect(Object.keys(table).sort()).toEqual([...keys].sort());
   });
 
-  it("renders the tag for every key, in the order the response carried them", () => {
-    const html = renderHead(FULL_METADATA);
-    const expected = [
-      '<meta charSet="utf-8"/>',
-      TAG_FOR_KEY.title,
-      TAG_FOR_KEY.description,
-      TAG_FOR_KEY.keywords,
-      TAG_FOR_KEY.canonical,
-      TAG_FOR_KEY.robots,
-      TAG_FOR_OPEN_GRAPH_KEY.title,
-      TAG_FOR_OPEN_GRAPH_KEY.description,
-      TAG_FOR_OPEN_GRAPH_KEY.image,
-      TAG_FOR_OPEN_GRAPH_KEY.url,
-      TAG_FOR_OPEN_GRAPH_KEY.type,
-      TAG_FOR_TWITTER_KEY.card,
-      TAG_FOR_TWITTER_KEY.title,
-      TAG_FOR_TWITTER_KEY.description,
-      TAG_FOR_TWITTER_KEY.image,
-    ].join("");
-
-    expect(html).toBe(expected);
+  it.each([
+    ...Object.entries(CASE_FOR_KEY).map(([key, entry]) => ["metadata", key, entry] as const),
+    ...Object.entries(CASE_FOR_OPEN_GRAPH_KEY).map(
+      ([key, entry]) => ["openGraph", key, entry] as const,
+    ),
+    ...Object.entries(CASE_FOR_TWITTER_KEY).map(([key, entry]) => ["twitter", key, entry] as const),
+  ])("%s.%s reaches the head", (_group, _key, entry) => {
+    expect(renderHead(entry.metadata)).toContain(entry.tag);
   });
 
   it("writes NOTHING for a key the type does not declare — the whole reason the gate exists", () => {

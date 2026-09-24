@@ -26,6 +26,7 @@ import {
   type ErrorPageModule,
   type ErrorPageModuleLoader,
 } from "./error-page";
+import { enrichMetadata } from "../metadata/enrich-metadata";
 import { ERROR_PAGE_METADATA } from "./resolve-page-metadata";
 import { registerModules, type RegisterableModuleNamespace } from "../register-modules";
 import { markNonHydrating } from "./page-render-bundle";
@@ -1004,6 +1005,18 @@ async function finishRender(
   // not the build-time `virtual:warlock/pages` guess — see
   // `DocumentContextValue.localeRouting`.
   const localeRouting = resolveDocumentLocaleRouting(bundle.route.path, activeLocaleRouting);
+
+  // The ONE place request-aware metadata is filled in (auto canonical/og:url,
+  // absolute URLs, og:locale). `finishRender` serves the document AND the
+  // client-navigation data response, and both read `bundle.metadata` from here
+  // on (`buildHydrationPayload`), so the two cannot disagree. The error paths
+  // below replace `bundle.metadata` wholesale and are never enriched.
+  bundle.metadata = enrichMetadata(bundle.metadata, {
+    publicUrl: getPublicUrl(),
+    requestPath: request.path,
+    locale: documentSlots.locale,
+    alternateLocales: localeAlternates?.map((alternate) => alternate.hreflang),
+  });
 
   let documentValue: DocumentContextValue = {
     metadata: bundle.metadata,

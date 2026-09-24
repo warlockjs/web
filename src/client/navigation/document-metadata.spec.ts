@@ -23,6 +23,9 @@ type FakeElement = {
   attributes: Record<string, string>;
   textContent: string;
   setAttribute(name: string, value: string): void;
+  getAttribute(name: string): string | null;
+  getAttributeNames(): string[];
+  removeAttribute(name: string): void;
   remove(): void;
 };
 
@@ -63,6 +66,11 @@ function fakeHead(
       setAttribute(name, value) {
         element.attributes[name] = value;
       },
+      getAttribute: (name) => element.attributes[name] ?? null,
+      getAttributeNames: () => Object.keys(element.attributes),
+      removeAttribute(name) {
+        delete element.attributes[name];
+      },
       remove() {
         const index = elements.indexOf(element);
 
@@ -86,6 +94,14 @@ function fakeHead(
     createElement: (tagName: string) => make(tagName),
     querySelector: (selector: string) =>
       elements.find((element) => matchesSelector(element, selector)) ?? null,
+    // Only the `[attribute]` shape the applier uses to find its dynamic tags.
+    querySelectorAll: (selector: string) => {
+      const attribute = /^\[([a-zA-Z-]+)\]$/.exec(selector)?.[1];
+
+      if (attribute === undefined) throw new Error(`Unsupported selector: ${selector}`);
+
+      return elements.filter((element) => attribute in element.attributes);
+    },
   } as unknown as Document;
 
   return { documentNode, elements };
@@ -109,7 +125,13 @@ describe("applyDocumentMetadata", () => {
 
     applyDocumentMetadata(documentNode, { title: "Contact us" });
 
-    expect(describeHead(elements)).toEqual(["title Contact us"]);
+    expect(describeHead(elements)).toEqual([
+      "title Contact us",
+      "meta property=og:title content=Contact us",
+      "meta property=og:type content=website",
+      "meta name=twitter:card content=summary",
+      "meta name=twitter:title content=Contact us",
+    ]);
   });
 
   it("creates a title element when the document has none", () => {
@@ -117,7 +139,13 @@ describe("applyDocumentMetadata", () => {
 
     applyDocumentMetadata(documentNode, { title: "Contact us" });
 
-    expect(describeHead(elements)).toEqual(["title Contact us"]);
+    expect(describeHead(elements)).toEqual([
+      "title Contact us",
+      "meta property=og:title content=Contact us",
+      "meta property=og:type content=website",
+      "meta name=twitter:card content=summary",
+      "meta name=twitter:title content=Contact us",
+    ]);
   });
 
   /**
@@ -134,7 +162,13 @@ describe("applyDocumentMetadata", () => {
 
     applyDocumentMetadata(documentNode, { title: "Contact us" });
 
-    expect(describeHead(elements)).toEqual(["title Contact us"]);
+    expect(describeHead(elements)).toEqual([
+      "title Contact us",
+      "meta property=og:title content=Contact us",
+      "meta property=og:type content=website",
+      "meta name=twitter:card content=summary",
+      "meta name=twitter:title content=Contact us",
+    ]);
   });
 
   it("clears every managed tag when the new page has no metadata at all", () => {
@@ -160,7 +194,13 @@ describe("applyDocumentMetadata", () => {
 
     applyDocumentMetadata(documentNode, { description: "How to reach us" });
 
-    expect(describeHead(elements)).toEqual(["meta name=description content=How to reach us"]);
+    expect(describeHead(elements)).toEqual([
+      "meta name=description content=How to reach us",
+      "meta property=og:description content=How to reach us",
+      "meta property=og:type content=website",
+      "meta name=twitter:card content=summary",
+      "meta name=twitter:description content=How to reach us",
+    ]);
   });
 
   it("joins array keywords the way <Head/> does", () => {
@@ -172,18 +212,19 @@ describe("applyDocumentMetadata", () => {
   });
 
   /**
-   * `<Head/>`'s exact rule (`components/head.ts:22-23,43-48`): og:title falls
-   * back to the top-level title, but ONLY when `openGraph` is present. The
-   * applier mirrors it because the head after a navigation must equal the head
-   * after landing on the same URL — two rules would make that comparison a
-   * coin toss.
+   * The og fallbacks are context-free and always on: `og:title` /
+   * `og:description` come from the top-level fields even without `openGraph`.
+   * The applier mirrors `<Head/>` because the head after a navigation must equal
+   * the head after landing on the same URL.
    */
-  it("falls og:title back to the title only when openGraph is present", () => {
+  it("falls og:title back to the title with or without openGraph", () => {
     const withoutOpenGraph = fakeHead([]);
 
     applyDocumentMetadata(withoutOpenGraph.documentNode, { title: "Contact us" });
 
-    expect(describeHead(withoutOpenGraph.elements)).toEqual(["title Contact us"]);
+    expect(describeHead(withoutOpenGraph.elements)).toContain(
+      "meta property=og:title content=Contact us",
+    );
 
     const withOpenGraph = fakeHead([]);
 
@@ -195,8 +236,46 @@ describe("applyDocumentMetadata", () => {
     expect(describeHead(withOpenGraph.elements)).toEqual([
       "title Contact us",
       "meta property=og:title content=Contact us",
-      "meta property=og:image content=https://app.test/og.png",
+      "meta property=og:type content=website",
+      "meta name=twitter:card content=summary_large_image",
+      "meta name=twitter:title content=Contact us",
+      "meta name=twitter:image content=https://app.test/og.png",
+      'meta property=og:image content=https://app.test/og.png data-warlock-metadata=meta[property="og:image"]#0',
     ]);
+  });
+
+  it("navigation: a page with two og:image leaves one when the next page has one", () => {
+    const { documentNode, elements } = fakeHead([]);
+
+    applyDocumentMetadata(documentNode, {
+      openGraph: { images: [{ url: "https://app.test/a.png" }, { url: "https://app.test/b.png" }] },
+    });
+    expect(describeHead(elements).filter((tag) => tag.includes("og:image "))).toEqual([
+      "meta property=og:image content=https://app.test/a.png data-warlock-metadata=meta[property=\"og:image\"]#0",
+      "meta property=og:image content=https://app.test/b.png data-warlock-metadata=meta[property=\"og:image\"]#1",
+    ]);
+
+    applyDocumentMetadata(documentNode, { openGraph: { images: [{ url: "https://app.test/c.png" }] } });
+
+    const images = elements.filter((element) => element.attributes.property === "og:image");
+
+    expect(images).toHaveLength(1);
+    expect(images[0]?.attributes.content).toBe("https://app.test/c.png");
+  });
+
+  it("navigation: og:locale:alternate tags are removed when the next page has none", () => {
+    const { documentNode, elements } = fakeHead([]);
+
+    applyDocumentMetadata(documentNode, { openGraph: { locale: "en", alternateLocales: ["ar", "fr"] } });
+    expect(
+      elements.filter((element) => element.attributes.property === "og:locale:alternate"),
+    ).toHaveLength(2);
+
+    applyDocumentMetadata(documentNode, { openGraph: { locale: "en" } });
+
+    expect(
+      elements.filter((element) => element.attributes.property === "og:locale:alternate"),
+    ).toHaveLength(0);
   });
 
   it("writes the twitter and canonical tags", () => {

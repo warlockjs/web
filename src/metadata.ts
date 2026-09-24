@@ -19,30 +19,103 @@ import type { LoaderData, LoaderFunction } from "./props";
  * `build/read-metadata-keys.ts` accepts the key — but until a renderer emits a tag
  * for it, the key still does nothing. Write the renderer.
  */
+/** A share/preview image. A bare string is `{ url }`. */
+export type MetadataImage = {
+  url: string;
+  width?: number;
+  height?: number;
+  alt?: string;
+  type?: string;
+};
+
 export type MetadataOutput = {
   title?: string;
   description?: string;
   keywords?: string | readonly string[];
-  canonical?: string;
+  /**
+   * The share image: `og:image` and `twitter:image` fall back to it.
+   * `openGraph.images` / `openGraph.image` win over it.
+   */
+  image?: string | MetadataImage;
+  /** `<meta name="author">`, plus a `<link rel="author">` for each author with a `url`. */
+  authors?: string | readonly (string | { name: string; url?: string })[];
+  /**
+   * `false` = no canonical link and no automatic `og:url`. When absent the
+   * server derives it from the public URL and the request path (`enrichMetadata`).
+   */
+  canonical?: string | false;
   robots?: string;
   /**
    * `og:title`/`og:description` fall back to the top-level `title`/
-   * `description` when `openGraph` is present but the member is absent —
-   * no other member has a fallback.
+   * `description` ALWAYS, even without `openGraph`; `og:type` defaults to
+   * `"website"` whenever any `og:*` tag is emitted. `article` is only
+   * rendered when `type` is `"article"`.
    */
   openGraph?: {
     title?: string;
     description?: string;
+    /** Kept for compatibility; `images` wins over it. */
     image?: string;
+    images?: readonly MetadataImage[];
     url?: string;
-    type?: string;
+    type?: "website" | "article" | "product" | "profile" | (string & {});
+    siteName?: string;
+    locale?: string;
+    /** `og:locale:alternate`, one tag per entry. Filled by the server from the locale alternates. */
+    alternateLocales?: readonly string[];
+    article?: {
+      publishedTime?: string;
+      modifiedTime?: string;
+      authors?: readonly string[];
+      section?: string;
+      tags?: readonly string[];
+    };
   };
+  /**
+   * Every member falls back to the `og:*` value (`title`, `description`,
+   * `image`, `imageAlt`); `card` is `summary_large_image` with an image and
+   * `summary` without.
+   */
   twitter?: {
     card?: string;
     title?: string;
     description?: string;
     image?: string;
+    imageAlt?: string;
+    site?: string;
+    creator?: string;
   };
+  /**
+   * Extra `<meta>` tags. A built-in field wins: an entry addressing a tag a
+   * built-in field owns (`description`, `keywords`, `robots`, `og:*`,
+   * `twitter:*`) is dropped with a dev warning. Arrays are REPLACED by the
+   * nearest level that defines them (page over layout over root), never
+   * concatenated.
+   */
+  meta?: readonly (
+    | { name: string; content: string }
+    | { property: string; content: string }
+    | {
+        httpEquiv: "content-type" | "default-style" | "x-ua-compatible" | "content-security-policy";
+        content: string;
+      }
+  )[];
+  /**
+   * Extra `<link>` tags. `rel="canonical"` belongs to `canonical` and is
+   * dropped; an invalid `rel` or a `javascript:` href is dropped with a dev
+   * warning. Replaced, not concatenated, like `meta`.
+   */
+  links?: readonly {
+    rel: string;
+    href: string;
+    hreflang?: string;
+    type?: string;
+    sizes?: string;
+    media?: string;
+    as?: string;
+    crossOrigin?: "anonymous" | "use-credentials";
+    title?: string;
+  }[];
 };
 
 export type MetadataTitleInput =
@@ -95,17 +168,40 @@ export const METADATA_KEYS = [
   "title",
   "description",
   "keywords",
+  "image",
+  "authors",
   "canonical",
   "robots",
   "openGraph",
   "twitter",
+  "meta",
+  "links",
 ] as const;
 
 /** The members of `openGraph`, on the same terms as {@link METADATA_KEYS}. */
-export const OPEN_GRAPH_KEYS = ["title", "description", "image", "url", "type"] as const;
+export const OPEN_GRAPH_KEYS = [
+  "title",
+  "description",
+  "image",
+  "images",
+  "url",
+  "type",
+  "siteName",
+  "locale",
+  "alternateLocales",
+  "article",
+] as const;
 
 /** The members of `twitter`, on the same terms as {@link METADATA_KEYS}. */
-export const TWITTER_KEYS = ["card", "title", "description", "image"] as const;
+export const TWITTER_KEYS = [
+  "card",
+  "title",
+  "description",
+  "image",
+  "imageAlt",
+  "site",
+  "creator",
+] as const;
 
 /**
  * Instantiates only when `Difference` is empty. When it is not, the compiler

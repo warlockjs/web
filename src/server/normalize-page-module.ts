@@ -174,16 +174,27 @@ function validateMiddleware(value: unknown, sourceFile: string): readonly Pipeli
   return value as readonly PipelineMiddleware[];
 }
 
+/** A metadata image: a URL string or `{ url, width?, height?, alt?, type? }`. */
+function validateImage(value: unknown, sourceFile: string, subject: string): void {
+  if (typeof value === "string") return;
+  if (!plainObject(value) || typeof value.url !== "string") {
+    fail(sourceFile, `${subject} must be a URL string or an object with a string url.`);
+  }
+  assertExactKeys(value, ["url", "width", "height", "alt", "type"], sourceFile, subject);
+}
+
 function validateStringFields(
   value: unknown,
   keys: readonly string[],
   sourceFile: string,
   subject: string,
+  nonStringKeys: readonly string[] = [],
 ): void {
   if (!plainObject(value)) fail(sourceFile, `${subject} must be a plain object.`);
   assertExactKeys(value, keys, sourceFile, subject);
 
   for (const key of keys) {
+    if (nonStringKeys.includes(key)) continue;
     if (value[key] !== undefined && typeof value[key] !== "string") {
       fail(sourceFile, `${subject}.${key} must be a string when defined.`);
     }
@@ -218,9 +229,34 @@ function validateMetadataInput(value: unknown, sourceFile: string): MetadataInpu
     }
   }
 
-  for (const key of ["description", "canonical", "robots"] as const) {
+  for (const key of ["description", "robots"] as const) {
     if (value[key] !== undefined && typeof value[key] !== "string") {
       fail(sourceFile, `config.metadata.${key} must be a string when defined.`);
+    }
+  }
+  if (value.canonical !== undefined && value.canonical !== false && typeof value.canonical !== "string") {
+    fail(sourceFile, "config.metadata.canonical must be a string or false when defined.");
+  }
+  if (value.image !== undefined && typeof value.image !== "string") {
+    validateImage(value.image, sourceFile, "config.metadata.image");
+  }
+  if (
+    value.authors !== undefined &&
+    typeof value.authors !== "string" &&
+    (!Array.isArray(value.authors) ||
+      !value.authors.every(
+        (author) =>
+          typeof author === "string" || (plainObject(author) && typeof author.name === "string"),
+      ))
+  ) {
+    fail(
+      sourceFile,
+      "config.metadata.authors must be a string or an array of strings / { name, url? } objects.",
+    );
+  }
+  for (const key of ["meta", "links"] as const) {
+    if (value[key] !== undefined && !(Array.isArray(value[key]) && value[key].every(plainObject))) {
+      fail(sourceFile, `config.metadata.${key} must be an array of plain objects when defined.`);
     }
   }
   if (
@@ -235,7 +271,32 @@ function validateMetadataInput(value: unknown, sourceFile: string): MetadataInpu
     );
   }
   if (value.openGraph !== undefined) {
-    validateStringFields(value.openGraph, OPEN_GRAPH_KEYS, sourceFile, "config.metadata.openGraph");
+    validateStringFields(value.openGraph, OPEN_GRAPH_KEYS, sourceFile, "config.metadata.openGraph", [
+      "images",
+      "alternateLocales",
+      "article",
+    ]);
+    const openGraph = value.openGraph as Record<string, unknown>;
+    if (openGraph.images !== undefined) {
+      if (!Array.isArray(openGraph.images)) {
+        fail(sourceFile, "config.metadata.openGraph.images must be an array when defined.");
+      }
+      openGraph.images.forEach((image, index) =>
+        validateImage(image, sourceFile, `config.metadata.openGraph.images[${index}]`),
+      );
+    }
+    if (
+      openGraph.alternateLocales !== undefined &&
+      !(
+        Array.isArray(openGraph.alternateLocales) &&
+        openGraph.alternateLocales.every((locale) => typeof locale === "string")
+      )
+    ) {
+      fail(sourceFile, "config.metadata.openGraph.alternateLocales must be an array of strings.");
+    }
+    if (openGraph.article !== undefined && !plainObject(openGraph.article)) {
+      fail(sourceFile, "config.metadata.openGraph.article must be a plain object when defined.");
+    }
   }
   if (value.twitter !== undefined) {
     validateStringFields(value.twitter, TWITTER_KEYS, sourceFile, "config.metadata.twitter");

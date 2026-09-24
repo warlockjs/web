@@ -1,5 +1,6 @@
 import { createElement, Fragment, type ReactElement } from "react";
 import {
+  MANAGED_DYNAMIC_ATTRIBUTE,
   resolveMetadataDescriptors,
   type MetadataDescriptor,
 } from "../metadata/metadata-descriptors";
@@ -13,15 +14,22 @@ function renderDescriptor(descriptor: MetadataDescriptor): ReactElement {
     case "meta":
       return createElement("meta", {
         key: descriptor.key,
-        [descriptor.attrs.attribute]: descriptor.attrs.name,
+        [descriptor.attrs.attribute === "http-equiv" ? "httpEquiv" : descriptor.attrs.attribute]:
+          descriptor.attrs.name,
         content: descriptor.attrs.content,
+        ...(descriptor.dynamic ? { [MANAGED_DYNAMIC_ATTRIBUTE]: descriptor.key } : {}),
       });
-    case "link":
+    case "link": {
+      const { crossorigin, hreflang, ...rest } = descriptor.attrs;
+
       return createElement("link", {
         key: descriptor.key,
-        rel: descriptor.attrs.rel,
-        href: descriptor.attrs.href,
+        ...rest,
+        ...(hreflang === undefined ? {} : { hrefLang: hreflang }),
+        ...(crossorigin === undefined ? {} : { crossOrigin: crossorigin }),
+        ...(descriptor.dynamic ? { [MANAGED_DYNAMIC_ATTRIBUTE]: descriptor.key } : {}),
       });
+    }
   }
 }
 

@@ -78,6 +78,9 @@ type FakeElement = {
   attributes: Record<string, string>;
   textContent: string;
   setAttribute(name: string, value: string): void;
+  getAttribute(name: string): string | null;
+  getAttributeNames(): string[];
+  removeAttribute(name: string): void;
   remove(): void;
 };
 
@@ -107,6 +110,11 @@ function fakeDocument() {
       setAttribute(name, value) {
         element.attributes[name] = value;
       },
+      getAttribute: (name) => element.attributes[name] ?? null,
+      getAttributeNames: () => Object.keys(element.attributes),
+      removeAttribute(name) {
+        delete element.attributes[name];
+      },
       remove() {
         const index = elements.indexOf(element);
 
@@ -126,6 +134,14 @@ function fakeDocument() {
     createElement: (tagName: string) => make(tagName),
     querySelector: (selector: string) =>
       elements.find((element) => matchesSelector(element, selector)) ?? null,
+    // Only the `[attribute]` shape the applier uses to find its dynamic tags.
+    querySelectorAll: (selector: string) => {
+      const attribute = /^\[([a-zA-Z-]+)\]$/.exec(selector)?.[1];
+
+      if (attribute === undefined) throw new Error(`Unsupported selector: ${selector}`);
+
+      return elements.filter((element) => attribute in element.attributes);
+    },
   } as unknown as Document;
 
   return { documentNode, elements };
@@ -212,7 +228,7 @@ describe("SSR/client metadata parity", () => {
     ["title + description", TITLE_AND_DESCRIPTION],
     ["explicit og overriding the top-level fields", EXPLICIT_OG_OVERRIDE],
     [
-      "twitter set alongside og — no cross-fallback either implementation should invent",
+      "twitter set alongside og — twitter members fall back to the og values",
       TWITTER_DOES_NOT_FALL_BACK_TO_OG,
     ],
     ["canonical", CANONICAL],
@@ -257,13 +273,14 @@ describe("SSR/client metadata parity", () => {
       "meta name=robots content=index, follow",
       "meta property=og:title content=Talk to us",
       "meta property=og:description content=We are here to help",
-      "meta property=og:image content=https://app.test/og.png",
       "meta property=og:url content=https://app.test/contact-us",
       "meta property=og:type content=website",
       "meta name=twitter:card content=summary",
       "meta name=twitter:title content=Talk to us on Twitter",
       "meta name=twitter:description content=DM us any time",
       "meta name=twitter:image content=https://app.test/twitter.png",
+      // Repeatable built-ins are dynamic tags: after every fixed slot.
+      "meta property=og:image content=https://app.test/og.png",
     ]);
   });
 
@@ -325,6 +342,13 @@ describe("SSR/client metadata parity", () => {
     expect(appliedByClient(DANGEROUS)).toEqual([
       `title Contact us & "support" <team>`,
       `meta name=description content=We're here 24/7 & we <care> a lot, "really"`,
+      // og:*/twitter:* always fall back to title/description (5.20).
+      `meta property=og:title content=Contact us & "support" <team>`,
+      `meta property=og:description content=We're here 24/7 & we <care> a lot, "really"`,
+      "meta property=og:type content=website",
+      "meta name=twitter:card content=summary",
+      `meta name=twitter:title content=Contact us & "support" <team>`,
+      `meta name=twitter:description content=We're here 24/7 & we <care> a lot, "really"`,
     ]);
   });
 });
