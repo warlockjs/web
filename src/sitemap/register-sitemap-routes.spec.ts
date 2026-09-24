@@ -78,12 +78,13 @@ function context(
   params: Record<string, string> = {},
   headers: Record<string, string> = {},
   method = "GET",
+  missingHeader: string | null | undefined = undefined,
 ): HttpContext {
   return {
     request: {
       params,
       method,
-      header: (name: string) => headers[name.toLowerCase()],
+      header: (name: string) => headers[name.toLowerCase()] ?? missingHeader,
     },
     response,
   } as unknown as HttpContext;
@@ -157,6 +158,24 @@ describe("registerSitemapRoutes — manifest-backed serving", () => {
 
     expect(store.getArtifactStream).toHaveBeenCalledWith(current, current.mainFile);
     expect(calls["baseResponse.send"]).toHaveLength(1);
+  });
+
+  it("treats Core Request's null absent conditional headers as absent", async () => {
+    const { state, store } = stateFor(manifest());
+    const { router, routes } = capturingRouter();
+    registerSitemapRoutes(router, { path: "/sitemap.xml", getServingState: () => state });
+
+    const get = fakeResponse();
+    await routes.get("/sitemap.xml")!(context(get.response, {}, {}, "GET", null));
+
+    expect(get.calls["baseResponse.send"]).toHaveLength(1);
+    expect(get.calls.header).toContainEqual(["ETag", `"${digest}"`]);
+
+    const head = fakeResponse();
+    await routes.get("/sitemap.xml")!(context(head.response, {}, {}, "HEAD", null));
+
+    expect(head.calls.send).toEqual([[]]);
+    expect(store.getArtifactStream).toHaveBeenCalledTimes(1);
   });
 
   it("answers HEAD with validators and no artifact stream", async () => {
