@@ -165,3 +165,33 @@ describe("createManifestSitemapPageSource — layout declarations", () => {
     ]);
   });
 });
+
+describe("createManifestSitemapPageSource with setup modules", () => {
+  it("reads route, sitemap and layout prefix from *.setup.ts config", async () => {
+    const supplier = async () => [{ path: "/shop/a" }];
+    const source = createManifestSitemapPageSource({
+      pages: [
+        {
+          module: { default: () => null },
+          sourceFile: "src/web/shop/list.page.tsx",
+          setupModule: { config: { route: "/products", sitemap: supplier } },
+          setupSourceFile: "src/web/shop/list.setup.ts",
+          layouts: [
+            {
+              module: { default: () => null },
+              sourceFile: "src/web/shop/layout.tsx",
+              setupModule: { config: { prefix: "/store", sitemap: false } },
+              setupSourceFile: "src/web/shop/layout.setup.ts",
+            },
+          ],
+        },
+      ],
+    } as PageManifest);
+
+    const [entry] = await source();
+
+    expect(entry.routePath).toBe("/store/products");
+    expect(entry.sitemap).toBe(supplier);
+    expect(entry.layoutSitemaps).toEqual([{ sourceFile: "src/web/shop/layout.tsx", declared: false }]);
+  });
+});

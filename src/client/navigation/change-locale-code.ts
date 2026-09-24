@@ -7,6 +7,7 @@ import { routerEvents, type NavigationMode } from "../../routing/router-events";
 import { hydrateShared } from "../../shared";
 import { LOCALE_PREFERENCE_COOKIE_NAME } from "../../locale-preference";
 import { fetchPageData } from "./fetch-page-data";
+import { clearPrefetchCache } from "./prefetch";
 import type { RefreshRuntime } from "./refresh";
 import { syncDocumentLocale } from "./sync-document-locale";
 
@@ -287,6 +288,7 @@ export function createLocaleChanger(runtime: RefreshRuntime): LocaleChanger {
       // Shared state BEFORE the render that consumes it, exactly as a
       // navigation and a refresh do it.
       hydrateShared(result.payload.shared);
+      clearPrefetchCache();
 
       // Corrected HERE, synchronously, rather than left to `NavigationRoot`'s
       // own `current.payload.locale`-keyed effect (`navigation-root.tsx`):
@@ -306,7 +308,8 @@ export function createLocaleChanger(runtime: RefreshRuntime): LocaleChanger {
         // A REAL URL change: the new prefix is the address for this page now,
         // not a fetch-only marker to clean up — `pushState`, same as a plain
         // navigation, so Back returns to the previous locale's URL.
-        window.history.pushState(null, "", targetUrl);
+        if (runtime.commitUrl) runtime.commitUrl(targetUrl, "push");
+        else window.history.pushState(null, "", targetUrl);
       } else {
         // The visible URL is left alone UNLESS it already carried a `locale`
         // query param — left in place, that param would outrank the committed
@@ -315,7 +318,8 @@ export function createLocaleChanger(runtime: RefreshRuntime): LocaleChanger {
         const cleanedUrl = withoutLocaleParam(url);
 
         if (cleanedUrl !== undefined) {
-          window.history.replaceState(null, "", cleanedUrl);
+          if (runtime.commitUrl) runtime.commitUrl(cleanedUrl, "replace");
+          else window.history.replaceState(null, "", cleanedUrl);
         }
       }
 

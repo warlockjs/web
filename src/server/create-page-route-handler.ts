@@ -722,7 +722,8 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         response.setStatusCode(status);
 
         await response.streamReact(documentPipeableStreamForSend);
-        await pendingPageCacheWrite?.();
+        // Fire-and-forget: the response is already sent and the write never rejects.
+        void pendingPageCacheWrite?.();
 
         return;
       }

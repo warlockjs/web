@@ -7,6 +7,7 @@ import {
 } from "@mongez/http";
 import { useEffect, useRef, useState } from "react";
 import type { FormSubmitOptions } from "@mongez/react-form";
+import { clearPrefetchCache } from "../client/navigation/prefetch";
 import { resolveApiRoute } from "../routing/named-api-routes";
 import { interpolateRoutePath } from "../routing/route-path-interpolation";
 import type { SubmitFormResult, UseSubmitFormOptions } from "./types";
@@ -139,6 +140,8 @@ export function useSubmitForm<Schema = undefined, Data = unknown>(
               });
         active.current = request;
         const result = await request;
+        // A submission may have changed what any prefetched page shows.
+        clearPrefetchCache();
         if (!mounted.current || cancelled.current || active.current !== request) return;
         setResponse(result);
         if (result.error) {

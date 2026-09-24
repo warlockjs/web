@@ -11,6 +11,7 @@ import {
   WebPageGraphUnsupportedImportError,
   WEB_ENTRY_IMPORT,
   WEB_ESBUILD_PATCH,
+  webEsbuildDefine,
 } from "./generate-pages-barrel";
 import { MissingPageDefaultExportError } from "./page-default-export";
 
@@ -239,7 +240,7 @@ describe("generatePagesBarrel", () => {
   it("contributes the spike-settled esbuild patch and no NODE_ENV define", () => {
     expect(WEB_ESBUILD_PATCH.jsx).toBe("automatic");
     expect(WEB_ESBUILD_PATCH.jsxImportSource).toBe("react");
-    expect(WEB_ESBUILD_PATCH.define).toEqual({
+    expect(WEB_ESBUILD_PATCH.define).toMatchObject({
       "import.meta.env.DEV": "false",
       "import.meta.env.PROD": "true",
       "import.meta.env.SSR": "true",
@@ -453,5 +454,21 @@ describe("the page-route manifest", () => {
       // manifest is stable across rebuilds.
       expect(normalizeRoutePath(route.path)).toBe(route.path);
     }
+  });
+});
+
+describe("webEsbuildDefine", () => {
+  it("defines every PUBLIC_* var (import.meta.env.PUBLIC_SITE_NAME) and the env object, and no secrets", () => {
+    const define = webEsbuildDefine({ PUBLIC_SITE_NAME: "Acme", DB_PASSWORD: "hunter2" });
+
+    expect(define["import.meta.env.PUBLIC_SITE_NAME"]).toBe('"Acme"');
+    expect(JSON.parse(define["import.meta.env"])).toEqual({
+      DEV: false,
+      PROD: true,
+      SSR: true,
+      MODE: "production",
+      PUBLIC_SITE_NAME: "Acme",
+    });
+    expect(JSON.stringify(define)).not.toContain("hunter2");
   });
 });

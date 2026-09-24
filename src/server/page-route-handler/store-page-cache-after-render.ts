@@ -1,6 +1,6 @@
 import { stringify } from "devalue";
 
-import type { Request, Response } from "@warlock.js/core";
+import { config, type Request, type Response } from "@warlock.js/core";
 
 import { buildHydrationPayload } from "../build-hydration-payload";
 import { DATA_RESPONSE_CONTENT_TYPE } from "../../routing/data-request";
@@ -33,6 +33,41 @@ export function resolveCacheTags(
   if (tags === undefined) return [];
 
   return typeof tags === "function" ? tags(data, { shared: shared ?? {} }) : tags;
+}
+
+const CACHE_FAILURE_LOG_INTERVAL_MS = 60_000;
+let lastCacheFailureLoggedAt = 0;
+
+/** Reports a cache-backend failure at most once a minute, so an outage is not one log line per request. */
+export function reportPageCacheFailure(operation: "lookup" | "store", error: unknown): void {
+  const now = Date.now();
+
+  if (now - lastCacheFailureLoggedAt < CACHE_FAILURE_LOG_INTERVAL_MS) return;
+
+  lastCacheFailureLoggedAt = now;
+  console.warn(`[warlock:web] page-cache ${operation} failed; serving uncached:`, error);
+}
+
+/** Test seam: forget the throttle window. */
+export function resetPageCacheFailureThrottle(): void {
+  lastCacheFailureLoggedAt = 0;
+}
+
+/**
+ * HTML documents carry the request's CSP nonce on their inline scripts, so a
+ * replayed entry would carry the FIRST visitor's nonce and be blocked.
+ */
+export function isNoncedDocumentCache(variant: PageCacheVariant): boolean {
+  return variant === "html" && config.get("http.csp")?.enabled === true;
+}
+
+/** Never rejects: a cache-backend failure must not reach the page's catch block. */
+async function storeSafely(...args: Parameters<typeof setPageCacheEntry>): Promise<void> {
+  try {
+    await setPageCacheEntry(...args);
+  } catch (error) {
+    reportPageCacheFailure("store", error);
+  }
 }
 
 export type PageCacheStorageAttempt = {
@@ -87,7 +122,7 @@ export async function storePageCacheAfterRender(options: {
       Boolean((rendered.headers as Record<string, unknown> | undefined)?.["set-cookie"]),
   });
 
-  if (!eligible) return empty;
+  if (!eligible || isNoncedDocumentCache(pageCacheVariant)) return empty;
 
   const ttl = cache.ttl ?? cache.maxAge;
   const tags = resolveCacheTags(cache.tags, rendered.data, rendered.bundle?.shared);
@@ -118,7 +153,7 @@ export async function storePageCacheAfterRender(options: {
             return;
           }
 
-          await setPageCacheEntry(
+          await storeSafely(
             cacheKey,
             {
               body: limited.body,
@@ -138,7 +173,7 @@ export async function storePageCacheAfterRender(options: {
     if (bytes > maxEntryBytes) {
       reportPageCacheEntryTooLarge(bytes, maxEntryBytes);
     } else {
-      await setPageCacheEntry(
+      void storeSafely(
         cacheKey,
         {
           body: rendered.html,
@@ -162,7 +197,7 @@ export async function storePageCacheAfterRender(options: {
   if (bytes > maxEntryBytes) {
     reportPageCacheEntryTooLarge(bytes, maxEntryBytes);
   } else {
-    await setPageCacheEntry(
+    void storeSafely(
       cacheKey,
       {
         body: precomputedJsonBody,

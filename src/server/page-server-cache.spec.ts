@@ -105,6 +105,7 @@ vi.mock("@warlock.js/cache", async (importOriginal) => {
 
 import { createPageRouteHandler } from "./create-page-route-handler";
 import { invalidatePageCache } from "./invalidate-page-cache";
+import { resetPageCacheFailureThrottle } from "./page-route-handler/store-page-cache-after-render";
 import { resetPageCacheDriverStateForTests } from "./page-cache-driver";
 import {
   DEFAULT_PAGE_CACHE_MAX_ENTRY_BYTES,
@@ -1344,7 +1345,7 @@ describe("server-side page cache (route.cache.serverCache)", () => {
   });
 
   // ── A cache failure must never be silent ──────────────────────────────────
-  it("logs a cache failure server-side, with the error name and message, before the 500 renders", async () => {
+  it("logs a cache failure server-side, with the error name and message, then renders the page uncached (200)", async () => {
     class CacheDriverNotInitializedError extends Error {
       public constructor() {
         super("Cache driver is not initialized");
@@ -1353,8 +1354,9 @@ describe("server-side page cache (route.cache.serverCache)", () => {
     }
 
     const originalGet = fakeCache.get;
-    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const logged = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
+    resetPageCacheFailureThrottle();
     fakeCache.get = async () => {
       throw new CacheDriverNotInitializedError();
     };
@@ -1362,16 +1364,23 @@ describe("server-side page cache (route.cache.serverCache)", () => {
     try {
       const response = await server.inject({ method: "GET", url: "/__scache-driver-down" });
 
-      expect(response.statusCode).toBe(500);
-      expect(renderPageRequest).not.toHaveBeenCalled();
+      // A cache-backend failure is a miss (W1 B3): the page renders.
+      expect(response.statusCode).toBe(200);
+      expect(renderPageRequest).toHaveBeenCalled();
 
       const report = logged.mock.calls.find(
-        (args) => typeof args[0] === "string" && args[0].startsWith("[warlock:web]"),
+        (args) => typeof args[0] === "string" && args[0].startsWith("[warlock:web] page-cache lookup failed"),
       );
 
       expect(report).toBeDefined();
-      expect(String(report![0])).toContain("/__scache-driver-down");
-      expect(report!.some((arg) => arg instanceof CacheDriverNotInitializedError)).toBe(true);
+      expect(
+        report!.some(
+          (arg) =>
+            arg instanceof Error &&
+            arg.name === "CacheDriverNotInitializedError" &&
+            arg.message === "Cache driver is not initialized",
+        ),
+      ).toBe(true);
     } finally {
       fakeCache.get = originalGet;
       logged.mockRestore();

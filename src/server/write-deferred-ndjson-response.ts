@@ -105,6 +105,7 @@ export async function writeDeferredNdjsonResponse(
     endOnce();
   });
 
+  response.flushPendingCookies();
   raw.writeHead(response.statusCode, response.getHeaders() as never);
 
   // devalue's output is JSON-compatible text with no raw newlines, so this

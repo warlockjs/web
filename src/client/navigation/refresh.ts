@@ -3,6 +3,7 @@ import type { HydrationDocumentPayloadSource } from "../../hydration-payload";
 import { routerEvents } from "../../routing/router-events";
 import { hydrateShared } from "../../shared";
 import { fetchPageData } from "./fetch-page-data";
+import { clearPrefetchCache } from "./prefetch";
 
 /**
  * Re-run the current route's loaders and re-render it — under MRR's name.
@@ -84,6 +85,12 @@ export type RefreshRuntime = {
    * sooner — `isCurrent()` remains the one thing that decides which response
    * wins, abort or no abort.
    */
+  /**
+   * Write a URL to the address bar through the runtime, so its committed URL
+   * and active history-entry key stay in step with what the browser holds.
+   * `push` mints a fresh entry key; `replace` keeps the current entry's.
+   */
+  commitUrl?: (url: string, mode: "push" | "replace") => void;
   claimTicket: () => {
     isCurrent: () => boolean;
     signal: AbortSignal;
@@ -195,6 +202,7 @@ export function createRefresher(runtime: RefreshRuntime): Refresher {
       // Shared state BEFORE the render that consumes it, exactly as a navigation
       // does it — a refresh can carry a changed locale or a changed user too.
       hydrateShared(result.payload.shared);
+      clearPrefetchCache();
 
       const previous = runtime.readCurrent();
       const sameEntry = result.payload.name === previous.payload.name;
@@ -211,7 +219,8 @@ export function createRefresher(runtime: RefreshRuntime): Refresher {
       (`?page=2` collapsing to `?page=1`) has still changed it.
     */
       if (result.url !== url) {
-        window.history.replaceState(null, "", result.url);
+        if (runtime.commitUrl) runtime.commitUrl(result.url, "replace");
+        else window.history.replaceState(null, "", result.url);
       }
 
       runtime.writeCurrent(

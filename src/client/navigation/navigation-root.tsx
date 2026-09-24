@@ -488,6 +488,19 @@ export function NavigationRoot({
       readCurrent: () => currentRef.current,
       writeCurrent: applySwap,
       buildTree: (payload: HydrationDocumentPayloadSource) => buildTree(pages, payload),
+      commitUrl: (url: string, mode: "push" | "replace") => {
+        // The outgoing entry's scroll is captured before a push leaves it.
+        if (mode === "push") captureScrollPosition(activeEntryKey.current);
+
+        const entryKey = mode === "push" ? createEntryKey() : ensureEntryKey(window.history);
+        const state = mode === "push" ? withEntryKey(null, entryKey) : window.history.state;
+
+        if (mode === "push") window.history.pushState(state, "", url);
+        else window.history.replaceState(state, "", url);
+
+        committedUrl = window.location.href;
+        activeEntryKey.current = entryKey;
+      },
       claimTicket,
     };
 

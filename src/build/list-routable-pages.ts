@@ -11,6 +11,7 @@
  */
 import { pathToFileURL } from "node:url";
 import type { PageMetadata } from "../metadata";
+import { composePageModule } from "../server/compose-page-module";
 import { normalizePageModule } from "../server/normalize-page-module";
 import { NOT_FOUND_ROUTE_NAME, NOT_FOUND_ROUTE_PATH } from "../server/not-found-page";
 import {
@@ -40,6 +41,18 @@ export type ListedRoutablePage = {
   layoutSitemaps?: readonly { sourceFile: string; declared: unknown }[];
 };
 
+/** Imports a UI file and its optional `*.setup.ts` companion, composed exactly as the route installer composes them. */
+async function importComposed(
+  uiFile: string,
+  setupFile: string | undefined,
+): Promise<Readonly<Record<string, unknown>>> {
+  const uiModule = await import(pathToFileURL(uiFile).href);
+
+  if (setupFile === undefined) return uiModule;
+
+  return composePageModule(uiModule, await import(pathToFileURL(setupFile).href), uiFile, setupFile);
+}
+
 /**
  * Every routable page in the application, EXCLUDING the not-found route and
  * error pages (the latter are not a routable page at all —
@@ -64,7 +77,7 @@ export async function listRoutablePages(
   return Promise.all(
     pages.map(async (page) => {
       const pageModule = normalizePageModule(
-        await import(pathToFileURL(page.pageFile).href),
+        await importComposed(page.pageFile, page.setupFile),
         "page",
         page.pageFile,
       );
@@ -74,10 +87,10 @@ export async function listRoutablePages(
       // declared. Read the same way production does, off the module, so both
       // pipelines learn a layout's policy by the same mechanism.
       const layoutSitemaps = await Promise.all(
-        page.layouts.map(async (layoutFile) => ({
+        page.layouts.map(async (layoutFile, index) => ({
           sourceFile: layoutFile,
           declared: normalizePageModule(
-            await import(pathToFileURL(layoutFile).href),
+            await importComposed(layoutFile, page.layoutSetupFiles?.[index]),
             "layout",
             layoutFile,
           ).sitemap,

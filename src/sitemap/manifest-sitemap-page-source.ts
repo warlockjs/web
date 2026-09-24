@@ -16,6 +16,7 @@ import { composeRoutePath } from "../routing/compose-route-path";
 import { deriveFilesystemRoutePath } from "../routing/filesystem-route";
 import { resolveLayoutLevel } from "../routing/layout-level";
 import { resolvePageRouteIdentity } from "../routing/route-identity";
+import { composePageModule } from "../server/compose-page-module";
 import { layoutPrefixesByDirectory } from "../server/layout-prefixes";
 import { isNotFoundPageFile } from "../server/not-found-page";
 import type { PageManifest, PageManifestPageEntry } from "../server/page-manifest";
@@ -79,10 +80,31 @@ export function createManifestSitemapPageSource(manifest: PageManifest): Sitemap
       .map((rawPage): SitemapPageSourceEntry => {
         const page: NormalizedSitemapPage = {
           ...rawPage,
-          module: normalizePageModule(rawPage.module, "page", rawPage.sourceFile),
+          // Compose the setup namespace in first (the same helper, so the same
+          // precedence, `installPageRoutesFromManifest` uses) so a `config`
+          // (route, sitemap, prefix) kept in `*.setup.ts` is not lost.
+          module: normalizePageModule(
+            composePageModule(
+              rawPage.module,
+              rawPage.setupModule,
+              rawPage.sourceFile,
+              rawPage.setupSourceFile,
+            ),
+            "page",
+            rawPage.sourceFile,
+          ),
           layouts: rawPage.layouts.map((layout) => ({
             sourceFile: layout.sourceFile,
-            module: normalizePageModule(layout.module, "layout", layout.sourceFile),
+            module: normalizePageModule(
+              composePageModule(
+                layout.module,
+                layout.setupModule,
+                layout.sourceFile,
+                layout.setupSourceFile,
+              ),
+              "layout",
+              layout.sourceFile,
+            ),
           })),
         };
         const { path, name } = routeOf(page);

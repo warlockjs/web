@@ -151,6 +151,8 @@ export type { MatchedRoute } from "./client/navigation/current-route";
 // failed navigation does: a navigation must reload because the user has to
 // arrive, a refresh must not because the user is already there.
 export { refresh } from "./client/navigation/refresh";
+// Drop every hover-prefetched page — call after a logout or mutation the runtime cannot see.
+export { clearPrefetchCache } from "./client/navigation/prefetch";
 
 // `changeLocaleCode()` is the client-side locale switch: a data request
 // for the current route with `?locale=<code>` on the FETCH URL only (the

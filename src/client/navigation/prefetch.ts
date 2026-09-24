@@ -76,6 +76,13 @@ const cache = new Map<string, CacheEntry>();
 const inFlight = new Set<string>();
 
 /**
+ * Bumped by every {@link clearPrefetchCache}. A request that started before a
+ * clear resolves into a world the clear declared stale, so it must not be
+ * written back.
+ */
+let generation = 0;
+
+/**
  * Whether there is a browser to prefetch from.
  *
  * Called rather than assumed because `<Link>` is universal: the same module
@@ -121,6 +128,8 @@ export async function prefetchPageData(url: string): Promise<void> {
 
   inFlight.add(url);
 
+  const startedIn = generation;
+
   try {
     const result = await fetchPageData(url);
 
@@ -133,6 +142,8 @@ export async function prefetchPageData(url: string): Promise<void> {
       that already knows how to degrade.
     */
     if (result.type !== "payload") return;
+
+    if (startedIn !== generation) return;
 
     if (cache.size >= PREFETCH_CACHE_LIMIT) evictOldest();
 
@@ -183,6 +194,19 @@ export function takePrefetchedPageData(url: string): PrefetchedPageData | undefi
  * leak into the next one.
  */
 export function resetPrefetchCache(): void {
+  clearPrefetchCache();
+}
+
+/**
+ * Drop every prefetched payload, and discard any prefetch still in the air.
+ *
+ * Called by the runtime after `refresh()`, a locale change and a form/action
+ * submission, because each of them makes cached loader data and `shared`
+ * snapshots wrong. Public: call it after a mutation or logout the runtime
+ * cannot see.
+ */
+export function clearPrefetchCache(): void {
+  generation += 1;
   cache.clear();
   inFlight.clear();
 }

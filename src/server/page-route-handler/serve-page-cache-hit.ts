@@ -5,6 +5,7 @@ import { computePageCacheKey, type PageCacheVariant } from "../page-cache-key";
 import { getPageCacheEntry } from "../page-cache-store";
 import { markPageResponse } from "../set-cookie-cache-floor-hook";
 import { pageVaryHeader } from "../page-vary-header";
+import { isNoncedDocumentCache, reportPageCacheFailure } from "./store-page-cache-after-render";
 import { persistRequestedLocale } from "./persist-requested-locale";
 
 export type PageCacheLookupOutcome =
@@ -58,6 +59,17 @@ export async function resolvePageCacheHitOrMiss(options: {
     };
   }
 
+  // A nonce'd HTML document is never stored or replayed — see
+  // `isNoncedDocumentCache`. The JSON variant carries no nonce and still caches.
+  if (isNoncedDocumentCache(pageCacheVariant)) {
+    return {
+      served: false,
+      cacheHeaderValue: "bypass",
+      cacheKey: undefined,
+      attemptStorageAfterRender: false,
+    };
+  }
+
   const cacheKey = computePageCacheKey({
     host: String(request.header("host", "") ?? ""),
     vary: cache.varyBy?.(request),
@@ -68,7 +80,16 @@ export async function resolvePageCacheHitOrMiss(options: {
     translationsRevision: options.translationsRevision,
   });
 
-  const hit = await getPageCacheEntry(cacheKey);
+  let hit: Awaited<ReturnType<typeof getPageCacheEntry>>;
+
+  try {
+    hit = await getPageCacheEntry(cacheKey);
+  } catch (error) {
+    // Backend down: render uncached, and skip a store that would fail the same way.
+    reportPageCacheFailure("lookup", error);
+
+    return { served: false, cacheHeaderValue: "miss", cacheKey, attemptStorageAfterRender: false };
+  }
 
   if (hit === undefined) {
     return { served: false, cacheHeaderValue: "miss", cacheKey, attemptStorageAfterRender: true };

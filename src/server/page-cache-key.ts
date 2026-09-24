@@ -35,18 +35,19 @@ export type PageCacheKeyInput = {
 
 /**
  * Normalises a pathname the same way `create-page-route-handler.ts` already
- * splits `request.path` on `"?"` — lower-cased, trailing slash stripped
+ * splits `request.path` on `"?"` — case preserved, trailing slash stripped
  * except for the root `"/"`.
  */
 function normalisePathname(path: string): string {
   const [pathname = path] = path.split("?");
-  const lowered = pathname.toLowerCase();
 
-  if (lowered.length > 1 && lowered.endsWith("/")) {
-    return lowered.slice(0, -1);
+  // Case is KEPT: production routing is case-sensitive and params keep their
+  // case, so `/users/Alice` and `/users/alice` are two different pages.
+  if (pathname.length > 1 && pathname.endsWith("/")) {
+    return pathname.slice(0, -1);
   }
 
-  return lowered;
+  return pathname;
 }
 
 /**

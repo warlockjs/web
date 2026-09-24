@@ -62,6 +62,47 @@ export { NestedLayoutsNotSupportedError } from "../routing/layout-policy";
  */
 const STYLE_EXTENSIONS = [".css", ".scss", ".sass", ".less", ".styl"];
 
+/** The prefix Vite's `envPrefix` exposes to the client (`vite/gate-b-secrets.ts`). */
+const PUBLIC_ENV_PREFIX = "PUBLIC_";
+
+/**
+ * The server bundle's `import.meta.env` defines: the builtins plus every
+ * `PUBLIC_*` variable in `env`, the same set the client build inlines.
+ *
+ * `import.meta.env` itself is defined too: it is `undefined` in Node ESM, so
+ * without it a read of an unset `PUBLIC_*` key would throw instead of yielding
+ * `undefined`. esbuild matches the longest key first, so the specific keys win.
+ */
+export function webEsbuildDefine(
+  env: Readonly<Record<string, string | undefined>>,
+): Record<string, string> {
+  const publicEnv: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(env)) {
+    if (key.startsWith(PUBLIC_ENV_PREFIX) && value !== undefined) publicEnv[key] = value;
+  }
+
+  const define: Record<string, string> = {
+    "import.meta.env": JSON.stringify({
+      DEV: false,
+      PROD: true,
+      SSR: true,
+      MODE: "production",
+      ...publicEnv,
+    }),
+    "import.meta.env.DEV": "false",
+    "import.meta.env.PROD": "true",
+    "import.meta.env.SSR": "true",
+    "import.meta.env.MODE": '"production"',
+  };
+
+  for (const [key, value] of Object.entries(publicEnv)) {
+    define[`import.meta.env.${key}`] = JSON.stringify(value);
+  }
+
+  return define;
+}
+
 /**
  * The esbuild patch web contributes.
  *
@@ -72,11 +113,12 @@ const STYLE_EXTENSIONS = [".css", ".scss", ".sass", ".less", ".styl"];
 export const WEB_ESBUILD_PATCH: ConnectorEsbuildPatch = {
   jsx: "automatic",
   jsxImportSource: "react",
-  define: {
-    "import.meta.env.DEV": "false",
-    "import.meta.env.PROD": "true",
-    "import.meta.env.SSR": "true",
-    "import.meta.env.MODE": '"production"',
+  /**
+   * A getter, so `PUBLIC_*` is read when the build asks for the patch (after
+   * `.env` has loaded), not when this module is first imported.
+   */
+  get define(): Record<string, string> {
+    return webEsbuildDefine(process.env);
   },
   /**
    * Stylesheets compile to NOTHING in the server bundle, rather than failing it.
