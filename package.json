@@ -64,14 +64,14 @@
     "@babel/parser": "^7.29.7",
     "@babel/traverse": "^7.29.8",
     "@babel/types": "^7.29.7",
-    "@mongez/localization": "^3.5.0",
+    "@mongez/localization": "^3.5.1",
     "@warlock.js/sitemap": "workspace:^",
     "devalue": "^5.9.2",
     "magic-string": "^0.30.21"
   },
   "peerDependencies": {
     "@vitejs/plugin-react": "^5.2.0",
-    "@mongez/http": "^3.5.0",
+    "@mongez/http": "^3.5.1",
     "@mongez/react-form": "^4.0.0",
     "@warlock.js/cache": "5.19.1",
     "@warlock.js/core": "5.19.1",
