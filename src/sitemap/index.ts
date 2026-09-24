@@ -15,18 +15,23 @@ export type { SitemapResult } from "./sitemap-result-types";
 export type {
   RegeneratePolicy,
   SitemapLocaleConfig,
+  SitemapStorageConfig,
   WebSitemapConfig,
 } from "./sitemap-config-types";
-export type { SitemapPageExport, SitemapPageOptions, SitemapPageUrl } from "./sitemap-page-export";
+export type {
+  SitemapModelLike,
+  SitemapPageEntriesDeclaration,
+  SitemapPageExport,
+  SitemapPageOptions,
+  SitemapPageUrl,
+} from "./sitemap-page-export";
 export type { RobotsConfig, RobotsGroup } from "./robots-config-types";
 
 /**
  * Regeneration lifecycle (contract Part 6) — server-only. The application
  * calls this on an event, a schedule, or a TTL when its own dynamic data
- * changed; `warlock build` and production boot already call it via
- * `WebConnector` and the build contribution. Never called from an HTTP
- * request handler — that is what `/sitemap.xml`'s route reads the result of,
- * never what triggers it.
+ * changed. Never call it from an HTTP request handler â€” that route reads a
+ * previously published result and never triggers generation.
  */
 export { regenerateSitemap } from "./sitemap-lifecycle";
 export type {

@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.typecheck.json",
+  "include": [],
+  "files": ["route-types.ts"]
+}

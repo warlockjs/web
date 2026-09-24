@@ -50,6 +50,7 @@ function buildContext(appRoot: string): ConnectorBuildContext {
     appRoot,
     productionDir: path.join(appRoot, ".warlock", "production"),
     options: { outdir: path.join(appRoot, "dist") } as ConnectorBuildContext["options"],
+    namedApiRoutes: [],
   };
 }
 

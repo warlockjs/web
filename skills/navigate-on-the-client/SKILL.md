@@ -25,6 +25,18 @@ export function ProductLink({ id }: { id: string }) {
 
 Route-name destinations resolve through the table published from the same page graph the server installs. Missing or extra params throw rather than producing a URL that silently 404s.
 
+`LinkProps` is exported from the package root for a wrapper or navigation item
+that accepts the same typed destination contract. Import it as a type; do not
+redeclare `to`, `href`, `params`, or `query` separately:
+
+```tsx
+import { Link, type LinkProps } from "@warlock.js/web";
+
+export function NavigationItem(props: LinkProps) {
+  return <Link {...props} />;
+}
+```
+
 ## Link destinations
 
 Pass exactly one destination prop:
@@ -72,9 +84,9 @@ const productUrl = href(
 );
 ```
 
-Unknown route names throw at runtime with the known names. `href()` accepts a
-string name, so an unknown name is not a TypeScript error. Generated route-name
-and parameter types are not available in 5.17. Call `href()` after the route
+Generated declarations make known route names and parameters type-safe when
+they are available. Runtime validation remains active before generation, and
+unknown route names throw with the known names. Call `href()` after the route
 table has been published—during a page render, event, or request—not from an
 eager module initializer before boot.
 
@@ -158,6 +170,31 @@ export function NavigationProgress() {
   return <div className={isNavigating ? "navigation-progress is-active" : "navigation-progress"} />;
 }
 ```
+
+## Generated named-route types
+
+Warlock writes `.warlock/typings/web-routes.d.ts` atomically after successful
+route registration in development and during a Web production build. Keep
+`.warlock/typings/*.d.ts` in `tsconfig.json`'s `include`. The declarations keep
+page names in `PageRouteRegistry` and API names in `ApiRouteRegistry`; they are
+separate maps, not a compatibility map for applications without Web.
+
+`href()` and `<Link>` therefore retain each named route's parameter shape:
+optional path parameters stay optional. A path grammar that cannot be expressed
+precisely gets broad params rather than an invented type. Use
+`runtimeRoute(name)` only for a genuinely runtime-discovered name.
+
+`navigateTo` also accepts a named object, so the name and params stay
+correlated:
+
+```ts
+navigateTo({ name: "products.details", params: { id: "42" } });
+```
+
+The existing string form remains a literal URL/path. A route declared with a
+canonical uppercase method belongs to the API map for forms, not this page map.
+When Web is removed, Warlock deletes only a declaration file bearing its exact
+generated header, never a user-authored file at that path.
 
 This is pending/not-pending, never percent-complete. Keep CSS in the imported
 stylesheet; do not add an inline `<style>` tag. `routerEvents` remains for

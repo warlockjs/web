@@ -56,6 +56,26 @@ describe("normalizePageModule", () => {
     expect(normalized).not.toBe(raw);
   });
 
+  it("accepts a page entries declaration and refuses invalidation without a supplier", () => {
+    const model = { events: () => ({ on: () => () => {} }) };
+    const entries = () => [{ path: "/products/one" }];
+
+    expect(
+      normalizePageModule(
+        page({ sitemap: { entries, locales: false, invalidateOn: [model] } }),
+        "page",
+        "src/web/products.page.tsx",
+      ).sitemap,
+    ).toMatchObject({ entries, locales: false, invalidateOn: [model] });
+    expect(() =>
+      normalizePageModule(
+        page({ sitemap: { invalidateOn: [model] } }),
+        "page",
+        "src/web/products.page.tsx",
+      ),
+    ).toThrow(/invalidateOn requires config\.sitemap\.entries/);
+  });
+
   it("accepts memo and forward-ref component objects without invoking them", () => {
     const memo = { $$typeof: Symbol.for("react.memo") };
     const forwardRef = { $$typeof: Symbol.for("react.forward_ref") };

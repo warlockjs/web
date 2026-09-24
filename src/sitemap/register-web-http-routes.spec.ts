@@ -2,12 +2,18 @@ import config from "@mongez/config";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Router } from "@warlock.js/core";
 
-const { generateSitemap } = vi.hoisted(() => ({ generateSitemap: vi.fn() }));
+const { generateSitemap, startSitemapRuntime } = vi.hoisted(() => ({
+  generateSitemap: vi.fn(),
+  startSitemapRuntime: vi.fn(),
+}));
 
 vi.mock("./generate-sitemap", () => ({ generateSitemap }));
+vi.mock("./sitemap-lifecycle", () => ({
+  getSitemapServingState: () => undefined,
+  startSitemapRuntime,
+}));
 
 import { regenerateSitemapOnStartup, registerWebHttpRoutes } from "./register-web-http-routes";
-import { resetSitemapLifecycleForTests } from "./sitemap-lifecycle";
 
 function stubRouter(): Router {
   return { get: vi.fn() } as unknown as Router;
@@ -21,8 +27,9 @@ afterEach(() => {
 describe("registerWebHttpRoutes", () => {
   beforeEach(() => {
     generateSitemap.mockReset();
+    startSitemapRuntime.mockReset();
     generateSitemap.mockResolvedValue({ mode: "disabled", urls: 0, duplicates: [], routes: [] });
-    resetSitemapLifecycleForTests();
+    startSitemapRuntime.mockResolvedValue(undefined);
   });
 
   it("registers routes without generating when the sitemap is enabled", async () => {
@@ -34,13 +41,13 @@ describe("registerWebHttpRoutes", () => {
     expect(generateSitemap).not.toHaveBeenCalled();
   });
 
-  it("generates once at startup when enabled and regenerate.onBoot is unset", async () => {
+  it("starts the managed runtime at startup when enabled and regenerate.onBoot is unset", async () => {
     config.set("app", { publicUrl: "https://example.com" });
     config.set("web", { sitemap: { enabled: true } });
 
     await regenerateSitemapOnStartup({ appRoot: "/app" });
 
-    expect(generateSitemap).toHaveBeenCalledTimes(1);
+    expect(startSitemapRuntime).toHaveBeenCalledWith({ appRoot: "/app" });
   });
 
   it("does not generate at startup when regenerate.onBoot is false", async () => {
@@ -49,7 +56,7 @@ describe("registerWebHttpRoutes", () => {
 
     await regenerateSitemapOnStartup({ appRoot: "/app" });
 
-    expect(generateSitemap).not.toHaveBeenCalled();
+    expect(startSitemapRuntime).toHaveBeenCalledWith({ appRoot: "/app" });
   });
 
   it("does not generate, and registers no sitemap route, when the sitemap is disabled", async () => {
@@ -59,7 +66,7 @@ describe("registerWebHttpRoutes", () => {
     await registerWebHttpRoutes(router, { appRoot: "/app" });
     await regenerateSitemapOnStartup({ appRoot: "/app" });
 
-    expect(generateSitemap).not.toHaveBeenCalled();
+    expect(startSitemapRuntime).not.toHaveBeenCalled();
     expect(router.get).not.toHaveBeenCalledWith("/sitemap.xml", expect.anything());
   });
 

@@ -619,161 +619,176 @@ Creating a page, deleting one, or editing `config.route` is route-table churn ra
 
 ---
 name: generate-sitemap
-description: 'Serve `/sitemap.xml` and `/robots.txt` from a Warlock web app with the `@warlock.js/web/sitemap` subpath — the `web.sitemap` and `web.robots` keys in `src/config/web.ts`, page `config.sitemap` (opt out, static options, or a supplier for dynamic routes), locale/hreflang expansion, the automatic switch to a sharded `SitemapIndex`, when generation runs (runtime boot or `regenerateSitemap()` — never `warlock build`), the 503-before-first-generation rule, and `MissingPublicUrlError`. Triggers: `web.sitemap`, `web.robots`, `WebSitemapConfig`, `RobotsConfig`, `SitemapPageExport`, `export const sitemap`, `regenerateSitemap`, `generateSitemap`, `MissingPublicUrlError`, `splitByLocale`, `localeUrl`, `referenceSitemap`, `warlock add sitemap`; "add a sitemap to my Warlock site", "dynamic route missing from sitemap.xml", "regenerate the sitemap after publishing a post", "robots.txt", "sitemap returns 503", "hreflang in the sitemap". Skip: the framework-blind builder classes themselves (`Sitemap`, `SitemapIndex`, Express/cron usage) — `@warlock.js/sitemap/sitemap-overview/SKILL.md`; `app.publicUrl` — `@warlock.js/core/configure-app/SKILL.md`; page metadata `robots: noindex` — `@warlock.js/web/create-a-page/SKILL.md`; competing tools `next-sitemap`, `sitemap` npm package direct.'
+description: 'Serve `/sitemap.xml` and `/robots.txt` from a Warlock web app with the `@warlock.js/web/sitemap` subpath — the `web.sitemap` and `web.robots` keys in `src/config/web.ts`, page `config.sitemap` (opt out, static options, or a supplier for dynamic routes), locale/hreflang expansion, the automatic switch to a sharded `SitemapIndex`, when generation runs (intervals, committed model changes, runtime boot or `regenerateSitemap()` — never `warlock build`), the 503-before-first-generation rule, and `MissingPublicUrlError`. Triggers: `web.sitemap`, `web.robots`, `WebSitemapConfig`, `RobotsConfig`, `SitemapPageExport`, `export const sitemap`, `regenerateSitemap`, `generateSitemap`, `MissingPublicUrlError`, `splitByLocale`, `localeUrl`, `referenceSitemap`, `warlock add sitemap`; "add a sitemap to my Warlock site", "dynamic route missing from sitemap.xml", "regenerate the sitemap after publishing a post", "robots.txt", "sitemap returns 503", "hreflang in the sitemap". Skip: the framework-blind builder classes themselves (`Sitemap`, `SitemapIndex`, Express/cron usage) — `@warlock.js/sitemap/sitemap-overview/SKILL.md`; `app.publicUrl` — `@warlock.js/core/configure-app/SKILL.md`; page metadata `robots: noindex` — `@warlock.js/web/create-a-page/SKILL.md`; competing tools `next-sitemap`, `sitemap` npm package direct.'
 ---
 
-# Warlock — generate a sitemap and robots.txt
+# Generate a sitemap and robots.txt
 
-`@warlock.js/web` turns the app's page graph into `sitemap.xml` and serves it,
-plus an optional generated `robots.txt`. `@warlock.js/sitemap` owns the XML
-protocol; web is its caller — it discovers pages, expands locales, picks the
-single-file or sharded builder, and wires the routes.
-
-## Turn it on
-
-`warlock add sitemap` installs `@warlock.js/sitemap` and merges a **disabled**
-`sitemap` section into `src/config/web.ts` (creating the file when missing).
-There is no `src/config/sitemap.ts` and no connector to register — web reads
-`web.sitemap` itself.
-
-Two steps to enable it:
-
-1. Set the public origin: `app.publicUrl` in `src/config/app.ts`, or the
-   `PUBLIC_APP_URL` environment variable. The origin is never guessed from a
-   request host.
-2. Flip `sitemap.enabled` to `true`.
+Web discovers the page graph and serves persisted XML. Enable sitemap generation
+under `web.sitemap`, and set `app.publicUrl` (or `PUBLIC_APP_URL`). The origin
+is never inferred from a request header. `warlock add sitemap` installs the
+sitemap package and adds disabled configuration; enable it explicitly.
 
 ```ts
-import type { RobotsConfig, WebSitemapConfig } from "@warlock.js/web/sitemap";
+import type { WebConfigurations } from "@warlock.js/web";
 
-const webConfig: { sitemap: WebSitemapConfig; robots: RobotsConfig } = {
+export default {
   sitemap: {
     enabled: true,
-    path: "/sitemap.xml",
-    defaults: { changefreq: "weekly", priority: 0.5 },
-    locales: { codes: ["en", "ar"], defaultLocale: "en" },
+    storage: { directory: "sitemaps" },
+    regenerateEvery: "1d",
   },
   robots: {
     enabled: true,
     groups: [{ userAgent: "*", disallow: ["/admin"] }],
   },
-};
-
-export default webConfig;
+} satisfies WebConfigurations;
 ```
 
-`@warlock.js/web/sitemap` is a separate subpath, not the root barrel — it
-reaches page discovery, which a page's own graph must never pull in.
+`storage.disk` selects a configured Core storage name; omission uses the app's
+default storage. `storage.directory` defaults to `"sitemap"` and must be a
+dedicated relative prefix. The legacy `outputDir` option still selects a local
+directory. Do not combine it with `storage`.
 
-## `web.sitemap` keys
+## Page policy and dynamic URLs
 
-| key                     | default                  | meaning                                                                                                                                                                                                                                        |
-| ----------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `enabled`               | `false`                  | Nothing is discovered, generated or routed until `true`.                                                                                                                                                                                       |
-| `path`                  | `/sitemap.xml`           | The served path of the single file or the index.                                                                                                                                                                                               |
-| `outputDir`             | `storagePath("sitemap")` | Where files are written. Must be a directory the sitemap owns outright — publishing replaces it whole, and `@warlock.js/sitemap` refuses a non-empty directory it did not create (`UnownedOutputDirectoryError`). Never point it at `public/`. |
-| `gzip`                  | `false`                  | On the sharded path, write each shard as `.xml.gz` instead of `.xml`.                                                                                                                                                                          |
-| `defaults`              | —                        | `changefreq` / `priority` applied to every entry that does not set its own.                                                                                                                                                                    |
-| `locales.codes`         | `app.locales`            | Locale codes each page is expanded into, with `xhtml:link` hreflang alternates.                                                                                                                                                                |
-| `locales.defaultLocale` | —                        | Also emitted as `x-default`. Unset: no `x-default`.                                                                                                                                                                                            |
-| `locales.splitByLocale` | `false`                  | One shard per locale, listed in an index.                                                                                                                                                                                                      |
-| `localeUrl`             | `path?locale=<code>`     | Override how a path becomes a locale URL — only when the app implements its own prefix routing. A page's `localePaths` still wins.                                                                                                             |
-| `regenerate.onBoot`     | `true`                   | Generate at boot (dev and production). `warlock build` never generates — see below.                                                                                                                                                            |
+Static routable pages are included by default. Error pages are excluded.
+`config.sitemap: false` opts out. A page or layout may supply static options
+such as `priority`, `changefreq`, `lastmod`, `locales: false`, or
+`localePaths`. The nearest explicit page/layout policy wins; layout policies
+cannot supply dynamic entries.
 
-Above 50,000 URLs (or with `splitByLocale`) web switches from a single
-`Sitemap` to a sharded `SitemapIndex` automatically; `path` then serves the
-index and each shard is served at `/<shard file>`.
+A route such as `/products/:slug` is a pattern, not a URL. Give that page a
+supplier returning its concrete URLs. Warlock does not crawl links or infer a
+model query. Without a supplier the dynamic route contributes zero URLs and
+appears with a zero count in generation diagnostics.
 
-## Per-page control: `config.sitemap`
-
-Every routable page is included by default, expanded per locale. Error pages
-are never listed. A page module can put `sitemap` in `config` to change that:
-
-```tsx
+```ts
 import type { PageConfig } from "@warlock.js/web";
+import { Product } from "./product.server";
+import { listPublishedProductSitemapRows } from "./product-sitemap-data.server";
 
-export const config = { sitemap: false } satisfies PageConfig;
-```
+async function productSitemap() {
+  const products = await listPublishedProductSitemapRows();
+  return products.map(product => ({
+    path: `/products/${encodeURIComponent(product.slug)}`,
+    lastmod: product.updatedAt,
+    images: [{ loc: product.imageUrl }],
+  }));
+}
 
-```tsx
 export const config = {
-  sitemap: { priority: 0.9, changefreq: "daily", locales: false },
+  sitemap: {
+    entries: productSitemap,
+    invalidateOn: [Product],
+  },
 } satisfies PageConfig;
 ```
 
-The object form takes `priority`, `changefreq`, `lastmod`, `locales: false`
-(one locale-invariant URL) and `localePaths` (per-locale slugs).
+The query helper above is application-owned: select eligible published rows.
+A plain `sitemap: productSitemap` function remains supported. The object form
+adds `invalidateOn` and static defaults, including `locales: false` for every
+supplied entry. Supplier functions return an Iterable or Promise of an Iterable;
+the Web adapter currently materializes entries in memory.
 
-**A dynamic route (`/posts/:slug`) is not a URL.** Only a supplier function
-can name its concrete paths; without one the route contributes nothing and is
-reported with `count: 0` in the result's `routes`, never silently dropped:
+Sitemap configuration and its exclusive model imports are projected out of the
+browser graph. Keep models in server modules and do not read them from the page
+component or client `register` function.
 
-```tsx
-import type { PageConfig } from "@warlock.js/web";
+Images use the image sitemap extension, with at most 1,000 images per URL;
+excess images are dropped with a warning per route. Price, stock and product
+description belong in page structured data or a product feed, not sitemap XML.
 
-export const config = {
-  sitemap: async () => [
-    { path: "/posts/hello-world", lastmod: new Date("2026-09-01") },
-    { path: "/posts/second-post", localePaths: { ar: "/posts/thani" } },
-  ],
-} satisfies PageConfig;
-```
+## Refreshing after changes
 
-In a real page, read the rows from your model — the function runs at
-generation time, not per request.
-
-A layout may set static `config.sitemap` defaults or `false` for descendants;
-supplier functions belong to pages only. The nearest explicit page/layout
-policy wins. Root config has no sitemap key. Configure sitewide generation
-under `web.sitemap`, and HTML indexing policy separately with
-`config.metadata.robots` on pages or layouts.
-
-## When it runs — never on a request
-
-`warlock build` never generates the sitemap — the build process loads no app
-config and ships no page source files, so it logs
-`[warlock:web] sitemap: \`warlock build\` never generates the sitemap; when web.sitemap is enabled it is generated at runtime boot (web.sitemap.regenerate.onBoot)`and leaves generation to boot. Generation happens at boot (dev and
-production) when`regenerate.onBoot`is on, and whenever the app calls`regenerateSitemap()`:
+The application-level function is:
 
 ```ts
 import { regenerateSitemap } from "@warlock.js/web/sitemap";
 
-export async function onPostPublished(): Promise<void> {
-  await regenerateSitemap();
+// After the application's transaction has successfully committed:
+await regenerateSitemap();
+```
+
+For an import, call it once after the batch commits. A request made during a
+generation waits for a following pass; concurrent requests may share that pass.
+Later requests can require another pass. A failed pass rejects its callers and
+keeps the last published sitemap.
+
+`invalidateOn` subscribes to the declared models' saved/deleted events and uses
+Cascade's `afterCommit` hook before marking the sitemap stale. It debounces
+events for 30 seconds of quiet, with a five-minute maximum wait. Cascade is
+optional unless this feature is used. Listeners are removed on reload/shutdown.
+Bulk writes, raw SQL and external writers may bypass model events, so use
+explicit regeneration or the interval safety net.
+
+`regenerateEvery` is optional; omission means no interval. It accepts positive
+milliseconds or durations such as `"30s"`, `"6h"`, and `"1d"`. Timers do
+not keep the process alive and are cleared on shutdown/reload. They use the
+same generation coordinator, retain the last good output on failure, and retry
+on a later tick. `changefreq` is crawler metadata, not a refresh schedule.
+
+`generateSitemap()` remains a low-level one-shot artifact writer. It does not
+update the managed HTTP serving state or coordinate refreshes. Use
+`regenerateSitemap()` for application changes.
+
+## Storage, restarts and multiple instances
+
+Managed generations contain immutable files plus a manifest. Startup validates
+and restores the latest valid manifest, then refreshes in the background when
+`regenerate.onBoot` is enabled (default true). With no valid manifest,
+`/sitemap.xml` returns 503 and `Retry-After: 30` until generation succeeds.
+Requests only serve published artifacts; they never trigger generation.
+`warlock build` does not generate the sitemap.
+
+`coordination: "local"` is the default for one process. For multiple servers:
+
+```ts
+sitemap: {
+  enabled: true,
+  coordination: "shared",
+  storage: { disk: "assets", directory: "sitemaps" },
+  regenerateEvery: "1d",
 }
 ```
 
-- A call while a generation is running joins it instead of starting another.
-- A failed run keeps serving the last good set and is always reported to
-  stderr. A boot never fails because the sitemap did.
-- `/sitemap.xml` only ever serves what was last written. Before the first
-  successful generation it answers **503 with `Retry-After`**, never a 404 and
-  never a generation on the request's behalf.
+Here `assets` must already be a configured shared storage disk. Shared mode
+requires atomic create-if-absent and consistent reads/listing. Supported
+conditional-write providers are S3 and R2; local storage requires a genuinely
+shared filesystem with the corresponding guarantees. Do not assume every
+S3-compatible provider supports the capability. There is no built-in GCS
+driver, and Spaces conditional creation is not currently supported.
 
-`generateSitemap()` is the underlying one-shot call (no join, no last-good
-tracking); it throws `MissingPublicUrlError` when `enabled` is `true` and no
-origin is configured, before any page is read.
+Each pass claims a durable increasing number before collecting entries. The
+highest valid manifest determines the served generation. No Redis is required.
+Concurrent servers can duplicate generation work; publication order remains
+defined by their claims. Claims are retained so numbers cannot be reused.
+Other instances refresh manifest metadata at most every `manifestPollMs`
+(default 30,000). A manual caller awaits its own server's post-request pass.
 
-## `web.robots`
+## Locales, shards and HTTP caching
 
-| key                | default | meaning                                                                                      |
-| ------------------ | ------- | -------------------------------------------------------------------------------------------- |
-| `enabled`          | `false` | Registers `GET /robots.txt`.                                                                 |
-| `groups`           | —       | `{ userAgent, allow?, disallow? }` blocks.                                                   |
-| `referenceSitemap` | `true`  | Appends `Sitemap: <origin><web.sitemap.path>` when the sitemap is enabled and has an origin. |
-| `extra`            | —       | Raw lines appended verbatim (`Host:`, `Crawl-delay:`).                                       |
+Locale codes/defaults come from `app.localeCodes` and `app.localeCode`,
+unless overridden under `sitemap.locales`. Each URL expands once per configured
+locale with hreflang alternates. Active locale routing determines prefixed
+URLs; `localeUrl` overrides that convention and a page's `localePaths` wins.
 
-A hand-written `public/robots.txt` wins outright: web registers no route and
-warns that the `Sitemap:` line is then yours to add.
+Above 50,000 collected entries, or with `locales.splitByLocale`, the main
+endpoint serves an index. Shards use generation-specific URLs under
+`/sitemaps/<generationId>/`. Retention keeps recent generations for old index
+readers, with at least two retained manifests and a one-hour grace period.
 
-## Pitfalls
+Responses stream from storage. ETag and Last-Modified come from the manifest;
+matching conditional requests return 304 without reading artifact contents.
+The main endpoint defaults to `Cache-Control: public, max-age=300`, configurable
+with `sitemap.cacheControl`. Versioned generation URLs use immutable caching.
 
-- **503 on `/sitemap.xml`** — no generation has succeeded yet. Check the
-  boot log for `[warlock:web] sitemap regeneration failed`; a missing
-  `app.publicUrl` is the usual cause.
-- **A dynamic page is missing** — it has no `config.sitemap` supplier.
-  Its route shows up with `count: 0` in the generation result.
-- **`outputDir` inside `public/`** — refused. The sitemap owns its directory.
+## robots.txt
+
+`web.robots.enabled` registers `/robots.txt`. Configure `groups` and optional
+`extra` lines. `referenceSitemap` defaults true and adds the configured
+sitemap URL when enabled and an origin exists. A hand-written
+`public/robots.txt` wins; maintain its Sitemap line yourself.
 
 ## load-page-data  `@warlock.js/web/load-page-data/SKILL.md`
 
@@ -784,7 +799,12 @@ description: "Load App, Layout, and Page data with named loaders; page validatio
 
 # Warlock — load page data
 
-Loaders run on the server and return serializable data to their own component level. Use the level-specific loader type with `satisfies`, then pass `typeof loader` to the matching props type.
+Loaders run on the server and return serializable data to their own component level.
+Prefer a named `async function loader` with a public context type such as
+`PageLoaderContext<typeof config.validation, typeof config.route>`. Let the
+named function infer its return; do not use `satisfies` or annotate the whole
+function as `PageLoader`.
+Pass `typeof loader` to the matching props type.
 
 ## Pass environment values through loader data
 
@@ -795,11 +815,11 @@ which is server code, and return it as page data.**
 
 ```tsx
 import { env } from "@warlock.js/core";
-import type { PageLoader, PageProps } from "@warlock.js/web";
+import type { PageLoaderContext, PageProps } from "@warlock.js/web";
 
-export const loader = (async () => ({
-  siteName: env("PUBLIC_SITE_NAME"),
-})) satisfies PageLoader;
+export async function loader(_context: PageLoaderContext<undefined, undefined>) {
+  return { siteName: env("PUBLIC_SITE_NAME") };
+}
 
 export default function HomePage({ data }: PageProps<typeof loader>) {
   return <h1>{data.siteName}</h1>;
@@ -875,14 +895,18 @@ one for anything request-scoped.
 
 ```tsx title="src/web/products/product-details.page.tsx"
 import { v } from "@warlock.js/seal";
-import type { PageConfig, PageLoader, PageProps } from "@warlock.js/web";
+import type { PageConfig, PageLoaderContext, PageProps } from "@warlock.js/web";
 
 export const config = {
   route: { path: "/products/:id", name: "products.details" },
   validation: { params: v.object({ id: v.string().minLength(2) }) },
 } satisfies PageConfig;
 
-export const loader = (async ({ request, response, shared }) => {
+export async function loader({
+  request,
+  response,
+  shared,
+}: PageLoaderContext<typeof config.validation, typeof config.route>) {
   const { params } = request.validated();
   const { id } = params;
 
@@ -899,7 +923,7 @@ export const loader = (async ({ request, response, shared }) => {
     },
     locale: (shared as { locale?: string }).locale ?? "en",
   };
-}) satisfies PageLoader<typeof config.validation, typeof config.route>;
+}
 
 export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
   return (
@@ -910,7 +934,8 @@ export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
 }
 ```
 
-`LoaderShortCircuit` values from `notFound()` and redirects are excluded from `PageProps["data"]`, so the component sees only the successful loader return.
+`LoaderShortCircuit` values from
+otFound()`and redirects are excluded from`PageProps["data"]`, so the component sees only the successful loader return.
 
 ## What survives the wire
 
@@ -971,10 +996,12 @@ All receive one context object with `request`, `response`, `shared`, and `signal
 `ctx.signal` is an `AbortSignal` that fires when the client disconnects before the response finishes. Hand it to anything cancelable:
 
 ```ts
-export const loader = (async ({ signal }) => {
+import type { PageLoaderContext } from "@warlock.js/web";
+
+export async function loader({ signal }: PageLoaderContext<undefined, undefined>) {
   const res = await fetch("https://api.example.com/products", { signal });
   return { products: await res.json() };
-}) satisfies PageLoader;
+}
 ```
 
 **Honest limitation:** a loader that never checks `signal` runs to completion anyway — the framework only stops the pipeline _between_ levels (app → layout → page), never inside a loader already running.
@@ -1047,7 +1074,8 @@ return response.permanentRedirect("/products");
 return response.notFound();
 ```
 
-Do not continue after a redirect or `notFound`; return the result. Surviving buffers are committed root to leaf. For the same header key, the leafward write wins. A loader that throws or a lower level discarded by a short-circuit does not leak its buffered writes.
+Do not continue after a redirect or
+otFound`; return the result. Surviving buffers are committed root to leaf. For the same header key, the leafward write wins. A loader that throws or a lower level discarded by a short-circuit does not leak its buffered writes.
 
 ## Declare the shared payload
 
@@ -1143,7 +1171,8 @@ Only put browser-safe data in `shared`: scalars, arrays, plain objects, or value
 - [`create-a-page/SKILL.md`](../create-a-page/SKILL.md) — the complete page module.
 - [`write-the-root/SKILL.md`](../write-the-root/SKILL.md) — `AppLoader`, `<Head />`, and `<Scripts />`.
 - [`use-layouts/SKILL.md`](../use-layouts/SKILL.md) — `LayoutLoader` and persistent wrappers.
-- [`navigate-on-the-client/SKILL.md`](../navigate-on-the-client/SKILL.md) — re-fetch loaders with `refresh()`.
+- [
+  avigate-on-the-client/SKILL.md`](../navigate-on-the-client/SKILL.md) — re-fetch loaders with `refresh()`.
 - [`stream-deferred-data/SKILL.md`](../stream-deferred-data/SKILL.md) — stream a slow page-loader key after the shell with `defer()` and `use()`.
 
 ## localize-pages  `@warlock.js/web/localize-pages/SKILL.md`
@@ -1716,6 +1745,18 @@ export function ProductLink({ id }: { id: string }) {
 
 Route-name destinations resolve through the table published from the same page graph the server installs. Missing or extra params throw rather than producing a URL that silently 404s.
 
+`LinkProps` is exported from the package root for a wrapper or navigation item
+that accepts the same typed destination contract. Import it as a type; do not
+redeclare `to`, `href`, `params`, or `query` separately:
+
+```tsx
+import { Link, type LinkProps } from "@warlock.js/web";
+
+export function NavigationItem(props: LinkProps) {
+  return <Link {...props} />;
+}
+```
+
 ## Link destinations
 
 Pass exactly one destination prop:
@@ -1763,9 +1804,9 @@ const productUrl = href(
 );
 ```
 
-Unknown route names throw at runtime with the known names. `href()` accepts a
-string name, so an unknown name is not a TypeScript error. Generated route-name
-and parameter types are not available in 5.17. Call `href()` after the route
+Generated declarations make known route names and parameters type-safe when
+they are available. Runtime validation remains active before generation, and
+unknown route names throw with the known names. Call `href()` after the route
 table has been published—during a page render, event, or request—not from an
 eager module initializer before boot.
 
@@ -1849,6 +1890,31 @@ export function NavigationProgress() {
   return <div className={isNavigating ? "navigation-progress is-active" : "navigation-progress"} />;
 }
 ```
+
+## Generated named-route types
+
+Warlock writes `.warlock/typings/web-routes.d.ts` atomically after successful
+route registration in development and during a Web production build. Keep
+`.warlock/typings/*.d.ts` in `tsconfig.json`'s `include`. The declarations keep
+page names in `PageRouteRegistry` and API names in `ApiRouteRegistry`; they are
+separate maps, not a compatibility map for applications without Web.
+
+`href()` and `<Link>` therefore retain each named route's parameter shape:
+optional path parameters stay optional. A path grammar that cannot be expressed
+precisely gets broad params rather than an invented type. Use
+`runtimeRoute(name)` only for a genuinely runtime-discovered name.
+
+`navigateTo` also accepts a named object, so the name and params stay
+correlated:
+
+```ts
+navigateTo({ name: "products.details", params: { id: "42" } });
+```
+
+The existing string form remains a literal URL/path. A route declared with a
+canonical uppercase method belongs to the API map for forms, not this page map.
+When Web is removed, Warlock deletes only a declaration file bearing its exact
+generated header, never a user-authored file at that path.
 
 This is pending/not-pending, never percent-complete. Keep CSS in the imported
 stylesheet; do not add an inline `<style>` tag. `routerEvents` remains for
@@ -2626,6 +2692,20 @@ The default client is the configured `@mongez/http` singleton, so its base URL a
 Validation mapping is on by default. Known server field errors are assigned to controls; unknown fields and general messages go to `formErrors`. Set `mapFieldErrors: false` to leave controls untouched or provide a mapper returning `{ [field]: message }`.
 
 Named route metadata contains only name, path, and method. A route declared with method `all` cannot select a browser verb: use a direct `path` and explicit `method`.
+
+Generated API declarations live in `ApiRouteRegistry`, separately from page
+names. They preserve canonical method case (for example `POST`) and parameter
+optionality; an advanced path shape that cannot be represented precisely uses
+broad params rather than a guessed type. `runtimeRoute(name)` is the explicit
+escape for a genuinely dynamic API name. There is no legacy map fallback.
+
+Core obtains these declarations in a fresh registration-only child before a
+Web build contribution: it does not register, boot, or start connectors.
+Application module top-level imports still execute in that child, so keep such
+modules free of unwanted side effects. Development writes the same declaration
+after successful registration/reload. Include `.warlock/typings/*.d.ts` in
+your TypeScript project; a generated file is replaced atomically and is cleared
+only when its Warlock ownership header proves it is framework-owned.
 
 ## use-layouts  `@warlock.js/web/use-layouts/SKILL.md`
 

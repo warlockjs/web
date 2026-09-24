@@ -1,31 +1,28 @@
-/**
- * `registerSitemapRoutes` — contract Part 4 rule 6 / Part B checklist item 1.
- * Handlers are invoked directly against a captured route table, never
- * through a real HTTP server: what matters here is what each handler DOES
- * with the lifecycle state, not Fastify's own dispatch.
- */
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+﻿import { Readable } from "node:stream";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { HttpContext, Router } from "@warlock.js/core";
-
-const { generateSitemap } = vi.hoisted(() => ({ generateSitemap: vi.fn() }));
-
-vi.mock("./generate-sitemap", () => ({ generateSitemap }));
-
+import type { SitemapGenerationManifest } from "@warlock.js/sitemap";
 import { registerSitemapRoutes } from "./register-sitemap-routes";
-import { regenerateSitemap, resetSitemapLifecycleForTests } from "./sitemap-lifecycle";
+import type { SitemapServingState } from "./sitemap-serving-state";
 
-const temporaryDirectories: string[] = [];
+const digest = "a".repeat(64);
 
-function tempFile(contents: string | Buffer, fileName = "artifact.xml"): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "warlock-sitemap-routes-"));
-  temporaryDirectories.push(dir);
-  const file = path.join(dir, fileName);
-  fs.writeFileSync(file, contents);
-
-  return file;
+function manifest(overrides: Partial<SitemapGenerationManifest> = {}): SitemapGenerationManifest {
+  return {
+    version: 1,
+    fence: 3,
+    generationId: "current_3",
+    coversRev: 3,
+    kind: "index",
+    mainFile: "generations/current_3/sitemap_index.xml",
+    files: [
+      { path: "generations/current_3/sitemap_index.xml", bytes: 12, sha256: digest },
+      { path: "generations/current_3/sitemap-0001.xml.gz", bytes: 8, sha256: digest },
+    ],
+    entries: 1,
+    generatedAt: "2026-09-24T12:34:56.000Z",
+    ...overrides,
+  };
 }
 
 function capturingRouter() {
@@ -40,22 +37,21 @@ function capturingRouter() {
 }
 
 function fakeResponse() {
-  const calls: Record<string, unknown[]> = {};
+  const calls: Record<string, unknown[][]> = {};
   const record = (name: string, args: unknown[]) => {
-    calls[name] = args;
+    calls[name] = [...(calls[name] ?? []), args];
   };
-
-  const response: Record<string, (...args: unknown[]) => unknown> = {
+  const response: Record<string, unknown> = {
     header: (...args: unknown[]) => {
       record("header", args);
       return response;
     },
-    xml: (...args: unknown[]) => {
-      record("xml", args);
+    setStatusCode: (...args: unknown[]) => {
+      record("setStatusCode", args);
       return response;
     },
-    sendBuffer: (...args: unknown[]) => {
-      record("sendBuffer", args);
+    send: async (...args: unknown[]) => {
+      record("send", args);
       return response;
     },
     serviceUnavailable: (...args: unknown[]) => {
@@ -66,133 +62,170 @@ function fakeResponse() {
       record("notFound", args);
       return response;
     },
+    baseResponse: {
+      send: (...args: unknown[]) => {
+        record("baseResponse.send", args);
+        return response;
+      },
+    },
   };
 
   return { response, calls };
 }
 
-afterEach(() => {
-  while (temporaryDirectories.length > 0) {
-    fs.rmSync(temporaryDirectories.pop() as string, { recursive: true, force: true });
-  }
-});
+function context(
+  response: Record<string, unknown>,
+  params: Record<string, string> = {},
+  headers: Record<string, string> = {},
+  method = "GET",
+): HttpContext {
+  return {
+    request: {
+      params,
+      method,
+      header: (name: string) => headers[name.toLowerCase()],
+    },
+    response,
+  } as unknown as HttpContext;
+}
 
-describe("registerSitemapRoutes", () => {
-  beforeEach(() => {
-    generateSitemap.mockReset();
-    resetSitemapLifecycleForTests();
-  });
+function stateFor(current: SitemapGenerationManifest | undefined) {
+  const store = {
+    getArtifactStream: vi.fn(async () => Readable.from([Buffer.from("<xml />")])),
+    readManifestByGeneration: vi.fn(
+      async (): Promise<SitemapGenerationManifest | undefined> => undefined,
+    ),
+  };
+  const state: SitemapServingState = {
+    store: store as unknown as SitemapServingState["store"],
+    cacheControl: "public, max-age=300",
+    getManifest: vi.fn(async () => current),
+  };
 
-  it("registers the configured path and both shard patterns", () => {
+  return { state, store, current };
+}
+
+describe("registerSitemapRoutes — manifest-backed serving", () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  it("registers the configured main route, generation route, and compatibility basename route", () => {
     const { router, routes } = capturingRouter();
-
-    registerSitemapRoutes(router, { path: "/sitemap.xml" });
+    registerSitemapRoutes(router, { path: "/sitemap.xml", getServingState: () => undefined });
 
     expect(routes.has("/sitemap.xml")).toBe(true);
-    expect(
-      [...routes.keys()].some((key) => key.includes("(^sitemap") && key.endsWith(").xml")),
-    ).toBe(true);
-    expect(
-      [...routes.keys()].some((key) => key.includes("(^sitemap") && key.endsWith(").xml.gz")),
-    ).toBe(true);
+    expect(routes.has("/sitemaps/:sitemapGenerationId/:sitemapGenerationFile")).toBe(true);
+    expect(routes.has("/:sitemapArtifactFile")).toBe(true);
   });
 
-  it("serves 503 with Retry-After before the first generation, and never triggers one", async () => {
+  it("returns 503 with Retry-After before a serving state exists", async () => {
     const { router, routes } = capturingRouter();
-    registerSitemapRoutes(router, { path: "/sitemap.xml", warn: () => undefined });
-
+    registerSitemapRoutes(router, {
+      path: "/sitemap.xml",
+      warn: () => undefined,
+      getServingState: () => undefined,
+    });
     const { response, calls } = fakeResponse();
-    const mainHandler = routes.get("/sitemap.xml")!;
 
-    await mainHandler({ request: { params: {} } as never, response: response as never });
+    await routes.get("/sitemap.xml")!(context(response));
 
     expect(calls.serviceUnavailable).toBeDefined();
-    expect(calls.header).toEqual(["Retry-After", "30"]);
-    expect(generateSitemap).not.toHaveBeenCalled();
+    expect(calls.header).toContainEqual(["Retry-After", "30"]);
   });
 
-  it("serves the last-good bounded sitemap as XML, from disk, on every request", async () => {
-    const file = tempFile("<urlset></urlset>");
-    generateSitemap.mockResolvedValue({
-      mode: "single",
-      path: file,
-      urls: 1,
-      duplicates: [],
-      routes: [],
-    });
-    await regenerateSitemap();
-    generateSitemap.mockClear();
-
+  it("returns 304 from manifest validators without opening an artifact stream", async () => {
+    const { state, store } = stateFor(manifest());
     const { router, routes } = capturingRouter();
-    registerSitemapRoutes(router, { path: "/sitemap.xml" });
-
-    const { response, calls } = fakeResponse();
-    await routes.get("/sitemap.xml")!({
-      request: { params: {} } as never,
-      response: response as never,
-    });
-
-    expect(calls.xml).toEqual(["<urlset></urlset>"]);
-    expect(generateSitemap).not.toHaveBeenCalled();
-  });
-
-  it("serves a known plain shard as XML and an unknown one as 404, without generating", async () => {
-    const shard = tempFile("<urlset><shard/></urlset>", "sitemap-0001.xml");
-    generateSitemap.mockResolvedValue({
-      indexPath: tempFile("<sitemapindex></sitemapindex>", "sitemap_index.xml"),
-      totalUrls: 1,
-      duplicates: [],
-      routes: [],
-      files: [{ path: shard, urls: 1, bytes: 10, gzipped: false }],
-    });
-    await regenerateSitemap();
-    generateSitemap.mockClear();
-
-    const { router, routes } = capturingRouter();
-    registerSitemapRoutes(router, { path: "/sitemap.xml" });
-    const plainHandler = [...routes.entries()].find(([key]) => key.endsWith(").xml"))![1];
-
-    const known = fakeResponse();
-    await plainHandler({
-      request: { params: { sitemapArtifactFile: "sitemap-0001" } } as never,
-      response: known.response as never,
-    });
-    expect(known.calls.xml).toEqual(["<urlset><shard/></urlset>"]);
-
-    const unknown = fakeResponse();
-    await plainHandler({
-      request: { params: { sitemapArtifactFile: "sitemap-9999" } } as never,
-      response: unknown.response as never,
-    });
-    expect(unknown.calls.notFound).toBeDefined();
-    expect(generateSitemap).not.toHaveBeenCalled();
-  });
-
-  it("serves a gzip shard with Content-Encoding: gzip and application/xml", async () => {
-    const gz = tempFile(Buffer.from([0x1f, 0x8b, 0x00]), "sitemap-en-0001.xml.gz");
-    generateSitemap.mockResolvedValue({
-      indexPath: tempFile("<sitemapindex></sitemapindex>", "sitemap_index.xml"),
-      totalUrls: 1,
-      duplicates: [],
-      routes: [],
-      files: [{ path: gz, key: "en", urls: 1, bytes: 3, gzipped: true }],
-    });
-    await regenerateSitemap();
-    generateSitemap.mockClear();
-
-    const { router, routes } = capturingRouter();
-    registerSitemapRoutes(router, { path: "/sitemap.xml" });
-    const gzHandler = [...routes.entries()].find(([key]) => key.endsWith(").xml.gz"))![1];
-
+    registerSitemapRoutes(router, { path: "/sitemap.xml", getServingState: () => state });
     const { response, calls } = fakeResponse();
 
-    await gzHandler({
-      request: { params: { sitemapArtifactFile: "sitemap-en-0001" } } as never,
-      response: response as never,
-    });
+    await routes.get("/sitemap.xml")!(context(response, {}, { "if-none-match": `W/"${digest}"` }));
 
-    expect(calls.header).toEqual(["Content-Encoding", "gzip"]);
-    expect(calls.sendBuffer?.[1]).toEqual({ contentType: "application/xml" });
-    expect(generateSitemap).not.toHaveBeenCalled();
+    expect(calls.setStatusCode).toEqual([[304]]);
+    expect(calls.header).toContainEqual(["ETag", `"${digest}"`]);
+    expect(calls.header).toContainEqual(["Cache-Control", "public, max-age=300"]);
+    expect(store.getArtifactStream).not.toHaveBeenCalled();
+  });
+
+  it("streams the current main artifact after validator handling", async () => {
+    const current = manifest();
+    const { state, store } = stateFor(current);
+    const { router, routes } = capturingRouter();
+    registerSitemapRoutes(router, { path: "/sitemap.xml", getServingState: () => state });
+    const { response, calls } = fakeResponse();
+
+    await routes.get("/sitemap.xml")!(context(response));
+
+    expect(store.getArtifactStream).toHaveBeenCalledWith(current, current.mainFile);
+    expect(calls["baseResponse.send"]).toHaveLength(1);
+  });
+
+  it("answers HEAD with validators and no artifact stream", async () => {
+    const { state, store } = stateFor(manifest());
+    const { router, routes } = capturingRouter();
+    registerSitemapRoutes(router, { path: "/sitemap.xml", getServingState: () => state });
+    const { response, calls } = fakeResponse();
+
+    await routes.get("/sitemap.xml")!(context(response, {}, {}, "HEAD"));
+
+    expect(calls.header).toContainEqual(["Content-Type", "application/xml"]);
+    expect(calls.send).toEqual([[]]);
+    expect(store.getArtifactStream).not.toHaveBeenCalled();
+  });
+
+  it("serves only a listed immutable generation file with immutable cache headers", async () => {
+    const current = manifest();
+    const previous = manifest({
+      generationId: "previous_2",
+      fence: 2,
+      mainFile: "generations/previous_2/sitemap.xml",
+      files: [{ path: "generations/previous_2/sitemap.xml", bytes: 4, sha256: digest }],
+    });
+    const { state, store } = stateFor(current);
+    store.readManifestByGeneration.mockResolvedValue(previous);
+    const { router, routes } = capturingRouter();
+    registerSitemapRoutes(router, { path: "/sitemap.xml", getServingState: () => state });
+    const { response, calls } = fakeResponse();
+
+    await routes.get("/sitemaps/:sitemapGenerationId/:sitemapGenerationFile")!(
+      context(response, {
+        sitemapGenerationId: "previous_2",
+        sitemapGenerationFile: "sitemap.xml",
+      }),
+    );
+
+    expect(store.readManifestByGeneration).toHaveBeenCalledWith("previous_2");
+    expect(calls.header).toContainEqual(["Cache-Control", "public, max-age=31536000, immutable"]);
+    expect(calls["baseResponse.send"]).toHaveLength(1);
+  });
+
+  it("rejects traversal-shaped or unlisted generation requests before storage streaming", async () => {
+    const { state, store } = stateFor(manifest());
+    const { router, routes } = capturingRouter();
+    registerSitemapRoutes(router, { path: "/sitemap.xml", getServingState: () => state });
+    const { response, calls } = fakeResponse();
+
+    await routes.get("/sitemaps/:sitemapGenerationId/:sitemapGenerationFile")!(
+      context(response, { sitemapGenerationId: "../escape", sitemapGenerationFile: "sitemap.xml" }),
+    );
+
+    expect(calls.notFound).toBeDefined();
+    expect(store.getArtifactStream).not.toHaveBeenCalled();
+  });
+
+  it("sets gzip content encoding from the listed filename without reading bytes first", async () => {
+    const { state, store } = stateFor(manifest());
+    const { router, routes } = capturingRouter();
+    registerSitemapRoutes(router, { path: "/sitemap.xml", getServingState: () => state });
+    const { response, calls } = fakeResponse();
+
+    await routes.get("/sitemaps/:sitemapGenerationId/:sitemapGenerationFile")!(
+      context(response, {
+        sitemapGenerationId: "current_3",
+        sitemapGenerationFile: "sitemap-0001.xml.gz",
+      }),
+    );
+
+    expect(calls.header).toContainEqual(["Content-Encoding", "gzip"]);
+    expect(store.getArtifactStream).toHaveBeenCalledTimes(1);
   });
 });

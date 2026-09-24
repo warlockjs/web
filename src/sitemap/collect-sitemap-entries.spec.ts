@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { collectSitemapEntries } from "./collect-sitemap-entries";
+import { collectSitemapEntries, collectSitemapModelDependencies } from "./collect-sitemap-entries";
 
 const temporaryDirectories: string[] = [];
 
@@ -127,5 +127,58 @@ describe("collectSitemapEntries", () => {
     const { declaredRoutes } = await collectSitemapEntries({ appRoot, locales: noLocales });
 
     expect(declaredRoutes.size).toBe(0);
+  });
+
+  it("collects entries declarations, applies their locale policy, and deduplicates their models", async () => {
+    const model = { events: () => ({ on: () => () => {} }) };
+    let calls = 0;
+    const supplier = async () => {
+      calls++;
+      return [{ path: "/products/one" }];
+    };
+
+    const collected = await collectSitemapEntries({
+      appRoot: "unused",
+      locales: { codes: ["en", "ar"] },
+      pageSource: () => [
+        {
+          routeName: "products.show",
+          routePath: "/products/:slug",
+          sitemap: { entries: supplier, locales: false, invalidateOn: [model, model] },
+        },
+      ],
+    });
+
+    expect(calls).toBe(1);
+    expect(collected.items).toEqual([
+      { entry: { path: "/products/one", route: "/products/:slug" } },
+    ]);
+    expect(collected.models).toEqual([model]);
+  });
+
+  it("finds invalidation models without invoking entries suppliers", async () => {
+    const model = { events: () => ({ on: () => () => {} }) };
+    let supplierCalls = 0;
+
+    const models = await collectSitemapModelDependencies({
+      appRoot: "unused",
+      locales: noLocales,
+      pageSource: () => [
+        {
+          routeName: "posts.show",
+          routePath: "/posts/:slug",
+          sitemap: {
+            entries: () => {
+              supplierCalls++;
+              return [];
+            },
+            invalidateOn: [model, model],
+          },
+        },
+      ],
+    });
+
+    expect(models).toEqual([model]);
+    expect(supplierCalls).toBe(0);
   });
 });

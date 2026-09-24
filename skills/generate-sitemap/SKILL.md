@@ -1,157 +1,172 @@
 ---
 name: generate-sitemap
-description: 'Serve `/sitemap.xml` and `/robots.txt` from a Warlock web app with the `@warlock.js/web/sitemap` subpath — the `web.sitemap` and `web.robots` keys in `src/config/web.ts`, page `config.sitemap` (opt out, static options, or a supplier for dynamic routes), locale/hreflang expansion, the automatic switch to a sharded `SitemapIndex`, when generation runs (runtime boot or `regenerateSitemap()` — never `warlock build`), the 503-before-first-generation rule, and `MissingPublicUrlError`. Triggers: `web.sitemap`, `web.robots`, `WebSitemapConfig`, `RobotsConfig`, `SitemapPageExport`, `export const sitemap`, `regenerateSitemap`, `generateSitemap`, `MissingPublicUrlError`, `splitByLocale`, `localeUrl`, `referenceSitemap`, `warlock add sitemap`; "add a sitemap to my Warlock site", "dynamic route missing from sitemap.xml", "regenerate the sitemap after publishing a post", "robots.txt", "sitemap returns 503", "hreflang in the sitemap". Skip: the framework-blind builder classes themselves (`Sitemap`, `SitemapIndex`, Express/cron usage) — `@warlock.js/sitemap/sitemap-overview/SKILL.md`; `app.publicUrl` — `@warlock.js/core/configure-app/SKILL.md`; page metadata `robots: noindex` — `@warlock.js/web/create-a-page/SKILL.md`; competing tools `next-sitemap`, `sitemap` npm package direct.'
+description: 'Serve `/sitemap.xml` and `/robots.txt` from a Warlock web app with the `@warlock.js/web/sitemap` subpath — the `web.sitemap` and `web.robots` keys in `src/config/web.ts`, page `config.sitemap` (opt out, static options, or a supplier for dynamic routes), locale/hreflang expansion, the automatic switch to a sharded `SitemapIndex`, when generation runs (intervals, committed model changes, runtime boot or `regenerateSitemap()` — never `warlock build`), the 503-before-first-generation rule, and `MissingPublicUrlError`. Triggers: `web.sitemap`, `web.robots`, `WebSitemapConfig`, `RobotsConfig`, `SitemapPageExport`, `export const sitemap`, `regenerateSitemap`, `generateSitemap`, `MissingPublicUrlError`, `splitByLocale`, `localeUrl`, `referenceSitemap`, `warlock add sitemap`; "add a sitemap to my Warlock site", "dynamic route missing from sitemap.xml", "regenerate the sitemap after publishing a post", "robots.txt", "sitemap returns 503", "hreflang in the sitemap". Skip: the framework-blind builder classes themselves (`Sitemap`, `SitemapIndex`, Express/cron usage) — `@warlock.js/sitemap/sitemap-overview/SKILL.md`; `app.publicUrl` — `@warlock.js/core/configure-app/SKILL.md`; page metadata `robots: noindex` — `@warlock.js/web/create-a-page/SKILL.md`; competing tools `next-sitemap`, `sitemap` npm package direct.'
 ---
 
-# Warlock — generate a sitemap and robots.txt
+# Generate a sitemap and robots.txt
 
-`@warlock.js/web` turns the app's page graph into `sitemap.xml` and serves it,
-plus an optional generated `robots.txt`. `@warlock.js/sitemap` owns the XML
-protocol; web is its caller — it discovers pages, expands locales, picks the
-single-file or sharded builder, and wires the routes.
-
-## Turn it on
-
-`warlock add sitemap` installs `@warlock.js/sitemap` and merges a **disabled**
-`sitemap` section into `src/config/web.ts` (creating the file when missing).
-There is no `src/config/sitemap.ts` and no connector to register — web reads
-`web.sitemap` itself.
-
-Two steps to enable it:
-
-1. Set the public origin: `app.publicUrl` in `src/config/app.ts`, or the
-   `PUBLIC_APP_URL` environment variable. The origin is never guessed from a
-   request host.
-2. Flip `sitemap.enabled` to `true`.
+Web discovers the page graph and serves persisted XML. Enable sitemap generation
+under `web.sitemap`, and set `app.publicUrl` (or `PUBLIC_APP_URL`). The origin
+is never inferred from a request header. `warlock add sitemap` installs the
+sitemap package and adds disabled configuration; enable it explicitly.
 
 ```ts
-import type { RobotsConfig, WebSitemapConfig } from "@warlock.js/web/sitemap";
+import type { WebConfigurations } from "@warlock.js/web";
 
-const webConfig: { sitemap: WebSitemapConfig; robots: RobotsConfig } = {
+export default {
   sitemap: {
     enabled: true,
-    path: "/sitemap.xml",
-    defaults: { changefreq: "weekly", priority: 0.5 },
-    locales: { codes: ["en", "ar"], defaultLocale: "en" },
+    storage: { directory: "sitemaps" },
+    regenerateEvery: "1d",
   },
   robots: {
     enabled: true,
     groups: [{ userAgent: "*", disallow: ["/admin"] }],
   },
-};
-
-export default webConfig;
+} satisfies WebConfigurations;
 ```
 
-`@warlock.js/web/sitemap` is a separate subpath, not the root barrel — it
-reaches page discovery, which a page's own graph must never pull in.
+`storage.disk` selects a configured Core storage name; omission uses the app's
+default storage. `storage.directory` defaults to `"sitemap"` and must be a
+dedicated relative prefix. The legacy `outputDir` option still selects a local
+directory. Do not combine it with `storage`.
 
-## `web.sitemap` keys
+## Page policy and dynamic URLs
 
-| key                     | default                  | meaning                                                                                                                                                                                                                                        |
-| ----------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `enabled`               | `false`                  | Nothing is discovered, generated or routed until `true`.                                                                                                                                                                                       |
-| `path`                  | `/sitemap.xml`           | The served path of the single file or the index.                                                                                                                                                                                               |
-| `outputDir`             | `storagePath("sitemap")` | Where files are written. Must be a directory the sitemap owns outright — publishing replaces it whole, and `@warlock.js/sitemap` refuses a non-empty directory it did not create (`UnownedOutputDirectoryError`). Never point it at `public/`. |
-| `gzip`                  | `false`                  | On the sharded path, write each shard as `.xml.gz` instead of `.xml`.                                                                                                                                                                          |
-| `defaults`              | —                        | `changefreq` / `priority` applied to every entry that does not set its own.                                                                                                                                                                    |
-| `locales.codes`         | `app.locales`            | Locale codes each page is expanded into, with `xhtml:link` hreflang alternates.                                                                                                                                                                |
-| `locales.defaultLocale` | —                        | Also emitted as `x-default`. Unset: no `x-default`.                                                                                                                                                                                            |
-| `locales.splitByLocale` | `false`                  | One shard per locale, listed in an index.                                                                                                                                                                                                      |
-| `localeUrl`             | `path?locale=<code>`     | Override how a path becomes a locale URL — only when the app implements its own prefix routing. A page's `localePaths` still wins.                                                                                                             |
-| `regenerate.onBoot`     | `true`                   | Generate at boot (dev and production). `warlock build` never generates — see below.                                                                                                                                                            |
+Static routable pages are included by default. Error pages are excluded.
+`config.sitemap: false` opts out. A page or layout may supply static options
+such as `priority`, `changefreq`, `lastmod`, `locales: false`, or
+`localePaths`. The nearest explicit page/layout policy wins; layout policies
+cannot supply dynamic entries.
 
-Above 50,000 URLs (or with `splitByLocale`) web switches from a single
-`Sitemap` to a sharded `SitemapIndex` automatically; `path` then serves the
-index and each shard is served at `/<shard file>`.
+A route such as `/products/:slug` is a pattern, not a URL. Give that page a
+supplier returning its concrete URLs. Warlock does not crawl links or infer a
+model query. Without a supplier the dynamic route contributes zero URLs and
+appears with a zero count in generation diagnostics.
 
-## Per-page control: `config.sitemap`
-
-Every routable page is included by default, expanded per locale. Error pages
-are never listed. A page module can put `sitemap` in `config` to change that:
-
-```tsx
+```ts
 import type { PageConfig } from "@warlock.js/web";
+import { Product } from "./product.server";
+import { listPublishedProductSitemapRows } from "./product-sitemap-data.server";
 
-export const config = { sitemap: false } satisfies PageConfig;
-```
+async function productSitemap() {
+  const products = await listPublishedProductSitemapRows();
+  return products.map(product => ({
+    path: `/products/${encodeURIComponent(product.slug)}`,
+    lastmod: product.updatedAt,
+    images: [{ loc: product.imageUrl }],
+  }));
+}
 
-```tsx
 export const config = {
-  sitemap: { priority: 0.9, changefreq: "daily", locales: false },
+  sitemap: {
+    entries: productSitemap,
+    invalidateOn: [Product],
+  },
 } satisfies PageConfig;
 ```
 
-The object form takes `priority`, `changefreq`, `lastmod`, `locales: false`
-(one locale-invariant URL) and `localePaths` (per-locale slugs).
+The query helper above is application-owned: select eligible published rows.
+A plain `sitemap: productSitemap` function remains supported. The object form
+adds `invalidateOn` and static defaults, including `locales: false` for every
+supplied entry. Supplier functions return an Iterable or Promise of an Iterable;
+the Web adapter currently materializes entries in memory.
 
-**A dynamic route (`/posts/:slug`) is not a URL.** Only a supplier function
-can name its concrete paths; without one the route contributes nothing and is
-reported with `count: 0` in the result's `routes`, never silently dropped:
+Sitemap configuration and its exclusive model imports are projected out of the
+browser graph. Keep models in server modules and do not read them from the page
+component or client `register` function.
 
-```tsx
-import type { PageConfig } from "@warlock.js/web";
+Images use the image sitemap extension, with at most 1,000 images per URL;
+excess images are dropped with a warning per route. Price, stock and product
+description belong in page structured data or a product feed, not sitemap XML.
 
-export const config = {
-  sitemap: async () => [
-    { path: "/posts/hello-world", lastmod: new Date("2026-09-01") },
-    { path: "/posts/second-post", localePaths: { ar: "/posts/thani" } },
-  ],
-} satisfies PageConfig;
-```
+## Refreshing after changes
 
-In a real page, read the rows from your model — the function runs at
-generation time, not per request.
-
-A layout may set static `config.sitemap` defaults or `false` for descendants;
-supplier functions belong to pages only. The nearest explicit page/layout
-policy wins. Root config has no sitemap key. Configure sitewide generation
-under `web.sitemap`, and HTML indexing policy separately with
-`config.metadata.robots` on pages or layouts.
-
-## When it runs — never on a request
-
-`warlock build` never generates the sitemap — the build process loads no app
-config and ships no page source files, so it logs
-`[warlock:web] sitemap: \`warlock build\` never generates the sitemap; when web.sitemap is enabled it is generated at runtime boot (web.sitemap.regenerate.onBoot)`and leaves generation to boot. Generation happens at boot (dev and
-production) when`regenerate.onBoot`is on, and whenever the app calls`regenerateSitemap()`:
+The application-level function is:
 
 ```ts
 import { regenerateSitemap } from "@warlock.js/web/sitemap";
 
-export async function onPostPublished(): Promise<void> {
-  await regenerateSitemap();
+// After the application's transaction has successfully committed:
+await regenerateSitemap();
+```
+
+For an import, call it once after the batch commits. A request made during a
+generation waits for a following pass; concurrent requests may share that pass.
+Later requests can require another pass. A failed pass rejects its callers and
+keeps the last published sitemap.
+
+`invalidateOn` subscribes to the declared models' saved/deleted events and uses
+Cascade's `afterCommit` hook before marking the sitemap stale. It debounces
+events for 30 seconds of quiet, with a five-minute maximum wait. Cascade is
+optional unless this feature is used. Listeners are removed on reload/shutdown.
+Bulk writes, raw SQL and external writers may bypass model events, so use
+explicit regeneration or the interval safety net.
+
+`regenerateEvery` is optional; omission means no interval. It accepts positive
+milliseconds or durations such as `"30s"`, `"6h"`, and `"1d"`. Timers do
+not keep the process alive and are cleared on shutdown/reload. They use the
+same generation coordinator, retain the last good output on failure, and retry
+on a later tick. `changefreq` is crawler metadata, not a refresh schedule.
+
+`generateSitemap()` remains a low-level one-shot artifact writer. It does not
+update the managed HTTP serving state or coordinate refreshes. Use
+`regenerateSitemap()` for application changes.
+
+## Storage, restarts and multiple instances
+
+Managed generations contain immutable files plus a manifest. Startup validates
+and restores the latest valid manifest, then refreshes in the background when
+`regenerate.onBoot` is enabled (default true). With no valid manifest,
+`/sitemap.xml` returns 503 and `Retry-After: 30` until generation succeeds.
+Requests only serve published artifacts; they never trigger generation.
+`warlock build` does not generate the sitemap.
+
+`coordination: "local"` is the default for one process. For multiple servers:
+
+```ts
+sitemap: {
+  enabled: true,
+  coordination: "shared",
+  storage: { disk: "assets", directory: "sitemaps" },
+  regenerateEvery: "1d",
 }
 ```
 
-- A call while a generation is running joins it instead of starting another.
-- A failed run keeps serving the last good set and is always reported to
-  stderr. A boot never fails because the sitemap did.
-- `/sitemap.xml` only ever serves what was last written. Before the first
-  successful generation it answers **503 with `Retry-After`**, never a 404 and
-  never a generation on the request's behalf.
+Here `assets` must already be a configured shared storage disk. Shared mode
+requires atomic create-if-absent and consistent reads/listing. Supported
+conditional-write providers are S3 and R2; local storage requires a genuinely
+shared filesystem with the corresponding guarantees. Do not assume every
+S3-compatible provider supports the capability. There is no built-in GCS
+driver, and Spaces conditional creation is not currently supported.
 
-`generateSitemap()` is the underlying one-shot call (no join, no last-good
-tracking); it throws `MissingPublicUrlError` when `enabled` is `true` and no
-origin is configured, before any page is read.
+Each pass claims a durable increasing number before collecting entries. The
+highest valid manifest determines the served generation. No Redis is required.
+Concurrent servers can duplicate generation work; publication order remains
+defined by their claims. Claims are retained so numbers cannot be reused.
+Other instances refresh manifest metadata at most every `manifestPollMs`
+(default 30,000). A manual caller awaits its own server's post-request pass.
 
-## `web.robots`
+## Locales, shards and HTTP caching
 
-| key                | default | meaning                                                                                      |
-| ------------------ | ------- | -------------------------------------------------------------------------------------------- |
-| `enabled`          | `false` | Registers `GET /robots.txt`.                                                                 |
-| `groups`           | —       | `{ userAgent, allow?, disallow? }` blocks.                                                   |
-| `referenceSitemap` | `true`  | Appends `Sitemap: <origin><web.sitemap.path>` when the sitemap is enabled and has an origin. |
-| `extra`            | —       | Raw lines appended verbatim (`Host:`, `Crawl-delay:`).                                       |
+Locale codes/defaults come from `app.localeCodes` and `app.localeCode`,
+unless overridden under `sitemap.locales`. Each URL expands once per configured
+locale with hreflang alternates. Active locale routing determines prefixed
+URLs; `localeUrl` overrides that convention and a page's `localePaths` wins.
 
-A hand-written `public/robots.txt` wins outright: web registers no route and
-warns that the `Sitemap:` line is then yours to add.
+Above 50,000 collected entries, or with `locales.splitByLocale`, the main
+endpoint serves an index. Shards use generation-specific URLs under
+`/sitemaps/<generationId>/`. Retention keeps recent generations for old index
+readers, with at least two retained manifests and a one-hour grace period.
 
-## Pitfalls
+Responses stream from storage. ETag and Last-Modified come from the manifest;
+matching conditional requests return 304 without reading artifact contents.
+The main endpoint defaults to `Cache-Control: public, max-age=300`, configurable
+with `sitemap.cacheControl`. Versioned generation URLs use immutable caching.
 
-- **503 on `/sitemap.xml`** — no generation has succeeded yet. Check the
-  boot log for `[warlock:web] sitemap regeneration failed`; a missing
-  `app.publicUrl` is the usual cause.
-- **A dynamic page is missing** — it has no `config.sitemap` supplier.
-  Its route shows up with `count: 0` in the generation result.
-- **`outputDir` inside `public/`** — refused. The sitemap owns its directory.
+## robots.txt
+
+`web.robots.enabled` registers `/robots.txt`. Configure `groups` and optional
+`extra` lines. `referenceSitemap` defaults true and adds the configured
+sitemap URL when enabled and an origin exists. A hand-written
+`public/robots.txt` wins; maintain its Sitemap line yourself.

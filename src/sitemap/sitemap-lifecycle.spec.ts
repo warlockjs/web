@@ -1,149 +1,168 @@
-/**
- * Contract Part 6, rules 4-5: join-in-flight, last-good-on-failure,
- * unconditional stderr on a failed regeneration.
- */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { generateSitemap } = vi.hoisted(() => ({ generateSitemap: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  config: vi.fn(),
+  createStore: vi.fn(),
+  createRuntime: vi.fn(),
+  dependencies: vi.fn(),
+  subscribe: vi.fn(),
+}));
 
-vi.mock("./generate-sitemap", () => ({ generateSitemap }));
+vi.mock("./resolve-sitemap-config", () => ({ resolveSitemapConfig: mocks.config }));
+vi.mock("./sitemap-artifact-store", () => ({ createSitemapArtifactStore: mocks.createStore }));
+vi.mock("./sitemap-local-runtime", () => ({ createSitemapLocalRuntime: mocks.createRuntime }));
+vi.mock("./collect-sitemap-entries", () => ({
+  collectSitemapModelDependencies: mocks.dependencies,
+}));
+vi.mock("./sitemap-model-subscriptions", () => ({ subscribeSitemapModels: mocks.subscribe }));
 
 import {
-  getLastSitemapFailure,
-  getSitemapArtifacts,
+  getSitemapServingState,
   regenerateSitemap,
+  refreshSitemapModelSubscriptions,
   resetSitemapLifecycleForTests,
+  shutdownSitemapRuntime,
+  startSitemapRuntime,
 } from "./sitemap-lifecycle";
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
+const manifest = (fence: number, generatedAt = "2026-09-24T12:00:00.000Z") => ({
+  version: 1,
+  fence,
+  generationId: `run-${fence}`,
+  coversRev: fence,
+  kind: "single" as const,
+  mainFile: `generations/run-${fence}/sitemap.xml`,
+  files: [{ path: `generations/run-${fence}/sitemap.xml`, bytes: 1, sha256: "a".repeat(64) }],
+  entries: 1,
+  generatedAt,
+});
 
-  return { promise, resolve, reject };
+function setup({ coordination = "local", onBoot = false } = {}) {
+  const store = {
+    supportsSharedClaims: vi.fn(() => coordination !== "shared"),
+    readLatestManifest: vi.fn(),
+    cleanupRetainedGenerations: vi.fn(async () => ({ manifests: 0, artifacts: 0 })),
+    claimFence: vi.fn(),
+  };
+  const runtime = {
+    store,
+    currentManifest: undefined,
+    initialize: vi.fn(),
+    request: vi.fn(),
+    dispose: vi.fn(),
+  };
+  mocks.config.mockReturnValue({
+    enabled: true,
+    storage: { directory: "sitemap" },
+    legacyOutputDir: undefined,
+    coordination,
+    cacheControl: "public, max-age=300",
+    manifestPollMs: 1,
+    regenerateEveryMs: undefined,
+    regenerate: { onBoot },
+    locales: {},
+  });
+  mocks.createStore.mockReturnValue(store);
+  mocks.createRuntime.mockReturnValue(runtime);
+  mocks.dependencies.mockResolvedValue([]);
+  mocks.subscribe.mockResolvedValue({ dispose: vi.fn() });
+  return { store, runtime };
 }
 
-describe("regenerateSitemap", () => {
-  beforeEach(() => {
-    generateSitemap.mockReset();
-    resetSitemapLifecycleForTests();
+describe("managed sitemap lifecycle", () => {
+  afterEach(async () => {
+    await shutdownSitemapRuntime();
+    vi.clearAllMocks();
   });
 
-  afterEach(() => {
-    vi.restoreAllMocks();
+  it("restores and subscribes even when boot generation is disabled", async () => {
+    const { runtime } = setup({ onBoot: false });
+    await startSitemapRuntime();
+    expect(runtime.initialize).toHaveBeenCalledOnce();
+    expect(mocks.dependencies).toHaveBeenCalledOnce();
+    expect(mocks.subscribe).toHaveBeenCalledOnce();
   });
 
-  it("publishes a bounded result as the last-good artifact", async () => {
-    generateSitemap.mockResolvedValue({
-      mode: "single",
-      path: "/out/sitemap.xml",
-      urls: 3,
-      duplicates: [],
-      routes: [],
-    });
-
-    await regenerateSitemap();
-
-    const artifacts = getSitemapArtifacts();
-    expect(artifacts?.mainFile).toEqual({ absolutePath: "/out/sitemap.xml", gzipped: false });
-    expect(artifacts?.shardFiles.size).toBe(0);
+  it("rejects shared mode before starting when storage cannot make atomic claims", async () => {
+    setup({ coordination: "shared" });
+    await expect(startSitemapRuntime()).rejects.toThrow("putIfAbsent");
+    expect(mocks.createRuntime).not.toHaveBeenCalled();
   });
 
-  it("publishes an index result's shards, keyed by their served URL, skipping empty groups", async () => {
-    generateSitemap.mockResolvedValue({
-      indexPath: "/out/sitemap_index.xml",
-      totalUrls: 2,
-      duplicates: [],
-      routes: [],
-      files: [
-        { path: "/out/sitemap-0001.xml", urls: 1, bytes: 100, gzipped: false },
-        { path: "/out/sitemap-en-0001.xml.gz", key: "en", urls: 1, bytes: 50, gzipped: true },
-        { path: "/out/sitemap-fr-0001.xml.gz", key: "fr", urls: 0, bytes: 0, gzipped: false },
-      ],
-    });
-
-    await regenerateSitemap();
-
-    const artifacts = getSitemapArtifacts();
-    expect(artifacts?.mainFile).toEqual({ absolutePath: "/out/sitemap_index.xml", gzipped: false });
-    expect(artifacts?.shardFiles.get("/sitemap-0001.xml")).toEqual({
-      absolutePath: "/out/sitemap-0001.xml",
-      gzipped: false,
-    });
-    expect(artifacts?.shardFiles.get("/sitemap-en-0001.xml.gz")).toEqual({
-      absolutePath: "/out/sitemap-en-0001.xml.gz",
-      gzipped: true,
-    });
-    expect(artifacts?.shardFiles.has("/sitemap-fr-0001.xml.gz")).toBe(false);
+  it("adopts only a monotonically higher polled manifest and never generates from state reads", async () => {
+    const { store } = setup();
+    store.readLatestManifest.mockResolvedValueOnce(manifest(3)).mockResolvedValueOnce(manifest(2));
+    await startSitemapRuntime();
+    const state = getSitemapServingState()!;
+    await expect(state.getManifest()).resolves.toMatchObject({ fence: 3 });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    await expect(state.getManifest()).resolves.toMatchObject({ fence: 3 });
   });
 
-  it("a disabled result publishes nothing", async () => {
-    generateSitemap.mockResolvedValue({ mode: "disabled", urls: 0, duplicates: [], routes: [] });
-
-    await regenerateSitemap();
-
-    expect(getSitemapArtifacts()).toBeUndefined();
+  it("publishes the runtime result despite asynchronous cleanup failure", async () => {
+    const { runtime, store } = setup();
+    runtime.request.mockResolvedValue({
+      manifest: manifest(1),
+      result: { mode: "single", path: "x", urls: 1, duplicates: [], routes: [] },
+    });
+    store.cleanupRetainedGenerations.mockRejectedValue(new Error("cleanup"));
+    await startSitemapRuntime();
+    await expect(regenerateSitemap()).resolves.toMatchObject({ mode: "single" });
   });
 
-  it("joins an in-flight generation instead of starting a second one", async () => {
-    const gate = deferred<void>();
-    generateSitemap.mockImplementation(async () => {
-      await gate.promise;
-      return { mode: "single", path: "/out/sitemap.xml", urls: 1, duplicates: [], routes: [] };
-    });
+  it("delegates overlapping manual requests to the runtime instead of retaining the legacy lifecycle join", async () => {
+    const { runtime } = setup();
+    runtime.request
+      .mockResolvedValueOnce({
+        manifest: manifest(1),
+        result: { mode: "single", path: "first", urls: 1, duplicates: [], routes: [] },
+      })
+      .mockResolvedValueOnce({
+        manifest: manifest(2),
+        result: { mode: "single", path: "second", urls: 2, duplicates: [], routes: [] },
+      });
+    await startSitemapRuntime();
 
-    const first = regenerateSitemap();
-    const second = regenerateSitemap();
+    const [first, second] = await Promise.all([regenerateSitemap(), regenerateSitemap()]);
 
-    expect(generateSitemap).toHaveBeenCalledTimes(1);
-
-    gate.resolve();
-    const [firstResult, secondResult] = await Promise.all([first, second]);
-
-    expect(firstResult).toBe(secondResult);
-    expect(generateSitemap).toHaveBeenCalledTimes(1);
+    expect(runtime.request).toHaveBeenCalledTimes(2);
+    expect(first).toMatchObject({ path: "first", urls: 1 });
+    expect(second).toMatchObject({ path: "second", urls: 2 });
   });
 
-  it("keeps the last good artifact and reports the error unconditionally when regeneration fails", async () => {
-    const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    generateSitemap.mockResolvedValueOnce({
-      mode: "single",
-      path: "/out/sitemap.xml",
-      urls: 1,
-      duplicates: [],
-      routes: [],
-    });
-    await regenerateSitemap();
-    const goodArtifacts = getSitemapArtifacts();
-
-    const failure = new Error("disk full");
-    generateSitemap.mockRejectedValueOnce(failure);
-
-    await expect(regenerateSitemap()).rejects.toBe(failure);
-
-    expect(getSitemapArtifacts()).toBe(goodArtifacts);
-    expect(getLastSitemapFailure()?.error).toBe(failure);
-    expect(stderr).toHaveBeenCalled();
+  it("keeps the prior model subscriptions when a page-HMR replacement fails", async () => {
+    setup();
+    const old = { dispose: vi.fn() };
+    mocks.subscribe
+      .mockResolvedValueOnce(old)
+      .mockRejectedValueOnce(new Error("new dependencies failed"));
+    await startSitemapRuntime();
+    await expect(refreshSitemapModelSubscriptions()).rejects.toThrow("new dependencies failed");
+    expect(old.dispose).not.toHaveBeenCalled();
   });
 
-  it("a new call after a failure starts a fresh generation, not the failed in-flight promise", async () => {
-    generateSitemap.mockRejectedValueOnce(new Error("boom"));
-    await expect(regenerateSitemap()).rejects.toThrow("boom");
-
-    generateSitemap.mockResolvedValueOnce({
-      mode: "single",
-      path: "/out/sitemap.xml",
-      urls: 1,
-      duplicates: [],
-      routes: [],
+  it("disposes a late replacement after shutdown instead of re-subscribing", async () => {
+    setup();
+    const old = { dispose: vi.fn() };
+    let resolve!: (value: { dispose: ReturnType<typeof vi.fn> }) => void;
+    const pending = new Promise<{ dispose: ReturnType<typeof vi.fn> }>((done) => {
+      resolve = done;
     });
-    await regenerateSitemap();
+    const replacement = { dispose: vi.fn() };
+    mocks.subscribe.mockResolvedValueOnce(old).mockReturnValueOnce(pending);
+    await startSitemapRuntime();
+    const refresh = refreshSitemapModelSubscriptions();
+    await shutdownSitemapRuntime();
+    resolve(replacement);
+    await refresh;
+    expect(replacement.dispose).toHaveBeenCalledOnce();
+  });
 
-    expect(getSitemapArtifacts()?.mainFile.absolutePath).toBe("/out/sitemap.xml");
-    expect(generateSitemap).toHaveBeenCalledTimes(2);
+  it("disposes runtime and subscriptions so queued handlers cannot survive shutdown", async () => {
+    const { runtime } = setup();
+    await startSitemapRuntime();
+    await shutdownSitemapRuntime();
+    expect(runtime.dispose).toHaveBeenCalledOnce();
+    expect(getSitemapServingState()).toBeUndefined();
   });
 });

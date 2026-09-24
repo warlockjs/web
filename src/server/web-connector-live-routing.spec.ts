@@ -12,12 +12,23 @@ import {
   installPageRoutes,
   type InstallPageRoutesOptions,
 } from "./install-page-routes";
+
+const sitemapMocks = vi.hoisted(() => ({
+  refresh: vi.fn(async () => undefined),
+}));
+
+vi.mock("../sitemap/sitemap-lifecycle", () => ({
+  refreshSitemapModelSubscriptions: sitemapMocks.refresh,
+  shutdownSitemapRuntime: vi.fn(async () => undefined),
+}));
+
 import { WebConnector } from "./web-connector";
 
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
   vi.restoreAllMocks();
+  sitemapMocks.refresh.mockClear();
   setConfig("app", {});
   setConfig("web", {});
   while (temporaryDirectories.length > 0) {
@@ -235,6 +246,7 @@ describe("WebConnector live page routing", () => {
     expect(replace).not.toHaveBeenCalled();
     expect(install).not.toHaveBeenCalled();
     expect(vite.send).not.toHaveBeenCalled();
+    expect(sitemapMocks.refresh).toHaveBeenCalledWith({ appRoot: files.appRoot });
   });
 
   it("atomically replaces routes, then invalidates the client registry for a route edit", async () => {
@@ -268,6 +280,7 @@ describe("WebConnector live page routing", () => {
     expect(vite.invalidateModule).toHaveBeenCalledWith(vite.registryNode);
     expect(vite.send).toHaveBeenCalledTimes(1);
     expect(vite.send).toHaveBeenCalledWith({ type: "full-reload", path: "*" });
+    expect(sitemapMocks.refresh).toHaveBeenCalledWith({ appRoot: files.appRoot });
 
     // Vite observing the same filesystem event after core consumes exactly one
     // suppression and does not install or reload a second time.

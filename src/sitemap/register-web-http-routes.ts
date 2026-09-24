@@ -8,7 +8,7 @@ import path from "node:path";
 import { publicPath, type Router } from "@warlock.js/core";
 import { registerRobotsRoute } from "./register-robots-route";
 import { registerSitemapRoutes } from "./register-sitemap-routes";
-import { regenerateSitemap } from "./sitemap-lifecycle";
+import { startSitemapRuntime } from "./sitemap-lifecycle";
 import { resolveSitemapConfig } from "./resolve-sitemap-config";
 
 export type RegisterWebHttpRoutesOptions = {
@@ -40,9 +40,7 @@ export async function registerWebHttpRoutes(
 export async function regenerateSitemapOnStartup(
   options: { appRoot?: string } = {},
 ): Promise<void> {
-  const sitemapConfig = resolveSitemapConfig();
-
-  if (!sitemapConfig.enabled || !sitemapConfig.regenerate.onBoot) return;
-
-  await regenerateSitemap({ appRoot: options.appRoot }).catch(() => undefined);
+  if (!resolveSitemapConfig().enabled) return;
+  // Restoration/subscriptions happen even when onBoot generation is disabled.
+  await startSitemapRuntime({ appRoot: options.appRoot }).catch(() => undefined);
 }

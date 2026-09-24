@@ -1,34 +1,23 @@
 /**
- * `GET <sitemap path>` and `GET /<shard file>` (contract Part 4 rule 6, Part
- * B checklist item 1). Both handlers only ever READ
- * {@link getSitemapArtifacts} — neither calls {@link regenerateSitemap} or
- * {@link generateSitemap}. A request that arrives before the first
- * successful generation gets a `503` with `Retry-After`, never a silent
- * `404` and never a generation kicked off on its behalf.
+ * HTTP readers for immutable sitemap manifests. Requests only read published
+ * state: they never regenerate, upload, poll manually, or touch lifecycle
+ * ownership. Storage streams go directly to Fastify after Response has set
+ * the protocol headers; Response.stream() is unsuitable here because it
+ * unconditionally installs `Cache-Control: no-cache` before writing headers.
  */
-import { readFile } from "node:fs/promises";
+import path from "node:path";
 import type { HttpContext, Response, ReturnedResponse, Router } from "@warlock.js/core";
-import { getSitemapArtifacts, type SitemapArtifactFile } from "./sitemap-lifecycle";
+import type { SitemapGenerationFile, SitemapGenerationManifest } from "@warlock.js/sitemap";
+import { getSitemapServingState } from "./sitemap-lifecycle";
+import { resolveSitemapHttpValidators } from "./sitemap-http-validators";
+import type { SitemapServingState } from "./sitemap-serving-state";
 
-/** Seconds. Arbitrary but short: the first generation is expected to finish well inside this. */
 const NOT_GENERATED_RETRY_AFTER_SECONDS = 30;
+const IMMUTABLE_GENERATION_CACHE_CONTROL = "public, max-age=31536000, immutable";
+const SAFE_GENERATION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const SAFE_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/;
 
-async function serveArtifactFile(
-  response: Response,
-  file: SitemapArtifactFile,
-): Promise<ReturnedResponse> {
-  if (file.gzipped) {
-    const buffer = await readFile(file.absolutePath);
-
-    response.header("Content-Encoding", "gzip");
-
-    return response.sendBuffer(buffer, { contentType: "application/xml" }) as ReturnedResponse;
-  }
-
-  const xml = await readFile(file.absolutePath, "utf8");
-
-  return response.xml(xml) as ReturnedResponse;
-}
+type SitemapRouteContext = Pick<HttpContext, "request" | "response">;
 
 function serveNotGeneratedYet(
   response: Response,
@@ -36,7 +25,7 @@ function serveNotGeneratedYet(
 ): ReturnedResponse {
   warn(
     "[warlock:web] a sitemap request arrived before the first successful generation completed " +
-      "— serving 503 rather than a silent 404. If this persists, check the build/boot logs for a " +
+      "� serving 503 rather than a silent 404. If this persists, check the build/boot logs for a " +
       "sitemap generation failure.",
   );
 
@@ -45,69 +34,173 @@ function serveNotGeneratedYet(
     .serviceUnavailable({ error: "sitemap has not been generated yet" }) as ReturnedResponse;
 }
 
-export type RegisterSitemapRoutesOptions = {
-  /** The configured `web.sitemap.path` — `resolveSitemapConfig().path`. */
-  path: string;
-  warn?: (message: string) => void;
-};
+function isGzipped(file: SitemapGenerationFile): boolean {
+  return file.path.endsWith(".gz");
+}
 
-/**
- * Shard/index file STEMS `@warlock.js/sitemap` produces — always
- * `sitemap<...>` (`filePrefix` defaults to `"sitemap"` and
- * `generate-sitemap.ts` never overrides it). The extension is deliberately
- * OUTSIDE the regex group, as a literal path suffix — find-my-way's own
- * documented idiom (`/example/:file(^\\d+).png`) — rather than folded into
- * the pattern, so the router never has to parse a dot inside a parametric
- * regex group.
- *
- * Constrained at all so this route only ever intercepts paths SHAPED like a
- * sitemap artifact: every other unmatched top-level request (a real 404, a
- * typo'd page) falls through untouched, exactly as if this route did not
- * exist.
- */
-const SHARD_STEM_PATTERN = "^sitemap[A-Za-z0-9_-]*";
+function safeFileName(value: string | undefined): value is string {
+  return (
+    value !== undefined &&
+    SAFE_FILE_NAME.test(value) &&
+    !value.includes("/") &&
+    !value.includes("\\")
+  );
+}
 
-function shardRequestHandler(extension: string, warn: (message: string) => void) {
-  return ({ request, response }: HttpContext) => {
-    const artifacts = getSitemapArtifacts();
+function fileFromManifest(
+  manifest: SitemapGenerationManifest,
+  filePath: string,
+): SitemapGenerationFile | undefined {
+  return manifest.files.find((file) => file.path === filePath);
+}
 
-    if (!artifacts) return serveNotGeneratedYet(response, warn);
+async function serveManifestFile(
+  context: SitemapRouteContext,
+  state: SitemapServingState,
+  manifest: SitemapGenerationManifest,
+  file: SitemapGenerationFile,
+  cacheControl: string,
+): Promise<ReturnedResponse> {
+  const { request, response } = context;
+  const validators = resolveSitemapHttpValidators({
+    sha256: file.sha256,
+    generatedAt: manifest.generatedAt,
+    ifNoneMatch: request.header("if-none-match", undefined),
+    ifModifiedSince: request.header("if-modified-since", undefined),
+    method: request.method,
+    cacheControl,
+  });
 
-    const stem = (request.params as Record<string, string>).sitemapArtifactFile;
-    const file = artifacts.shardFiles.get(`/${stem}${extension}`);
+  response
+    .header("ETag", validators.etag)
+    .header("Last-Modified", validators.lastModified)
+    .header("Cache-Control", validators.cacheControl)
+    .header("Content-Type", "application/xml");
+
+  if (isGzipped(file)) response.header("Content-Encoding", "gzip");
+
+  if (validators.notModified) {
+    return (await response.setStatusCode(304).send()) as unknown as ReturnedResponse;
+  }
+
+  if (request.method === "HEAD") {
+    return (await response.send()) as unknown as ReturnedResponse;
+  }
+
+  const artifact = await state.store.getArtifactStream(manifest, file.path);
+
+  // `Response.send(stream)` parses iterable streams and buffers them. The
+  // underlying Fastify reply is the narrow existing escape hatch that preserves
+  // the storage stream and headers without materialising XML in memory.
+  return response.baseResponse.send(artifact) as unknown as ReturnedResponse;
+}
+
+async function resolveGenerationManifest(
+  state: SitemapServingState,
+  generationId: string,
+): Promise<SitemapGenerationManifest | undefined> {
+  const current = await state.getManifest();
+
+  if (current?.generationId === generationId) return current;
+
+  return state.store.readManifestByGeneration(generationId);
+}
+
+function generationRequestHandler(
+  getServingState: () => SitemapServingState | undefined,
+  warn: (message: string) => void,
+) {
+  return async (context: SitemapRouteContext): Promise<ReturnedResponse> => {
+    const { request, response } = context;
+    const state = getServingState();
+
+    if (!state) return serveNotGeneratedYet(response, warn);
+
+    const params = request.params as Record<string, string | undefined>;
+    const generationId = params.sitemapGenerationId;
+    const fileName = params.sitemapGenerationFile;
+
+    if (!generationId || !SAFE_GENERATION_ID.test(generationId) || !safeFileName(fileName)) {
+      return response.notFound() as ReturnedResponse;
+    }
+
+    const manifest = await resolveGenerationManifest(state, generationId);
+
+    if (!manifest) return response.notFound() as ReturnedResponse;
+
+    const file = fileFromManifest(manifest, `generations/${generationId}/${fileName}`);
 
     if (!file) return response.notFound() as ReturnedResponse;
 
-    return serveArtifactFile(response, file);
+    return serveManifestFile(context, state, manifest, file, IMMUTABLE_GENERATION_CACHE_CONTROL);
   };
 }
 
+function latestBareShardHandler(
+  getServingState: () => SitemapServingState | undefined,
+  warn: (message: string) => void,
+) {
+  return async (context: SitemapRouteContext): Promise<ReturnedResponse> => {
+    const { request, response } = context;
+    const state = getServingState();
+
+    if (!state) return serveNotGeneratedYet(response, warn);
+
+    const manifest = await state.getManifest();
+
+    if (!manifest) return serveNotGeneratedYet(response, warn);
+
+    const fileName = (request.params as Record<string, string | undefined>).sitemapArtifactFile;
+
+    if (!safeFileName(fileName)) return response.notFound() as ReturnedResponse;
+
+    const file = manifest.files.find((candidate) => path.basename(candidate.path) === fileName);
+
+    if (!file) return response.notFound() as ReturnedResponse;
+
+    return serveManifestFile(context, state, manifest, file, IMMUTABLE_GENERATION_CACHE_CONTROL);
+  };
+}
+
+export type RegisterSitemapRoutesOptions = {
+  /** The configured `web.sitemap.path` � `resolveSitemapConfig().path`. */
+  readonly path: string;
+  readonly warn?: (message: string) => void;
+  /** Test seam; production reads the lifecycle's serving-state getter. */
+  readonly getServingState?: () => SitemapServingState | undefined;
+};
+
+/**
+ * Registers the stable index/single route and immutable generation-file route.
+ * A route read never invokes regeneration: before the first manifest it is a
+ * 503, while absent/expired immutable generations are ordinary 404s.
+ */
 export function registerSitemapRoutes(router: Router, options: RegisterSitemapRoutesOptions): void {
   const warn = options.warn ?? console.warn;
+  const getServingState = options.getServingState ?? getSitemapServingState;
 
-  router.get(options.path, ({ response }) => {
-    const artifacts = getSitemapArtifacts();
+  router.get(options.path, async (context: SitemapRouteContext) => {
+    const state = getServingState();
 
-    if (!artifacts) return serveNotGeneratedYet(response, warn);
+    if (!state) return serveNotGeneratedYet(context.response, warn);
 
-    return serveArtifactFile(response, artifacts.mainFile);
+    const manifest = await state.getManifest();
+
+    if (!manifest) return serveNotGeneratedYet(context.response, warn);
+
+    const file = fileFromManifest(manifest, manifest.mainFile);
+
+    if (!file) return context.response.notFound() as ReturnedResponse;
+
+    return serveManifestFile(context, state, manifest, file, state.cacheControl);
   });
 
-  // Shards are always served at the site root (`/${fileName}`), regardless of
-  // `options.path`'s own directory — that is where `@warlock.js/sitemap`
-  // writes `<loc>` entries in the index (`joinOrigin(baseUrl, file.fileName)`,
-  // no directory segment), so the served URL has to match unconditionally.
-  //
-  // A pair of param routes rather than one literal route per shard: shard
-  // filenames are only known AFTER the first generation, and production's
-  // route table is fixed at `HttpConnector.start()`'s scan
-  // (`core/src/router/router.ts` `scan()`), before any generation has run.
-  // Membership is checked per request against the last-good set instead —
-  // this never generates, and a request for an unrecognised name gets the
-  // same `404` it would if no route existed here at all.
-  router.get(`/:sitemapArtifactFile(${SHARD_STEM_PATTERN}).xml`, shardRequestHandler(".xml", warn));
   router.get(
-    `/:sitemapArtifactFile(${SHARD_STEM_PATTERN}).xml.gz`,
-    shardRequestHandler(".xml.gz", warn),
+    "/sitemaps/:sitemapGenerationId/:sitemapGenerationFile",
+    generationRequestHandler(getServingState, warn),
   );
+
+  // Backwards compatibility for existing generated index XML. It can only
+  // serve a basename listed in the current manifest, never arbitrary storage.
+  router.get("/:sitemapArtifactFile", latestBareShardHandler(getServingState, warn));
 }

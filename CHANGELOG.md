@@ -2,6 +2,26 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.20.0
+
+### Added
+
+- Development and production publish generated page and named-API route
+  declarations to `.warlock/typings/web-routes.d.ts`. `href`, `Link`, client
+  navigation, and `useSubmitForm` use those declarations when present while
+  retaining runtime validation before they have been generated.
+- Public `PageLoaderContext`, `LayoutLoaderContext`, `AppLoaderContext`, and
+  `WebConfigurations` type exports.
+- Managed sitemaps: durable generation manifests, optional shared storage,
+  model-driven invalidation after a Cascade transaction commits, conditional
+  HTTP responses, and immutable generation shard URLs. Requests serve the
+  last published generation and never generate an XML document themselves.
+
+### Changed
+
+- Refined grouped skill discovery guidance for routes, loaders, form
+  submission, and sitemap generation.
+
 ## 5.19.1 - 2026-09-23
 
 ### Fixed

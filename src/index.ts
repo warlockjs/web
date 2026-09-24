@@ -20,13 +20,33 @@ export interface SharedContext {}
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface TranslationKeyRegistry {}
 
+/** App-generated page route entries augment this registry during development. */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface PageRouteRegistry {}
+
+/** App-generated API route entries augment this registry during development. */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface ApiRouteRegistry {}
+
 /** A generated key, or any string before an app has generated key typings. */
 export type TranslationKey = keyof TranslationKeyRegistry extends never
   ? string
   : Extract<keyof TranslationKeyRegistry, string>;
 
 export type { HttpContext, PageContext } from "./context";
-export type { PageLoader, LayoutLoader, AppLoader } from "./loaders";
+export type {
+  PageLoader,
+  PageLoaderContext,
+  LayoutLoader,
+  LayoutLoaderContext,
+  AppLoader,
+  AppLoaderContext,
+} from "./loaders";
+export type {
+  CrawlerDetectionOptions,
+  WebStreamingConfigurations,
+  WebConfigurations,
+} from "./configurations";
 // Server-safe by construction (no React/react-dom import) — the `defer()`
 // marker a page loader returns to stream data after the shell. Client
 // bundle weight is unaffected: nothing in `./loaders/defer` imports
@@ -75,8 +95,28 @@ export type { TextDirection } from "./text-direction";
 export { useTextDirection } from "./use-text-direction";
 export { href } from "./routing/route-table";
 export type { RouteParameters, RouteQuery } from "./routing/route-table";
+export { runtimeRoute } from "./routing/route-types";
+export type {
+  ApiRouteDefinition,
+  ApiRouteMethod,
+  HasGeneratedApiRoutes,
+  HasGeneratedPageRoutes,
+  ApiRouteName,
+  ApiRouteParams,
+  ApiRouteTarget,
+  PageRouteDefinition,
+  PageRouteName,
+  PageRouteParams,
+  PageRouteTarget,
+  RouteParamValue,
+  RegisteredApiRouteName,
+  RegisteredPageRouteName,
+  RuntimeRouteName,
+  SubmittableApiRouteName,
+} from "./routing/route-types";
 export { localizedPath } from "./routing/localized-path";
 export { Link } from "./components/link";
+export type { LinkProps } from "./components/link";
 
 // The navigation verbs carry `@mongez/react-router`'s NAMES on purpose (canon
 // 9c8f878b): a developer moving between a Mongez CSR app and a Warlock SSR app

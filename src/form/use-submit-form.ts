@@ -8,6 +8,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import type { FormSubmitOptions } from "@mongez/react-form";
 import { resolveApiRoute } from "../routing/named-api-routes";
+import { interpolateRoutePath } from "../routing/route-path-interpolation";
 import type { SubmitFormResult, UseSubmitFormOptions } from "./types";
 
 function resolveTarget<Schema, Data>(
@@ -36,18 +37,6 @@ function defaultFieldErrors(error: NonNullable<HttpResult<unknown>["error"]>): {
       if (typeof input === "string" && typeof message === "string") fields[input] = message;
     }
   return { fields, general: typeof body.message === "string" ? [body.message] : [] };
-}
-
-function interpolate(path: string, params: Record<string, unknown> | undefined): string {
-  return path.replace(/:([A-Za-z0-9_]+)|\*/g, (segment, name: string | undefined) => {
-    const key = name ?? "*";
-    const value = params?.[key];
-    if (value === undefined || value === null)
-      throw new Error(
-        `Submit route ${JSON.stringify(path)} is missing path parameter ${JSON.stringify(key)}.`,
-      );
-    return encodeURIComponent(String(value));
-  });
 }
 
 function queryValues(
@@ -127,7 +116,14 @@ export function useSubmitForm<Schema = undefined, Data = unknown>(
         const target = resolveTarget(options);
         const method = target.method.toUpperCase();
         const client: Http = options.client ?? http;
-        const path = interpolate(target.path, options.params);
+        const path = interpolateRoutePath(target.path, options.params, {
+          isMissing: (value) => value === undefined || value === null,
+          onMissingParameter: (parameterName) => {
+            throw new Error(
+              `Submit route ${JSON.stringify(target.path)} is missing path parameter ${JSON.stringify(parameterName)}.`,
+            );
+          },
+        });
         const request =
           method === "GET" || method === "HEAD"
             ? client.request<Data>(method, path, undefined, {

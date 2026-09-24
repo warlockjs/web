@@ -4,7 +4,7 @@ import type { SharedContext } from "./index";
 import type { RouteDeclaration } from "./route";
 import type { PageValidation, ValidatedOutput } from "./validation";
 
-type PageLoaderContext<
+export type PageLoaderContext<
   TValidation extends PageValidation | undefined,
   TRoute extends RouteDeclaration | undefined,
 > = {
@@ -30,6 +30,10 @@ export type PageLoader<
   TRoute extends RouteDeclaration | undefined = undefined,
 > = (context: PageLoaderContext<TValidation, TRoute>) => unknown;
 
-export type LayoutLoader = (context: PageContext) => unknown;
+export type LayoutLoaderContext = PageContext;
 
-export type AppLoader = (context: PageContext) => unknown;
+export type AppLoaderContext = PageContext;
+
+export type LayoutLoader = (context: LayoutLoaderContext) => unknown;
+
+export type AppLoader = (context: AppLoaderContext) => unknown;

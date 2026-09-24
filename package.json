@@ -74,6 +74,7 @@
     "@mongez/http": "^3.5.1",
     "@mongez/react-form": "^4.0.0",
     "@warlock.js/cache": "5.19.1",
+    "@warlock.js/cascade": "5.19.1",
     "@warlock.js/core": "5.19.1",
     "@warlock.js/seal": "5.19.1",
     "react": "^19.0.0",
@@ -88,6 +89,9 @@
       "optional": true
     },
     "@warlock.js/cache": {
+      "optional": true
+    },
+    "@warlock.js/cascade": {
       "optional": true
     },
     "@mongez/http": {
@@ -116,6 +120,7 @@
     "@types/node": "^20.19.43",
     "@vitejs/plugin-react": "^5.2.0",
     "@warlock.js/cache": "workspace:^",
+    "@warlock.js/cascade": "workspace:^",
     "@warlock.js/context": "workspace:^",
     "@warlock.js/core": "workspace:^",
     "@warlock.js/seal": "workspace:^",

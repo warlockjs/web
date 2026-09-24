@@ -11,6 +11,7 @@ const projects = [
   "tsconfig.typecheck.json",
   "__tests__/types/tsconfig.with-generation.json",
   "__tests__/types/tsconfig.without-generation.json",
+  "__tests__/types/tsconfig.route-types.json",
 ];
 
 for (const project of projects) {

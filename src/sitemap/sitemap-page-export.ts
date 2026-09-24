@@ -26,6 +26,31 @@ export type SitemapPageOptions = {
   readonly localePaths?: Readonly<Record<string, string>>;
 };
 
-/** A page opts out (`false`), declares static options, or supplies its URLs. */
+/** The minimal Cascade-model surface sitemap invalidation will subscribe to. */
+export type SitemapModelLike = {
+  readonly events: () => {
+    readonly on: (
+      event: "saved" | "deleted",
+      listener: (...arguments_: never[]) => void | Promise<void>,
+    ) => () => void;
+  };
+};
+
+export type SitemapPageSupplier = () =>
+  Promise<Iterable<SitemapPageUrl>> | Iterable<SitemapPageUrl>;
+
+/** A page-owned URL supplier with optional model dependencies for later invalidation wiring. */
+export type SitemapPageEntriesDeclaration = SitemapPageOptions & {
+  readonly entries: SitemapPageSupplier;
+  readonly invalidateOn?: readonly SitemapModelLike[];
+};
+
+export function isSitemapPageEntriesDeclaration(
+  value: SitemapPageExport | undefined,
+): value is SitemapPageEntriesDeclaration {
+  return typeof value === "object" && value !== null && "entries" in value;
+}
+
+/** A page opts out, declares static options, or supplies its URLs in either supported form. */
 export type SitemapPageExport =
-  false | SitemapPageOptions | (() => Promise<Iterable<SitemapPageUrl>> | Iterable<SitemapPageUrl>);
+  false | SitemapPageOptions | SitemapPageSupplier | SitemapPageEntriesDeclaration;

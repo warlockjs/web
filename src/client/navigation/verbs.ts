@@ -1,4 +1,6 @@
 import { currentNavigator } from "../../routing/navigator";
+import { href, type RouteQuery } from "../../routing/route-table";
+import type { PageRouteTarget } from "../../routing/route-types";
 
 /**
  * The history verbs, under the names MRR spells them
@@ -34,10 +36,24 @@ import { currentNavigator } from "../../routing/navigator";
  * pre-hydration) or the runtime declined the URL. A `false` caller that needs
  * the user to arrive anyway should fall back to a real browser navigation.
  */
-export function navigateTo(path: string, options?: { replace?: boolean }): boolean {
+export type NamedNavigationTarget = PageRouteTarget & {
+  query?: RouteQuery;
+};
+
+export function navigateTo(path: string, options?: { replace?: boolean }): boolean;
+export function navigateTo(target: NamedNavigationTarget, options?: { replace?: boolean }): boolean;
+export function navigateTo(
+  destination: string | NamedNavigationTarget,
+  options?: { replace?: boolean },
+): boolean {
   const navigator = currentNavigator();
 
   if (!navigator) return false;
+
+  const path =
+    typeof destination === "string"
+      ? destination
+      : href(destination.name, destination.params, destination.query);
 
   return navigator(path, options);
 }

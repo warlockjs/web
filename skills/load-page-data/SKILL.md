@@ -5,7 +5,12 @@ description: "Load App, Layout, and Page data with named loaders; page validatio
 
 # Warlock — load page data
 
-Loaders run on the server and return serializable data to their own component level. Use the level-specific loader type with `satisfies`, then pass `typeof loader` to the matching props type.
+Loaders run on the server and return serializable data to their own component level.
+Prefer a named `async function loader` with a public context type such as
+`PageLoaderContext<typeof config.validation, typeof config.route>`. Let the
+named function infer its return; do not use `satisfies` or annotate the whole
+function as `PageLoader`.
+Pass `typeof loader` to the matching props type.
 
 ## Pass environment values through loader data
 
@@ -16,11 +21,11 @@ which is server code, and return it as page data.**
 
 ```tsx
 import { env } from "@warlock.js/core";
-import type { PageLoader, PageProps } from "@warlock.js/web";
+import type { PageLoaderContext, PageProps } from "@warlock.js/web";
 
-export const loader = (async () => ({
-  siteName: env("PUBLIC_SITE_NAME"),
-})) satisfies PageLoader;
+export async function loader(_context: PageLoaderContext<undefined, undefined>) {
+  return { siteName: env("PUBLIC_SITE_NAME") };
+}
 
 export default function HomePage({ data }: PageProps<typeof loader>) {
   return <h1>{data.siteName}</h1>;
@@ -96,14 +101,18 @@ one for anything request-scoped.
 
 ```tsx title="src/web/products/product-details.page.tsx"
 import { v } from "@warlock.js/seal";
-import type { PageConfig, PageLoader, PageProps } from "@warlock.js/web";
+import type { PageConfig, PageLoaderContext, PageProps } from "@warlock.js/web";
 
 export const config = {
   route: { path: "/products/:id", name: "products.details" },
   validation: { params: v.object({ id: v.string().minLength(2) }) },
 } satisfies PageConfig;
 
-export const loader = (async ({ request, response, shared }) => {
+export async function loader({
+  request,
+  response,
+  shared,
+}: PageLoaderContext<typeof config.validation, typeof config.route>) {
   const { params } = request.validated();
   const { id } = params;
 
@@ -120,7 +129,7 @@ export const loader = (async ({ request, response, shared }) => {
     },
     locale: (shared as { locale?: string }).locale ?? "en",
   };
-}) satisfies PageLoader<typeof config.validation, typeof config.route>;
+}
 
 export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
   return (
@@ -131,7 +140,8 @@ export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
 }
 ```
 
-`LoaderShortCircuit` values from `notFound()` and redirects are excluded from `PageProps["data"]`, so the component sees only the successful loader return.
+`LoaderShortCircuit` values from
+otFound()`and redirects are excluded from`PageProps["data"]`, so the component sees only the successful loader return.
 
 ## What survives the wire
 
@@ -192,10 +202,12 @@ All receive one context object with `request`, `response`, `shared`, and `signal
 `ctx.signal` is an `AbortSignal` that fires when the client disconnects before the response finishes. Hand it to anything cancelable:
 
 ```ts
-export const loader = (async ({ signal }) => {
+import type { PageLoaderContext } from "@warlock.js/web";
+
+export async function loader({ signal }: PageLoaderContext<undefined, undefined>) {
   const res = await fetch("https://api.example.com/products", { signal });
   return { products: await res.json() };
-}) satisfies PageLoader;
+}
 ```
 
 **Honest limitation:** a loader that never checks `signal` runs to completion anyway — the framework only stops the pipeline _between_ levels (app → layout → page), never inside a loader already running.
@@ -268,7 +280,8 @@ return response.permanentRedirect("/products");
 return response.notFound();
 ```
 
-Do not continue after a redirect or `notFound`; return the result. Surviving buffers are committed root to leaf. For the same header key, the leafward write wins. A loader that throws or a lower level discarded by a short-circuit does not leak its buffered writes.
+Do not continue after a redirect or
+otFound`; return the result. Surviving buffers are committed root to leaf. For the same header key, the leafward write wins. A loader that throws or a lower level discarded by a short-circuit does not leak its buffered writes.
 
 ## Declare the shared payload
 
@@ -364,5 +377,6 @@ Only put browser-safe data in `shared`: scalars, arrays, plain objects, or value
 - [`create-a-page/SKILL.md`](../create-a-page/SKILL.md) — the complete page module.
 - [`write-the-root/SKILL.md`](../write-the-root/SKILL.md) — `AppLoader`, `<Head />`, and `<Scripts />`.
 - [`use-layouts/SKILL.md`](../use-layouts/SKILL.md) — `LayoutLoader` and persistent wrappers.
-- [`navigate-on-the-client/SKILL.md`](../navigate-on-the-client/SKILL.md) — re-fetch loaders with `refresh()`.
+- [
+  avigate-on-the-client/SKILL.md`](../navigate-on-the-client/SKILL.md) — re-fetch loaders with `refresh()`.
 - [`stream-deferred-data/SKILL.md`](../stream-deferred-data/SKILL.md) — stream a slow page-loader key after the shell with `defer()` and `use()`.

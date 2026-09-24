@@ -155,6 +155,14 @@ describe("resolveSitemapDeclaration — what a layout may NOT declare", () => {
     }
   });
 
+  it("continues to refuse page entries declarations on a layout", () => {
+    expect(() =>
+      resolveSitemapDeclaration(undefined, [
+        layout("src/web/layout.tsx", { entries: () => [], invalidateOn: [] }),
+      ]),
+    ).toThrow(/entries/);
+  });
+
   it("accepts every key the PAGE contract allows — one list, so a layout cannot reject what a page accepts", () => {
     const everyKey = {
       priority: 0.5,

@@ -13,6 +13,14 @@ import { withLocalePrefix } from "../routing/locale-prefixed-paths";
 import { isPrefixedLocale, readLocaleRouting } from "../routing/locale-routing";
 import { currentNavigator } from "../routing/navigator";
 import { href, knownRouteNames, routePathOf } from "../routing/route-table";
+import type {
+  HasGeneratedPageRoutes,
+  PageRouteName,
+  PageRouteParams,
+  RegisteredPageRouteName,
+  RouteParamValue,
+  RuntimeRouteName,
+} from "../routing/route-types";
 
 /**
  * `<Link>` is SUGAR over `href()`, and deliberately thin.
@@ -82,13 +90,70 @@ type LinkDestinationProps = {
    * Values for the route's `:param` segments, e.g. `{ id }` for
    * `"/products/:id"`. Only meaningful with a route NAME.
    */
-  params?: Record<string, unknown>;
+  params?: Record<string, RouteParamValue>;
   /**
    * Query string values; an `undefined` value is omitted. Only meaningful with
    * a route NAME.
    */
   query?: Record<string, unknown>;
 };
+
+type TypedRouteDestination = HasGeneratedPageRoutes extends true
+  ? | {
+        [Name in RegisteredPageRouteName]: {} extends PageRouteParams<Name>
+          ? | { to: Name; href?: never; email?: never; tel?: never; params?: PageRouteParams<Name> }
+            | { href: Name; to?: never; email?: never; tel?: never; params?: PageRouteParams<Name> }
+          : | { to: Name; href?: never; email?: never; tel?: never; params: PageRouteParams<Name> }
+            | { href: Name; to?: never; email?: never; tel?: never; params: PageRouteParams<Name> };
+      }[RegisteredPageRouteName]
+    | {
+        to: RuntimeRouteName;
+        href?: never;
+        email?: never;
+        tel?: never;
+        params?: Record<string, RouteParamValue>;
+      }
+    | {
+        href: RuntimeRouteName;
+        to?: never;
+        email?: never;
+        tel?: never;
+        params?: Record<string, RouteParamValue>;
+      }
+  : never;
+type LiteralRouteDestination =
+  | {
+      to: `/${string}` | `${string}:${string}`;
+      href?: never;
+      email?: never;
+      tel?: never;
+      params?: never;
+      query?: never;
+    }
+  | {
+      href: `/${string}` | `${string}:${string}`;
+      to?: never;
+      email?: never;
+      tel?: never;
+      params?: never;
+      query?: never;
+    };
+type LegacyRouteDestination = HasGeneratedPageRoutes extends true
+  ? never
+  : | {
+        to: string;
+        href?: never;
+        email?: never;
+        tel?: never;
+        params?: Record<string, RouteParamValue>;
+      }
+    | {
+        href: string;
+        to?: never;
+        email?: never;
+        tel?: never;
+        params?: Record<string, RouteParamValue>;
+      };
 
 /**
  * EXACTLY ONE destination, enforced by the type.
@@ -101,13 +166,14 @@ type LinkDestinationProps = {
  * cast both get past this.
  */
 type LinkDestination =
-  | { to: string; href?: never; email?: never; tel?: never }
-  | { href: string; to?: never; email?: never; tel?: never }
-  | { email: string; to?: never; href?: never; tel?: never }
-  | { tel: string; to?: never; href?: never; email?: never };
+  | TypedRouteDestination
+  | LiteralRouteDestination
+  | LegacyRouteDestination
+  | { email: string; to?: never; href?: never; tel?: never; params?: never }
+  | { tel: string; to?: never; href?: never; email?: never; params?: never };
 
 export type LinkProps = AnchorProps &
-  LinkDestinationProps &
+  Omit<LinkDestinationProps, "to" | "href" | "email" | "tel" | "params"> &
   LinkDestination & {
     /**
      * Open in a new browsing context: `target="_blank"` plus the `rel` that
@@ -383,7 +449,7 @@ function resolveDestination(props: LinkDestinationProps): Destination {
   */
   return {
     url: prefixForActiveLocale(
-      href(destination, fillLocaleParam(destination, props.params), props.query),
+      href(destination as PageRouteName, fillLocaleParam(destination, props.params), props.query),
     ),
     isInApp: true,
   };

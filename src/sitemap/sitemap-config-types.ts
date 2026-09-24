@@ -24,6 +24,19 @@ export type SitemapLocaleConfig = {
   readonly splitByLocale?: boolean;
 };
 
+/** Storage namespace owned exclusively by sitemap generations and manifests. */
+export type SitemapStorageConfig = {
+  /** Name of a configured storage disk; omitted means the app's local storage. */
+  readonly disk?: string;
+  /** Dedicated disk prefix. Defaults to `"sitemap"`. */
+  readonly directory?: string;
+};
+
+export type SitemapCoordination = "local" | "shared";
+
+/** A positive millisecond count or a duration string such as `"30s"`. */
+export type SitemapDuration = string | number;
+
 export type WebSitemapConfig = {
   /** Ships `false` by default: a fresh app has no `app.publicUrl` yet to build absolute URLs from. */
   readonly enabled: boolean;
@@ -39,6 +52,16 @@ export type WebSitemapConfig = {
    * `/sitemap.xml` and shard routes serve the files from here.
    */
   readonly outputDir?: string;
+  /** New generation/manifest storage location. Cannot be combined with legacy `outputDir`. */
+  readonly storage?: SitemapStorageConfig;
+  /** Explicit process coordination mode. Default `"local"`; shared enforcement is runtime-owned. */
+  readonly coordination?: SitemapCoordination;
+  /** Optional periodic regeneration interval. */
+  readonly regenerateEvery?: SitemapDuration;
+  /** Maximum interval before a non-generating instance re-resolves the manifest, in milliseconds. Default 30 seconds. */
+  readonly manifestPollMs?: number;
+  /** Response policy for sitemap index and shard validators. Default `public, max-age=300`. */
+  readonly cacheControl?: string;
   /** Write `.xml.gz` beside each shard when the large-site path is taken. Default `false`. */
   readonly gzip?: boolean;
   readonly defaults?: Pick<SitemapOptions, "changefreq" | "priority">;

@@ -188,4 +188,11 @@ describe("localeInvariantEntry", () => {
 
     expect(result).toEqual({ entry: { path: "/privacy" } });
   });
+
+  it("carries image entries into the package sitemap entry", () => {
+    const images = [{ loc: "https://cdn.example.test/privacy.jpg" }];
+    const result = localeInvariantEntry({ path: "/privacy", images }, undefined);
+
+    expect(result.entry.images).toEqual(images);
+  });
 });

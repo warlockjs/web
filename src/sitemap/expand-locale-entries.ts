@@ -15,7 +15,7 @@
  * themselves. A page's own bare path is used as-is only when it opts out of
  * expansion entirely (`locales: false`, contract 5(a)).
  */
-import type { ChangeFreq, SitemapAlternate, SitemapEntry } from "@warlock.js/sitemap";
+import type { ChangeFreq, SitemapAlternate, SitemapEntry, SitemapImage } from "@warlock.js/sitemap";
 
 export type SitemapPageUrl = {
   readonly path: string;
@@ -24,6 +24,7 @@ export type SitemapPageUrl = {
   readonly priority?: number;
   /** Per-locale paths for THIS url, when slugs diverge. */
   readonly localePaths?: Readonly<Record<string, string>>;
+  readonly images?: readonly SitemapImage[];
 };
 
 export type LocaleMatrix = {
@@ -94,6 +95,7 @@ function toEntry(
     ...(url.lastmod !== undefined ? { lastmod: url.lastmod } : {}),
     ...(url.changefreq !== undefined ? { changefreq: url.changefreq } : {}),
     ...(url.priority !== undefined ? { priority: url.priority } : {}),
+    ...(url.images !== undefined ? { images: url.images } : {}),
     ...(alternates !== undefined ? { alternates } : {}),
   };
 }

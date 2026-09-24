@@ -106,6 +106,7 @@ function buildContext(appRoot: string): ConnectorBuildContext {
     options: {
       outdir: path.join(appRoot, "dist"),
     } as ConnectorBuildContext["options"],
+    namedApiRoutes: [],
   };
 }
 

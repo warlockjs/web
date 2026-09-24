@@ -31,3 +31,17 @@ The default client is the configured `@mongez/http` singleton, so its base URL a
 Validation mapping is on by default. Known server field errors are assigned to controls; unknown fields and general messages go to `formErrors`. Set `mapFieldErrors: false` to leave controls untouched or provide a mapper returning `{ [field]: message }`.
 
 Named route metadata contains only name, path, and method. A route declared with method `all` cannot select a browser verb: use a direct `path` and explicit `method`.
+
+Generated API declarations live in `ApiRouteRegistry`, separately from page
+names. They preserve canonical method case (for example `POST`) and parameter
+optionality; an advanced path shape that cannot be represented precisely uses
+broad params rather than a guessed type. `runtimeRoute(name)` is the explicit
+escape for a genuinely dynamic API name. There is no legacy map fallback.
+
+Core obtains these declarations in a fresh registration-only child before a
+Web build contribution: it does not register, boot, or start connectors.
+Application module top-level imports still execute in that child, so keep such
+modules free of unwanted side effects. Development writes the same declaration
+after successful registration/reload. Include `.warlock/typings/*.d.ts` in
+your TypeScript project; a generated file is replaced atomically and is cleared
+only when its Warlock ownership header proves it is framework-owned.

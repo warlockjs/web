@@ -241,6 +241,19 @@ export function createWebBuildContribution(
       pageCount = result.pageCount;
       pageRoutes = result.pageRoutes;
 
+      if (context.namedApiRoutes === undefined) {
+        throw new Error(
+          "Web build requires Core's fresh named API route snapshot. Run this contribution through ProductionBuilder with the Web connector configured.",
+        );
+      }
+
+      const { writeRouteTypes } = await import("./write-route-types");
+      await writeRouteTypes({
+        appRoot: context.appRoot,
+        pages: pageRoutes.routes,
+        apis: context.namedApiRoutes,
+      });
+
       // Contributed unconditionally, zero pages included: the barrel is always
       // written, and the entry has to IMPORT it for the empty table to reach
       // the runtime. Withholding this line on zero pages would leave the

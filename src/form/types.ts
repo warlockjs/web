@@ -1,11 +1,50 @@
 import type { Http, HttpError, HttpResult, RequestOptions } from "@mongez/http";
 import type { FormSubmitOptions } from "@mongez/react-form";
+import type {
+  ApiRouteMethodInput,
+  ApiRouteParams,
+  HasGeneratedApiRoutes,
+  RouteParamValue,
+  RuntimeRouteName,
+  SubmittableApiRouteName,
+} from "../routing/route-types";
 
-export type SubmitFormTarget = { route: string; path?: never } | { path: string; route?: never };
-
-export type UseSubmitFormOptions<Schema = undefined, Data = unknown> = SubmitFormTarget & {
+type LegacyNamedSubmitTarget = HasGeneratedApiRoutes extends true
+  ? never
+  : { route: string; path?: never; method?: string; params?: Record<string, RouteParamValue> };
+type TypedNamedSubmitTarget = HasGeneratedApiRoutes extends true
+  ? | {
+        [Name in SubmittableApiRouteName]: {} extends ApiRouteParams<Name>
+          ? {
+              route: Name;
+              path?: never;
+              method?: ApiRouteMethodInput<Name>;
+              params?: ApiRouteParams<Name>;
+            }
+          : {
+              route: Name;
+              path?: never;
+              method?: ApiRouteMethodInput<Name>;
+              params: ApiRouteParams<Name>;
+            };
+      }[SubmittableApiRouteName]
+    | {
+        route: RuntimeRouteName;
+        path?: never;
+        method?: string;
+        params?: Record<string, RouteParamValue>;
+      }
+  : never;
+type PathSubmitTarget = {
+  path: string;
+  route?: never;
   method?: string;
   params?: Record<string, unknown>;
+};
+
+export type SubmitFormTarget = LegacyNamedSubmitTarget | TypedNamedSubmitTarget | PathSubmitTarget;
+
+export type UseSubmitFormOptions<Schema = undefined, Data = unknown> = SubmitFormTarget & {
   query?: RequestOptions["params"];
   headers?: RequestOptions["headers"];
   client?: Http;

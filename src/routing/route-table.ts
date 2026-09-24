@@ -26,6 +26,8 @@
  */
 
 import { queryStringOf, type QueryStringInput } from "./query-string";
+import { interpolateRoutePath } from "./route-path-interpolation";
+import type { HasGeneratedPageRoutes, PageRouteName, PageRouteParams } from "./route-types";
 
 /** The two fields `href` needs. Callers may pass richer entries; the rest is ignored. */
 export type RouteTableEntry = {
@@ -45,8 +47,6 @@ export type RouteParameters = Readonly<Record<string, unknown>>;
  * behind it are documented in query-string.ts.
  */
 export type RouteQuery = QueryStringInput;
-
-const PARAMETER_PATTERN = /:([A-Za-z0-9_]+)|\*/g;
 
 /**
  * ── WHY THIS LIVES ON `globalThis` AND NOT IN A MODULE BINDING ───────────────
@@ -243,41 +243,6 @@ export function routeTablePublisher(): string | undefined {
   return readSlot()?.publishedBy;
 }
 
-function parameterNamesOf(routePath: string): readonly string[] {
-  const names: string[] = [];
-
-  for (const match of routePath.matchAll(PARAMETER_PATTERN)) {
-    names.push(match[1] ?? "*");
-  }
-
-  return names;
-}
-
-function interpolate(
-  routeName: string,
-  routePath: string,
-  params: RouteParameters | undefined,
-): string {
-  const declared = parameterNamesOf(routePath);
-  const supplied = Object.keys(params ?? {}).filter((key) => params?.[key] !== undefined);
-  const undeclared = supplied.filter((key) => !declared.includes(key));
-
-  if (undeclared.length > 0) {
-    throw new UnknownRouteParameterError(routeName, undeclared, routePath);
-  }
-
-  return routePath.replace(PARAMETER_PATTERN, (match) => {
-    const name = match === "*" ? "*" : match.slice(1);
-    const value = params?.[name];
-
-    if (value === undefined) {
-      throw new MissingRouteParameterError(routeName, name, routePath);
-    }
-
-    return encodeURIComponent(String(value));
-  });
-}
-
 /**
  * Resolve a route NAME to a URL.
  *
@@ -294,7 +259,16 @@ function interpolate(
  * @throws {UnserializableQueryValueError} when a query value nests deeper than
  * the wire format core parses can carry.
  */
-export function href(name: string, params?: RouteParameters, query?: RouteQuery): string {
+type HrefArguments<Name extends PageRouteName> = HasGeneratedPageRoutes extends true
+  ? Name extends import("./route-types").RuntimeRouteName
+    ? [params?: RouteParameters, query?: RouteQuery]
+    : {} extends PageRouteParams<Name>
+      ? [params?: PageRouteParams<Name>, query?: RouteQuery]
+      : [params: PageRouteParams<Name>, query?: RouteQuery]
+  : [params?: RouteParameters, query?: RouteQuery];
+
+export function href<Name extends PageRouteName>(name: Name, ...args: HrefArguments<Name>): string;
+export function href(name: string, params?: object, query?: RouteQuery): string {
   const slot = readSlot();
 
   if (slot === undefined) throw new RouteTableNotPublishedError(name);
@@ -305,5 +279,13 @@ export function href(name: string, params?: RouteParameters, query?: RouteQuery)
     throw new UnknownRouteNameError(name, [...slot.table.keys()]);
   }
 
-  return `${interpolate(name, routePath, params)}${queryStringOf(query)}`;
+  return `${interpolateRoutePath(routePath, params as RouteParameters | undefined, {
+    rejectUnknownParameters: true,
+    onMissingParameter: (parameterName) => {
+      throw new MissingRouteParameterError(name, parameterName, routePath);
+    },
+    onUnknownParameters: (parameterNames) => {
+      throw new UnknownRouteParameterError(name, parameterNames, routePath);
+    },
+  })}${queryStringOf(query)}`;
 }

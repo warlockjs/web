@@ -10,6 +10,7 @@ const entryFiles = {
 
 const peerPackages = [
   "@warlock.js/cache",
+  "@warlock.js/cascade",
   "@warlock.js/core",
   "@warlock.js/seal",
   "@mongez/http",

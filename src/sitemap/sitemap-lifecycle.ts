@@ -1,133 +1,203 @@
-/**
- * The regeneration lifecycle (contract Part 6): joins a generation already in
- * flight instead of starting a second one, keeps serving the last good
- * artifact set on failure, and reports a failed run unconditionally.
- *
- * This module is the ONE place mutable "what does `/sitemap.xml` serve right
- * now" state lives. `./register-sitemap-routes.ts` only ever reads it; it
- * never calls {@link generateSitemap} itself (Part 6 rule 5 / rule 1 — a
- * request must never trigger generation).
- */
-import path from "node:path";
+/** Managed sitemap runtime lifecycle. HTTP serving only observes this state. */
 import type { SitemapSetResult } from "@warlock.js/sitemap";
-import { generateSitemap, type GenerateSitemapOptions } from "./generate-sitemap";
+import { collectSitemapModelDependencies } from "./collect-sitemap-entries";
+import { type GenerateSitemapOptions } from "./generate-sitemap";
+import { resolveSitemapConfig } from "./resolve-sitemap-config";
+import { createSitemapLocalRuntime, type SitemapLocalRuntime } from "./sitemap-local-runtime";
+import { createSitemapArtifactStore } from "./sitemap-artifact-store";
+import { SitemapRefreshScheduler } from "./sitemap-refresh-scheduler";
+import type { SitemapServingState } from "./sitemap-serving-state";
+import {
+  subscribeSitemapModels,
+  type SitemapModelSubscriptions,
+} from "./sitemap-model-subscriptions";
 import type { SitemapResult } from "./sitemap-result-types";
 
 export type SitemapGenerationResult = SitemapSetResult | SitemapResult;
-
-export type SitemapArtifactFile = {
-  readonly absolutePath: string;
-  readonly gzipped: boolean;
-};
-
-/**
- * The last successfully published artifact set. `shardFiles` is keyed by the
- * URL path it is served at — always `/${basename}` at the site root, because
- * that is where `@warlock.js/sitemap` writes `<loc>` entries in the index
- * (`joinOrigin(baseUrl, file.fileName)`, no directory segment).
- */
+export type SitemapArtifactFile = { readonly absolutePath: string; readonly gzipped: boolean };
+/** @deprecated Manifest storage has replaced local-path artifact serving. */
 export type SitemapArtifacts = {
   readonly mainFile: SitemapArtifactFile;
   readonly shardFiles: ReadonlyMap<string, SitemapArtifactFile>;
   readonly result: SitemapGenerationResult;
   readonly generatedAt: number;
 };
+export type SitemapFailure = { readonly error: unknown; readonly at: number };
 
-export type SitemapFailure = {
-  readonly error: unknown;
-  readonly at: number;
-};
-
-let lastGood: SitemapArtifacts | undefined;
+let runtime: SitemapLocalRuntime | undefined;
+let scheduler: SitemapRefreshScheduler | undefined;
+let subscriptions: SitemapModelSubscriptions | undefined;
+let servingState: SitemapServingState | undefined;
 let lastFailure: SitemapFailure | undefined;
-let inFlight: Promise<SitemapGenerationResult> | undefined;
+let latestManifestAt = 0;
+let lifecycleGeneration = 0;
 
-function shardUrl(fileName: string): string {
-  return `/${fileName}`;
+function disabledResult(): SitemapResult {
+  return { mode: "disabled", urls: 0, duplicates: [], routes: [] };
+}
+function reportFailure(error: unknown): void {
+  lastFailure = { error, at: Date.now() };
+  console.error("[warlock:web] sitemap regeneration failed:", error);
 }
 
-function toArtifacts(result: SitemapGenerationResult): SitemapArtifacts | undefined {
-  if ("indexPath" in result) {
-    const shardFiles = new Map<string, SitemapArtifactFile>();
-
-    for (const file of result.files) {
-      // A zero-url row is reported, never written (`sitemap-shard-writer.ts`)
-      // — nothing exists on disk at `file.path` to serve.
-      if (file.urls === 0) continue;
-
-      shardFiles.set(shardUrl(path.basename(file.path)), {
-        absolutePath: file.path,
-        gzipped: file.gzipped,
-      });
-    }
-
-    return {
-      mainFile: { absolutePath: result.indexPath, gzipped: false },
-      shardFiles,
-      result,
-      generatedAt: Date.now(),
-    };
-  }
-
-  if (result.mode === "disabled" || result.path === undefined) return undefined;
+function createServingState(
+  active: SitemapLocalRuntime,
+  cacheControl: string,
+  pollMs: number,
+): SitemapServingState {
+  let observed = active.currentManifest;
+  let lastPoll = 0;
 
   return {
-    mainFile: { absolutePath: result.path, gzipped: false },
-    shardFiles: new Map(),
-    result,
-    generatedAt: Date.now(),
+    store: active.store,
+    cacheControl,
+    getManifest: async () => {
+      if (Date.now() - lastPoll < pollMs) return observed;
+      lastPoll = Date.now();
+      const discovered = await active.store.readLatestManifest();
+      if (discovered && (!observed || discovered.fence > observed.fence)) observed = discovered;
+      return observed;
+    },
   };
 }
 
+async function sharedIntervalIsFresh(
+  active: SitemapLocalRuntime,
+  intervalMs: number | undefined,
+): Promise<boolean> {
+  if (!intervalMs) return false;
+  // This deliberately bypasses normal request poll throttling: an interval tick
+  // is a coordination decision, while HTTP still uses the bounded serving poll.
+  const manifest = await active.store.readLatestManifest();
+  if (!manifest) return false;
+  const generatedAt = Date.parse(manifest.generatedAt);
+  return Number.isFinite(generatedAt) && Date.now() - generatedAt < intervalMs;
+}
+/** Start/restore the singleton without making HTTP requests generate anything. */
+export async function startSitemapRuntime(options: GenerateSitemapOptions = {}): Promise<void> {
+  const config = resolveSitemapConfig();
+  if (!config.enabled || runtime) return;
+
+  const store = createSitemapArtifactStore({
+    storage: config.storage,
+    legacyOutputDir: config.legacyOutputDir,
+  });
+  if (config.coordination === "shared" && !store.supportsSharedClaims()) {
+    throw new Error(
+      "web.sitemap.coordination=shared requires storage with atomic putIfAbsent and consistent listing.",
+    );
+  }
+
+  const active = createSitemapLocalRuntime({
+    resolvedConfig: config,
+    options,
+    ports: {
+      store,
+      ...(config.coordination === "shared"
+        ? { allocateFence: (generationId: string) => store.claimFence(generationId) }
+        : {}),
+    },
+  });
+  runtime = active;
+  await active.initialize();
+  servingState = createServingState(active, config.cacheControl, config.manifestPollMs);
+
+  scheduler = new SitemapRefreshScheduler({
+    trigger: async (reason) => {
+      if (
+        reason === "interval" &&
+        config.coordination === "shared" &&
+        (await sharedIntervalIsFresh(active, config.regenerateEveryMs))
+      )
+        return;
+      await regenerateSitemap(options);
+    },
+    intervalMs: config.regenerateEveryMs,
+    reportError: reportFailure,
+  });
+  await refreshSitemapModelSubscriptions(options);
+  scheduler.start();
+
+  if (!config.regenerate.onBoot) return;
+  if (active.currentManifest) {
+    void regenerateSitemap(options).catch(reportFailure);
+    return;
+  }
+  await regenerateSitemap(options).catch(reportFailure);
+}
+
 /**
- * Generate (or join an already-running generation), publish the result as
- * the new last-good artifact set on success, and keep serving the previous
- * one on failure.
- *
- * The failure is reported to stderr UNCONDITIONALLY (canon `8d3c13a8`) —
- * this always fires, on top of anything the caller's own logging does,
- * because a fatal reported only through a configurable sink can vanish.
+ * Refresh page-declared invalidation dependencies after a committed page-route
+ * replacement. The old set remains live until discovery and subscription both
+ * succeed; a shutdown that races either await disposes the new set instead.
  */
-export function regenerateSitemap(
+export async function refreshSitemapModelSubscriptions(
+  options: GenerateSitemapOptions = {},
+): Promise<void> {
+  const active = runtime;
+  const activeScheduler = scheduler;
+  if (!active || !activeScheduler) return;
+  const generation = lifecycleGeneration;
+  const config = resolveSitemapConfig();
+  const models = await collectSitemapModelDependencies({
+    appRoot: options.appRoot ?? process.cwd(),
+    srcDir: options.srcDir,
+    locales: config.locales,
+    pageSource: options.pageSource,
+  });
+  const replacement = await subscribeSitemapModels(models, () => activeScheduler.invalidate());
+  if (generation !== lifecycleGeneration || runtime !== active || scheduler !== activeScheduler) {
+    replacement.dispose();
+    return;
+  }
+  const previous = subscriptions;
+  subscriptions = replacement;
+  previous?.dispose();
+}
+/** Compatible public entry point: managed publication result only, never HTTP-triggered. */
+export async function regenerateSitemap(
   options: GenerateSitemapOptions = {},
 ): Promise<SitemapGenerationResult> {
-  if (inFlight) return inFlight;
-
-  const run = generateSitemap(options)
-    .then((result) => {
-      const artifacts = toArtifacts(result);
-      if (artifacts) lastGood = artifacts;
-      lastFailure = undefined;
-
-      return result;
-    })
-    .catch((error: unknown) => {
-      lastFailure = { error, at: Date.now() };
-      console.error("[warlock:web] sitemap regeneration failed:", error);
-
-      throw error;
-    })
-    .finally(() => {
-      inFlight = undefined;
-    });
-
-  inFlight = run;
-
-  return run;
+  const config = resolveSitemapConfig();
+  if (!config.enabled) return disabledResult();
+  if (!runtime) await startSitemapRuntime(options);
+  if (!runtime) return disabledResult();
+  try {
+    const generated = await runtime.request();
+    lastFailure = undefined;
+    latestManifestAt = Date.now();
+    void runtime.store.cleanupRetainedGenerations(generated.manifest).catch(reportFailure);
+    return generated.result;
+  } catch (error) {
+    reportFailure(error);
+    throw error;
+  }
 }
 
-/** The artifact set routes should serve, or `undefined` before the first successful generation. */
+export function getSitemapServingState(): SitemapServingState | undefined {
+  return servingState;
+}
+/** Compatibility surface has no local filesystem artifacts in managed storage mode. */
 export function getSitemapArtifacts(): SitemapArtifacts | undefined {
-  return lastGood;
+  return undefined;
 }
-
 export function getLastSitemapFailure(): SitemapFailure | undefined {
   return lastFailure;
 }
 
-/** Test-only: this module's state is a process-wide singleton by design (Part 6 rule 5). */
+export async function shutdownSitemapRuntime(): Promise<void> {
+  scheduler?.dispose();
+  scheduler = undefined;
+  subscriptions?.dispose();
+  subscriptions = undefined;
+  lifecycleGeneration++;
+  runtime?.dispose();
+  runtime = undefined;
+  servingState = undefined;
+  latestManifestAt = 0;
+}
+
 export function resetSitemapLifecycleForTests(): void {
-  lastGood = undefined;
+  void shutdownSitemapRuntime();
   lastFailure = undefined;
-  inFlight = undefined;
 }

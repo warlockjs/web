@@ -43,6 +43,64 @@ describe("resolveSitemapConfig — outputDir default", () => {
     const resolved = resolveSitemapConfig();
 
     expect(resolved.outputDir).toBe("/explicit/dir");
+    expect(resolved.legacyOutputDir).toBe("/explicit/dir");
+  });
+
+  it("keeps the compatibility outputDir without treating its default as a legacy override", () => {
+    const resolved = resolveSitemapConfig();
+
+    expect(resolved.outputDir).toBe(storagePath("sitemap"));
+    expect(resolved.legacyOutputDir).toBeUndefined();
+  });
+});
+
+describe("resolveSitemapConfig â€” storage and generation policy", () => {
+  it("resolves the storage-aware defaults without IO", () => {
+    const resolved = resolveSitemapConfig();
+
+    expect(resolved.storage).toEqual({ directory: "sitemap" });
+    expect(resolved.coordination).toBe("local");
+    expect(resolved.regenerateEveryMs).toBeUndefined();
+    expect(resolved.manifestPollMs).toBe(30_000);
+    expect(resolved.cacheControl).toBe("public, max-age=300");
+  });
+
+  it("normalizes explicit storage and duration settings", () => {
+    config.set("web", {
+      sitemap: {
+        storage: { disk: "sitemap-files", directory: "generated/maps" },
+        coordination: "shared",
+        regenerateEvery: "30s",
+        manifestPollMs: 1_200,
+        cacheControl: "public, max-age=60",
+      },
+    });
+
+    const resolved = resolveSitemapConfig();
+
+    expect(resolved.storage).toEqual({ disk: "sitemap-files", directory: "generated/maps" });
+    expect(resolved.coordination).toBe("shared");
+    expect(resolved.regenerateEveryMs).toBe(30_000);
+    expect(resolved.manifestPollMs).toBe(1_200);
+    expect(resolved.cacheControl).toBe("public, max-age=60");
+  });
+
+  it.each([
+    [{ outputDir: "/legacy", storage: {} }, /outputDir/],
+    [{ storage: { disk: "   " } }, /storage\.disk/],
+    [{ storage: { directory: "" } }, /storage\.directory/],
+    [{ storage: { directory: "../maps" } }, /storage\.directory/],
+    [{ storage: { directory: "C:\\maps" } }, /storage\.directory/],
+    [{ coordination: "remote" }, /coordination/],
+    [{ regenerateEvery: "nonsense" }, /regenerateEvery/],
+    [{ regenerateEvery: 0 }, /regenerateEvery/],
+    [{ manifestPollMs: 0 }, /manifestPollMs/],
+    [{ manifestPollMs: 2_147_483_648 }, /manifestPollMs/],
+    [{ cacheControl: "   " }, /cacheControl/],
+  ])("rejects invalid storage or timing policy %#", (sitemap, expectedError) => {
+    config.set("web", { sitemap });
+
+    expect(resolveSitemapConfig).toThrow(expectedError);
   });
 });
 

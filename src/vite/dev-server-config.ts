@@ -60,7 +60,12 @@ const CORE_OPTIONAL_PEERS = [
  * loaded it this way — and `@vitejs/plugin-react` is loaded from the same
  * function, for the same dev-only reason, so it belongs in the same set.
  */
-const WEB_OPTIONAL_PEERS = ["vite", "@vitejs/plugin-react", "@warlock.js/cache"] as const;
+const WEB_OPTIONAL_PEERS = [
+  "vite",
+  "@vitejs/plugin-react",
+  "@warlock.js/cache",
+  "@warlock.js/cascade",
+] as const;
 
 /**
  * `@warlock.js/*` packages that dev SSR deliberately keeps INSIDE Vite's SSR

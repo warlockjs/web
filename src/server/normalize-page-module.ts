@@ -13,7 +13,12 @@ import {
 } from "../metadata";
 import type { PageConfigValidation } from "../page-config";
 import type { PageCacheOptIn } from "../routing/route-identity";
-import type { SitemapPageExport, SitemapPageOptions } from "../sitemap/sitemap-page-export";
+import type {
+  SitemapModelLike,
+  SitemapPageEntriesDeclaration,
+  SitemapPageExport,
+  SitemapPageOptions,
+} from "../sitemap/sitemap-page-export";
 import { readLayoutSitemapDeclaration } from "../sitemap/resolve-layout-sitemap";
 import type { PipelineLoader, PipelineMiddleware } from "./execute-page-request.types";
 
@@ -234,7 +239,11 @@ function validateMetadataInput(value: unknown, sourceFile: string): MetadataInpu
       fail(sourceFile, `config.metadata.${key} must be a string when defined.`);
     }
   }
-  if (value.canonical !== undefined && value.canonical !== false && typeof value.canonical !== "string") {
+  if (
+    value.canonical !== undefined &&
+    value.canonical !== false &&
+    typeof value.canonical !== "string"
+  ) {
     fail(sourceFile, "config.metadata.canonical must be a string or false when defined.");
   }
   if (value.image !== undefined && typeof value.image !== "string") {
@@ -271,11 +280,13 @@ function validateMetadataInput(value: unknown, sourceFile: string): MetadataInpu
     );
   }
   if (value.openGraph !== undefined) {
-    validateStringFields(value.openGraph, OPEN_GRAPH_KEYS, sourceFile, "config.metadata.openGraph", [
-      "images",
-      "alternateLocales",
-      "article",
-    ]);
+    validateStringFields(
+      value.openGraph,
+      OPEN_GRAPH_KEYS,
+      sourceFile,
+      "config.metadata.openGraph",
+      ["images", "alternateLocales", "article"],
+    );
     const openGraph = value.openGraph as Record<string, unknown>;
     if (openGraph.images !== undefined) {
       if (!Array.isArray(openGraph.images)) {
@@ -317,9 +328,57 @@ function validatePageMetadata(value: unknown, sourceFile: string): PageMetadata<
 
 function validatePageSitemap(value: unknown, sourceFile: string): SitemapPageExport {
   if (value === false || typeof value === "function") return value as SitemapPageExport;
-  // The layout validator owns the static-options grammar. Page suppliers are
-  // the only extra page form, handled above.
-  return readLayoutSitemapDeclaration(value, sourceFile) as SitemapPageOptions;
+  if (!plainObject(value) || (value.entries === undefined && value.invalidateOn === undefined)) {
+    return readLayoutSitemapDeclaration(value, sourceFile) as SitemapPageOptions;
+  }
+
+  const allowedKeys = [
+    "priority",
+    "changefreq",
+    "lastmod",
+    "locales",
+    "localePaths",
+    "entries",
+    "invalidateOn",
+  ];
+  assertExactKeys(value, allowedKeys, sourceFile, "config.sitemap");
+
+  if (value.entries === undefined && value.invalidateOn !== undefined) {
+    fail(
+      sourceFile,
+      "config.sitemap.invalidateOn requires config.sitemap.entries. Add an entries supplier or remove invalidateOn.",
+    );
+  }
+  if (typeof value.entries !== "function") {
+    fail(sourceFile, "config.sitemap.entries must be a function that returns sitemap URL entries.");
+  }
+  if (
+    value.invalidateOn !== undefined &&
+    (!Array.isArray(value.invalidateOn) ||
+      !value.invalidateOn.every(
+        (model) =>
+          model !== null &&
+          (typeof model === "object" || typeof model === "function") &&
+          typeof (model as { events?: unknown }).events === "function",
+      ))
+  ) {
+    fail(sourceFile, "config.sitemap.invalidateOn must be an array of models exposing events().");
+  }
+
+  const staticOptions = Object.fromEntries(
+    ["priority", "changefreq", "lastmod", "locales", "localePaths"]
+      .filter((key) => value[key] !== undefined)
+      .map((key) => [key, value[key]]),
+  );
+  const normalizedOptions = readLayoutSitemapDeclaration(staticOptions, sourceFile) ?? {};
+
+  return {
+    ...normalizedOptions,
+    entries: value.entries,
+    ...(value.invalidateOn === undefined
+      ? {}
+      : { invalidateOn: value.invalidateOn as readonly SitemapModelLike[] }),
+  } as SitemapPageEntriesDeclaration;
 }
 
 /**
