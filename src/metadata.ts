@@ -126,7 +126,11 @@ export type MetadataTitleInput =
 /** Author-facing metadata. Renderers only ever receive {@link MetadataOutput}. */
 export type MetadataInput = Omit<MetadataOutput, "title"> & { readonly title?: MetadataTitleInput };
 
-type DeepReadonlyMetadataValue<Value> = Value extends readonly (infer Item)[]
+// Primitives first: a branded string such as `string & {}` (used for open
+// unions like `openGraph.type`) must stay a string, not become a mapped object.
+type DeepReadonlyMetadataValue<Value> = Value extends string | number | boolean | bigint | symbol | null | undefined
+  ? Value
+  : Value extends readonly (infer Item)[]
   ? readonly DeepReadonlyMetadataValue<Item>[]
   : Value extends object
     ? Readonly<{ [Key in keyof Value]: DeepReadonlyMetadataValue<Value[Key]> }>

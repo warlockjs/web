@@ -139,7 +139,11 @@ describe("page cache namespace (independent of the app's request-scoped globalPr
  * reads and writes this same object, so its `name` classifies it as a
  * shared, out-of-process backend (`page-cache-driver.ts`).
  */
-const sharedBackend: Record<string, unknown> = {};
+// The memory driver stores entries (and its tag index) in protected fields,
+// so the shared backend is those structures, handed to every instance.
+const sharedEntries = new Map();
+const sharedExpiry = new Map();
+let sharedTagIndex: unknown;
 
 class SharedBackendDriver extends MemoryCacheDriver {
   /** Instances built so far — the app's own driver plus any page-cache clone. */
@@ -150,7 +154,11 @@ class SharedBackendDriver extends MemoryCacheDriver {
   public constructor() {
     super();
     SharedBackendDriver.instances++;
-    this.data = sharedBackend;
+    const self = this as unknown as { entries: Map<unknown, unknown>; expiry: Map<unknown, unknown>; tagIndex: unknown };
+    self.entries = sharedEntries;
+    self.expiry = sharedExpiry;
+    sharedTagIndex ??= self.tagIndex;
+    self.tagIndex = sharedTagIndex;
   }
 }
 
@@ -181,7 +189,9 @@ describe("page cache deployment namespace (shared backends)", () => {
   beforeEach(() => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    for (const key of Object.keys(sharedBackend)) delete sharedBackend[key];
+    sharedEntries.clear();
+    sharedExpiry.clear();
+    sharedTagIndex = undefined;
 
     resetPageCacheDriverStateForTests();
     resetPageCacheStoreStateForTests();
@@ -221,7 +231,9 @@ describe("page cache deployment namespace (shared backends)", () => {
     await bootDeployment({ driver: SharedBackendDriver, globalPrefix: "acme-prod" });
     await setPageCacheEntry(key, entry("<p>prod</p>"), 60, ["post.10"]);
 
-    expect(sharedBackend).toMatchObject({ warlock: { page: { "acme-prod": expect.any(Object) } } });
+    // The memory driver stores flat keys (cache 5.20), so assert the segment
+    // on the flat key rather than on a nested object tree.
+    expect([...sharedEntries.keys()].some((stored) => String(stored).startsWith("warlock.page.acme-prod."))).toBe(true);
 
     await bootDeployment({ driver: SharedBackendDriver, globalPrefix: "acme-staging" });
     expect(await getPageCacheEntry(key)).toBeUndefined();

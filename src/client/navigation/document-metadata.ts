@@ -91,7 +91,7 @@ export function applyDocumentMetadata(
   // MANAGED_DYNAMIC_ATTRIBUTE, so tags root.tsx wrote are never matched: stale
   // ones are removed, current ones replaced in place (attributes cleared first,
   // so a link that lost its `media` does not keep it).
-  const dynamicDescriptors = [...descriptorsByKey.values()].filter((d) => d.dynamic === true);
+  const dynamicDescriptors = [...descriptorsByKey.values()].filter((d) => "dynamic" in d && d.dynamic === true);
   const wanted = new Set(dynamicDescriptors.map((descriptor) => descriptor.key));
   const present = new Map<string, Element>();
 
