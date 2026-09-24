@@ -16,7 +16,7 @@ vi.mock("./sitemap-lifecycle", () => ({
 import { regenerateSitemapOnStartup, registerWebHttpRoutes } from "./register-web-http-routes";
 
 function stubRouter(): Router {
-  return { get: vi.fn() } as unknown as Router;
+  return { get: vi.fn(), head: vi.fn() } as unknown as Router;
 }
 
 afterEach(() => {
@@ -36,9 +36,12 @@ describe("registerWebHttpRoutes", () => {
     config.set("app", { publicUrl: "https://example.com" });
     config.set("web", { sitemap: { enabled: true } });
 
-    await registerWebHttpRoutes(stubRouter(), { appRoot: "/app" });
+    const router = stubRouter();
+    await registerWebHttpRoutes(router, { appRoot: "/app" });
 
     expect(generateSitemap).not.toHaveBeenCalled();
+    expect(router.get).toHaveBeenCalledWith("/sitemap.xml", expect.any(Function));
+    expect(router.head).toHaveBeenCalledWith("/sitemap.xml", expect.any(Function));
   });
 
   it("starts the managed runtime at startup when enabled and regenerate.onBoot is unset", async () => {
@@ -68,6 +71,7 @@ describe("registerWebHttpRoutes", () => {
 
     expect(startSitemapRuntime).not.toHaveBeenCalled();
     expect(router.get).not.toHaveBeenCalledWith("/sitemap.xml", expect.anything());
+    expect(router.head).not.toHaveBeenCalledWith("/sitemap.xml", expect.anything());
   });
 
   it("boot continues when the first generation fails — the error was already reported", async () => {
