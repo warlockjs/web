@@ -17,6 +17,16 @@ const IMMUTABLE_GENERATION_CACHE_CONTROL = "public, max-age=31536000, immutable"
 const SAFE_GENERATION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const SAFE_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/;
 
+// `generateSitemapArtifacts()` delegates sharded output to SitemapIndex without
+// overriding its defaults: `sitemap.xml`, `sitemap_index.xml`, `sitemap-0001.xml`,
+// `sitemap-<source>-0001.xml`, and optional shard `.gz` forms. The configured main path is registered as an
+// exact route below, so this compatibility route must not become a one-segment
+// catch-all that prevents Web's normal not-found handling.
+const LEGACY_BARE_SHARD_ROUTE =
+  "/:sitemapArtifactFile(^sitemap(?:\\.xml|_index\\.xml|-(?:[0-9]{4,}|[A-Za-z0-9_-]+-[0-9]{4,})\\.xml(?:\\.gz)?)$)";
+const LEGACY_BARE_SHARD_FILE_NAME =
+  /^sitemap(?:\.xml|_index\.xml|-(?:[0-9]{4,}|[A-Za-z0-9_-]+-[0-9]{4,})\.xml(?:\.gz)?)$/;
+
 type SitemapRouteContext = Pick<HttpContext, "request" | "response">;
 type SitemapRouteHandler = (context: SitemapRouteContext) => Promise<ReturnedResponse>;
 
@@ -161,6 +171,15 @@ function latestBareShardHandler(
 ) {
   return async (context: SitemapRouteContext): Promise<ReturnedResponse> => {
     const { request, response } = context;
+    const fileName = (request.params as Record<string, string | undefined>).sitemapArtifactFile;
+
+    // The route expression is deliberately simple enough for find-my-way's
+    // safe-regex check. Validate the complete generator-owned shape before
+    // reading serving state, so a near-miss can never turn into sitemap's 503.
+    if (!safeFileName(fileName) || !LEGACY_BARE_SHARD_FILE_NAME.test(fileName)) {
+      return response.notFound() as ReturnedResponse;
+    }
+
     const state = getServingState();
 
     if (!state) return serveNotGeneratedYet(response, warn);
@@ -168,10 +187,6 @@ function latestBareShardHandler(
     const manifest = await state.getManifest();
 
     if (!manifest) return serveNotGeneratedYet(response, warn);
-
-    const fileName = (request.params as Record<string, string | undefined>).sitemapArtifactFile;
-
-    if (!safeFileName(fileName)) return response.notFound() as ReturnedResponse;
 
     const file = manifest.files.find((candidate) => path.basename(candidate.path) === fileName);
 
@@ -221,11 +236,12 @@ export function registerSitemapRoutes(router: Router, options: RegisterSitemapRo
     generationRequestHandler(getServingState, warn),
   );
 
-  // Backwards compatibility for existing generated index XML. It can only
-  // serve a basename listed in the current manifest, never arbitrary storage.
+  // Backwards compatibility for generated bare artifact URLs. The route grammar itself
+  // is deliberately constrained before lifecycle state is read, so unrelated
+  // one-segment URLs continue to Web's ordinary not-found route.
   registerReadableRoute(
     router,
-    "/:sitemapArtifactFile",
+    LEGACY_BARE_SHARD_ROUTE,
     latestBareShardHandler(getServingState, warn),
   );
 }

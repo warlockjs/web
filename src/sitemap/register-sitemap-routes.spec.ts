@@ -1,11 +1,14 @@
 ﻿import { Readable } from "node:stream";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { RouteRegistry, type HttpContext, type Route, type Router } from "@warlock.js/core";
+import Fastify from "fastify";
+import { RouteRegistry, Router, router, type HttpContext, type Route } from "@warlock.js/core";
 import type { SitemapGenerationManifest } from "@warlock.js/sitemap";
 import { registerSitemapRoutes } from "./register-sitemap-routes";
 import type { SitemapServingState } from "./sitemap-serving-state";
 
 const digest = "a".repeat(64);
+const legacyBareShardRoute =
+  "/:sitemapArtifactFile(^sitemap(?:\\.xml|_index\\.xml|-(?:[0-9]{4,}|[A-Za-z0-9_-]+-[0-9]{4,})\\.xml(?:\\.gz)?)$)";
 
 function manifest(overrides: Partial<SitemapGenerationManifest> = {}): SitemapGenerationManifest {
   return {
@@ -147,7 +150,7 @@ describe("registerSitemapRoutes — manifest-backed serving", () => {
     const expectedPaths = [
       "/sitemap.xml",
       "/sitemaps/:sitemapGenerationId/:sitemapGenerationFile",
-      "/:sitemapArtifactFile",
+      legacyBareShardRoute,
     ];
 
     expect([...routes.keys()]).toEqual(expectedPaths);
@@ -157,11 +160,71 @@ describe("registerSitemapRoutes — manifest-backed serving", () => {
 
     for (const path of [
       "/sitemap.xml",
+      "/sitemap_index.xml",
       "/sitemaps/current_3/sitemap-0001.xml",
       "/sitemap-0001.xml",
+      "/sitemap-en-0001.xml.gz",
     ]) {
       expect(dispatcher.find("GET", path)?.route.method).toBe("GET");
       expect(dispatcher.find("HEAD", path)?.route.method).toBe("HEAD");
+    }
+
+    for (const path of ["/missing", "/favicon.ico", "/about.xml"]) {
+      expect(dispatcher.find("GET", path)).toBeNull();
+      expect(dispatcher.find("HEAD", path)).toBeNull();
+    }
+  });
+
+  it("keeps a custom main path exact while retaining only generated bare artifacts", () => {
+    const { router: sitemapRouter, routes, headRoutes } = capturingRouter();
+    registerSitemapRoutes(sitemapRouter, {
+      path: "/maps/custom.xml",
+      getServingState: () => undefined,
+    });
+    const dispatcher = dispatchingRegistry(routes, headRoutes);
+
+    for (const method of ["GET", "HEAD"] as const) {
+      expect(dispatcher.find(method, "/maps/custom.xml")?.route.path).toBe("/maps/custom.xml");
+      for (const path of ["/sitemap.xml", "/sitemap_index.xml", "/sitemap-0001.xml"]) {
+        expect(dispatcher.find(method, path)?.route.path).toBe(legacyBareShardRoute);
+      }
+      expect(dispatcher.find(method, "/custom.xml")).toBeNull();
+    }
+  });
+
+  it("lets Fastify return ordinary 404s for unknown one-segment URLs", async () => {
+    const server = Fastify();
+    registerSitemapRoutes(router, {
+      path: "/__sitemap-route-constraint-main.xml",
+      warn: () => undefined,
+      getServingState: () => undefined,
+    });
+    router.scan(server);
+
+    try {
+      for (const method of ["GET", "HEAD"] as const) {
+        for (const url of ["/missing", "/favicon.ico", "/about.xml"]) {
+          const response = await server.inject({ method, url });
+          expect(response.statusCode).toBe(404);
+        }
+
+        for (const url of [
+          "/__sitemap-route-constraint-main.xml",
+          "/sitemaps/current_3/sitemap-0001.xml",
+          "/sitemap.xml",
+          "/sitemap_index.xml",
+          "/sitemap-0001.xml",
+          "/sitemap-en-0001.xml.gz",
+        ]) {
+          const artifact = await server.inject({ method, url });
+          expect(artifact.statusCode).toBe(503);
+        }
+
+        const malformedShard = await server.inject({ method, url: "/sitemap-x0001.xml" });
+        expect(malformedShard.statusCode).toBe(404);
+      }
+    } finally {
+      await server.close();
     }
   });
 
