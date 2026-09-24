@@ -20,7 +20,10 @@ function renderHead(metadata: MetadataOutput | undefined): string {
   );
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
 
 describe("metadata.meta / metadata.links — server render", () => {
   it("renders name, property and http-equiv metas", () => {
@@ -83,6 +86,7 @@ describe("metadata.meta / metadata.links — server render", () => {
   });
 
   it("drops a bad rel and a javascript: href, with a dev warning", () => {
+    vi.stubEnv("DEV", true);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const html = renderHead({
       links: [

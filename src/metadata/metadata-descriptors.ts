@@ -114,9 +114,9 @@ const HTTP_EQUIV_VALUES: readonly string[] = [
 const LINK_OPTIONAL_ATTRIBUTES = ["hreflang", "type", "sizes", "media", "as", "title"] as const;
 
 function warnDropped(what: string, reason: string): void {
-  if (typeof process !== "undefined" && process.env?.NODE_ENV === "production") return;
-
-  console.warn(`[warlock] metadata: dropped ${what} — ${reason}.`);
+  if (import.meta.env?.DEV) {
+    console.warn(`[warlock] metadata: dropped ${what} — ${reason}.`);
+  }
 }
 
 /** Escapes a value for use inside a double-quoted CSS attribute selector. */
@@ -193,7 +193,12 @@ function dynamicMetaDescriptors(entries: MetadataOutput["meta"]): MetadataDescri
   const seen = new Set<string>();
 
   for (const entry of entries ?? []) {
-    const raw = entry as { name?: unknown; property?: unknown; httpEquiv?: unknown; content?: unknown };
+    const raw = entry as {
+      name?: unknown;
+      property?: unknown;
+      httpEquiv?: unknown;
+      content?: unknown;
+    };
     const attribute =
       typeof raw.name === "string"
         ? "name"
@@ -377,7 +382,11 @@ export function resolveMetadataDescriptors(
     metaDescriptor("property", "article:modified_time", article?.modifiedTime),
     metaDescriptor("property", "article:section", article?.section),
     metaDescriptor("name", "twitter:card", twitterCard),
-    metaDescriptor("name", "twitter:title", twitterActive ? (twitter?.title ?? ogTitle) : undefined),
+    metaDescriptor(
+      "name",
+      "twitter:title",
+      twitterActive ? (twitter?.title ?? ogTitle) : undefined,
+    ),
     metaDescriptor(
       "name",
       "twitter:description",
