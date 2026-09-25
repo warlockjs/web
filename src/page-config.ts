@@ -30,6 +30,16 @@ export type PageConfigValidation =
       readonly validating?: never;
     };
 
+/**
+ * Settings for a page's `action` export, or for one of its named `actions`.
+ * `validation` checks the submitted body (minus `_action`); a failure never
+ * runs the action. `middleware` runs after app, layout, and page guards.
+ */
+export type PageActionConfig = {
+  readonly validation?: BaseValidator;
+  readonly middleware?: readonly PipelineMiddleware[];
+};
+
 /** Props of a page-owned, named server-rendered `ErrorBoundary` component. */
 export type PageErrorBoundaryProps = { readonly error: unknown };
 
@@ -54,6 +64,10 @@ export type PageConfig<TLoader extends LoaderFunction | undefined = undefined> =
   readonly metadata?: PageMetadata<TLoader>;
   /** Page sitemap policy or dynamic URL supplier. */
   readonly sitemap?: SitemapPageExport;
+  /** Settings for the unnamed `action` export; requires that export. */
+  readonly action?: PageActionConfig;
+  /** Settings per named `actions` export, keyed by action name. */
+  readonly actions?: Readonly<Record<string, PageActionConfig>>;
 };
 
 /**

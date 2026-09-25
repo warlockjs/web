@@ -2,6 +2,13 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## Unreleased
+
+### Fixed
+
+- `PageConfig` accepts `action` and `actions` (new `PageActionConfig` type), so `config = { action: { validation } } satisfies PageConfig` type-checks.
+- `PageActionContext<typeof config.action>` types `request.validated()` from the action's Seal validator.
+
 ## 5.21.0 - 2026-09-25
 
 ### Added

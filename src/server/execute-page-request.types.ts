@@ -2,6 +2,7 @@ import type { HttpContext, Request, Response } from "@warlock.js/core";
 import type { BaseValidator } from "@warlock.js/seal";
 import type { SharedContext } from "../index";
 import type { MetadataOutput, PageMetadata } from "../metadata";
+import type { PageActionConfig } from "../page-config";
 import type { SerializedErrorPageProps } from "../components/document-context";
 import type { SharedStore } from "../shared";
 import type { SessionModel, SessionUser } from "../session/session.types";
@@ -59,10 +60,7 @@ export type PipelineLoader = (ctx: PipelineLoaderContext) => unknown | Promise<u
 
 export type PageActionHandler = (context: any) => unknown;
 
-export type PageActionConfig = {
-  validation?: BaseValidator;
-  middleware?: readonly PipelineMiddleware[];
-};
+export type { PageActionConfig };
 
 export type PageTripleModule = {
   register?: () => unknown;

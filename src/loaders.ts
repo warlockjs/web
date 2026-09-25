@@ -1,6 +1,8 @@
 import type { ActionState } from "./server/action-state";
 import type { ActionResponse } from "./server/settle-page-response";
 import type { Request, Response } from "@warlock.js/core";
+import type { BaseValidator, Infer } from "@warlock.js/seal";
+import type { PageActionConfig } from "./page-config";
 import type { PageContext } from "./context";
 import type { PageSession, SharedContext } from "./index";
 import type { RouteDeclaration } from "./route";
@@ -43,20 +45,23 @@ export type LayoutLoader = (context: LayoutLoaderContext) => unknown;
 export type AppLoader = (context: AppLoaderContext) => unknown;
 
 /**
+ * An action's `validation` is a bare Seal validator over the body, not the
+ * page's `{ schema }` / `{ params, query }` shape, so it is inferred
+ * directly. No validation validates nothing: the empty object.
+ */
+type ActionValidatedOutput<TConfig> = TConfig extends {
+  readonly validation: infer TValidator extends BaseValidator;
+}
+  ? Infer.Output<TValidator>
+  : Record<string, never>;
+
+/**
  * What a page `action` receives: the page loader's context with the action's
  * own validated body and the buffered `ActionResponse` (failure helpers
  * included). `TConfig` is `typeof config.action` (or one `config.actions.<name>`).
  */
-export type PageActionContext<
-  TConfig extends { validation?: PageValidation } | undefined = undefined,
-> = {
-  request: Request<
-    ValidatedOutput<
-      TConfig extends { validation: infer TValidation extends PageValidation }
-        ? TValidation
-        : undefined
-    >
-  >;
+export type PageActionContext<TConfig extends PageActionConfig | undefined = undefined> = {
+  request: Request<ActionValidatedOutput<TConfig>>;
   response: ActionResponse;
   shared: SharedContext;
   /** The resolved session; present only when `web.session` is configured. */
