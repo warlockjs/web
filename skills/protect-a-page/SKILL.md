@@ -17,7 +17,8 @@ export default { session: pageSession({ project: (user: User) => userSessionReso
 `project` is required; only its result reaches the browser as the payload's optional `session` key. Type it by augmenting `SessionRegistry { user; model }` in module `"@warlock.js/web"`.
 
 ```tsx
-import { requireGuest, requireUser, useUser } from "@warlock.js/web";
+import { useUser } from "@warlock.js/web";
+import { requireGuest, requireUser } from "@warlock.js/web/session";
 
 // account page
 export const config = { route: "/account", middleware: [requireUser({ loginPath: "/login" })] };

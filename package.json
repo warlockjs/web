@@ -40,6 +40,11 @@
       "import": "./src/page-cache.ts",
       "default": "./src/page-cache.ts"
     },
+    "./session": {
+      "types": "./src/session.ts",
+      "import": "./src/session.ts",
+      "default": "./src/session.ts"
+    },
     "./sitemap": {
       "types": "./src/sitemap/index.ts",
       "import": "./src/sitemap/index.ts",

@@ -62,8 +62,6 @@ export type {
   SessionResolver,
 } from "./session/session.types";
 export { PageRedirectSignal } from "./session/page-redirect-signal";
-export { requireUser, requireGuest } from "./session/require-user";
-export type { RequireUserOptions, RequireGuestOptions } from "./session/require-user";
 export { safeRedirectTarget } from "./session/safe-redirect-target";
 export { useUser, installSession, SessionContext } from "./session/use-user";
 // Server-safe by construction (no React/react-dom import) — the `defer()`
