@@ -40,6 +40,7 @@ import {
   type PageResponseCommit,
 } from "./settle-page-response";
 import { isPageRedirectSignal } from "../session/page-redirect-signal";
+import { SessionResolvedTooLateError } from "../session/session-resolved-too-late-error";
 import type { SessionResolver } from "../session/session.types";
 import type {
   ExecutePageRequestOptions,
@@ -71,6 +72,19 @@ type Bundle = PageDataBundle & {
     body?: unknown;
   };
 };
+
+/**
+ * Stage 2.5 is the final point at which a session resolver may renew a
+ * cookie. `Response` deliberately exposes the underlying raw response for
+ * streaming, and Node marks that response once `writeHead` has run.
+ */
+function hasCommittedResponseHeaders(response: Response): boolean {
+  const raw = response.baseResponse?.raw as
+    | { headersSent?: boolean; writableEnded?: boolean }
+    | undefined;
+
+  return raw?.headersSent === true || raw?.writableEnded === true;
+}
 
 /**
  * Self-wires `useQueryString`'s SSR seam to the SAME per-request store
@@ -455,6 +469,10 @@ export async function executePageRequest<TResult = PageDataBundle>(
 
     if (sessionResolver) {
       try {
+        if (hasCommittedResponseHeaders(response)) {
+          throw new SessionResolvedTooLateError();
+        }
+
         const resolved = await sessionResolver.resolve(request, response);
 
         if (resolved) {

@@ -12,6 +12,7 @@ import {
   executePageRequest,
   type PageRouteEntry,
 } from "./execute-page-request";
+import { SessionResolvedTooLateError } from "../session/session-resolved-too-late-error";
 
 beforeEach(() => {
   connectPageContext({
@@ -26,8 +27,9 @@ afterEach(() => {
 });
 
 describe("session stage ordering (renewal before headers)", () => {
-  it("resolves exactly once, before any loader and before finish", async () => {
+  it("hands one resolved session to app, layout, and page loaders after resolution", async () => {
     const order: string[] = [];
+    const sessions: unknown[] = [];
     const resolve = vi.fn(async () => {
       order.push("resolve");
       return { model: { id: 1 }, user: { id: 1 } };
@@ -36,9 +38,24 @@ describe("session stage ordering (renewal before headers)", () => {
       path: "/a",
       name: "a",
       triple: {
-        app: { loader: (ctx) => void order.push(`app:${ctx.session?.user?.id}`) },
-        layout: { loader: (ctx) => void order.push(`layout:${ctx.session?.user?.id}`) },
-        page: { loader: () => void order.push("page") },
+        app: {
+          loader: (ctx) => {
+            sessions.push(ctx.session);
+            order.push(`app:${ctx.session?.user?.id}`);
+          },
+        },
+        layout: {
+          loader: (ctx) => {
+            sessions.push(ctx.session);
+            order.push(`layout:${ctx.session?.user?.id}`);
+          },
+        },
+        page: {
+          loader: (ctx) => {
+            sessions.push(ctx.session);
+            order.push(`page:${ctx.session?.user?.id}`);
+          },
+        },
       },
     };
     const request = { locals: {}, method: "GET" } as unknown as Request;
@@ -56,7 +73,14 @@ describe("session stage ordering (renewal before headers)", () => {
     });
 
     expect(resolve).toHaveBeenCalledTimes(1);
-    expect(order).toEqual(["resolve", "app:1", "layout:1", "page", "finish"]);
+    expect(order).toEqual(["resolve", "app:1", "layout:1", "page:1", "finish"]);
+    expect(sessions).toEqual([
+      { user: { id: 1 }, model: { id: 1 } },
+      { user: { id: 1 }, model: { id: 1 } },
+      { user: { id: 1 }, model: { id: 1 } },
+    ]);
+    expect(sessions[1]).toBe(sessions[0]);
+    expect(sessions[2]).toBe(sessions[0]);
   });
 
   it("lets the resolver write a renewal cookie onto the response before loaders start", async () => {
@@ -94,5 +118,35 @@ describe("session stage ordering (renewal before headers)", () => {
     });
 
     expect(loaderSawCookie).toBe(true);
+  });
+
+  it("does not invoke a renewal-capable resolver after response headers commit", async () => {
+    const resolve = vi.fn(async () => ({ model: { id: 1 }, user: { id: 1 } }));
+    const response = new Response();
+    (response as unknown as { baseResponse: { raw: { headersSent: boolean } } }).baseResponse = {
+      raw: { headersSent: true },
+    };
+
+    config.set("web.session", { resolve });
+
+    const result = await executePageRequest({
+      url: "/a",
+      routes: [
+        {
+          path: "/a",
+          name: "a",
+          triple: { app: {}, layout: {}, page: {} },
+        },
+      ],
+      createHttp: () => ({
+        request: { locals: {}, method: "GET" } as unknown as Request,
+        response,
+      }),
+    });
+
+    expect(resolve).not.toHaveBeenCalled();
+    expect((result as { error?: { error: unknown } }).error?.error).toBeInstanceOf(
+      SessionResolvedTooLateError,
+    );
   });
 });

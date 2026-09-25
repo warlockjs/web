@@ -63,6 +63,12 @@ type _PageActionNamesFallsBackToString = Assert<
 type _PageLoaderContextExposesSession = Assert<
   Equal<PageLoaderContext<undefined, undefined>["session"], PageSession | undefined>
 >;
+type _LayoutLoaderContextExposesSession = Assert<
+  Equal<LayoutLoaderContext["session"], PageSession | undefined>
+>;
+type _AppLoaderContextExposesSession = Assert<
+  Equal<AppLoaderContext["session"], PageSession | undefined>
+>;
 type _PageActionContextExposesSession = Assert<
   Equal<PageActionContext["session"], PageSession | undefined>
 >;

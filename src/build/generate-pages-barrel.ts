@@ -201,6 +201,8 @@ export type PageRouteManifestEntry = {
   path: string;
   name: string;
   source: string;
+  /** Page action names discovered from the page's static declarations. */
+  actions?: readonly string[];
 };
 
 export type PageRoutesManifest = {
@@ -517,6 +519,7 @@ export async function generatePagesBarrel(
           path: normalizeRoutePath(page.routePath),
           name: page.routeName,
           source: toPosix(path.relative(appRoot, page.pageFile)),
+          ...(page.actions === undefined ? {} : { actions: page.actions }),
         })),
       {
         method: "GET" as const,

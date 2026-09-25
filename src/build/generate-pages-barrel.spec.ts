@@ -398,6 +398,29 @@ describe("the Vite-switch tripwire", () => {
  * immediately after a successful build.
  */
 describe("the page-route manifest", () => {
+  it("carries statically declared page action names into the route-type input", async () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/web/main/edit.page.tsx": [
+        'export const config = { route: { path: "/edit", name: "edit" }, actions: { save: {}, remove: {} } };',
+        "export async function action() {}",
+        "export default function Edit() { return null; }",
+      ].join("\n"),
+    });
+
+    const { pageRoutes } = await generatePagesBarrel({
+      appRoot,
+      productionDir: path.join(appRoot, ".warlock/production"),
+      clientDir: "dist/client",
+    });
+
+    expect(pageRoutes.routes.find((route) => route.name === "edit")?.actions).toEqual([
+      "default",
+      "remove",
+      "save",
+    ]);
+  });
+
   it("records the catch-all as the router's canonical `/*`, never the raw `*`", async () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,

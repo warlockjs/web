@@ -36,9 +36,18 @@ export type PageLoader<
   TRoute extends RouteDeclaration | undefined = undefined,
 > = (context: PageLoaderContext<TValidation, TRoute>) => unknown;
 
-export type LayoutLoaderContext = PageContext;
+/**
+ * The layout loader receives the same resolved session as a page loader.
+ * It is omitted when `web.session` is not configured, and has a null user
+ * for a guest.
+ */
+export type LayoutLoaderContext = PageContext & { session?: PageSession };
 
-export type AppLoaderContext = PageContext;
+/**
+ * The app loader runs after session resolution, before layout and page
+ * loaders, so it receives the same session shape as the other loaders.
+ */
+export type AppLoaderContext = PageContext & { session?: PageSession };
 
 export type LayoutLoader = (context: LayoutLoaderContext) => unknown;
 
