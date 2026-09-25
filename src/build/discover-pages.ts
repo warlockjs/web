@@ -109,6 +109,8 @@ export type DiscoveredRoutablePage = {
   appFile?: string;
   /** Optional `root.setup.ts` companion for the application root. */
   appSetupFile?: string;
+  /** Page action names read statically (`"default"` or the `actions` keys); absent when none. */
+  actions?: string[];
 };
 
 /** The one application error boundary. It deliberately has no route identity. */
@@ -693,7 +695,7 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
     assertPageHasDefaultExport(relativeToApp(pageFile), pageSource);
     const declarationFile = setupFile ?? pageFile;
     const declarationSource = setupFile === undefined ? pageSource : fs.readFileSync(setupFile, "utf-8");
-    const { route } = readDeclarations(
+    const { route, actionNames } = readDeclarations(
       declarationFile,
       declarations,
       declarationSource,
@@ -877,6 +879,7 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
         return candidate !== undefined && isFile(candidate) ? candidate : undefined;
       }),
       middlewareLayouts: isNotFoundPage ? [] : middlewareLayouts,
+      ...(actionNames === undefined || isNotFoundPage ? {} : { actions: actionNames }),
       ...(hasAppFile ? { appFile } : {}),
       ...(appSetupFile === undefined ? {} : { appSetupFile }),
     });

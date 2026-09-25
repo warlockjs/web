@@ -489,7 +489,7 @@ Creating a page, deleting one, or editing `config.route` is route-table churn ra
 - **Do not annotate the loader with `: PageLoader`.** That erases the return type `PageProps` needs.
 - **Components receive data, not HTTP objects.** `request` and `response` belong to loaders; the component also renders in the browser.
 - **A default component is synchronous.** Fetch in the loader, then render its result.
-- **There are no server actions.** Mutations remain ordinary API requests; call `refresh()` after a successful mutation.
+- **A page can export `action` (or `actions`) to handle its own form POST.** Use `<Form>` and `useActionData`; see [`handle-a-form-action/SKILL.md`](../handle-a-form-action/SKILL.md). Mutations through API routes remain ordinary requests; call `refresh()` after them.
 - **Do not import the hydration entry.** `esm/hydration/index.mjs` is a framework build input, not a consumer API. The public low-level runtime subpath is `@warlock.js/web/client/runtime`.
 
 ## See also

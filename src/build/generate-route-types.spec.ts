@@ -60,3 +60,20 @@ describe("generateRouteTypes", () => {
     ).toThrow(ConflictingRouteTypeNameError);
   });
 });
+
+describe("generateRouteTypes page actions", () => {
+  it("emits sorted action names on the page entry and nothing when there are none", () => {
+    const source = generateRouteTypes({
+      pages: [
+        { name: "admin.posts.edit", path: "/admin/posts/:id", method: "GET", actions: ["save", "remove"] },
+        { name: "home", path: "/", method: "GET" },
+      ],
+      apiRoutes: [],
+    });
+
+    expect(source).toContain(
+      '"admin.posts.edit": { path: "/admin/posts/:id"; params: { "id": RouteParamValue }; actions: "remove" | "save" };',
+    );
+    expect(source).toContain('"home": { path: "/"; params: {} };');
+  });
+});

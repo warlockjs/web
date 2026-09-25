@@ -180,3 +180,32 @@ describe("buildHydrationPayload — inlinedDeferredKeys (a serverCache route's J
     expect(payload.deferred).toBeUndefined();
   });
 });
+
+describe("buildHydrationPayload — actionData and session", () => {
+  it("omits both keys when not provided", () => {
+    const payload = buildHydrationPayload(bundleOf(), "en");
+
+    expect("actionData" in payload).toBe(false);
+    expect("session" in payload).toBe(false);
+  });
+
+  it("omits both keys when explicitly undefined", () => {
+    const payload = buildHydrationPayload(bundleOf(), "en", {
+      actionData: undefined,
+      session: undefined,
+    });
+
+    expect("actionData" in payload).toBe(false);
+    expect("session" in payload).toBe(false);
+  });
+
+  it("emits both keys when provided, including a guest session", () => {
+    const payload = buildHydrationPayload(bundleOf(), "en", {
+      actionData: { data: { ok: true } },
+      session: { user: null },
+    });
+
+    expect(payload.actionData).toEqual({ data: { ok: true } });
+    expect(payload.session).toEqual({ user: null });
+  });
+});

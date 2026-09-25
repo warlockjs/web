@@ -40,7 +40,10 @@ import { composeLayoutModules } from "./compose-layout-modules";
 import { composePageModule } from "./compose-page-module";
 import { createPageModuleLoader } from "./create-page-module-loader";
 import { resolveLocaleRouting } from "./locale-routing/resolve-locale-routing";
-import { localePageRegistrations } from "./locale-routing/locale-page-registrations";
+import {
+  localeActionRegistrations,
+  localePageRegistrations,
+} from "./locale-routing/locale-page-registrations";
 import type { ErrorPageModule } from "./error-page";
 import {
   createPageRouteHandler,
@@ -512,7 +515,7 @@ export function installPageRoutesFromManifest(
             page.sourceFile,
           ]);
 
-    const pageHandler = createHandler({
+    const handlerOptions: PageRouteHandlerOptions = {
       path: effectivePath,
       name,
       appFile: app.sourceFile,
@@ -531,7 +534,16 @@ export function installPageRoutesFromManifest(
       resolveRequestStylesheetUrls,
       cache,
       renderNotFound,
-    });
+    };
+    const pageHandler = createHandler(handlerOptions);
+
+    // POST is registered only for a page whose loaded module exports an
+    // `action` or `actions`. The manifest already carries the loaded
+    // (setup-composed) module, so no manifest field is needed.
+    const actionHandler =
+      pageModule.action !== undefined || pageModule.actions !== undefined
+        ? createHandler({ ...handlerOptions, mode: "action" })
+        : undefined;
 
     // Under an active `web.localeRouting.strategy` this is more than one
     // registration — the base path (possibly rewritten into a locale
@@ -554,6 +566,17 @@ export function installPageRoutesFromManifest(
         // page. The name stays on the base registration only.
         { name: registration.name, isPage: true },
       );
+    }
+
+    if (actionHandler !== undefined) {
+      for (const registration of localeActionRegistrations(
+        effectivePath,
+        actionHandler,
+        localeRouting,
+        { pageFile: page.sourceFile, renderNotFound },
+      )) {
+        router.post(registration.path, registration.handler, { isPage: true });
+      }
     }
 
     installed.push({

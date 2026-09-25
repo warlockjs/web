@@ -1,5 +1,5 @@
 ---
-description: "Server-rendered React pages for a Warlock app, with Vite. Exports `defer`, `useTrans`, `LocaleProvider`, `Link`, `href`, `navigateTo`, `refresh`, `shared`, `useShared`, `PublicPageError`, plus `Head` and `ClientOnly`. Use for: add a page, add SSR to an app, load data for a page, stream slow data, add a layout, change the HTML document, translate a page, link or navigate between pages, submit a form, serve a sitemap, add a theme, ship CSS. Not this package: API routes, controllers, mail, storage → @warlock.js/core; database queries → @warlock.js/cascade; form input rules → @warlock.js/seal."
+description: "Server-rendered React pages for a Warlock app, with Vite. Exports `defer`, `useTrans`, `LocaleProvider`, `Link`, `href`, `navigateTo`, `refresh`, `shared`, `useShared`, `PublicPageError`, plus `Head` and `ClientOnly`. Use for: add a page, add SSR to an app, load data for a page, stream slow data, add a layout, change the HTML document, translate a page, link or navigate between pages, submit a form, handle a form action, protect a page, read the signed-in user, serve a sitemap, add a theme, ship CSS. Not this package: API routes, controllers, mail, storage → @warlock.js/core; database queries → @warlock.js/cascade; form input rules → @warlock.js/seal."
 ---
 # @warlock.js/web
 
@@ -9,9 +9,10 @@ Web adds an SSR React page layer to a Warlock app. Pages live under `src/web/**`
 1. Install the layer with `warlock add web` (`add-web-to-an-app.md`), then edit the document in `src/web/root.tsx` (`write-the-root.md`).
 2. Create pages with `config` and a loader (`create-a-page.md`, `load-page-data.md`); wrap them with `use-layouts.md`.
 3. Link and navigate with `<Link>`, `href()`, `navigateTo` (`navigate-on-the-client.md`).
-4. Post forms to a Core API route (`submit-a-form.md`), then `refresh()` to revalidate.
-5. Translate pages (`localize-pages.md`); stream slow data (`stream-deferred-data.md`).
-6. Polish: styles (`serve-styles.md`), sitemap and robots (`generate-sitemap.md`), themes (`multi-theme.md`), client-only UI (`render-client-only.md`), vitals (`measure-web-vitals.md`).
+4. Post forms to a Core API route (`submit-a-form.md`), then `refresh()` to revalidate; or handle a form on the page itself with an `action` export and `<Form>` (`handle-a-form-action.md`).
+5. Guard pages and read the user (`protect-a-page.md`).
+6. Translate pages (`localize-pages.md`); stream slow data (`stream-deferred-data.md`).
+7. Polish: styles (`serve-styles.md`), sitemap and robots (`generate-sitemap.md`), themes (`multi-theme.md`), client-only UI (`render-client-only.md`), vitals (`measure-web-vitals.md`).
 
 ## Conventions and pitfalls
 - Route, cache, validation, middleware, metadata and sitemap policy go in `config`; keep loaders for data only.

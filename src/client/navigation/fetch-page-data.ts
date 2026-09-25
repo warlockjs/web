@@ -383,6 +383,19 @@ export async function fetchPageData(
     return { type: "hard-navigate", url, reason: `status ${response.status}` };
   }
 
+  return readPageDataResponse(response, url);
+}
+
+/**
+ * Turn an already-accepted (2xx) data response into a {@link PageDataResult}:
+ * NDJSON or plain devalue JSON, anything else a `hard-navigate`. Shared by
+ * `fetchPageData` and `submitPageAction`, so a page action's 200 is read by the
+ * exact code a navigation's is.
+ */
+export async function readPageDataResponse(
+  response: Response,
+  url: string,
+): Promise<PageDataResult> {
   // Checked BEFORE the plain-JSON gate: a page with no deferred keys never
   // gets an ndjson body even when it was accepted (`write-deferred-ndjson-response.ts`
   // is only ever invoked for a page that has some), so this branch is taken

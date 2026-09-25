@@ -19,6 +19,7 @@ import {
 } from "../components/document-context";
 import type { SharedContext } from "../index";
 import { LocaleProvider } from "../localization";
+import { withSessionProvider } from "./with-session-provider";
 import { buildHydrationPayload } from "./build-hydration-payload";
 import {
   hydrationErrorPageProps,
@@ -66,7 +67,18 @@ export { escapePayload, PAYLOAD_SCRIPT_ID };
 export type { BufferedCookie };
 
 /** Widens `PageDataBundle` with the stage 7 commit record — see `execute-page-request.ts`. */
-type Bundle = PageDataBundle & { commit?: PageResponseCommit };
+type Bundle = PageDataBundle & {
+  commit?: PageResponseCommit;
+  /** Stage 2.5's projection (`{ user }`), when `web.session` is configured. */
+  session?: { user: unknown };
+};
+
+/** The optional `session` payload key, read off the bundle stage 2.5 filled. */
+function sessionExtras(bundle: PageDataBundle): { session?: { user: unknown } } {
+  const session = (bundle as Bundle).session;
+
+  return session === undefined ? {} : { session };
+}
 
 /** Reads the stage 7 commit into the lowercased header map `RenderedPage` carries. */
 function committedHeaders(bundle: PageDataBundle): Record<string, string> {
@@ -1021,7 +1033,7 @@ async function finishRender(
 
   let documentValue: DocumentContextValue = {
     metadata: bundle.metadata,
-    payload: buildHydrationPayload(bundle, documentSlots.locale),
+    payload: buildHydrationPayload(bundle, documentSlots.locale, sessionExtras(bundle)),
     nonce: documentSlots.nonce,
     lang: documentSlots.locale,
     stylesheetUrls: documentStylesheetUrls(
@@ -1042,7 +1054,7 @@ async function finishRender(
       children: createElement(LocaleProvider, {
         locale: documentValue.payload.locale,
         translations: bundle.routeTranslations?.keywords,
-        children: element,
+        children: withSessionProvider(documentValue.payload.session, element),
       }),
     });
 
@@ -1077,7 +1089,7 @@ async function finishRender(
     );
     documentValue = {
       ...documentValue,
-      payload: buildHydrationPayload(bundle, documentSlots.locale),
+      payload: buildHydrationPayload(bundle, documentSlots.locale, sessionExtras(bundle)),
     };
     return renderWithContext(
       createElement(DefaultApp, {
@@ -1091,7 +1103,7 @@ async function finishRender(
     documentValue = {
       ...documentValue,
       metadata: bundle.metadata,
-      payload: buildHydrationPayload(bundle, documentSlots.locale),
+      payload: buildHydrationPayload(bundle, documentSlots.locale, sessionExtras(bundle)),
     };
     return renderFrameworkRoot();
   };
@@ -1130,7 +1142,7 @@ async function finishRender(
     documentValue = {
       ...documentValue,
       metadata: bundle.metadata,
-      payload: buildHydrationPayload(bundle, documentSlots.locale),
+      payload: buildHydrationPayload(bundle, documentSlots.locale, sessionExtras(bundle)),
     };
     return renderWithContext(
       wrapRootward(triple, bundle, "page", errorPageElement(module, ssrProps)),

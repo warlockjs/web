@@ -51,7 +51,13 @@ function malformedPayload(): never {
  * rule the required keys live by, so it throws. Arrays included — `typeof []`
  * is `"object"`, and an array of params is not params.
  */
-export const OPTIONAL_OBJECT_PAYLOAD_KEYS = ["metadata", "params", "errorPage"] as const;
+export const OPTIONAL_OBJECT_PAYLOAD_KEYS = [
+  "metadata",
+  "params",
+  "errorPage",
+  "actionData",
+  "session",
+] as const;
 
 function isPlainObject(value: unknown): boolean {
   return typeof value === "object" && value !== null && !Array.isArray(value);

@@ -4,6 +4,8 @@ import type { SharedContext } from "../index";
 import type { MetadataOutput, PageMetadata } from "../metadata";
 import type { SerializedErrorPageProps } from "../components/document-context";
 import type { SharedStore } from "../shared";
+import type { SessionModel, SessionUser } from "../session/session.types";
+import type { ActionState } from "./action-state";
 import type { DeferSettlement } from "./defer-settlement";
 import type { BufferedResponse } from "./settle-page-response";
 import type { RouteTranslations } from "./route-translations";
@@ -45,9 +47,22 @@ export type PipelineLoaderContext = {
    * stop that work early; nothing breaks if you don't.
    */
   signal: AbortSignal;
+  /**
+   * The session stage 2.5 resolved, present only when `web.session` is
+   * configured. `user` is null for a guest. Read by the loader form of
+   * `requireUser(ctx)`.
+   */
+  session?: { user: SessionUser | null; model: SessionModel | null };
 };
 
 export type PipelineLoader = (ctx: PipelineLoaderContext) => unknown | Promise<unknown>;
+
+export type PageActionHandler = (context: any) => unknown;
+
+export type PageActionConfig = {
+  validation?: BaseValidator;
+  middleware?: readonly PipelineMiddleware[];
+};
 
 export type PageTripleModule = {
   register?: () => unknown;
@@ -66,6 +81,11 @@ export type PageTripleModule = {
     | { schema?: BaseValidator; validating?: readonly string[]; params?: never; query?: never }
     | { params?: BaseValidator; query?: BaseValidator; schema?: never; validating?: never };
   loader?: PipelineLoader;
+  /** 5.21 page actions: the unnamed action, or the named ones (never both). */
+  action?: PageActionHandler;
+  actions?: Readonly<Record<string, PageActionHandler>>;
+  actionConfig?: PageActionConfig;
+  actionsConfig?: Readonly<Record<string, PageActionConfig>>;
   metadata?: PageMetadata<PipelineLoader>;
   /** Ordered outer-to-inner metadata retained by a composed layout module. */
   layoutMetadata?: readonly (PageMetadata<PipelineLoader> | undefined)[];
@@ -136,6 +156,16 @@ export type PageShortCircuit =
   | { stage: "validation"; status: number; errors: unknown }
   | {
       /**
+       * A page ACTION ended the request before the loaders (5.21 stage 5b): a
+       * failed action on a DATA request (`bundle.actionData` carries the
+       * errors, and no loader re-runs) or an unknown `_action` name (no
+       * `actionData`; 404 for data, 400 for a document).
+       */
+      stage: "action";
+      statusCode: number;
+    }
+  | {
+      /**
        * An app, layout or page LOADER returned `response.redirect()`,
        * `permanentRedirect()` or `notFound()`. Recorded at stage 6 and never
        * sent by the loader itself: the handler writes the answer — the
@@ -179,6 +209,10 @@ export type PageDataBundle = {
   shared?: Readonly<SharedContext>;
   metadata?: MetadataOutput;
   shortCircuit?: PageShortCircuit;
+  /** Stage 2.5's projection (never the model); absent when `web.session` is not configured. */
+  session?: { user: SessionUser | null };
+  /** The page action's outcome, set by stage 5b of an action POST only. */
+  actionData?: ActionState;
   error?: PageErrorRecord;
   /** Immutable route-owned translations selected for this request. */
   routeTranslations?: RouteTranslations;

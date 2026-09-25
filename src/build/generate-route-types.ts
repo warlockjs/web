@@ -5,6 +5,8 @@ export type RegisteredRouteTypeSnapshot = {
   name: string;
   path: string;
   method: string;
+  /** Page action names read statically from `config.action` / `config.actions` keys. */
+  actions?: readonly string[];
 };
 
 /** Inputs remain separate because page and API names may legitimately overlap. */
@@ -77,6 +79,9 @@ function emitRegistry(
       `path: ${quote(snapshot.path)}`,
       `params: ${paramsType(snapshot.path)}`,
       ...(includesMethod ? [`method: ${quote(snapshot.method.toUpperCase())}`] : []),
+      ...(snapshot.actions && snapshot.actions.length > 0
+        ? [`actions: ${[...new Set(snapshot.actions)].sort().map(quote).join(" | ")}`]
+        : []),
     ];
     lines.push(`    ${quote(snapshot.name)}: { ${fields.join("; ")} };`);
   }

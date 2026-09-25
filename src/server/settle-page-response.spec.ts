@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setEnvironment } from "@warlock.js/core";
-import { buildErrorRecord } from "./settle-page-response";
+import {
+  buildErrorRecord,
+  createActionResponse,
+  createLevelBuffer,
+  isActionFailure,
+  isLoaderShortCircuit,
+} from "./settle-page-response";
 import { PublicPageError } from "./public-page-error";
 import type { PageBoundaryDesignation } from "./execute-page-request.types";
 
@@ -52,5 +58,32 @@ describe("buildErrorRecord()", () => {
 
     expect(record.error).toBe(thrown);
     expect(record.scrubbed).toBe(false);
+  });
+});
+
+describe("createActionResponse()", () => {
+  it.each([
+    ["badRequest", 400],
+    ["unauthorized", 401],
+    ["forbidden", 403],
+    ["conflict", 409],
+    ["unprocessableEntity", 422],
+    ["tooManyRequests", 429],
+  ] as const)("%s returns a branded %i failure signal and buffers the status", (helper, status) => {
+    const buffer = createLevelBuffer();
+    const signal = createActionResponse(buffer)[helper]({ message: "no" });
+
+    expect(isActionFailure(signal)).toBe(true);
+    expect(isLoaderShortCircuit(signal)).toBe(false);
+    expect(signal).toMatchObject({ statusCode: status, helper, payload: { message: "no" } });
+    expect(buffer.statusCode).toBe(status);
+  });
+
+  it("keeps the buffered response surface and never brands lookalike objects", () => {
+    const buffer = createLevelBuffer();
+    const response = createActionResponse(buffer);
+
+    expect(isLoaderShortCircuit(response.redirect("/x"))).toBe(true);
+    expect(isActionFailure({ kind: "failure", statusCode: 400 })).toBe(false);
   });
 });

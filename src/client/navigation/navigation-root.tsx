@@ -14,7 +14,7 @@ import type {
   HydrationDocumentPayloadSource,
   SerializedErrorPageProps,
 } from "../../hydration-payload";
-import { connectNavigator } from "../../routing/navigator";
+import { connectNavigator, currentNavigator } from "../../routing/navigator";
 import { routerEvents, type NavigationMode } from "../../routing/router-events";
 import {
   fragmentOf,
@@ -23,6 +23,7 @@ import {
   withoutFragment,
 } from "../../routing/url-fragment";
 import { hydrateShared } from "../../shared";
+import { installSession } from "../../session/use-user";
 import type { ClientPageEntry } from "../runtime";
 import { recordCurrentRoute } from "./current-route";
 import { DOCUMENT_SCOPE, releaseDeferredScope } from "../runtime/defer-registry";
@@ -33,6 +34,7 @@ import { fetchPageData } from "./fetch-page-data";
 import { createEntryKey, ensureEntryKey, withEntryKey } from "./history-entry-key";
 import { takePrefetchedPageData } from "./prefetch";
 import { connectRefresher, createRefresher, type RefreshablePage } from "./refresh";
+import { connectActionSubmitter, createActionSubmitter } from "./action-submitter";
 import {
   applyScrollPosition,
   captureScrollPosition,
@@ -374,6 +376,7 @@ export function NavigationRoot({
         state — locale, permissions, the current user.
       */
         hydrateShared(result.payload.shared);
+        installSession(result.payload.session);
 
         /*
         The fragment PUT BACK. `result.url` comes from `response.url`, and a
@@ -506,6 +509,17 @@ export function NavigationRoot({
 
     const previousRefresher = connectRefresher(createRefresher(runtime));
     const previousLocaleChanger = connectLocaleChanger(createLocaleChanger(runtime));
+    const previousActionSubmitter = connectActionSubmitter(
+      createActionSubmitter({
+        ...runtime,
+        navigate: (url: string) => {
+          // External destinations (an OAuth start) leave the document.
+          const external = new URL(url, window.location.href).origin !== window.location.origin;
+
+          if (external || !currentNavigator()?.(url)) window.location.assign(url);
+        },
+      }),
+    );
 
     const previousNavigator = connectNavigator((url, options) => {
       const replace = options?.replace === true;
@@ -612,6 +626,7 @@ export function NavigationRoot({
       connectNavigator(previousNavigator);
       connectRefresher(previousRefresher);
       connectLocaleChanger(previousLocaleChanger);
+      connectActionSubmitter(previousActionSubmitter);
     };
   }, [pages, buildTree]);
 

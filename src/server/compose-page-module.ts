@@ -1,6 +1,6 @@
 type ModuleNamespace = Readonly<Record<string, unknown>>;
 
-const SETUP_EXPORT_NAMES = new Set(["config", "loader", "register"]);
+const SETUP_EXPORT_NAMES = new Set(["config", "loader", "register", "action", "actions"]);
 
 const composedModules = new WeakMap<ModuleNamespace, WeakMap<ModuleNamespace, ModuleNamespace>>();
 
@@ -20,7 +20,7 @@ export class PageSetupModuleExportError extends Error {
  * Combines an optional setup namespace with its UI namespace for the server.
  *
  * The UI file continues to own the component boundary. Setup may provide the
- * three currently portable module exports; duplicate declarations are rejected
+ * portable module exports (config, loader, register, action, actions); duplicate declarations are rejected
  * before any consumer can accidentally choose an order-dependent winner.
  */
 export function composePageModule(

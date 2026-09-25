@@ -20,6 +20,7 @@
  * Scope: this file creates a seam and nothing else. It does not implement
  * `type: "page"` routing, HTML error pages, or any other new capability.
  */
+import { stringify } from "devalue";
 import {
   buildTracingContext,
   container,
@@ -31,7 +32,12 @@ import {
   type Request,
 } from "@warlock.js/core";
 
-import { isDataRequest, WARLOCK_DATA_REQUEST_HEADER } from "../routing/data-request";
+import {
+  DATA_RESPONSE_CONTENT_TYPE,
+  isDataRequest,
+  WARLOCK_DATA_REQUEST_HEADER,
+} from "../routing/data-request";
+import { guardActionOrigin } from "./action-origin-guard";
 import { isCrawlerRequest } from "./detect-crawler";
 import { registerModules, type RegisterableModuleNamespace } from "../register-modules";
 import { applyResponseCacheFloor } from "./response-cache-floor";
@@ -48,7 +54,7 @@ import { pathnameFromRequest } from "./error-reporting-config";
 import { ensureSetCookieCacheFloorHook, markPageResponse } from "./set-cookie-cache-floor-hook";
 import { runPageMiddlewareGate } from "./execute-page-request";
 import type { BufferedCookie, PageRouteEntry, PageTripleModule } from "./execute-page-request";
-import { renderPageRequest } from "./render-page";
+import { renderPageRequest, type RenderedPage } from "./render-page";
 import { NDJSON_CONTENT_TYPE } from "./write-deferred-ndjson-response";
 import { applyCommit } from "./page-route-handler/apply-commit";
 import { resolvePageCacheHitOrMiss } from "./page-route-handler/serve-page-cache-hit";
@@ -254,9 +260,94 @@ export type PageRouteHandlerOptions = {
    * data representation can never disagree on `Cache-Control`.
    */
   cache?: PageCacheOptIn;
+  /**
+   * `"action"` builds the POST handler for a page that declares an `action`
+   * (5.21 page actions). Omitted means the ordinary GET page handler. The
+   * branch itself is implemented by card A9.
+   */
+  mode?: "action";
 };
 
 export type PageRouteHandler = (context: HttpContext) => Promise<void | Response>;
+
+/** An action reply is about one visitor's write: never shared, never stored. */
+const ACTION_CACHE_CONTROL = "private, no-store";
+
+/** The header a data-request redirect travels in (fetch cannot surface a cross-origin Location). */
+const ACTION_REDIRECT_HEADER = "x-warlock-redirect";
+
+/**
+ * The action outcomes that end the request without rendering a page (5.21
+ * stage 5b): a redirect, a failed action on a data request, an unknown
+ * `_action`. Returns `true` when it wrote the whole reply; `false` leaves a
+ * successful or no-JS-failed action to the ordinary render (loaders re-ran).
+ */
+async function answerActionOutcome(options: {
+  response: Response;
+  rendered: RenderedPage;
+  wantsData: boolean;
+  authDerivedState: boolean | undefined;
+  requestLooksAuthenticated: boolean;
+}): Promise<boolean> {
+  const { response, rendered, wantsData, authDerivedState, requestLooksAuthenticated } = options;
+  const shortCircuit = rendered.bundle?.shortCircuit;
+  const actionData = rendered.bundle?.actionData;
+
+  const settle = () => {
+    applyResponseCacheFloor(response, {
+      authDerived: authDerivedState,
+      requestLooksAuthenticated,
+    });
+    response.header("Cache-Control", ACTION_CACHE_CONTROL);
+  };
+
+  if (shortCircuit?.stage === "loaders" && shortCircuit.kind === "redirect") {
+    const url = shortCircuit.url ?? "/";
+
+    settle();
+
+    if (wantsData) {
+      // 204 + header: the client decides (push navigation, or a hard
+      // navigation for an external URL). No Location, so nothing follows it.
+      response.removeHeader("Location");
+      response.header(ACTION_REDIRECT_HEADER, url);
+      response.noContent();
+
+      return true;
+    }
+
+    // Post/redirect/get: a 301/302 answer to a POST becomes a 303.
+    const statusCode = shortCircuit.statusCode === 301 || shortCircuit.statusCode === 302
+      ? 303
+      : shortCircuit.statusCode;
+
+    response.header("Location", url);
+    await response.html("", statusCode);
+
+    return true;
+  }
+
+  if (shortCircuit?.stage === "action") {
+    settle();
+
+    if (actionData !== undefined) {
+      response.setContentType(DATA_RESPONSE_CONTENT_TYPE);
+      await response.send(stringify({ actionData }), shortCircuit.statusCode);
+    } else if (wantsData) {
+      response.setContentType(DATA_RESPONSE_CONTENT_TYPE);
+      await response.send(JSON.stringify({ error: "not_found" }), shortCircuit.statusCode);
+    } else {
+      await response.html(
+        "<!doctype html><html><body><h1>Bad Request</h1></body></html>",
+        shortCircuit.statusCode,
+      );
+    }
+
+    return true;
+  }
+
+  return false;
+}
 
 /**
  * Build the handler for ONE page route. Per request it loads the App + layout
@@ -293,8 +384,14 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     noindex = false,
     renderNotFound,
     applyBufferedCookie = defaultApplyBufferedCookie,
-    cache,
+    cache: routeCache,
+    mode,
   } = options;
+
+  const actionMode = mode === "action";
+  // An action POST never looks up, stores or honours a page cache opt-in
+  // (design 2.7): every cache decision below sees no opt-in at all.
+  const cache = actionMode ? undefined : routeCache;
 
   // Distinguish "not supplied" (fall back to the container, and REQUIRE the
   // container to have it) from "supplied as `undefined`" (a deliberate "this
@@ -332,6 +429,14 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
     const routeTranslations = bindRequestRouteTranslations(request, getRouteTranslations, pageFile);
 
     const wantsData = isDataRequest(request.header(WARLOCK_DATA_REQUEST_HEADER, undefined));
+
+    // Always-on Origin/Referer check for an action POST, before any module
+    // loads or middleware runs (design 2.7).
+    if (actionMode) {
+      const refused = await guardActionOrigin(request, response);
+
+      if (refused) return refused;
+    }
 
     // Stage 2 slice S3 (contract rule 10): a client navigation that can read
     // the streaming representation says so via `Accept`. Presence-checked
@@ -548,10 +653,16 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       // allowed to restate, and both the document and the data branch below must
       // restate it the same way — a client navigation that received 200 with a
       // not-found payload would push the URL into history as a real page.
-      const status =
+      const settledStatus =
         rendered.status === 200 && statusForRenderedOk !== undefined
           ? statusForRenderedOk
           : rendered.status;
+      // A failed action re-renders the page (no-JS) at the failure's own
+      // status, unless the render already settled on something worse.
+      const status =
+        settledStatus === 200 && rendered.bundle?.actionData?.ok === false
+          ? rendered.bundle.actionData.status
+          : settledStatus;
 
       // Stage 10a: the stage 7 commit (headers, then cookies), applied ONCE,
       // identically for the document and the data representation — see
@@ -593,6 +704,18 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       const authDerivedState =
         request.locals === undefined ? undefined : request.locals.authDerived === true;
 
+      if (actionMode) {
+        const answered = await answerActionOutcome({
+          response,
+          rendered,
+          wantsData,
+          authDerivedState,
+          requestLooksAuthenticated,
+        });
+
+        if (answered) return;
+      }
+
       // A loader `notFound()` on a FULL-DOCUMENT request answers with the
       // not-found route's own document — the one an unmatched URL gets —
       // instead of the empty body `finishRender` leaves for every loader
@@ -622,6 +745,8 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
         cache,
         requestLooksAuthenticated,
       });
+
+      if (actionMode) response.header("Cache-Control", ACTION_CACHE_CONTROL);
 
       // Emitted at the SAME seam as the floor, right after it, so the two
       // headers can never be computed from different auth-state reads.

@@ -24,6 +24,13 @@ export interface TranslationKeyRegistry {}
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface PageRouteRegistry {}
 
+/** The action names a page route declares; `string` until route types are generated. */
+export type PageActionNames<Name extends string> = Name extends keyof PageRouteRegistry
+  ? PageRouteRegistry[Name] extends { actions: infer Actions extends string }
+    ? Actions
+    : never
+  : string;
+
 /** App-generated API route entries augment this registry during development. */
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface ApiRouteRegistry {}
@@ -41,12 +48,24 @@ export type {
   LayoutLoaderContext,
   AppLoader,
   AppLoaderContext,
+  PageActionContext,
 } from "./loaders";
 export type {
   CrawlerDetectionOptions,
   WebStreamingConfigurations,
   WebConfigurations,
 } from "./configurations";
+export type {
+  SessionRegistry,
+  SessionUser,
+  SessionModel,
+  SessionResolver,
+} from "./session/session.types";
+export { PageRedirectSignal } from "./session/page-redirect-signal";
+export { requireUser, requireGuest } from "./session/require-user";
+export type { RequireUserOptions, RequireGuestOptions } from "./session/require-user";
+export { safeRedirectTarget } from "./session/safe-redirect-target";
+export { useUser, installSession, SessionContext } from "./session/use-user";
 // Server-safe by construction (no React/react-dom import) — the `defer()`
 // marker a page loader returns to stream data after the shell. Client
 // bundle weight is unaffected: nothing in `./loaders/defer` imports
@@ -89,6 +108,12 @@ export { InvalidStylesheetSourceError, linkStylesheetsFor } from "./request-styl
 // thrown value is sanitized to a generic message plus an error code.
 export { PublicPageError } from "./server/public-page-error";
 export { LocaleProvider, useLocale, useTrans } from "./localization";
+export type { ActionResponse } from "./server/settle-page-response";
+export type { ActionState } from "./server/action-state";
+import type { PipelineLoaderContext } from "./server/execute-page-request.types";
+
+/** The session stage 2.5 resolved, as `ctx.session` on a loader, action or action middleware. */
+export type PageSession = NonNullable<PipelineLoaderContext["session"]>;
 export type { LocaleProviderProps, Translate } from "./localization";
 export { localeDirection } from "./text-direction";
 export type { TextDirection } from "./text-direction";
@@ -231,6 +256,13 @@ export {
 export type { RequestSearchResolver } from "./routing/query-string";
 export { useQueryString } from "./client/navigation/use-query-string";
 export { useIsNavigating } from "./client/navigation/use-is-navigating";
+export { useIsSubmitting } from "./client/navigation/submitting-store";
+export { Form } from "./components/form";
+export type { FormProps } from "./components/form";
+export { useActionData } from "./components/use-action-data";
+export type { ActionData } from "./components/use-action-data";
+export { FieldError } from "./components/field-error";
+export type { FieldErrorProps } from "./components/field-error";
 export { Head } from "./components/head";
 export { Scripts } from "./components/scripts";
 

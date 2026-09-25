@@ -254,3 +254,23 @@ describe("useSubmitForm", () => {
     expect(onSuccess).not.toHaveBeenCalled();
   });
 });
+
+describe("useSubmitForm F2", () => {
+  it("puts a 429 { message } body in formErrors", async () => {
+    const tooMany = {
+      ...failure({ message: "Slow down" }),
+      status: 429,
+      error: { body: { message: "Slow down" }, isValidationError: false, isAborted: false },
+    };
+    const client = {
+      request: vi.fn(() => Object.assign(Promise.resolve(tooMany), { cancel: vi.fn() })),
+    };
+    const view = mount({ path: "/api/orders", client });
+
+    await act(async () => {
+      await view.value.submit(formContext());
+    });
+    expect(view.value.formErrors).toEqual(["Slow down"]);
+    act(() => view.root.unmount());
+  });
+});

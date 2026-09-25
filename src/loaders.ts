@@ -1,6 +1,8 @@
+import type { ActionState } from "./server/action-state";
+import type { ActionResponse } from "./server/settle-page-response";
 import type { Request, Response } from "@warlock.js/core";
 import type { PageContext } from "./context";
-import type { SharedContext } from "./index";
+import type { PageSession, SharedContext } from "./index";
 import type { RouteDeclaration } from "./route";
 import type { PageValidation, ValidatedOutput } from "./validation";
 
@@ -23,6 +25,8 @@ export type PageLoaderContext<
   request: Request<ValidatedOutput<TValidation>>;
   response: Response;
   shared: SharedContext;
+  /** The resolved session; present only when `web.session` is configured. `user` is null for a guest. */
+  session?: PageSession;
 };
 
 export type PageLoader<
@@ -37,3 +41,26 @@ export type AppLoaderContext = PageContext;
 export type LayoutLoader = (context: LayoutLoaderContext) => unknown;
 
 export type AppLoader = (context: AppLoaderContext) => unknown;
+
+/**
+ * What a page `action` receives: the page loader's context with the action's
+ * own validated body and the buffered `ActionResponse` (failure helpers
+ * included). `TConfig` is `typeof config.action` (or one `config.actions.<name>`).
+ */
+export type PageActionContext<
+  TConfig extends { validation?: PageValidation } | undefined = undefined,
+> = {
+  request: Request<
+    ValidatedOutput<
+      TConfig extends { validation: infer TValidation extends PageValidation }
+        ? TValidation
+        : undefined
+    >
+  >;
+  response: ActionResponse;
+  shared: SharedContext;
+  /** The resolved session; present only when `web.session` is configured. */
+  session?: PageSession;
+};
+
+export type { ActionResponse, ActionState };

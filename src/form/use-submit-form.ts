@@ -27,11 +27,11 @@ function defaultFieldErrors(error: NonNullable<HttpResult<unknown>["error"]>): {
   fields: Record<string, string>;
   general: string[];
 } {
-  if (!error.isValidationError || !error.body || typeof error.body !== "object")
-    return { fields: {}, general: [] };
+  if (!error.body || typeof error.body !== "object") return { fields: {}, general: [] };
   const body = error.body as Record<string, unknown>;
   const fields: Record<string, string> = {};
-  if (Array.isArray(body.errors))
+  // A non-validation failure (a 429, say) still carries a `{ message }` worth showing.
+  if (Array.isArray(body.errors) && error.isValidationError)
     for (const entry of body.errors) {
       if (!entry || typeof entry !== "object") continue;
       const { input, error: message } = entry as Record<string, unknown>;

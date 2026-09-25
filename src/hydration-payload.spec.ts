@@ -405,3 +405,39 @@ describe("document hydration payload — devalue round trip", () => {
     expect(result.node.self).toBe(result.node);
   });
 });
+
+describe("optional actionData and session keys", () => {
+  it("keeps exactly seven required keys", () => {
+    expect(REQUIRED_PAYLOAD_KEYS.length).toBe(7);
+    expect(REQUIRED_PAYLOAD_KEYS).not.toContain("actionData");
+    expect(REQUIRED_PAYLOAD_KEYS).not.toContain("session");
+  });
+
+  it("accepts a payload without them", () => {
+    expect(isHydrationPayload(fullPayload)).toBe(true);
+  });
+
+  it("accepts object values for both", () => {
+    expect(
+      isHydrationPayload({
+        ...fullPayload,
+        actionData: { data: 1 },
+        session: { user: null },
+      }),
+    ).toBe(true);
+  });
+
+  it.each(["actionData", "session"])("rejects %s that is a string, array or null", (key) => {
+    for (const bad of ["x", [], null, 1]) {
+      expect(isHydrationPayload({ ...fullPayload, [key]: bad })).toBe(false);
+    }
+  });
+
+  it("readHydrationPayload throws for session: \"x\" and session: []", () => {
+    for (const bad of ["x", []]) {
+      expect(() =>
+        readHydrationPayload(makeDocument(stringify({ ...fullPayload, session: bad }))),
+      ).toThrow(/could not be read/);
+    }
+  });
+});

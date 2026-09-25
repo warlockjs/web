@@ -59,9 +59,16 @@ import {
 } from "../build/build-route-locale-manifest";
 import { prepareDevRouteLocaleArtifact } from "./dev-route-locale-artifact";
 import { composeLayoutModules } from "./compose-layout-modules";
-import { createPageRouteHandler, type PageRouteHandler } from "./create-page-route-handler";
+import {
+  createPageRouteHandler,
+  type PageRouteHandler,
+  type PageRouteHandlerOptions,
+} from "./create-page-route-handler";
 import { resolveLocaleRouting } from "./locale-routing/resolve-locale-routing";
-import { localePageRegistrations } from "./locale-routing/locale-page-registrations";
+import {
+  localeActionRegistrations,
+  localePageRegistrations,
+} from "./locale-routing/locale-page-registrations";
 import type { ErrorPageModule } from "./error-page";
 import { layoutPrefixesByDirectory } from "./layout-prefixes";
 import { notFoundPageHandlerOptions } from "./not-found-handler-options";
@@ -219,6 +226,34 @@ async function registerFailedPageRoute(input: {
       { name: resolvePageRouteName(undefined, filesystemPageFile), isPage: true },
     ),
   );
+}
+
+/**
+ * Whether the page (or its setup file, where actions may live) exports
+ * `action` or `actions` — a static read, never a module evaluation.
+ */
+function pageDeclaresAction(pageFile: string): boolean {
+  const setupCandidate = pageSetupFileFor(pageFile);
+  const setupFile = setupCandidate !== undefined && isFile(setupCandidate) ? setupCandidate : undefined;
+
+  return declares(pageFile) || (setupFile !== undefined && declares(setupFile));
+}
+
+/**
+ * Probe one file for an `action`/`actions` export. This only decides whether
+ * the page claims the POST verb: a module that cannot be read statically (no
+ * default export, unreadable, unparsable) declares no action here, and the
+ * page's own load reports the real problem with its attributed error.
+ */
+function declares(file: string): boolean {
+  try {
+    return (
+      readModuleConfig(file, readFileSync(file, "utf-8"), "page", { allowMissingDefault: true })
+        .declaresAction === true
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** How this module gets a layout module namespace — `vite.ssrLoadModule`, in practice. */
@@ -585,7 +620,7 @@ async function installDiscoveredPageRoutes(
     // `type: "page"` route can bind to, and testable without a Vite server.
     // Vite appears here only as the dev answer to "how do I load a module";
     // the handler takes that as an input and knows nothing else about it.
-    const pageHandler = createPageRouteHandler({
+    const handlerOptions: PageRouteHandlerOptions = {
       path: effectivePath,
       name,
       appFile,
@@ -614,7 +649,16 @@ async function installDiscoveredPageRoutes(
       cache,
       renderNotFound,
       ...httpServerOption,
-    });
+    };
+    const pageHandler = createPageRouteHandler(handlerOptions);
+
+    // A page gets a POST only when its module declares an action, read
+    // statically (the page file and its setup file) so an action-less page
+    // never claims the POST verb and an app `router.post` on the same path
+    // keeps working. A clash with one is the router's own duplicate error.
+    const actionHandler = pageDeclaresAction(pageFile)
+      ? createPageRouteHandler({ ...handlerOptions, mode: "action" })
+      : undefined;
 
     // Under an active `web.localeRouting.strategy` this is more than one
     // registration — the base path (possibly rewritten into a locale
@@ -638,6 +682,17 @@ async function installDiscoveredPageRoutes(
           // page. The name stays on the base registration only.
           { name: registration.name, isPage: true },
         );
+      }
+
+      if (actionHandler === undefined) return;
+
+      for (const registration of localeActionRegistrations(
+        effectivePath,
+        actionHandler,
+        localeRouting,
+        { pageFile, renderNotFound },
+      )) {
+        router.post(registration.path, registration.handler, { isPage: true });
       }
     });
 

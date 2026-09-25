@@ -2,6 +2,26 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.21.0
+
+### Added
+
+- Page actions: a page can export `action` / `actions` (`PageActionNames`). `<Form>` works without JavaScript, shows field errors, redirects and revalidates the page. Client helpers: `useActionData()`, `FieldError`, `useIsSubmitting()`, `useSubmitAction()`. `ActionResponse` types the server result. `web.forms.redactValues` controls which submitted values are redacted from echoed state.
+- Sessions in pages: `web.session` resolver, `useUser()` on the client, `requireUser()` / `requireGuest()` in page middleware and loaders, `safeRedirectTarget()` and `PageRedirectSignal`.
+- CSS Modules (`*.module.css`) render on the server with class names matching the client.
+
+### Changed
+
+- **BREAKING:** the page cache keeps path case, does not cache the HTML variant under a CSP, and runs app/layout/page middleware before serving a cache hit.
+- **BREAKING:** two filesystem pages that differ only by route-param name (`blog/[id]` vs `blog/[slug]`) throw `DuplicatePageRoutePathError`. Rename one.
+- The locale cookie now has a 1-year `Max-Age`. `Link` never intercepts `download`, `target` other than `_self`, or modified clicks.
+- A `*` wildcard param is encoded per path segment (`/` is no longer `%2F`); the image loader appends `&variant=` to an existing query and keeps `#fragment` last.
+- `useShared()` uses `useSyncExternalStore`, so memoized consumers update after `hydrateShared()`.
+
+### Fixed
+
+- Build gates: Gate C, the unread `PUBLIC_` env check and `*.setup.ts` handling are more accurate.
+
 ## 5.20.1 - 2026-09-24
 
 ### Fixed

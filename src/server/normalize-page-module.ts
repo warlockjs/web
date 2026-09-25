@@ -26,6 +26,13 @@ export type { PageModuleKind } from "../module-config-schema";
 
 type PageRoute = string | { readonly path: string; readonly name?: string };
 
+type PageActionFunction = (context: any) => unknown;
+
+export type NormalizedActionConfig = {
+  validation?: BaseValidator;
+  middleware?: readonly PipelineMiddleware[];
+};
+
 export type NormalizedPageModule = {
   default?: unknown;
   ErrorBoundary?: unknown;
@@ -35,6 +42,10 @@ export type NormalizedPageModule = {
   cache?: PageCacheOptIn;
   middleware?: readonly PipelineMiddleware[];
   validation?: PageConfigValidation;
+  action?: PageActionFunction;
+  actions?: Readonly<Record<string, PageActionFunction>>;
+  actionConfig?: NormalizedActionConfig;
+  actionsConfig?: Readonly<Record<string, NormalizedActionConfig>>;
   metadata?: PageMetadata<PipelineLoader> | { readonly robots?: string };
   sitemap?: SitemapPageExport | false | SitemapPageOptions;
   prefix?: string;
@@ -43,6 +54,8 @@ export type NormalizedPageModule = {
 
 const MODULE_EXPORTS = new Set<string>(MODULE_EXPORT_NAMES);
 const CACHE_KEYS = new Set(["public", "maxAge", "serverCache", "tags", "varyBy", "ttl"]);
+const ACTION_CONFIG_KEYS = new Set(["validation", "middleware"]);
+const ACTION_NAME_PATTERN = /^[a-z][a-zA-Z0-9]*$/;
 const ROUTE_KEYS = new Set(["path", "name"]);
 
 export class InvalidPageModuleConfigError extends TypeError {
@@ -170,6 +183,30 @@ function validateValidation(value: unknown, sourceFile: string): PageConfigValid
   if (hasParams) validator(value.params, sourceFile, "params");
   if (hasQuery) validator(value.query, sourceFile, "query");
   return value as PageConfigValidation;
+}
+
+function validateActionConfig(
+  value: unknown,
+  sourceFile: string,
+  subject: string,
+): NormalizedActionConfig {
+  if (!plainObject(value)) return fail(sourceFile, `${subject} must be a plain object.`);
+  assertExactKeys(value, ACTION_CONFIG_KEYS, sourceFile, subject);
+  const result: NormalizedActionConfig = {};
+  if (value.validation !== undefined) {
+    validator(value.validation, sourceFile, `${subject}.validation`);
+    result.validation = value.validation;
+  }
+  if (value.middleware !== undefined) {
+    if (
+      !Array.isArray(value.middleware) ||
+      !value.middleware.every((entry) => typeof entry === "function")
+    ) {
+      fail(sourceFile, `${subject}.middleware must be an array of functions.`);
+    }
+    result.middleware = value.middleware as readonly PipelineMiddleware[];
+  }
+  return result;
 }
 
 function validateMiddleware(value: unknown, sourceFile: string): readonly PipelineMiddleware[] {
@@ -402,6 +439,25 @@ export function normalizePageModule(
 
   if (raw.loader !== undefined && typeof raw.loader !== "function")
     fail(sourceFile, "loader export must be a function.");
+  if (kind !== "page" && (raw.action !== undefined || raw.actions !== undefined))
+    fail(sourceFile, "action and actions exports are only valid in page modules.");
+  if (raw.action !== undefined && raw.actions !== undefined)
+    fail(sourceFile, "action and actions exports are mutually exclusive; declare only one.");
+  if (raw.action !== undefined && typeof raw.action !== "function")
+    fail(sourceFile, "action export must be a function.");
+  if (raw.actions !== undefined) {
+    if (!plainObject(raw.actions))
+      fail(sourceFile, "actions export must be a plain object of functions.");
+    for (const [name, handler] of Object.entries(raw.actions)) {
+      if (name === "default" || !ACTION_NAME_PATTERN.test(name)) {
+        fail(
+          sourceFile,
+          `actions.${name} is not a valid action name; use /^[a-z][a-zA-Z0-9]*$/ and not "default".`,
+        );
+      }
+      if (typeof handler !== "function") fail(sourceFile, `actions.${name} must be a function.`);
+    }
+  }
   if (raw.register !== undefined && typeof raw.register !== "function")
     fail(sourceFile, "register export must be a function.");
   if (raw.ErrorBoundary !== undefined && !isReactComponentType(raw.ErrorBoundary)) {
@@ -430,6 +486,31 @@ export function normalizePageModule(
       normalized.cache = validateCache(configValue.cache, sourceFile);
     if (configValue.validation !== undefined)
       normalized.validation = validateValidation(configValue.validation, sourceFile);
+    if (raw.action !== undefined) normalized.action = raw.action as PageActionFunction;
+    if (raw.actions !== undefined)
+      normalized.actions = raw.actions as Record<string, PageActionFunction>;
+    if (configValue.action !== undefined) {
+      if (raw.action === undefined) fail(sourceFile, "config.action requires an action export.");
+      normalized.actionConfig = validateActionConfig(
+        configValue.action,
+        sourceFile,
+        "config.action",
+      );
+    }
+    if (configValue.actions !== undefined) {
+      if (raw.actions === undefined) fail(sourceFile, "config.actions requires an actions export.");
+      if (!plainObject(configValue.actions))
+        fail(sourceFile, "config.actions must be a plain object.");
+      const exported = raw.actions as Record<string, unknown>;
+      const actionsConfig: Record<string, NormalizedActionConfig> = {};
+      for (const [name, entry] of Object.entries(configValue.actions)) {
+        if (!Object.hasOwn(exported, name)) {
+          fail(sourceFile, `config.actions.${name} does not match any key of the actions export.`);
+        }
+        actionsConfig[name] = validateActionConfig(entry, sourceFile, `config.actions.${name}`);
+      }
+      normalized.actionsConfig = actionsConfig;
+    }
     if (configValue.metadata !== undefined) {
       normalized.metadata = validatePageMetadata(configValue.metadata, sourceFile);
     }

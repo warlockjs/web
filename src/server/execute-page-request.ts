@@ -1,3 +1,4 @@
+import config from "@mongez/config";
 import {
   buildTracingContext,
   dispatchPhase,
@@ -16,6 +17,9 @@ import { matchRoute } from "./match-page-route";
 import { resolvePageMetadata } from "./resolve-page-metadata";
 import { resolveValidationData } from "./resolve-validation-data";
 import { resolvePageValidationInput } from "./resolve-route-validation-input";
+import { DEFAULT_ACTION_NAME, resolveActionInput } from "./resolve-action-input";
+import { toActionState, type ActionState, type SealActionError } from "./action-state";
+import { isDataRequest, WARLOCK_DATA_REQUEST_HEADER } from "../routing/data-request";
 import { PageValidationFailedError } from "./page-validation-failed-error";
 import { resolveThrownHttpStatus } from "./resolve-thrown-http-status";
 import { DeferredInNonPageLoaderError, isDeferred, splitDeferredPageData } from "../loaders/defer";
@@ -25,22 +29,28 @@ import { PageLoaderTimeoutError } from "./page-loader-timeout-error";
 import {
   buildErrorRecord,
   commitBuffers,
+  createActionResponse,
   createBufferedResponse,
   createLevelBuffer,
   designateBoundary,
+  isActionFailure,
   isLoaderShortCircuit,
   LEVEL_ORDER,
   type LevelBuffer,
   type PageResponseCommit,
 } from "./settle-page-response";
+import { isPageRedirectSignal } from "../session/page-redirect-signal";
+import type { SessionResolver } from "../session/session.types";
 import type {
   ExecutePageRequestOptions,
+  PipelineLoaderContext,
   PageDataBundle,
   PageLevelName,
   PageRouteMatch,
   PageTripleModule,
   PipelineStore,
 } from "./execute-page-request.types";
+import type { SharedContext } from "../index";
 
 export * from "./execute-page-request.types";
 export { connectPageContext } from "./page-context";
@@ -149,6 +159,8 @@ type MiddlewareChainOptions = {
   pathname: string;
   routeName: string;
   routePath: string;
+  /** Stage 2.5's session, handed to action middleware; absent without `web.session`. */
+  session?: PipelineLoaderContext["session"];
 };
 
 type MiddlewareHalt = Pick<Bundle, "error" | "shortCircuit">;
@@ -162,14 +174,17 @@ type MiddlewareHalt = Pick<Bundle, "error" | "shortCircuit">;
 async function runMiddlewareChain(
   options: MiddlewareChainOptions,
 ): Promise<MiddlewareHalt | undefined> {
-  const { triple, request, response, pathname, routeName, routePath } = options;
+  const { triple, request, response, pathname, routeName, routePath, session } = options;
 
   for (const level of LEVEL_ORDER) {
     for (const middleware of triple[level].middleware ?? []) {
       let output: unknown;
 
       try {
-        output = await middleware({ request, response });
+        // `session` rides along for action middleware only; HttpContext predates it.
+        const middlewareContext = session === undefined ? { request, response } : { request, response, session };
+
+        output = await middleware(middlewareContext);
       } catch (thrown) {
         // Same rule as a loader throw: a thrown core `HttpError` owns its
         // status, and a 4xx is the visitor's affair — never reported.
@@ -207,6 +222,154 @@ async function runMiddlewareChain(
   }
 
   return undefined;
+}
+
+type ActionStageOutcome =
+  | { kind: "halt"; halted: MiddlewareHalt }
+  | { kind: "response"; response: Response }
+  /** The request is finished before the loaders; `bundle.shortCircuit` says why. */
+  | { kind: "stop" }
+  | { kind: "throw"; thrown: unknown }
+  | { kind: "validation"; errors: unknown }
+  | {
+      kind: "shortCircuit";
+      circuit: { kind: "redirect" | "notFound"; statusCode: number; url?: string; body?: unknown };
+    }
+  | { kind: "continue"; pageValidated: boolean };
+
+type ActionStageOptions = {
+  triple: PageRouteMatch["entry"]["triple"];
+  request: Request;
+  response: Response;
+  pathname: string;
+  routeName: string;
+  routePath: string;
+  bundle: Bundle;
+  buffer: LevelBuffer;
+  shared: SharedContext;
+  session?: PipelineLoaderContext["session"];
+};
+
+/**
+ * Stage 5b — ACTION (5.21 page actions), for a POST to a page that declares
+ * `action`/`actions`. It runs after the app/layout/page middleware and the
+ * shared seal, and before the loaders (design §2.3):
+ *
+ *   1. `config.action.middleware`;
+ *   2. the page's own `validation` (params/query) — a failure is today's 400;
+ *   3. action validation against the body only;
+ *   4. the action itself;
+ *   5. the page's validated data is restored, because the loaders re-run.
+ *
+ * The outcome lands on `bundle.actionData`; a request that must not reach the
+ * loaders (a failed action on a data request, an unknown `_action`) records
+ * `bundle.shortCircuit = { stage: "action" }` and answers `stop`.
+ */
+async function runActionStage(options: ActionStageOptions): Promise<ActionStageOutcome> {
+  const { triple, request, response, bundle, buffer } = options;
+  const page = triple.page;
+  const resolved = resolveActionInput(request);
+  const isDefault = resolved.name === DEFAULT_ACTION_NAME;
+  const handler = !resolved.validName
+    ? undefined
+    : isDefault
+      ? page.action
+      : page.actions !== undefined && Object.hasOwn(page.actions, resolved.name)
+        ? page.actions[resolved.name]
+        : undefined;
+  const wantsData = isDataRequest(request.header(WARLOCK_DATA_REQUEST_HEADER, undefined));
+
+  if (handler === undefined) {
+    bundle.shortCircuit = { stage: "action", statusCode: wantsData ? 404 : 400 };
+
+    return { kind: "stop" };
+  }
+
+  const actionConfig = isDefault ? page.actionConfig : page.actionsConfig?.[resolved.name];
+
+  if (actionConfig?.middleware?.length) {
+    const halted = await runMiddlewareChain({
+      ...options,
+      triple: { app: {}, layout: {}, page: { middleware: actionConfig.middleware } },
+    });
+
+    if (halted) return { kind: "halt", halted };
+  }
+
+  let pageValidated = false;
+
+  if (page.validation) {
+    const outcome = await validatePageInput(page.validation, request);
+
+    if (!outcome.valid) return { kind: "validation", errors: outcome.errors };
+
+    pageValidated = true;
+  }
+
+  const pageInput = request.validated();
+  const redactValues = config.get("web.forms.redactValues") as readonly string[] | undefined;
+  const stateOptions = { action: resolved.name, redactValues, values: resolved.input };
+  const restorePageInput = () => request.setValidatedData(pageInput);
+  const fail = (state: ActionState): ActionStageOutcome => {
+    bundle.actionData = state;
+    restorePageInput();
+
+    if (!wantsData) return { kind: "continue", pageValidated };
+
+    bundle.shortCircuit = { stage: "action", statusCode: state.status };
+
+    return { kind: "stop" };
+  };
+
+  if (actionConfig?.validation) {
+    const result = await v.validate(
+      actionConfig.validation,
+      resolved.input,
+      environment() === "production"
+        ? { ...getSealConfig(), redactValue: REDACTED_VALUE }
+        : undefined,
+    );
+
+    if (!result.isValid) {
+      return fail(
+        toActionState(
+          { kind: "errors", errors: result.errors as SealActionError[] },
+          stateOptions,
+        ),
+      );
+    }
+
+    request.setValidatedData(result.data ?? {});
+  }
+
+  let value: unknown;
+
+  try {
+    value = await handler({
+      request,
+      response: createActionResponse(buffer),
+      shared: options.shared,
+      pageInput,
+      signal: bundle.abortSignal,
+      ...(options.session === undefined ? {} : { session: options.session }),
+    });
+  } catch (thrown) {
+    return { kind: "throw", thrown };
+  }
+
+  restorePageInput();
+
+  if (value instanceof Response) return { kind: "response", response: value };
+
+  if (isLoaderShortCircuit(value)) return { kind: "shortCircuit", circuit: value };
+
+  if (isActionFailure(value)) {
+    return fail(toActionState({ kind: "signal", signal: value }, stateOptions));
+  }
+
+  bundle.actionData = toActionState({ kind: "success", data: value }, stateOptions);
+
+  return { kind: "continue", pageValidated };
 }
 
 export type PageMiddlewareGateOutcome = "passed" | "sent" | "blocked";
@@ -281,6 +444,50 @@ export async function executePageRequest<TResult = PageDataBundle>(
       },
       abortSignal: requestAbortController.signal,
     };
+
+    // Stage 2.5 — SESSION. Only when `web.session` is configured. Resolved
+    // ONCE, before the middleware loop and before any header is committed, so a
+    // renewal cookie can still be sent. A guest is `{ user: null }` and leaves
+    // `authDerived` untouched (the render stays cache-eligible); a signed-in
+    // user ships the projection only and marks the request auth-derived.
+    let stageSession: PipelineLoaderContext["session"];
+    const sessionResolver = config.get("web.session") as SessionResolver | undefined;
+
+    if (sessionResolver) {
+      try {
+        const resolved = await sessionResolver.resolve(request, response);
+
+        if (resolved) {
+          if (request.locals) request.locals.authDerived = true;
+
+          stageSession = { user: resolved.user, model: resolved.model };
+        } else {
+          stageSession = { user: null, model: null };
+        }
+      } catch (thrown) {
+        const resolvedStatus = resolveThrownHttpStatus(thrown);
+        const isClientError = resolvedStatus !== undefined && resolvedStatus < 500;
+
+        bundle.error = buildErrorRecord(
+          thrown,
+          designateBoundary("app", triple),
+          pathname,
+          resolvedStatus,
+          {
+            routeName: matched.entry.name,
+            routePath: matched.entry.path,
+            method: request.method,
+            requestId: request.id,
+          },
+          !isClientError,
+        );
+        response.setStatusCode(resolvedStatus ?? 500);
+
+        return finish(bundle);
+      }
+
+      bundle.session = { user: stageSession.user };
+    }
 
     // `route.middleware` shipped in 5.6.0 and was withdrawn (owner ruling,
     // 2026-09-08): a page declares middleware in exactly ONE place, the
@@ -359,6 +566,50 @@ export async function executePageRequest<TResult = PageDataBundle>(
     // completion through stage 8, where each metadata definition receives the
     // value produced by its matching layout loader.
     let capturedLayoutData: readonly unknown[] | undefined;
+    // Set by stage 5b when the page validation already ran there, so the
+    // loader loop does not run (and re-validate) it a second time.
+    let pageValidationDone = false;
+
+    // Stage 5b - ACTION. Only a POST to a page that declares an action gets
+    // here (install-page-routes registers no other POST), so a page without
+    // one is untouched.
+    if (request.method === "POST" && (triple.page.action || triple.page.actions)) {
+      const outcome = await runActionStage({
+        triple,
+        request,
+        response,
+        pathname,
+        routeName: matched.entry.name,
+        routePath: matched.entry.path,
+        bundle,
+        buffer: buffers.page,
+        shared: sealedShared,
+        session: stageSession,
+      });
+
+      if (outcome.kind === "halt") {
+        Object.assign(bundle, outcome.halted);
+        return finish(bundle);
+      }
+
+      if (outcome.kind === "response") return outcome.response;
+
+      if (outcome.kind === "stop") {
+        bundle.commit = commitBuffers(response, buffers, [...LEVEL_ORDER]);
+
+        return finish(bundle);
+      }
+
+      if (outcome.kind === "throw") {
+        signal = { kind: "throw", index: 2, level: "page", thrown: outcome.thrown };
+      } else if (outcome.kind === "validation") {
+        signal = { kind: "validation", index: 2, errors: outcome.errors };
+      } else if (outcome.kind === "shortCircuit") {
+        signal = { kind: "shortCircuit", index: 2, level: "page", circuit: outcome.circuit };
+      } else {
+        pageValidationDone = outcome.pageValidated;
+      }
+    }
 
     // Card `904a04eb`, audit §5.1: the whole non-deferred loader chain below
     // (app → layout → page loaders, plus the page's own `validation`
@@ -397,6 +648,10 @@ export async function executePageRequest<TResult = PageDataBundle>(
     const tracingEnabled = isTracingEnabled();
 
     for (const [index, level] of LEVEL_ORDER.entries()) {
+      // Stage 5b already ended the request (an action redirect, throw or a
+      // failed page validation): no loader runs.
+      if (signal) break;
+
       // Level boundary: an abandoned request does not START the next level.
       // A level already running is left alone — the framework only stops
       // BETWEEN levels (see `PipelineLoaderContext.signal`'s JSDoc).
@@ -426,7 +681,7 @@ export async function executePageRequest<TResult = PageDataBundle>(
       // never runs for a request that ancestor already stopped. It runs even
       // for a page with no loader: `request.validated()` is still the
       // page's to read.
-      if (level === "page" && triple.page.validation) {
+      if (level === "page" && triple.page.validation && !pageValidationDone) {
         try {
           const outcome = await Promise.race([
             validatePageInput(triple.page.validation, request),
@@ -456,6 +711,7 @@ export async function executePageRequest<TResult = PageDataBundle>(
         response: createBufferedResponse(buffers[level]),
         shared: sealedShared,
         signal: requestAbortController.signal,
+        ...(stageSession === undefined ? {} : { session: stageSession }),
       };
       const layoutValues =
         level === "layout" && triple.layout.layoutMetadata !== undefined
@@ -467,7 +723,15 @@ export async function executePageRequest<TResult = PageDataBundle>(
       try {
         value = await Promise.race([loader(loaderContext), loaderTimeoutSignal]);
       } catch (thrown) {
-        signal = { kind: "throw", index, level, thrown };
+        // `requireUser(ctx)` for a guest: the ordinary redirect short-circuit.
+        signal = isPageRedirectSignal(thrown)
+          ? {
+              kind: "shortCircuit",
+              index,
+              level,
+              circuit: { kind: "redirect", statusCode: thrown.statusCode, url: thrown.url },
+            }
+          : { kind: "throw", index, level, thrown };
         break;
       } finally {
         if (layoutValues !== undefined) {

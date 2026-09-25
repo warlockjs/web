@@ -210,6 +210,66 @@ export function createBufferedResponse(buffer: LevelBuffer): BufferedResponse {
   return bufferedResponse;
 }
 
+// ---------------------------------------------------------------------------
+// Page actions — the response surface an `action` sees (5.21 card A5)
+// ---------------------------------------------------------------------------
+
+const ACTION_FAILURE = Symbol("warlock.page.actionFailure");
+
+/** Failure helpers an action's response offers, with their HTTP status. */
+export const ACTION_FAILURE_STATUS = {
+  badRequest: 400,
+  unauthorized: 401,
+  forbidden: 403,
+  conflict: 409,
+  unprocessableEntity: 422,
+  tooManyRequests: 429,
+} as const;
+
+export type ActionFailureName = keyof typeof ACTION_FAILURE_STATUS;
+
+/**
+ * What an `ActionResponse` failure helper returns — branded by symbol (never
+ * by shape), like `LoaderShortCircuitSignal`. `payload` is the optional
+ * `{ message, errors }` (or any data) the action handed the helper.
+ */
+export type ActionFailureSignal = {
+  readonly [ACTION_FAILURE]: true;
+  kind: "failure";
+  helper: ActionFailureName;
+  statusCode: number;
+  payload?: unknown;
+};
+
+export function isActionFailure(value: unknown): value is ActionFailureSignal {
+  return Boolean(value) && typeof value === "object" && ACTION_FAILURE in (value as object);
+}
+
+/**
+ * The buffered response an ACTION sees: everything `BufferedResponse` offers
+ * plus the six core-named failure helpers. Each queues its status on the
+ * buffer and returns a branded signal the action returns.
+ */
+export type ActionResponse = BufferedResponse & {
+  [Name in ActionFailureName]: (payload?: unknown) => ActionFailureSignal;
+};
+
+export function createActionResponse(buffer: LevelBuffer): ActionResponse {
+  const actionResponse = createBufferedResponse(buffer) as ActionResponse;
+
+  for (const helper of Object.keys(ACTION_FAILURE_STATUS) as ActionFailureName[]) {
+    const statusCode = ACTION_FAILURE_STATUS[helper];
+
+    actionResponse[helper] = (payload) => {
+      buffer.statusCode = statusCode;
+
+      return { [ACTION_FAILURE]: true, kind: "failure", helper, statusCode, payload };
+    };
+  }
+
+  return actionResponse;
+}
+
 /** Stage 7's folded, applied result — what `bundle.commit` carries. */
 export type PageResponseCommit = {
   committedLevels: PageLevelName[];

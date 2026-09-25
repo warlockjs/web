@@ -241,3 +241,28 @@ describe("readModuleConfig — rejected modules", () => {
     ).toThrow("not allowed in a layout module");
   });
 });
+
+describe("readModuleConfig — action names", () => {
+  it("reads the keys of an `actions` record", () => {
+    const read = readModuleConfig(
+      "a.page.tsx",
+      "export const actions = { save() {}, remove: async () => {} };\nexport default function P() { return null; }",
+      "page",
+    );
+    expect(read.actionNames).toEqual(["remove", "save"]);
+  });
+
+  it("reads a single `action` export as \"default\"", () => {
+    const read = readModuleConfig(
+      "a.page.tsx",
+      "export async function action() {}\nexport default function P() { return null; }",
+      "page",
+    );
+    expect(read.actionNames).toEqual(["default"]);
+  });
+
+  it("omits actionNames when the page declares none", () => {
+    const read = readModuleConfig("a.page.tsx", "export default function P() { return null; }", "page");
+    expect(read.actionNames).toBeUndefined();
+  });
+});

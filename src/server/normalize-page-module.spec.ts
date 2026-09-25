@@ -235,3 +235,83 @@ describe("normalizePageModule", () => {
     ).toMatchObject({ metadata: { title: "layout" } });
   });
 });
+
+describe("normalizePageModule page actions", () => {
+  const action = () => undefined;
+
+  it("accepts an action export or an actions record", () => {
+    expect(normalizePageModule({ ...page(), action }, "page", "a.page.tsx")).toMatchObject({
+      action,
+    });
+    const actions = { save: action, remove: action };
+    expect(normalizePageModule({ ...page(), actions }, "page", "a.page.tsx")).toMatchObject({
+      actions,
+    });
+  });
+
+  it("refuses action and actions together", () => {
+    expect(() =>
+      normalizePageModule({ ...page(), action, actions: { save: action } }, "page", "a.page.tsx"),
+    ).toThrow("mutually exclusive");
+  });
+
+  it("refuses action exports on layouts", () => {
+    expect(() => normalizePageModule({ action }, "layout", "layout.tsx")).toThrow("page modules");
+  });
+
+  it("validates action names and handler types", () => {
+    expect(() =>
+      normalizePageModule({ ...page(), actions: { default: action } }, "page", "a.page.tsx"),
+    ).toThrow("not a valid action name");
+    expect(() =>
+      normalizePageModule({ ...page(), actions: { Save: action } }, "page", "a.page.tsx"),
+    ).toThrow("not a valid action name");
+    expect(() =>
+      normalizePageModule({ ...page(), actions: { save: 1 } }, "page", "a.page.tsx"),
+    ).toThrow("must be a function");
+    expect(() =>
+      normalizePageModule({ ...page(), action: "nope" }, "page", "a.page.tsx"),
+    ).toThrow("action export must be a function");
+  });
+
+  it("validates config.action and config.actions shape", () => {
+    const mw = () => undefined;
+    expect(
+      normalizePageModule(
+        { ...page({ action: { validation: validator, middleware: [mw] } }), action },
+        "page",
+        "a.page.tsx",
+      ),
+    ).toMatchObject({ actionConfig: { validation: validator, middleware: [mw] } });
+    expect(() =>
+      normalizePageModule({ ...page({ action: { cache: 1 } }), action }, "page", "a.page.tsx"),
+    ).toThrow("unknown key");
+    expect(() =>
+      normalizePageModule(
+        { ...page({ action: { validation: {} } }), action },
+        "page",
+        "a.page.tsx",
+      ),
+    ).toThrow("config.action.validation");
+    expect(() =>
+      normalizePageModule(page({ action: {} }), "page", "a.page.tsx"),
+    ).toThrow("requires an action export");
+  });
+
+  it("refuses config.actions keys that do not match the exports", () => {
+    expect(() =>
+      normalizePageModule(
+        { ...page({ actions: { save: {}, ghost: {} } }), actions: { save: action } },
+        "page",
+        "a.page.tsx",
+      ),
+    ).toThrow("config.actions.ghost");
+    expect(
+      normalizePageModule(
+        { ...page({ actions: { save: { validation: validator } } }), actions: { save: action } },
+        "page",
+        "a.page.tsx",
+      ),
+    ).toMatchObject({ actionsConfig: { save: { validation: validator } } });
+  });
+});

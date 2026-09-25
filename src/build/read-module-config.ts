@@ -17,6 +17,13 @@ export type ModuleConfigRead = {
   strictMode?: boolean;
   hasMiddleware: boolean;
   hasDefault: boolean;
+  /** Present (true) only when the module exports `action` or `actions`. */
+  declaresAction?: true;
+  /**
+   * Page action names read statically: `"default"` for an `action` export, and
+   * the keys of an `actions` object literal or `config.actions`. Sorted, unique.
+   */
+  actionNames?: string[];
 };
 
 type ModuleKind = PageModuleKind;
@@ -110,7 +117,9 @@ function inspectConfig(
   declarator: { id: { type: string; name?: string }; init?: ValueNode | null },
   sourceFile: string,
   kind: ModuleKind,
-): Pick<ModuleConfigRead, "route" | "prefix" | "strictMode" | "hasMiddleware"> {
+): Pick<ModuleConfigRead, "route" | "prefix" | "strictMode" | "hasMiddleware"> & {
+  actionKeys: string[];
+} {
   if (declarator.id.type !== "Identifier" || declarator.id.name !== "config" || !declarator.init) {
     fail(sourceFile, "the \`config\` export cannot use an alias or destructuring");
   }
@@ -120,6 +129,7 @@ function inspectConfig(
   let prefix: string | undefined;
   let strictMode: boolean | undefined;
   let hasMiddleware = false;
+  const actionKeys: string[] = [];
 
   for (const member of object.properties) {
     if (member.type === "SpreadElement") fail(sourceFile, "config cannot spread another value");
@@ -140,6 +150,7 @@ function inspectConfig(
     }
 
     if (key === "middleware") hasMiddleware = true;
+    if (key === "actions") actionKeys.push(...literalKeys(member.value));
     if (key === "route") route = readRoute(member.value, sourceFile);
     if (key === "prefix") {
       const value = stringLiteral(member.value);
@@ -158,7 +169,21 @@ function inspectConfig(
     ...(prefix === undefined ? {} : { prefix }),
     ...(strictMode === undefined ? {} : { strictMode }),
     hasMiddleware,
+    actionKeys,
   };
+}
+
+/** Plain-identifier or string keys of an object literal; anything unreadable is skipped. */
+function literalKeys(node: ValueNode): string[] {
+  const value = unwrap(node);
+  if (value.type !== "ObjectExpression") return [];
+  const keys: string[] = [];
+  for (const member of value.properties) {
+    if (member.type === "SpreadElement" || member.computed) continue;
+    if (member.key.type === "Identifier") keys.push(member.key.name);
+    else if (member.key.type === "StringLiteral") keys.push(member.key.value);
+  }
+  return keys;
 }
 
 /**
@@ -188,6 +213,9 @@ export function readModuleConfig(
   let strictMode: boolean | undefined;
   let hasMiddleware = false;
   let hasDefault = false;
+  let declaresAction = false;
+  let hasSingleAction = false;
+  const actionNames = new Set<string>();
   let configSeen = false;
 
   for (const statement of program.body) {
@@ -215,6 +243,8 @@ export function readModuleConfig(
       if (exported === "config")
         fail(sourceFile, "the \`config\` export cannot use an export list or alias");
       if (exported === "default") hasDefault = true;
+      if (exported === "action" || exported === "actions") declaresAction = true;
+      if (exported === "action") hasSingleAction = true;
     }
 
     if (!statement.declaration) continue;
@@ -227,6 +257,8 @@ export function readModuleConfig(
           "runtime exports must use one of config, loader, register, ErrorBoundary, or default",
         );
       }
+      if (name === "action" || name === "actions") declaresAction = true;
+      if (name === "action") hasSingleAction = true;
       continue;
     }
     for (const declarator of statement.declaration.declarations) {
@@ -235,6 +267,11 @@ export function readModuleConfig(
       const name = declarator.id.name;
       if (!allowedExports.has(name) || name === "default")
         fail(sourceFile, `runtime export \`${name}\` is not allowed`);
+      if (name === "action" || name === "actions") declaresAction = true;
+      if (name === "action") hasSingleAction = true;
+      if (name === "actions" && declarator.init) {
+        for (const key of literalKeys(declarator.init as ValueNode)) actionNames.add(key);
+      }
       if (name !== "config") continue;
       if (configSeen) fail(sourceFile, "the module declares \`config\` more than once");
       if (statement.declaration.kind !== "const") {
@@ -246,16 +283,20 @@ export function readModuleConfig(
       prefix = read.prefix;
       strictMode = read.strictMode;
       hasMiddleware = read.hasMiddleware;
+      for (const key of read.actionKeys) actionNames.add(key);
     }
   }
 
   if (kind === "page" && !hasDefault && options.allowMissingDefault !== true)
     fail(sourceFile, "a page module requires a runtime default export");
+  if (hasSingleAction) actionNames.add("default");
   return {
     ...(route === undefined ? {} : { route }),
     ...(prefix === undefined ? {} : { prefix }),
     ...(strictMode === undefined ? {} : { strictMode }),
     hasMiddleware,
     hasDefault,
+    ...(actionNames.size > 0 ? { actionNames: [...actionNames].sort() } : {}),
+    ...(declaresAction ? { declaresAction: true as const } : {}),
   };
 }

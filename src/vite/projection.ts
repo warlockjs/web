@@ -63,6 +63,8 @@ export const SERVER_EXPORT_NAMES = new Set([
   "metadata",
   "prefix",
   "sitemap",
+  "action",
+  "actions",
 ]);
 
 type ProjectableModuleKind = "page" | "layout" | "root";
@@ -1007,6 +1009,8 @@ function assertNoRawSetupValueImport(code: string, filePath: string): void {
   visit(program);
 }
 
+const SETUP_SURFACE_NAMES = new Set(["config", "loader", "register", "action", "actions"]);
+
 function assertSetupRegisterSurface(code: string, filePath: string): void {
   const program = parse(code, { sourceType: "module", plugins: ["typescript", "jsx"] }).program;
   for (const statement of program.body as any[]) {
@@ -1022,7 +1026,7 @@ function assertSetupRegisterSurface(code: string, filePath: string): void {
         : [statement.declaration.id?.name]
       : statement.specifiers.map((specifier: any) => specifier.exported?.name);
     for (const name of names) {
-      if (name !== undefined && name !== "config" && name !== "loader" && name !== "register") {
+      if (name !== undefined && !SETUP_SURFACE_NAMES.has(name)) {
         throw new Error(
           `Projection refused "${filePath}": setup files may expose only config, loader, or register; found "${name}".`,
         );

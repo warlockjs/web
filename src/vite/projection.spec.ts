@@ -1062,3 +1062,27 @@ describe("projection — re-export surface", () => {
     expect(message).toContain("export-star declarations are not allowed");
   });
 });
+
+describe("projection page actions", () => {
+  it("strips action and actions exports from the client output", () => {
+    const one = projectSource(
+      `export const config = {};\nexport async function action() { return 1; }\nexport default function P() { return null; }\n`,
+      "act-one.page.tsx",
+    );
+    expect(one).not.toMatch(/\baction\b/);
+    const many = projectSource(
+      `export const actions = { async save() { return 1; } };\nexport default function P() { return null; }\n`,
+      "act-many.page.tsx",
+    );
+    expect(many).not.toMatch(/\bactions\b/);
+  });
+
+  it("keeps a UI file using useActionData<typeof action>() with the action stripped", () => {
+    const out = projectSource(
+      `import { useActionData } from "@warlock.js/web";\nexport async function action() { return { ok: true }; }\nexport default function P() { const r = useActionData<typeof action>(); return r; }\n`,
+      "act-typeof.page.tsx",
+    );
+    expect(out).toContain("useActionData");
+    expect(out).not.toMatch(/function action\b/);
+  });
+});

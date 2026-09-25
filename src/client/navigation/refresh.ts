@@ -33,10 +33,11 @@ import { clearPrefetchCache } from "./prefetch";
  * exactly as it is and announces the error; the screen the user has is never
  * the price of a network blip.
  *
- * ## Not server actions
+ * ## Not the action pipeline
  *
- * The mutation is an ordinary POST to the API, and this is what you call after
- * it. Nothing here writes; nothing here knows a mutation happened.
+ * `refresh()` never writes and does not know a mutation happened. After a page
+ * action (`<Form>`) the runtime swaps in the fresh page data itself; call
+ * `refresh()` after a mutation made elsewhere, such as an ordinary API POST.
  */
 
 /**

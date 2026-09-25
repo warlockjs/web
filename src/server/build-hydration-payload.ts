@@ -56,9 +56,16 @@ function wirePageData(pageData: unknown, deferredKeys: string[] | undefined): un
   return wire;
 }
 
+/** Optional payload keys supplied by the page-action and session stages. */
+export type BuildHydrationPayloadExtras = {
+  readonly actionData?: HydrationDocumentPayloadSource["actionData"];
+  readonly session?: HydrationDocumentPayloadSource["session"];
+};
+
 export function buildHydrationPayload(
   bundle: PageDataBundle,
   locale: string,
+  extras: BuildHydrationPayloadExtras = {},
 ): HydrationDocumentPayloadSource {
   if (bundle.routeTranslations !== undefined && bundle.routeTranslations.locale !== locale) {
     throw new Error(
@@ -129,5 +136,16 @@ export function buildHydrationPayload(
     // Same optional/never-empty rule as `metadata`/`errorPage` above — see
     // `HydrationDocumentPayloadSource.deferred`'s own doc comment.
     ...(deferredMarkerKeys.length === 0 ? {} : { deferred: deferredMarkerKeys }),
+    // Omitted, never `undefined`, for the same in-process/wire parity reason as
+    // `metadata` above.
+    // A page action's outcome rides on the bundle (stage 5b), so every payload
+    // writer carries it without each call site threading it through.
+    ...((extras.actionData ?? bundle.actionData) === undefined
+      ? {}
+      : { actionData: extras.actionData ?? bundle.actionData }),
+    // Stage 2.5 rides on the bundle, so the data (JSON/NDJSON) writers carry it too.
+    ...((extras.session ?? bundle.session) === undefined
+      ? {}
+      : { session: extras.session ?? bundle.session }),
   };
 }

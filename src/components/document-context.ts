@@ -169,6 +169,19 @@ export type HydrationDocumentPayloadSource = {
    *     unwrapped ("Minified React error #438").
    */
   readonly deferred?: readonly string[];
+  /**
+   * The page action's result for this render (page-actions A10): `data` on
+   * success, or the failure's `errors`/`values`. OPTIONAL and never in the
+   * required list — a payload without it is valid. Present-but-not-an-object
+   * is malformed.
+   */
+  readonly actionData?: Readonly<Record<string, unknown>>;
+  /**
+   * The request's session snapshot (sessions W3), `{ user }` today. OPTIONAL
+   * and never in the required list — a missing key reads as a guest. An object
+   * so it can grow; present-but-not-an-object is malformed.
+   */
+  readonly session?: Readonly<Record<string, unknown>>;
 };
 
 export const PAYLOAD_SCRIPT_ID = "__WARLOCK_DATA__";

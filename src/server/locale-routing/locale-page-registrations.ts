@@ -120,3 +120,62 @@ export function localePageRegistrations(
 
   return registrations;
 }
+
+/**
+ * The POST registrations for a page that declares an `action` (5.21 page
+ * actions, §2.2). Same locale shapes as {@link localePageRegistrations}, minus
+ * everything that only redirects: a POST is never redirected, so
+ *
+ * - under `"prefix"` the bare path gets NO registration (a POST there is a
+ *   404 — `<Form>` always posts the localized URL);
+ * - under `"prefix-except-default"` the bare path serves the default locale
+ *   and the `/<default>/…` redirect path is not registered;
+ * - a page with its own leading `:locale` param gets the one wrapped
+ *   registration, exactly as its GET does.
+ *
+ * `name` is always `undefined` — the GET registration owns the route name.
+ */
+export function localeActionRegistrations(
+  effectivePath: string,
+  handler: PageRouteHandler,
+  routing: LocaleRouting,
+  context: LocalePageRegistrationContext,
+): LocalePageRegistration[] {
+  if (hasLeadingLocaleParam(effectivePath)) {
+    if (routing.strategy !== "none") {
+      throw new LocaleParamRoutingConflictError(context.pageFile, routing.strategy);
+    }
+
+    return [
+      {
+        path: effectivePath,
+        handler: localeParamPageHandler(handler, routing.codes, context.renderNotFound),
+        name: undefined,
+      },
+    ];
+  }
+
+  if (routing.strategy === "none") {
+    return [{ path: effectivePath, handler, name: undefined }];
+  }
+
+  const registrations: LocalePageRegistration[] = [];
+
+  if (routing.strategy === "prefix-except-default") {
+    registrations.push({
+      path: effectivePath,
+      handler: localePrefixedPageHandler(handler, routing.defaultLocale),
+      name: undefined,
+    });
+  }
+
+  for (const { path, locale } of localePrefixedPaths(effectivePath, routing)) {
+    registrations.push({
+      path,
+      handler: localePrefixedPageHandler(handler, locale),
+      name: undefined,
+    });
+  }
+
+  return registrations;
+}

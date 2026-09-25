@@ -3,6 +3,7 @@ import type { LocaleRoutingStrategy } from "./routing/locale-routing";
 import type { RobotsConfig } from "./sitemap/robots-config-types";
 import type { WebSitemapConfig } from "./sitemap/sitemap-config-types";
 import type { WebErrorReportingConfigurations } from "./server/error-reporting-config";
+import type { SessionResolver } from "./session/session.types";
 
 /** Customises crawler detection for the fully resolved-document renderer. */
 export type CrawlerDetectionOptions = {
@@ -29,4 +30,6 @@ export type WebConfigurations = {
   robots?: RobotsConfig;
   localeRouting?: { strategy?: LocaleRoutingStrategy };
   errors?: WebErrorReportingConfigurations;
+  /** Resolves the signed-in user for pages, e.g. auth's `pageSession()`. */
+  session?: SessionResolver;
 };
