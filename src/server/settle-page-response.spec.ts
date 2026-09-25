@@ -1,7 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { setEnvironment } from "@warlock.js/core";
+import type { Response } from "@warlock.js/core";
+import { defaultApplyBufferedCookie } from "./create-page-route-handler";
 import {
   buildErrorRecord,
+  commitBuffers,
   createActionResponse,
   createLevelBuffer,
   isActionFailure,
@@ -85,5 +88,56 @@ describe("createActionResponse()", () => {
 
     expect(isLoaderShortCircuit(response.redirect("/x"))).toBe(true);
     expect(isActionFailure({ kind: "failure", statusCode: 400 })).toBe(false);
+  });
+});
+
+describe("clearCookie() on a buffered response", () => {
+  function fakeResponse() {
+    return {
+      header: vi.fn(),
+      setStatusCode: vi.fn(),
+      cookie: vi.fn(),
+      clearCookie: vi.fn(),
+    };
+  }
+
+  it("queues a deletion that replays through response.clearCookie()", () => {
+    const buffer = createLevelBuffer();
+    createActionResponse(buffer).clearCookie("refresh_token", { path: "/" });
+
+    const real = fakeResponse();
+    for (const cookie of buffer.cookies) {
+      defaultApplyBufferedCookie(real as unknown as Response, cookie);
+    }
+
+    expect(real.clearCookie).toHaveBeenCalledWith("refresh_token", { path: "/" });
+    expect(real.cookie).not.toHaveBeenCalled();
+  });
+
+  it("lets the last write per name win across set and clear", () => {
+    const app = createLevelBuffer();
+    const page = createLevelBuffer();
+    createActionResponse(app).cookie("access_token", "abc", { raw: true });
+    createActionResponse(page).clearCookie("access_token", { path: "/" });
+
+    const commit = commitBuffers(
+      fakeResponse() as unknown as Response,
+      { app, layout: createLevelBuffer(), page },
+      ["app", "layout", "page"],
+    );
+
+    expect(commit.cookies).toEqual([
+      { name: "access_token", value: "", options: { path: "/" }, clear: true },
+    ]);
+  });
+
+  it("satisfies the cookie-writer shape @warlock.js/auth's session helpers take", () => {
+    // A structural copy of auth's `CookieWriter`; web does not depend on auth.
+    type CookieWriter = {
+      cookie(name: string, value: string, options?: Record<string, unknown>): unknown;
+      clearCookie(name: string, options?: Record<string, unknown>): unknown;
+    };
+
+    expectTypeOf(createActionResponse(createLevelBuffer())).toMatchTypeOf<CookieWriter>();
   });
 });

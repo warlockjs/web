@@ -112,6 +112,11 @@ export class MissingHttpServerForPageRouteError extends Error {
  * is the only production implementation of the cookie commit.
  */
 export function defaultApplyBufferedCookie(response: Response, cookie: BufferedCookie): void {
+  if (cookie.clear) {
+    response.clearCookie(cookie.name, cookie.options ?? {});
+    return;
+  }
+
   response.cookie(cookie.name, cookie.value as never, cookie.options ?? {});
 }
 

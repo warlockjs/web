@@ -110,11 +110,15 @@ export function buildErrorRecord(
 /** A single committed response header, in application order. */
 export type BufferedHeader = { key: string; value: string };
 
-/** A single committed response cookie — the shape `applyBufferedCookie` replays. */
+/**
+ * A single committed response cookie — the shape `applyBufferedCookie` replays.
+ * `clear` marks a deletion, replayed through `response.clearCookie()`.
+ */
 export type BufferedCookie = {
   name: string;
   value: unknown;
   options?: Record<string, unknown>;
+  clear?: true;
 };
 
 /** The two loader short-circuit kinds a buffered response can signal. */
@@ -163,6 +167,7 @@ export type BufferedResponse = {
   header(key: string, value: unknown): BufferedResponse;
   headers(bag: Record<string, unknown>): BufferedResponse;
   cookie(name: string, value: unknown, options?: Record<string, unknown>): BufferedResponse;
+  clearCookie(name: string, options?: Record<string, unknown>): BufferedResponse;
   setStatusCode(statusCode: number): BufferedResponse;
   redirect(url: string, statusCode?: number): LoaderShortCircuitSignal;
   permanentRedirect(url: string): LoaderShortCircuitSignal;
@@ -181,6 +186,10 @@ export function createBufferedResponse(buffer: LevelBuffer): BufferedResponse {
     },
     cookie(name, value, options) {
       buffer.cookies.push({ name, value, options });
+      return bufferedResponse;
+    },
+    clearCookie(name, options) {
+      buffer.cookies.push({ name, value: "", options, clear: true });
       return bufferedResponse;
     },
     setStatusCode(statusCode) {
