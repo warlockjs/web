@@ -2,7 +2,7 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
-## 5.21.0
+## 5.21.0 - 2026-09-25
 
 ### Added
 
@@ -22,7 +22,6 @@ All notable changes to `@warlock.js/web` are documented here.
 
 - Build gates: Gate C, the unread `PUBLIC_` env check and `*.setup.ts` handling are more accurate.
 
-## 5.20.1 - 2026-09-24
 
 ### Fixed
 
