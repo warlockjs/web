@@ -2,6 +2,12 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.22.1 - 2026-09-25
+
+### Fixed
+
+- Page session resolution reads Core's shared config instance, so authenticated loaders, actions, and `useUser()` receive the signed-in user in installed apps.
+
 ## 5.22.0 - 2026-09-25
 
 ### Fixed

@@ -1,6 +1,6 @@
-import config from "@mongez/config";
 import {
   buildTracingContext,
+  config,
   dispatchPhase,
   environment,
   isTracingEnabled,
