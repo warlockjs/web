@@ -7,7 +7,7 @@ All notable changes to `@warlock.js/web` are documented here.
 ### Added
 
 - Page actions: a page can export `action` / `actions` (`PageActionNames`). `<Form>` works without JavaScript, shows field errors, redirects and revalidates the page. Client helpers: `useActionData()`, `FieldError`, `useIsSubmitting()`, `useSubmitAction()`. `ActionResponse` types the server result. `web.forms.redactValues` controls which submitted values are redacted from echoed state.
-- Sessions in pages: `web.session` resolver, `useUser()` on the client, `requireUser()` / `requireGuest()` in page middleware and loaders, `safeRedirectTarget()` and `PageRedirectSignal`.
+- Sessions in pages: `web.session` resolver, `useUser()` on the client, `requireUser()` / `requireGuest()` in page middleware and loaders (server-only subpath `@warlock.js/web/session`), `safeRedirectTarget()` and `PageRedirectSignal`.
 - CSS Modules (`*.module.css`) render on the server with class names matching the client.
 
 ### Changed
