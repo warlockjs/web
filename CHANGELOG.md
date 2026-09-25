@@ -9,8 +9,8 @@ All notable changes to `@warlock.js/web` are documented here.
 - `PageConfig` accepts `action` and `actions` (new `PageActionConfig` type), so `config = { action: { validation } } satisfies PageConfig` type-checks.
 - `PageActionContext<typeof config.action>` types `request.validated()` from the action's Seal validator.
 - An action's `response.clearCookie()` exists and sends the deleting `Set-Cookie`, so `authService.clearSessionCookies(response)` no longer throws in a page action.
-
 - Page action names flow into the generated route manifest; app and layout loaders type resolved sessions; late session renewal raises `SessionResolvedTooLateError`.
+- Page actions can return `response.serviceUnavailable()` for upstream failures such as mail delivery.
 
 ## 5.21.0 - 2026-09-25
 

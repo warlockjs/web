@@ -72,6 +72,7 @@ describe("createActionResponse()", () => {
     ["conflict", 409],
     ["unprocessableEntity", 422],
     ["tooManyRequests", 429],
+    ["serviceUnavailable", 503],
   ] as const)("%s returns a branded %i failure signal and buffers the status", (helper, status) => {
     const buffer = createLevelBuffer();
     const signal = createActionResponse(buffer)[helper]({ message: "no" });

@@ -233,6 +233,7 @@ export const ACTION_FAILURE_STATUS = {
   conflict: 409,
   unprocessableEntity: 422,
   tooManyRequests: 429,
+  serviceUnavailable: 503,
 } as const;
 
 export type ActionFailureName = keyof typeof ACTION_FAILURE_STATUS;
@@ -256,7 +257,7 @@ export function isActionFailure(value: unknown): value is ActionFailureSignal {
 
 /**
  * The buffered response an ACTION sees: everything `BufferedResponse` offers
- * plus the six core-named failure helpers. Each queues its status on the
+ * plus the named failure helpers. Each queues its status on the
  * buffer and returns a branded signal the action returns.
  */
 export type ActionResponse = BufferedResponse & {
