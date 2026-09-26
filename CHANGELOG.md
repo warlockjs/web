@@ -2,7 +2,7 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
-## 5.23.0 - Unreleased
+## 5.23.0 - 2026-09-25
 
 ### Security
 
@@ -11,11 +11,11 @@ All notable changes to `@warlock.js/web` are documented here.
 ### Added
 
 - Multi-site support (`web.sites`, `resolveHost`).
+- `PageActionContext<typeof schema>` accepts a bare Seal schema, typing `request.validated()` as its output; works with a plain `config: PageConfig` annotation. The `typeof config.action` form is unchanged.
 
 ### Changed
 
 - Build logs show app-relative output paths.
-
 - A page action's `response.cookie()` and `response.clearCookie()` now take the same arguments as core's `Response`, so auth's cookie helpers (which take `Response`; `CookieWriter` is removed) accept it.
 
 ### Fixed
@@ -27,18 +27,6 @@ All notable changes to `@warlock.js/web` are documented here.
 - A `<Link>` or `navigateTo()` to another site's route (an absolute URL on another origin) now loads that site instead of silently doing nothing; the locale prefix is no longer applied to absolute URLs.
 - A multi-site production build now boots: each site's hashed `hydration-<site>` entry is read from the Vite manifest at boot and served to that site's pages (it previously demanded a single `hydration` entry and refused to start).
 - Multi-site production installs each site's pages under its own root (the dispatcher was dropped on the way to the production installer), and boot no longer tries to publish one global sitemap that needs `app.publicUrl`: each site's sitemap is built for its own origin.
-
-## Unreleased
-
-### Added
-
-- `PageActionContext<typeof schema>` accepts a bare Seal schema, typing `request.validated()` as its output; works with a plain `config: PageConfig` annotation. The `typeof config.action` form is unchanged.
-
-## 5.23.0 - 2026-09-25
-
-### Fixed
-
-- Page session resolution reads Core's shared config instance, so authenticated loaders, actions, and `useUser()` receive the signed-in user in installed apps.
 
 ## 5.22.1 - 2026-09-25
 
