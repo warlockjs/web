@@ -131,6 +131,8 @@ export { localeDirection } from "./text-direction";
 export type { TextDirection } from "./text-direction";
 export { useTextDirection } from "./use-text-direction";
 export { href } from "./routing/route-table";
+export { siteUrl } from "./routing/site-url";
+export type { CurrentSite } from "./routing/site-url";
 export type { RouteParameters, RouteQuery } from "./routing/route-table";
 export { runtimeRoute } from "./routing/route-types";
 export type {
