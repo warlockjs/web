@@ -18,6 +18,10 @@ All notable changes to `@warlock.js/web` are documented here.
 
 - A page action's `response.cookie()` and `response.clearCookie()` now take the same arguments as core's `Response`, so auth's cookie helpers (which take `Response`; `CookieWriter` is removed) accept it.
 
+### Fixed
+
+- A page file can declare its action schema at the top (`const schema = v.object(...)`, read by `config.action.validation` or `config.actions.<name>.validation`) — the documented pattern. Dev and build no longer refuse it as an ambiguous statement.
+
 ## Unreleased
 
 ### Added

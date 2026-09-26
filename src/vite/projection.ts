@@ -447,7 +447,45 @@ interface VariableExportEdit {
  */
 function configValidationRootNames(declarator: any): Set<string> {
   const names = new Set<string>();
-  let init = declarator?.init;
+  const config = unwrapExpression(declarator?.init);
+  if (config?.type !== "ObjectExpression") return names;
+
+  // Page actions carry their own schemas too: `config.action.validation` and
+  // `config.actions.<name>.validation` are as server-only as `config.validation`.
+  collectValidationNames(config, names);
+  for (const property of objectProperties(config)) {
+    const value = unwrapExpression(property.value);
+    if (value?.type !== "ObjectExpression") continue;
+    if (propertyKeyName(property) === "action") collectValidationNames(value, names);
+    if (propertyKeyName(property) === "actions") {
+      for (const action of objectProperties(value)) {
+        const actionConfig = unwrapExpression(action.value);
+        if (actionConfig?.type === "ObjectExpression") collectValidationNames(actionConfig, names);
+      }
+    }
+  }
+  return names;
+}
+
+function collectValidationNames(object: any, names: Set<string>): void {
+  for (const property of objectProperties(object)) {
+    if (propertyKeyName(property) === "validation") collectIdentifierNames(property.value, names);
+  }
+}
+
+function objectProperties(object: any): any[] {
+  return (object.properties ?? []).filter(
+    (property: any) => property?.type === "ObjectProperty" && !property.computed,
+  );
+}
+
+function propertyKeyName(property: any): string | undefined {
+  const key = property.key;
+  return key?.type === "Identifier" ? key.name : key?.type === "StringLiteral" ? key.value : undefined;
+}
+
+function unwrapExpression(node: any): any {
+  let current = node;
   while (
     [
       "TSAsExpression",
@@ -455,20 +493,11 @@ function configValidationRootNames(declarator: any): Set<string> {
       "TSNonNullExpression",
       "TSTypeAssertion",
       "ParenthesizedExpression",
-    ].includes(init?.type)
+    ].includes(current?.type)
   ) {
-    init = init.expression;
+    current = current.expression;
   }
-  if (init?.type !== "ObjectExpression") return names;
-  for (const property of init.properties ?? []) {
-    const key = property?.key;
-    const keyName =
-      key?.type === "Identifier" ? key.name : key?.type === "StringLiteral" ? key.value : undefined;
-    if (property?.type === "ObjectProperty" && !property.computed && keyName === "validation") {
-      collectIdentifierNames(property.value, names);
-    }
-  }
-  return names;
+  return current;
 }
 
 /**

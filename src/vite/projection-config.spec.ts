@@ -48,6 +48,55 @@ describe("projection config fence", () => {
     expect(code).toContain("export default function Post");
   });
 
+  it("removes a local schema read by config.action.validation and the action", async () => {
+    const code = await transform(
+      [
+        `import { v } from "@warlock.js/seal";`,
+        `const echoSchema = v.object({ title: v.string() });`,
+        `export const config = { action: { validation: echoSchema } };`,
+        `export async function action({ request }) { return echoSchema && request.validated(); }`,
+        `export default function Echo() { return <form />; }`,
+      ].join("\n"),
+    );
+
+    expect(code).not.toContain("echoSchema");
+    expect(code).not.toContain("@warlock.js/seal");
+    expect(code).toContain("export default function Echo");
+  });
+
+  it("removes local schemas read by config.actions.<name>.validation", async () => {
+    const code = await transform(
+      [
+        `import { v } from "@warlock.js/seal";`,
+        `const commentSchema = v.object({ body: v.string() });`,
+        `const likeSchema = v.object({ postId: v.int() });`,
+        `export const config = { actions: { comment: { validation: commentSchema }, like: { validation: likeSchema } } } satisfies PageConfig;`,
+        `export const actions = { comment: async () => ({}), like: async () => ({}) };`,
+        `export default function Post() { return <h1>Post</h1>; }`,
+      ].join("\n"),
+    );
+
+    expect(code).not.toContain("commentSchema");
+    expect(code).not.toContain("likeSchema");
+    expect(code).toContain("export default function Post");
+  });
+
+  it("still refuses an unread executable initializer next to action validation", async () => {
+    await expect(
+      transform(
+        [
+          `import { v } from "@warlock.js/seal";`,
+          `import { boot } from "./boot";`,
+          `const echoSchema = v.object({ title: v.string() });`,
+          `const booted = boot();`,
+          `export const config = { action: { validation: echoSchema } };`,
+          `export async function action() { return booted; }`,
+          `export default function Echo() { return <form />; }`,
+        ].join("\n"),
+      ),
+    ).rejects.toThrow(/const booted = boot\(\)/);
+  });
+
   it("refuses a client-reachable config binding, including through a helper alias", async () => {
     await expect(
       transform(
