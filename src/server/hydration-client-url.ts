@@ -12,7 +12,11 @@
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { HYDRATION_CLIENT_ENTRY_NAME } from "../vite/hydration-entries";
+import {
+  findSiteHydrationEntryFile,
+  HYDRATION_CLIENT_ENTRY_NAME,
+  hydrationSiteEntryName,
+} from "../vite/hydration-entries";
 import { CLIENT_ASSET_URL_PREFIX } from "./client-asset-url-prefix";
 
 export interface ResolveHydrationClientUrlOptions {
@@ -119,7 +123,61 @@ function findHydrationEntry(
 }
 
 export function resolveHydrationClientUrl(options: ResolveHydrationClientUrlOptions): string {
-  const manifestPath = path.join(options.clientDir, ".vite", "manifest.json");
+  const { manifestPath, manifest } = readClientManifest(options.clientDir);
+  const entry = findHydrationEntry(manifest);
+
+  if (entry === undefined || typeof entry !== "object" || typeof entry.file !== "string") {
+    throw new WebClientManifestEntryMissingError(manifestPath, HYDRATION_CLIENT_ENTRY_NAME);
+  }
+
+  return assetUrl(manifestPath, entry.file);
+}
+
+/**
+ * Multi-site builds emit one `hydration-<site>` entry per site and no single
+ * `hydration` entry. Resolved once at boot, like the single-site URL, with the
+ * same no-fallback rule: a site without its entry refuses to boot by name.
+ */
+export function resolveSiteHydrationClientUrls(options: {
+  clientDir: string;
+  sites: readonly string[];
+}): Record<string, string> {
+  const { manifestPath, manifest } = readClientManifest(options.clientDir);
+  const urls: Record<string, string> = {};
+
+  for (const site of options.sites) {
+    const file = findSiteHydrationEntryFile(manifest as Parameters<typeof findSiteHydrationEntryFile>[0], site);
+
+    if (file === undefined) {
+      throw new WebClientManifestEntryMissingError(manifestPath, hydrationSiteEntryName(site));
+    }
+
+    urls[site] = assetUrl(manifestPath, file);
+  }
+
+  return urls;
+}
+
+function assetUrl(manifestPath: string, file: string): string {
+  const url = `/${file}`;
+
+  // The prefix is DERIVED from CLIENT_ASSET_URL_PREFIX, never restated: this
+  // file must not carry a second copy of the literal the constant owns.
+  if (!url.startsWith(`${CLIENT_ASSET_URL_PREFIX}/`)) {
+    throw new WebClientAssetPrefixViolationError(manifestPath, file);
+  }
+
+  // Past this point the returned URL starts with CLIENT_ASSET_URL_PREFIX by
+  // construction — which is exactly what the static-file route mounting
+  // `<clientDir>/assets` at that same imported symbol relies on.
+  return url;
+}
+
+function readClientManifest(clientDir: string): {
+  manifestPath: string;
+  manifest: Record<string, ManifestEntry | undefined>;
+} {
+  const manifestPath = path.join(clientDir, ".vite", "manifest.json");
 
   let raw: string;
 
@@ -144,24 +202,7 @@ export function resolveHydrationClientUrl(options: ResolveHydrationClientUrlOpti
     );
   }
 
-  const entry = findHydrationEntry(parsed as Record<string, ManifestEntry | undefined>);
-
-  if (entry === undefined || typeof entry !== "object" || typeof entry.file !== "string") {
-    throw new WebClientManifestEntryMissingError(manifestPath, HYDRATION_CLIENT_ENTRY_NAME);
-  }
-
-  const url = `/${entry.file}`;
-
-  // The prefix is DERIVED from CLIENT_ASSET_URL_PREFIX, never restated: this
-  // file must not carry a second copy of the literal the constant owns.
-  if (!url.startsWith(`${CLIENT_ASSET_URL_PREFIX}/`)) {
-    throw new WebClientAssetPrefixViolationError(manifestPath, entry.file);
-  }
-
-  // Past this point the returned URL starts with CLIENT_ASSET_URL_PREFIX by
-  // construction — which is exactly what the static-file route mounting
-  // `<clientDir>/assets` at that same imported symbol relies on.
-  return url;
+  return { manifestPath, manifest: parsed as Record<string, ManifestEntry | undefined> };
 }
 
 /**
@@ -251,4 +292,16 @@ export function resolveHydrationClientModulePreloadUrls(
   for (const key of importedKeys) visit(key);
 
   return urls;
+}
+
+let siteHydrationUrls: Readonly<Record<string, string>> | undefined;
+
+/** Installed by the production connector at boot from {@link resolveSiteHydrationClientUrls}. */
+export function connectSiteHydrationUrls(urls: Readonly<Record<string, string>> | undefined): void {
+  siteHydrationUrls = urls;
+}
+
+/** The emitted hydration entry for `site` in a production multi-site build, if one was connected. */
+export function siteHydrationUrl(site: string): string | undefined {
+  return siteHydrationUrls?.[site];
 }

@@ -25,6 +25,7 @@ All notable changes to `@warlock.js/web` are documented here.
 - `siteUrl()` and the `CurrentSite` type are exported from `@warlock.js/web`, as the multi-site guide documents.
 - `warlock build` with `web.sites` no longer fails when `src/config/web.ts` imports app code through a tsconfig alias (a `resolveHost` from `app/...`): the build bundles `web.ts` with esbuild before reading `sites`.
 - A `<Link>` or `navigateTo()` to another site's route (an absolute URL on another origin) now loads that site instead of silently doing nothing; the locale prefix is no longer applied to absolute URLs.
+- A multi-site production build now boots: each site's hashed `hydration-<site>` entry is read from the Vite manifest at boot and served to that site's pages (it previously demanded a single `hydration` entry and refused to start).
 
 ## Unreleased
 

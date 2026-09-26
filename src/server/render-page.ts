@@ -62,6 +62,7 @@ import type { DeferSettlement } from "./defer-settlement";
 import { createSettledThenable } from "../loaders/settled-thenable";
 import { bindRequestRouteTranslations } from "./request-route-translations";
 import { resolveNamedApiRoutes } from "./named-api-routes";
+import { siteHydrationUrl } from "./hydration-client-url";
 import { consumePageManifest } from "./page-manifest";
 import { HYDRATION_SITE_QUERY } from "../vite/hydration-entries";
 
@@ -92,6 +93,10 @@ function hydrationClientUrlForRequest(url: string | undefined, request: Request)
   const site = request.site?.key;
 
   if (site === undefined || url === undefined) return url;
+
+  const resolved = siteHydrationUrl(site);
+
+  if (resolved !== undefined) return resolved;
 
   const emitted = consumePageManifest()?.sites?.[site]?.hydrationEntry;
 

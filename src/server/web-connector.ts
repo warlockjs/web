@@ -64,7 +64,9 @@ import { CLIENT_ASSET_URL_PREFIX } from "./client-asset-url-prefix";
 import { devErrorTransportPlugin, sendCapturedDevError } from "./dev-error-transport";
 import {
   resolveHydrationClientModulePreloadUrls as readHydrationClientModulePreloadUrls,
+  connectSiteHydrationUrls,
   resolveHydrationClientUrl,
+  resolveSiteHydrationClientUrls,
 } from "./hydration-client-url";
 import type { InstalledPageRoute } from "./install-page-routes";
 import { installProductionPageRoutes } from "./install-production-page-routes";
@@ -607,6 +609,18 @@ export class WebConnector extends BaseConnector {
    */
   protected resolveHydrationClientModuleUrl(webRoot?: string): string {
     if (isProductionRuntime()) {
+      const sites = Object.keys(this.pageManifest?.sites ?? {});
+
+      // Multi-site builds emit `hydration-<site>` entries and no single one;
+      // each request picks its own site's URL (`render-page.ts`).
+      if (sites.length > 0) {
+        const urls = resolveSiteHydrationClientUrls({ clientDir: this.resolveClientDir(), sites });
+
+        connectSiteHydrationUrls(urls);
+
+        return urls[sites[0]!]!;
+      }
+
       return resolveHydrationClientUrl({ clientDir: this.resolveClientDir() });
     }
 

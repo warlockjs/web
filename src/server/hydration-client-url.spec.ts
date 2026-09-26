@@ -7,6 +7,7 @@ import { CLIENT_ASSET_URL_PREFIX } from "./client-asset-url-prefix";
 import {
   resolveHydrationClientModulePreloadUrls,
   resolveHydrationClientUrl,
+  resolveSiteHydrationClientUrls,
   WebClientAssetPrefixViolationError,
   WebClientManifestEntryMissingError,
   WebClientManifestMalformedError,
@@ -305,5 +306,38 @@ describe("resolveHydrationClientModulePreloadUrls", () => {
     const clientDir = makeClientDir(JSON.stringify({ "some-other-entry": { file: "a.js" } }));
 
     expect(resolveHydrationClientModulePreloadUrls({ clientDir })).toEqual([]);
+  });
+});
+
+describe("resolveSiteHydrationClientUrls", () => {
+  const multiSiteManifest = JSON.stringify({
+    "esm/entry/index.mjs?warlock-site=landing": {
+      name: "hydration-landing",
+      isEntry: true,
+      file: `${CLIENT_ASSET_URL_PREFIX.slice(1)}/hydration-landing-abc.js`,
+    },
+    "esm/entry/index.mjs?warlock-site=tenant": {
+      name: "hydration-tenant",
+      isEntry: true,
+      file: `${CLIENT_ASSET_URL_PREFIX.slice(1)}/hydration-tenant-def.js`,
+    },
+  });
+
+  it("maps each site to its own emitted hydration entry (no single `hydration` entry exists)", () => {
+    const clientDir = makeClientDir(multiSiteManifest);
+
+    expect(resolveSiteHydrationClientUrls({ clientDir, sites: ["landing", "tenant"] })).toEqual({
+      landing: `${CLIENT_ASSET_URL_PREFIX}/hydration-landing-abc.js`,
+      tenant: `${CLIENT_ASSET_URL_PREFIX}/hydration-tenant-def.js`,
+    });
+  });
+
+  it("refuses by name a site the client build has no entry for", () => {
+    const clientDir = makeClientDir(multiSiteManifest);
+
+    expect(() => resolveSiteHydrationClientUrls({ clientDir, sites: ["landing", "platform"] })).toThrow(
+      WebClientManifestEntryMissingError,
+    );
+    expect(() => resolveSiteHydrationClientUrls({ clientDir, sites: ["platform"] })).toThrow(/hydration-platform/);
   });
 });
