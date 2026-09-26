@@ -216,6 +216,9 @@ export async function buildWarlockHydrationClient(
     resolveAliases: options.resolveAliases,
     external: options.external,
     cssModulesRoot: options.appRoot,
+    // Build logs list output paths relative to the app, not to the installed
+    // `@warlock.js/web` package Vite runs from.
+    logRoot: options.appRoot,
     sites: options.sites === undefined ? undefined : Object.keys(options.sites),
     plugins: [
       ...warlockClientBoundary({ appRoot: options.appRoot, srcDir: options.srcDir, sites: options.sites }),
