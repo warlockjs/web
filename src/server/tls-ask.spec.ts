@@ -4,8 +4,8 @@ import { createTlsAskHandler } from "./tls-ask";
 
 const request = new Request("https://localhost/.well-known/warlock/domain") as never;
 const fixed: SitesConfig = {
-  landing: { pages: "(landing)", hosts: ["estates.app"] },
-  tenant: { pages: "(tenant)", dynamic: true },
+  landing: { hosts: ["estates.app"] },
+  tenant: { dynamic: true },
 };
 
 describe("createTlsAskHandler", () => {

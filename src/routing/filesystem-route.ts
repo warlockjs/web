@@ -12,6 +12,16 @@ function isGroup(segment: string): boolean {
 }
 
 /**
+ * How many leading directories are a site's own folder, `$sites/<key>`. Like a
+ * group they never reach the URL or the route name, so every caller that
+ * derives from a `src/web`-relative path gets the same answer as one that
+ * derives from the site root.
+ */
+function siteFolderDepth(directories: readonly string[]): number {
+  return directories[0] === "$sites" && directories.length > 1 ? 2 : 0;
+}
+
+/**
  * Translate one filesystem segment (a directory name or the page basename)
  * into its route form. Consults {@link classifyPageFileSegment} first and
  * throws {@link PageFileSegmentNotSupportedError} for any segment outside
@@ -72,10 +82,17 @@ export function deriveFilesystemRoutePath(input: FilesystemRouteInput): string {
   const { directories, basename } = pageParts(input.pageFile);
   const prefixes = input.layoutPrefixes ?? {};
   const segments = [...validatedPrefixSegments(prefixes[""] ?? "", input.pageFile)];
+  const siteDepth = siteFolderDepth(directories);
 
   for (const [index, directory] of directories.entries()) {
     const directoryPath = directories.slice(0, index + 1).join("/");
     const prefix = prefixes[directoryPath];
+
+    if (index < siteDepth) {
+      // The site folder contributes nothing itself; a layout at its root may still add a prefix.
+      if (prefix !== undefined) segments.push(...validatedPrefixSegments(prefix, input.pageFile));
+      continue;
+    }
 
     // Validate EVERY directory name before deciding whether it contributes.
     // Contribution and legality are separate questions, and answering them in
@@ -105,7 +122,7 @@ export function deriveFilesystemRouteName(pageFile: string): string {
   const { directories, basename } = pageParts(pageFile);
   const segments: string[] = [];
 
-  for (const directory of directories) {
+  for (const directory of directories.slice(siteFolderDepth(directories))) {
     const routed = routeSegment(directory, pageFile);
 
     if (!isGroup(directory)) {

@@ -392,13 +392,13 @@ describe("installPageRoutesFromManifest — per-site locale routing", () => {
       ...postsPage,
       module: { config: { route: { path: "/pricing", name: "landing.pricing" } }, default: () => null },
       site: "landing",
-      sourceFile: "src/web/(landing)/pricing.page.tsx",
+      sourceFile: "src/web/$sites/landing/pricing.page.tsx",
     };
     const platformPage = {
       ...postsPage,
       module: { config: { route: { path: "/pricing", name: "platform.pricing" } }, default: () => null },
       site: "platform",
-      sourceFile: "src/web/(platform)/pricing.page.tsx",
+      sourceFile: "src/web/$sites/platform/pricing.page.tsx",
     };
 
     installPageRoutesFromManifest({
@@ -407,15 +407,15 @@ describe("installPageRoutesFromManifest — per-site locale routing", () => {
       siteDispatch: {
         dispatch,
         sites: {
-          landing: { pages: "(landing)", hosts: ["landing.test"], localeRouting: { strategy: "prefix" } },
-          platform: { pages: "(platform)", hosts: ["platform.test"] },
+          landing: { hosts: ["landing.test"], localeRouting: { strategy: "prefix" } },
+          platform: { hosts: ["platform.test"] },
         },
       },
       manifest: {
         pages: [landingPage, platformPage],
         sites: {
-          landing: { app: { module: appModule, sourceFile: "src/web/(landing)/root.tsx" } },
-          platform: { app: { module: appModule, sourceFile: "src/web/(platform)/root.tsx" } },
+          landing: { app: { module: appModule, sourceFile: "src/web/$sites/landing/root.tsx" } },
+          platform: { app: { module: appModule, sourceFile: "src/web/$sites/platform/root.tsx" } },
         },
       },
     });

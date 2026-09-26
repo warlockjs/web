@@ -72,8 +72,8 @@ describe("registerRobotsRoute", () => {
   it("selects the fixed site from the request host and uses its origin in the Sitemap line", async () => {
     config.set("web", {
       sites: {
-        landing: { pages: "(landing)", hosts: ["landing.test"] },
-        platform: { pages: "(platform)", hosts: ["app.test"], basePath: "/portal" },
+        landing: { hosts: ["landing.test"] },
+        platform: { hosts: ["app.test"], basePath: "/portal" },
       },
       robots: { enabled: true, groups: [{ userAgent: "*" }] },
       sitemap: { enabled: true, path: "/sitemap.xml" },
@@ -100,7 +100,7 @@ describe("registerRobotsRoute", () => {
 
   it("disallows non-indexable dynamic sites without exposing a sitemap", async () => {
     config.set("web", {
-      sites: { tenant: { pages: "(tenant)", dynamic: true } },
+      sites: { tenant: { dynamic: true } },
       resolveHost: () => ({ site: "tenant", key: "acme", indexable: false }),
       robots: { enabled: true, groups: [{ userAgent: "*" }] },
       sitemap: { enabled: true },

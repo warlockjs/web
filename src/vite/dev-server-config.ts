@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Alias, HttpServer, InlineConfig, PluginOption } from "vite";
 import type { DevelopmentModelModules } from "@warlock.js/core";
+import type { SitesConfig } from "../sites/site-config.types";
 import { appConventionAliases } from "./app-convention-aliases";
 import { cssModulesConfig } from "./css-modules-config";
 import { coreModelModules } from "./core-model-modules";
@@ -191,6 +192,8 @@ export type WebConnectorViteConfigOptions = {
   workspaceRoot: string;
   /** The raw node server Vite's HMR websocket shares with the rest of the app. */
   hmrServer: HttpServer;
+  /** `web.sites`: each per-site hydration entry then imports only its own site's page registry. */
+  sites?: SitesConfig;
   handlePageHotUpdate: (file: string) => Promise<boolean>;
   /** Plugins that must run ahead of the client-boundary gates, e.g. `devErrorTransportPlugin`. */
   leadingPlugins: PluginOption[];
@@ -245,6 +248,7 @@ export async function createWebConnectorViteConfig(
       ...warlockClientBoundary({
         appRoot: options.appRoot,
         srcDir: path.relative(options.appRoot, options.appSrcRoot),
+        sites: options.sites,
         beforePageHotUpdate: ({ file }) => options.handlePageHotUpdate(file),
       }),
       coreModelModules(options.modelModules),

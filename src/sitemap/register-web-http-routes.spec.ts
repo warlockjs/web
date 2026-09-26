@@ -56,7 +56,7 @@ describe("registerWebHttpRoutes", () => {
   it("leaves multi-site sitemaps to each site's request: no single-origin runtime at startup", async () => {
     config.set("web", {
       sitemap: { enabled: true },
-      sites: { landing: { pages: "(landing)", hosts: ["estates.test"] } },
+      sites: { landing: { hosts: ["estates.test"] } },
     });
 
     await regenerateSitemapOnStartup({ appRoot: "/app" });

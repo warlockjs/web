@@ -55,7 +55,7 @@ const web: WebConfigurations = {
 export default web;
 ```
 
-`pages` defaults to `$sites/<site key>`. The older `pages: "(group)"` form still works for apps on 5.23.0, but new apps should use the `$sites` layout. Fixed `hosts` are exact lowercase hostnames without ports; list `www` separately. A site uses either `hosts` or `dynamic: true`, never both. The exact listed host is selected before the resolver is called.
+Upgrade: move each `src/web/(group)` site folder to `src/web/$sites/<key>` and delete `pages` from `web.sites`. Fixed `hosts` are exact lowercase hostnames without ports; list `www` separately. A site uses either `hosts` or `dynamic: true`, never both. The exact listed host is selected before the resolver is called.
 
 ## 3. Keep resolver identity deliberate
 

@@ -2,8 +2,7 @@ import type { HostResolution, HostResolver, SitesConfig } from "./site-config.ty
 
 export type SiteConfigErrorCode =
   | "SITE_KEY_INVALID"
-  | "SITE_PAGES_INVALID"
-  | "SITE_PAGES_SHARED"
+  | "SITE_PAGES_REMOVED"
   | "SITE_HOSTS_AND_DYNAMIC"
   | "SITE_NO_HOSTS_OR_DYNAMIC"
   | "SITE_HOST_INVALID"
@@ -20,7 +19,6 @@ export type SiteConfigError = {
 };
 
 const SITE_KEY = /^[a-z][a-zA-Z0-9-]*$/;
-const PAGES_GROUP = /^\([a-zA-Z0-9][a-zA-Z0-9_-]*\)$/;
 const HOSTNAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
 
 /**
@@ -46,7 +44,6 @@ export function validateSitesConfig({
   unknownHost?: "not-found" | string;
 }): SiteConfigError[] {
   const errors: SiteConfigError[] = [];
-  const pagesOwner = new Map<string, string>();
   const hostOwner = new Map<string, string>();
   const dynamicSites: string[] = [];
 
@@ -59,24 +56,12 @@ export function validateSitesConfig({
       });
     }
 
-    const pages: unknown = site.pages;
-    if (pages !== undefined && (typeof pages !== "string" || !PAGES_GROUP.test(pages))) {
+    if (Object.hasOwn(site, "pages")) {
       errors.push({
-        code: "SITE_PAGES_INVALID",
+        code: "SITE_PAGES_REMOVED",
         site: key,
-        message: `Site "${key}" has invalid pages "${String(pages)}"; it must be a single route-group folder name such as "(landing)".`,
+        message: `web.sites.${key}.pages was removed in 5.23.1: move src/web/${String((site as { pages?: unknown }).pages)} to src/web/$sites/${key} and delete "pages".`,
       });
-    } else if (pages !== undefined) {
-      const owner = pagesOwner.get(pages);
-      if (owner !== undefined) {
-        errors.push({
-          code: "SITE_PAGES_SHARED",
-          site: key,
-          message: `Sites "${owner}" and "${key}" both use pages "${pages}"; each site needs its own folder.`,
-        });
-      } else {
-        pagesOwner.set(pages, key);
-      }
     }
 
     const hosts = (site as { hosts?: unknown }).hosts;

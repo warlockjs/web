@@ -6,8 +6,8 @@ const request = {} as never;
 const at = (rawHost: string, path = "/") => ({ rawHost, path, request });
 
 const fixed: SitesConfig = {
-  landing: { pages: "(landing)", hosts: ["estates.app", "www.estates.app"] },
-  platform: { pages: "(platform)", hosts: ["app.estates.app"] },
+  landing: { hosts: ["estates.app", "www.estates.app"] },
+  platform: { hosts: ["app.estates.app"] },
 };
 
 describe("createSiteSelector", () => {
@@ -40,9 +40,9 @@ describe("createSiteSelector", () => {
 
   it("picks the longest basePath on segment boundaries", async () => {
     const sites: SitesConfig = {
-      main: { pages: "(main)", hosts: ["acme.com"] },
-      admin: { pages: "(admin)", hosts: ["acme.com"], basePath: "/admin" },
-      deep: { pages: "(deep)", hosts: ["acme.com"], basePath: "/admin/deep" },
+      main: { hosts: ["acme.com"] },
+      admin: { hosts: ["acme.com"], basePath: "/admin" },
+      deep: { hosts: ["acme.com"], basePath: "/admin/deep" },
     };
     const { select } = createSiteSelector({ sites });
     const site = async (p: string) => ((await select(at("acme.com", p))) as { site: string }).site;
@@ -55,7 +55,7 @@ describe("createSiteSelector", () => {
 
   it("calls the resolver only for unlisted hosts", async () => {
     const resolveHost = vi.fn(() => null);
-    const sites: SitesConfig = { ...fixed, tenant: { pages: "(tenant)", dynamic: true } };
+    const sites: SitesConfig = { ...fixed, tenant: { dynamic: true } };
     const { select } = createSiteSelector({ sites, resolveHost });
     await select(at("estates.app"));
     expect(resolveHost).not.toHaveBeenCalled();
@@ -66,8 +66,8 @@ describe("createSiteSelector", () => {
   it("never calls the resolver for a listed host with a basePath mismatch", async () => {
     const resolveHost = vi.fn(() => null);
     const sites: SitesConfig = {
-      admin: { pages: "(admin)", hosts: ["acme.com"], basePath: "/admin" },
-      tenant: { pages: "(tenant)", dynamic: true },
+      admin: { hosts: ["acme.com"], basePath: "/admin" },
+      tenant: { dynamic: true },
     };
     const { select } = createSiteSelector({ sites, resolveHost });
     expect(await select(at("acme.com", "/"))).toEqual({ kind: "not-found", host: "acme.com" });
@@ -77,8 +77,8 @@ describe("createSiteSelector", () => {
   describe("resolver", () => {
     const sites: SitesConfig = {
       ...fixed,
-      tenant: { pages: "(tenant)", dynamic: true },
-      portal: { pages: "(portal)", dynamic: true, basePath: "/portal" },
+      tenant: { dynamic: true },
+      portal: { dynamic: true, basePath: "/portal" },
     };
     const hit: HostResolution = { site: "tenant", key: "t1" };
 
@@ -182,7 +182,7 @@ describe("createSiteSelector", () => {
 
   it("does not cache without resolveCache", async () => {
     const resolveHost = vi.fn(() => null);
-    const sites: SitesConfig = { ...fixed, tenant: { pages: "(tenant)", dynamic: true } };
+    const sites: SitesConfig = { ...fixed, tenant: { dynamic: true } };
     const { select } = createSiteSelector({ sites, resolveHost });
     await select(at("x.com"));
     await select(at("x.com"));
@@ -192,10 +192,10 @@ describe("createSiteSelector", () => {
 
 describe("Real-Estate config", () => {
   const sites: SitesConfig = {
-    landing: { pages: "(landing)", hosts: ["estates.app", "www.estates.app"] },
-    platform: { pages: "(platform)", hosts: ["app.estates.app"] },
-    tenant: { pages: "(tenant)", dynamic: true },
-    tenantAdmin: { pages: "(tenant-admin)", dynamic: true },
+    landing: { hosts: ["estates.app", "www.estates.app"] },
+    platform: { hosts: ["app.estates.app"] },
+    tenant: { dynamic: true },
+    tenantAdmin: { dynamic: true },
   };
   const resolveHost = ({ host }: { host: string }): HostResolution | null => {
     if (host === "acme.com") return { site: "tenant", key: "acme" };
@@ -225,10 +225,10 @@ describe("validateSitesAtBoot", () => {
 
   it("throws one error listing every problem, including resolver codes", () => {
     const sites: SitesConfig = {
-      a: { pages: "(a)", dynamic: true },
-      b: { pages: "bad", hosts: ["b.com"] },
+      a: { dynamic: true },
+      b: { hosts: ["b.com"], basePath: "/" },
     };
-    expect(() => validateSitesAtBoot({ sites })).toThrow(/SITE_PAGES_INVALID[\s\S]*DYNAMIC_SITE_WITHOUT_RESOLVER/);
+    expect(() => validateSitesAtBoot({ sites })).toThrow(/SITE_BASEPATH_INVALID[\s\S]*DYNAMIC_SITE_WITHOUT_RESOLVER/);
     expect(() => validateSitesAtBoot({ sites: fixed, resolveHost: () => null })).toThrow(
       /RESOLVER_WITHOUT_DYNAMIC_SITE/,
     );

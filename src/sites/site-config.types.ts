@@ -29,8 +29,6 @@ type SiteLocaleRouting = { strategy?: LocaleRoutingStrategy };
 
 /** A site served on an explicit list of exact hostnames. */
 export type FixedSiteConfig = {
-  /** Route-group folder directly under `src/web`; omit for `$sites/<site key>`. */
-  pages?: string;
   /** Exact lowercase hostnames without port; `www.` is an alias only when listed. */
   hosts: string[];
   /** Path prefix the whole site lives under on its hosts, e.g. `"/admin"`. */
@@ -41,8 +39,6 @@ export type FixedSiteConfig = {
 
 /** A site whose hosts are claimed at runtime by `web.resolveHost`. */
 export type DynamicSiteConfig = {
-  /** Route-group folder directly under `src/web`; omit for `$sites/<site key>`. */
-  pages?: string;
   dynamic: true;
   /** Path prefix the whole site lives under on its hosts, e.g. `"/admin"`. */
   basePath?: string;

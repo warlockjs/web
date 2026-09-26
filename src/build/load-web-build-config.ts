@@ -17,7 +17,6 @@ function staticSites(sites: SitesConfig | undefined): SitesConfig | undefined {
     Object.entries(sites).map(([key, site]) => [
       key,
       {
-        ...(site.pages === undefined ? {} : { pages: site.pages }),
         ...("hosts" in site ? { hosts: [...site.hosts] } : { dynamic: true as const }),
         ...(site.basePath === undefined ? {} : { basePath: site.basePath }),
         ...(site.localeRouting === undefined ? {} : { localeRouting: { ...site.localeRouting } }),

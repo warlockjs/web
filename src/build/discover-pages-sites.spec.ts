@@ -36,19 +36,19 @@ const named = (name: string, routePath: string) =>
   `export const config = { route: { path: "${routePath}", name: "${name}" } };\n${COMPONENT}`;
 
 const SITES: SitesConfig = {
-  landing: { pages: "(landing)", hosts: ["estates.app"] },
-  platform: { pages: "(platform)", hosts: ["app.estates.app"] },
-  tenant: { pages: "(tenant)", dynamic: true },
-  tenantAdmin: { pages: "(tenant-admin)", dynamic: true },
+  landing: { hosts: ["estates.app"] },
+  platform: { hosts: ["app.estates.app"] },
+  tenant: { dynamic: true },
+  tenantAdmin: { dynamic: true },
 };
 
 /** Real-Estate layout: four sites, each with a root and an index page. */
 function realEstate(extra: Record<string, string> = {}): Record<string, string> {
   const files: Record<string, string> = {};
 
-  for (const site of Object.values(SITES)) {
-    files[`src/web/${site.pages}/root.tsx`] = COMPONENT;
-    files[`src/web/${site.pages}/index.page.tsx`] = COMPONENT;
+  for (const key of Object.keys(SITES)) {
+    files[`src/web/$sites/${key}/root.tsx`] = COMPONENT;
+    files[`src/web/$sites/${key}/index.page.tsx`] = COMPONENT;
   }
 
   return { ...files, ...extra };
@@ -80,16 +80,16 @@ describe("discoverPages with sites", () => {
     ]);
   });
 
-  it("mixes convention sites with explicit route-group sites", () => {
+  it("discovers every configured site from its $sites folder", () => {
     const sites: SitesConfig = {
       landing: { hosts: ["estates.app"] },
-      platform: { pages: "(platform)", hosts: ["app.estates.app"] },
+      platform: { hosts: ["app.estates.app"] },
     };
     const appRoot = makeAppTree({
       "src/web/$sites/landing/root.tsx": COMPONENT,
       "src/web/$sites/landing/index.page.tsx": COMPONENT,
-      "src/web/(platform)/root.tsx": COMPONENT,
-      "src/web/(platform)/index.page.tsx": COMPONENT,
+      "src/web/$sites/platform/root.tsx": COMPONENT,
+      "src/web/$sites/platform/index.page.tsx": COMPONENT,
     });
 
     expect(pagesOf(discoverPages({ appRoot, sites })).map((page) => page.site)).toEqual(["landing", "platform"]);
@@ -108,25 +108,25 @@ describe("discoverPages with sites", () => {
 
   it("gives every page its own site's root and root.setup.ts", () => {
     const appRoot = makeAppTree(
-      realEstate({ "src/web/(tenant)/root.setup.ts": "export const config = { strictMode: true };\n" }),
+      realEstate({ "src/web/$sites/tenant/root.setup.ts": "export const config = { strictMode: true };\n" }),
     );
     const pages = pagesOf(discoverPages({ appRoot, sites: SITES }));
     const tenant = pages.find((page) => page.site === "tenant");
     const landing = pages.find((page) => page.site === "landing");
 
-    expect(tenant?.appFile).toBe(path.join(appRoot, "src/web/(tenant)/root.tsx"));
-    expect(tenant?.appSetupFile).toBe(path.join(appRoot, "src/web/(tenant)/root.setup.ts"));
-    expect(landing?.appFile).toBe(path.join(appRoot, "src/web/(landing)/root.tsx"));
+    expect(tenant?.appFile).toBe(path.join(appRoot, "src/web/$sites/tenant/root.tsx"));
+    expect(tenant?.appSetupFile).toBe(path.join(appRoot, "src/web/$sites/tenant/root.setup.ts"));
+    expect(landing?.appFile).toBe(path.join(appRoot, "src/web/$sites/landing/root.tsx"));
     expect(landing?.appSetupFile).toBeUndefined();
   });
 
   it("prefixes generated names with the site and leaves explicit names alone", () => {
     const appRoot = makeAppTree(
       realEstate({
-        "src/web/(landing)/pricing.page.tsx": COMPONENT,
-        "src/web/(landing)/about.page.tsx": named("company.about", "/about"),
-        "src/web/(landing)/welcome.page.tsx": `export const config = { route: "/welcome" };\n${COMPONENT}`,
-        "src/web/(platform)/welcome.page.tsx": `export const config = { route: "/welcome" };\n${COMPONENT}`,
+        "src/web/$sites/landing/pricing.page.tsx": COMPONENT,
+        "src/web/$sites/landing/about.page.tsx": named("company.about", "/about"),
+        "src/web/$sites/landing/welcome.page.tsx": `export const config = { route: "/welcome" };\n${COMPONENT}`,
+        "src/web/$sites/platform/welcome.page.tsx": `export const config = { route: "/welcome" };\n${COMPONENT}`,
       }),
     );
     const names = pagesOf(discoverPages({ appRoot, sites: SITES }))
@@ -146,7 +146,7 @@ describe("discoverPages with sites", () => {
 
   it("prepends basePath to every path in that site", () => {
     const appRoot = makeAppTree(
-      realEstate({ "src/web/(tenant-admin)/listings/[id].page.tsx": COMPONENT }),
+      realEstate({ "src/web/$sites/tenantAdmin/listings/[id].page.tsx": COMPONENT }),
     );
     const pages = pagesOf(
       discoverPages({
@@ -164,9 +164,9 @@ describe("discoverPages with sites", () => {
   it("uses per-site 404 and error pages with a unique not-found name", () => {
     const appRoot = makeAppTree(
       realEstate({
-        "src/web/(landing)/404.page.tsx": COMPONENT,
-        "src/web/(platform)/404.page.tsx": COMPONENT,
-        "src/web/(platform)/error.page.tsx": COMPONENT,
+        "src/web/$sites/landing/404.page.tsx": COMPONENT,
+        "src/web/$sites/platform/404.page.tsx": COMPONENT,
+        "src/web/$sites/platform/error.page.tsx": COMPONENT,
       }),
     );
     const all = discoverPages({ appRoot, sites: SITES });
@@ -180,7 +180,7 @@ describe("discoverPages with sites", () => {
 
   it("throws on the same path twice inside one site", () => {
     const appRoot = makeAppTree(
-      realEstate({ "src/web/(landing)/(a)/x.page.tsx": COMPONENT, "src/web/(landing)/x.page.tsx": COMPONENT }),
+      realEstate({ "src/web/$sites/landing/(a)/x.page.tsx": COMPONENT, "src/web/$sites/landing/x.page.tsx": COMPONENT }),
     );
 
     expect(() => discoverPages({ appRoot, sites: SITES })).toThrow(DuplicatePageRoutePathError);
@@ -189,8 +189,8 @@ describe("discoverPages with sites", () => {
   it("throws on one explicit name used by two sites", () => {
     const appRoot = makeAppTree(
       realEstate({
-        "src/web/(landing)/a.page.tsx": named("shared.name", "/a"),
-        "src/web/(platform)/b.page.tsx": named("shared.name", "/b"),
+        "src/web/$sites/landing/a.page.tsx": named("shared.name", "/a"),
+        "src/web/$sites/platform/b.page.tsx": named("shared.name", "/b"),
       }),
     );
 
@@ -230,26 +230,26 @@ describe("discoverPages with sites", () => {
 
     it("rejects a missing site folder and a missing root.tsx", () => {
       const files = realEstate();
-      delete files["src/web/(tenant)/root.tsx"];
-      delete files["src/web/(tenant)/index.page.tsx"];
-      const appRoot = makeAppTree({ ...files, "src/web/(tenant)/keep.txt": "" });
+      delete files["src/web/$sites/tenant/root.tsx"];
+      delete files["src/web/$sites/tenant/index.page.tsx"];
+      const appRoot = makeAppTree({ ...files, "src/web/$sites/tenant/keep.txt": "" });
       const missingFolder = makeAppTree(
-        Object.fromEntries(Object.entries(files).filter(([file]) => !file.includes("(platform)"))),
+        Object.fromEntries(Object.entries(files).filter(([file]) => !file.includes("$sites/platform"))),
       );
 
-      expect(() => discoverPages({ appRoot, sites: SITES })).toThrow(/\(tenant\).*no root\.tsx/);
+      expect(() => discoverPages({ appRoot, sites: SITES })).toThrow(/\$sites\/tenant.*no root\.tsx/);
       expect(() => discoverPages({ appRoot: missingFolder, sites: SITES })).toThrow(
-        /\(platform\).*does not exist/,
+        /\$sites\/platform.*does not exist/,
       );
     });
 
     it("rejects more than one 404 or error page in a site", () => {
       const appRoot = makeAppTree(
         realEstate({
-          "src/web/(landing)/404.page.tsx": COMPONENT,
-          "src/web/(landing)/help/404.page.tsx": COMPONENT,
-          "src/web/(platform)/error.page.tsx": COMPONENT,
-          "src/web/(platform)/x/error.page.tsx": COMPONENT,
+          "src/web/$sites/landing/404.page.tsx": COMPONENT,
+          "src/web/$sites/landing/help/404.page.tsx": COMPONENT,
+          "src/web/$sites/platform/error.page.tsx": COMPONENT,
+          "src/web/$sites/platform/x/error.page.tsx": COMPONENT,
         }),
       );
 
@@ -270,7 +270,7 @@ describe("discoverPages with sites", () => {
       const appRoot = makeAppTree(realEstate());
 
       expect(() =>
-        discoverPages({ appRoot, sites: { landing: { pages: "landing", hosts: ["a.app"] } } }),
+        discoverPages({ appRoot, sites: { Bad_Key: { hosts: ["a.app"] } } }),
       ).toThrow(/Invalid web\.sites/);
     });
   });

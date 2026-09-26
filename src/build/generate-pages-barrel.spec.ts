@@ -42,20 +42,20 @@ const PAGE =
   'export const config = { route: "/" };\nexport default function Page() { return null; }\n';
 const LAYOUT = "export default function Layout() { return null; }\n";
 const SITES = {
-  landing: { pages: "(landing)", hosts: ["estates.test"] },
-  platform: { pages: "(platform)", hosts: ["app.estates.test"] },
+  landing: { hosts: ["estates.test"] },
+  platform: { hosts: ["app.estates.test"] },
 };
 
 describe("generatePagesBarrel", () => {
   it("emits a site-owned page table and roots without hydration asset placeholders", async () => {
     const appRoot = makeAppTree({
-      "src/web/(landing)/root.tsx": APP,
-      "src/web/(landing)/index.page.tsx": PAGE,
-      "src/web/(landing)/error.page.tsx": APP,
-      "src/web/(platform)/root.tsx": APP,
-      "src/web/(platform)/root.setup.ts": "export const config = { strictMode: true };\n",
-      "src/web/(platform)/index.page.tsx": PAGE,
-      "src/web/(platform)/error.page.tsx": APP,
+      "src/web/$sites/landing/root.tsx": APP,
+      "src/web/$sites/landing/index.page.tsx": PAGE,
+      "src/web/$sites/landing/error.page.tsx": APP,
+      "src/web/$sites/platform/root.tsx": APP,
+      "src/web/$sites/platform/root.setup.ts": "export const config = { strictMode: true };\n",
+      "src/web/$sites/platform/index.page.tsx": PAGE,
+      "src/web/$sites/platform/error.page.tsx": APP,
     });
 
     const result = await generatePagesBarrel({

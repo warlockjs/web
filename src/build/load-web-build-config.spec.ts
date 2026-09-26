@@ -20,7 +20,7 @@ describe("loadWebBuildConfig", () => {
       path.join(configDir, "web.ts"),
       [
         "export default {",
-        '  sites: { landing: { pages: "(landing)", hosts: ["estates.test"], basePath: "/", localeRouting: { strategy: "prefix" } } },',
+        '  sites: { landing: { hosts: ["estates.test"], basePath: "/", localeRouting: { strategy: "prefix" } } },',
         "  resolveHost() { return null; },",
         "};",
       ].join("\n"),
@@ -32,7 +32,6 @@ describe("loadWebBuildConfig", () => {
     expect(config).toEqual({
       sites: {
         landing: {
-          pages: "(landing)",
           hosts: ["estates.test"],
           basePath: "/",
           localeRouting: { strategy: "prefix" },
@@ -62,7 +61,7 @@ describe("loadWebBuildConfig", () => {
       [
         'import { resolveHost, tenantHosts } from "app/tenants/resolve-host";',
         "export default {",
-        '  sites: { tenant: { pages: "(tenant)", hosts: tenantHosts } },',
+        '  sites: { tenant: { hosts: tenantHosts } },',
         "  resolveHost,",
         "};",
       ].join("\n"),
@@ -71,7 +70,7 @@ describe("loadWebBuildConfig", () => {
 
     const config = await loadWebBuildConfig(appRoot);
 
-    expect(config).toEqual({ sites: { tenant: { pages: "(tenant)", hosts: ["acme.test"] } } });
+    expect(config).toEqual({ sites: { tenant: { hosts: ["acme.test"] } } });
     expect(fs.readdirSync(appRoot).filter((name) => name.endsWith(".mjs"))).toEqual([]);
   });
 });

@@ -25,10 +25,10 @@ import {
  */
 
 const sites: SitesConfig = {
-  a: { pages: "(a)", hosts: ["a.test"] },
-  b: { pages: "(b)", hosts: ["b.test"] },
-  admin: { pages: "(admin)", hosts: ["a.test"], basePath: "/admin" },
-  tenant: { pages: "(tenant)", dynamic: true },
+  a: { hosts: ["a.test"] },
+  b: { hosts: ["b.test"] },
+  admin: { hosts: ["a.test"], basePath: "/admin" },
+  tenant: { dynamic: true },
 };
 
 type Fixture = { site: string; file: string; route?: string };
@@ -66,7 +66,7 @@ beforeEach(() => {
   container.set("http.server", { addHook: vi.fn() } as never);
 });
 
-const siteOf = (site: string) => `(${site})`;
+const siteOf = (site: string) => `$sites/${site}`;
 
 function pageSource(fixture: Fixture): string {
   return fixture.route === undefined
@@ -97,7 +97,7 @@ function recordingRouter() {
 
 /** `a/home`, `b/404`: the site folder and page file a handler was built for. */
 function tagOf(pageFile: string): string {
-  const match = /\(([a-z]+)\)[\\/]([\w]+)\.page\.tsx$/.exec(pageFile.replaceAll("\\", "/"));
+  const match = /\$sites\/([a-z]+)\/([\w]+)\.page\.tsx$/.exec(pageFile.replaceAll("\\", "/"));
 
   return match === null ? pageFile : `${match[1]}/${match[2]}`;
 }
@@ -354,8 +354,8 @@ describe.each<Mode>(["dev", "prod"])("multi-site dispatch (%s)", (mode) => {
 
 describe("multi-site shadow guard", () => {
   it("rejects one boot error for a page hidden by an application route with renamed params", () => {
-    const dispatch = createSiteDispatch({ sites: { landing: { pages: "(landing)", hosts: ["a.test"] } } });
-    dispatch.add("landing", "GET", "/products/:id", vi.fn() as never, "src/web/(landing)/product.page.tsx");
+    const dispatch = createSiteDispatch({ sites: { landing: { hosts: ["a.test"] } } });
+    dispatch.add("landing", "GET", "/products/:id", vi.fn() as never, "src/web/$sites/landing/product.page.tsx");
     const router = {
       list: () => [{ isPage: false, method: "GET", path: "/products/:slug" }],
       get: vi.fn(),
@@ -363,7 +363,7 @@ describe("multi-site shadow guard", () => {
     } as unknown as Router;
 
     expect(() => dispatch.register(router)).toThrow(
-      "src/web/(landing)/product.page.tsx is shadowed by application route GET /products/:slug: this page can never be reached.",
+      "src/web/$sites/landing/product.page.tsx is shadowed by application route GET /products/:slug: this page can never be reached.",
     );
   });
 });

@@ -4,9 +4,19 @@ All notable changes to `@warlock.js/web` are documented here.
 
 ## 5.23.1 - 2026-09-26
 
-### Added
+### Changed
 
-- Sites can live in `src/web/$sites/<name>/`: the folder name is the site key and `pages` becomes optional; `(group)` + `pages` still works.
+- **BREAKING:** sites live only in `src/web/$sites/<name>/` (the folder name is the site key); `web.sites.<name>.pages` is removed and reported at boot.
+
+### Fixed
+
+- Multi-site dev: each site's client entry now loads only its own pages. Before, `warlock dev` failed to transform the hydration entry with "Two pages resolve to the same route path", so pages never hydrated.
+- Multi-site dev: adding or removing a page no longer fails with `Route name "warlock.site-dispatch.get" is already taken`.
+- `$sites/<key>` never reaches a page's URL or route name in any installer, including production.
+
+### Upgrading
+
+Move each `src/web/(group)` site folder to `src/web/$sites/<key>` and delete `pages` from `web.sites`.
 
 ## 5.23.0 - 2026-09-25
 

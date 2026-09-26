@@ -127,13 +127,13 @@ function siteOwningFile(
   const target = path.resolve(file);
   const webRoot = path.join(appRoot, srcDir ?? "src", "web");
   return Object.keys(sites).find((key) => {
-    const folder = path.resolve(webRoot, siteFolder(key, sites[key]!)) + path.sep;
+    const folder = path.resolve(webRoot, siteFolder(key)) + path.sep;
     return target.startsWith(folder);
   });
 }
 
 function siteRootFile(appRoot: string, srcDir: string | undefined, sites: SitesConfig, site: string): string {
-  return path.join(appRoot, srcDir ?? "src", "web", siteFolder(site, sites[site]!), "root.tsx");
+  return path.join(appRoot, srcDir ?? "src", "web", siteFolder(site), "root.tsx");
 }
 
 function isRootSetupFile(

@@ -19,7 +19,7 @@ describe("registerTlsAsk", () => {
 
     registerTlsAsk(router, {
       tlsAsk: "/.well-known/warlock/domain",
-      sites: { tenant: { pages: "(tenant)", dynamic: true } },
+      sites: { tenant: { dynamic: true } },
       resolveHost: async () => ({ site: "tenant", key: "acme" }),
     });
 

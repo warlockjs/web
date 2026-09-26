@@ -27,8 +27,8 @@ afterAll(() => {
 });
 
 const SITES: SitesConfig = {
-  landing: { pages: "(landing)", hosts: ["a.test"] },
-  platform: { pages: "(platform)", hosts: ["b.test"] },
+  landing: { hosts: ["a.test"] },
+  platform: { hosts: ["b.test"] },
 };
 
 const COMPONENT = "export default function C() { return null; }\n";
@@ -40,10 +40,10 @@ function makeApp(multi: boolean): string {
   roots.push(root);
   const files: Record<string, string> = multi
     ? {
-        "src/web/(landing)/root.tsx": COMPONENT,
-        "src/web/(landing)/home.page.tsx": page("home", "/"),
-        "src/web/(platform)/root.tsx": COMPONENT,
-        "src/web/(platform)/dashboard.page.tsx": page("dashboard", "/dashboard"),
+        "src/web/$sites/landing/root.tsx": COMPONENT,
+        "src/web/$sites/landing/home.page.tsx": page("home", "/"),
+        "src/web/$sites/platform/root.tsx": COMPONENT,
+        "src/web/$sites/platform/dashboard.page.tsx": page("dashboard", "/dashboard"),
       }
     : { "src/web/root.tsx": COMPONENT, "src/web/home.page.tsx": page("home", "/") };
   for (const [relative, contents] of Object.entries(files)) {
@@ -237,7 +237,7 @@ describe("dev invalidation is scoped per site", () => {
     await hotUpdate.call(
       { environment: { name: "client" } },
       {
-        file: path.join(appRoot, "src/web/(landing)/root.tsx"),
+        file: path.join(appRoot, "src/web/$sites/landing/root.tsx"),
         type: "update",
         server,
       },

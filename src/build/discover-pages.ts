@@ -68,8 +68,7 @@ export type DiscoverPagesOptions = {
   srcDir?: string;
   /**
    * `web.sites`. When supplied, discovery runs in multi-site mode: each site's
-   * pages are read from each explicit `src/web/<site.pages>` or convention
-   * `src/web/$sites/<site key>` folder. Absent means today's single-site
+   * pages are read from each `src/web/$sites/<site key>` folder. Absent means today's single-site
    * behaviour, unchanged.
    */
   sites?: SitesConfig;
@@ -761,7 +760,7 @@ function prepareSites(
   }
 
   const units: SiteUnit[] = Object.entries(sites).map(([key, site]) => {
-    const folder = siteFolder(key, site);
+    const folder = siteFolder(key);
     const root = path.join(webRoot, folder);
     const rootFile = path.join(root, "root.tsx");
     const hasRoot = isFile(rootFile);

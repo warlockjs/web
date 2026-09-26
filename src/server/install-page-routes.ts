@@ -121,6 +121,9 @@ export type InstalledPageRoute = {
  */
 export const FRAMEWORK_DEFAULT_NOT_FOUND_SOURCE_FILE = "\0warlock:framework-default-404";
 
+/** Ownership key for multi-site mode's dispatch catch-alls; NUL-prefixed like the 404's. */
+export const SITE_DISPATCH_SOURCE_FILE = "\0warlock:site-dispatch";
+
 /**
  * The page's application-source-relative POSIX source path used as the router's
  * stable ownership key. `appSrcRoot`'s own basename preserves the existing
@@ -528,7 +531,7 @@ export async function installPageRoutes(
     const installedPages: InstalledPageRoute[] = [];
 
     for (const [site, siteConfig] of Object.entries(sites)) {
-      const root = path.join(options.appSrcRoot, "web", siteFolder(site, siteConfig));
+      const root = path.join(options.appSrcRoot, "web", siteFolder(site));
       const siteAppFile = siteAppFiles.get(site) ?? path.join(root, "root.tsx");
 
       const installed = await installDiscoveredPageRoutes(
@@ -549,7 +552,9 @@ export async function installPageRoutes(
       registerSiteRoutes(site, installed, sites, "installPageRoutes (development)");
     }
 
-    dispatch.register(options.router);
+    // Owned like every page route, so a dev page reload replaces the
+    // catch-alls instead of registering their names a second time.
+    await options.router.withSourceFile(SITE_DISPATCH_SOURCE_FILE, () => dispatch.register(options.router));
     artifact?.commit();
 
     return installedPages;

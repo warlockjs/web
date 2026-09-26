@@ -825,6 +825,9 @@ export class WebConnector extends BaseConnector {
         // A rejected install keeps both the old route table and browser live.
         this.installedPages = nextInstalledPages;
         invalidateClientPageRegistry(vite);
+        for (const site of Object.keys(config.get("web", {}).sites ?? {})) {
+          invalidateClientPageRegistry(vite, site);
+        }
 
         // Routes are committed; now atomically replace sitemap invalidation subscriptions.
         await this.refreshSitemapModelSubscriptions(paths.appRoot);
@@ -960,6 +963,7 @@ export class WebConnector extends BaseConnector {
         webRoot: paths.webRoot,
         workspaceRoot,
         hmrServer: fastify.server,
+        sites: config.get("web", {}).sites,
         handlePageHotUpdate: (file) => this.handlePageHotUpdate(file),
         leadingPlugins: [devErrorTransportPlugin({ isProductionRuntime, buildErrorMessage })],
         modelModules: container.tryGet("development.modelModules"),

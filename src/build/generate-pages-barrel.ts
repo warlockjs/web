@@ -508,8 +508,8 @@ export async function generatePagesBarrel(
     options.sites === undefined
       ? []
       : Object.entries(options.sites).map(([site, configuration], index) => {
-          const rootFile = path.join(srcRoot, "web", siteFolder(site, configuration), "root.tsx");
-          const setupFile = path.join(srcRoot, "web", siteFolder(site, configuration), "root.setup.ts");
+          const rootFile = path.join(srcRoot, "web", siteFolder(site), "root.tsx");
+          const setupFile = path.join(srcRoot, "web", siteFolder(site), "root.setup.ts");
 
           return {
             site,
