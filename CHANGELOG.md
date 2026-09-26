@@ -2,6 +2,12 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.23.3 - Unreleased
+
+### Changed
+
+- `PageLoaderContext`'s type parameters default to `undefined`, so a loader with no validation or route can be typed `({ request }: PageLoaderContext)`.
+
 ## 5.23.2 - 2026-09-26
 
 ### Fixed

@@ -9,8 +9,8 @@ import type { RouteDeclaration } from "./route";
 import type { PageValidation, ValidatedOutput } from "./validation";
 
 export type PageLoaderContext<
-  TValidation extends PageValidation | undefined,
-  TRoute extends RouteDeclaration | undefined,
+  TValidation extends PageValidation | undefined = undefined,
+  TRoute extends RouteDeclaration | undefined = undefined,
 > = {
   /**
    * `validated()` carries the page's ONE validation surface: the top-level
