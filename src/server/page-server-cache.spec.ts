@@ -436,7 +436,7 @@ describe("server-side page cache (route.cache.serverCache)", () => {
     expect(hit.headers["content-language"]).toBe("en");
   });
 
-  it("with app.url set, a foreign Host shares the configured host's entry instead of minting its own", async () => {
+  it("with app.url set, a foreign Host bypasses the cache and stores nothing", async () => {
     setConfig("app.url", "https://example.test");
 
     await server.inject({ method: "GET", url: "/__scache-basic", headers: { host: "example.test" } });
@@ -446,7 +446,7 @@ describe("server-side page cache (route.cache.serverCache)", () => {
       url: "/__scache-basic",
       headers: { host: "evil.test" },
     });
-    expect(foreign.headers["x-warlock-cache"]).toBe("hit");
+    expect(foreign.headers["x-warlock-cache"]).toBe("bypass");
     expect(fakeCacheStore.size).toBe(1);
   });
 

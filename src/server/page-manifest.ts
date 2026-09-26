@@ -47,6 +47,19 @@ export type PageManifestPageEntry = {
   setupSourceFile?: string;
   /** Layout chain, outermost first. */
   layouts: readonly PageManifestLayoutEntry[];
+  /** Key of the site this page belongs to; absent in single-site manifests. */
+  site?: string;
+};
+
+/** One site's application root (multi-site manifests only). */
+export type PageManifestSiteEntry = {
+  app: NonNullable<PageManifest["app"]>;
+  /** Kept beside `app` so the site's setup sidecar stays separate from its UI module. */
+  appSetup?: { module: Record<string, unknown>; sourceFile: string };
+  /** @deprecated Runtime resolves the hashed entry from `.vite/manifest.json`. */
+  hydrationEntry?: string;
+  /** This site's application-owned error boundary. */
+  errorPage?: PageManifestErrorPageEntry;
 };
 
 /** The optional application error boundary, kept outside the routable page table. */
@@ -113,6 +126,11 @@ export type PageManifest = {
     setupModule?: Record<string, unknown>;
     setupSourceFile?: string;
   };
+  /**
+   * Multi-site manifests only: one entry per site key. Single-site manifests
+   * omit it and keep `app`, so they load exactly as before.
+   */
+  sites?: Readonly<Record<string, PageManifestSiteEntry>>;
   /** An application-owned error boundary. It has no route name or path. */
   errorPage?: PageManifestErrorPageEntry;
   /**

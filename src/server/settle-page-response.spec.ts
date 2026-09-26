@@ -5,6 +5,7 @@ import { defaultApplyBufferedCookie } from "./create-page-route-handler";
 import {
   buildErrorRecord,
   commitBuffers,
+  type ActionResponse,
   createActionResponse,
   createLevelBuffer,
   isActionFailure,
@@ -132,13 +133,12 @@ describe("clearCookie() on a buffered response", () => {
     ]);
   });
 
-  it("satisfies the cookie-writer shape @warlock.js/auth's session helpers take", () => {
-    // A structural copy of auth's `CookieWriter`; web does not depend on auth.
-    type CookieWriter = {
-      cookie(name: string, value: string, options?: Record<string, unknown>): unknown;
-      clearCookie(name: string, options?: Record<string, unknown>): unknown;
-    };
-
-    expectTypeOf(createActionResponse(createLevelBuffer())).toMatchTypeOf<CookieWriter>();
+  it("takes the same cookie() / clearCookie() arguments as core's Response", () => {
+    expectTypeOf<Parameters<Response["cookie"]>>().toMatchTypeOf<
+      Parameters<ActionResponse["cookie"]>
+    >();
+    expectTypeOf<Parameters<Response["clearCookie"]>>().toMatchTypeOf<
+      Parameters<ActionResponse["clearCookie"]>
+    >();
   });
 });

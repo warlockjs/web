@@ -22,6 +22,7 @@ import type { SharedStoreResolver } from "../shared";
 import type { PageContextRunner } from "./execute-page-request";
 import type { InstalledManifestPageRoute } from "./install-page-routes-from-manifest";
 import type { PageManifest } from "./page-manifest";
+import type { SiteDispatchInstall } from "./site-dispatch";
 
 export type InstallProductionPageRoutesOptions = {
   router: Router;

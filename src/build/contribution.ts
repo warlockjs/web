@@ -21,6 +21,7 @@ import type {
   ConnectorBuildGenerateResult,
 } from "@warlock.js/core";
 import type { PluginOption } from "vite";
+import type { SitesConfig } from "../sites/site-config.types";
 
 export type WebBuildOptions = {
   /** Source directory name under the app root. Default: `"src"`. */
@@ -51,6 +52,8 @@ export type WebBuildOptions = {
   aliases?: Record<string, string>;
   /** Extra package names to keep external to the client bundle. */
   external?: string[];
+  /** Build-safe snapshot of `src/config/web.ts`'s static `sites` shape. */
+  sites?: SitesConfig;
 };
 
 function resolveClientOutDir(context: ConnectorBuildContext): string {
@@ -193,6 +196,7 @@ export function createWebBuildContribution(
     routes: [],
   };
   let publicFiles: string[] = [];
+  let sites: SitesConfig | undefined;
 
   return {
     async generate(context: ConnectorBuildContext): Promise<ConnectorBuildGenerateResult | void> {
@@ -200,6 +204,7 @@ export function createWebBuildContribution(
         await import("./generate-pages-barrel");
       const { collectPublicFiles } = await import("./public-files");
       const { cssModulesServerPlugin } = await import("./css-module-esbuild-plugin");
+      const { loadWebBuildConfig } = await import("./load-web-build-config");
 
       // Sitemap (v5.16 contract Part 6 rule 1, revised): `warlock build` does
       // NOT generate the sitemap. It cannot: the application's config is not
@@ -220,6 +225,10 @@ export function createWebBuildContribution(
       );
 
       publicFiles = await collectPublicFiles(path.join(context.appRoot, "public"));
+      // Core's production builder only evaluates its generated config-loader
+      // inside the server bundle. Build hooks therefore import this one config
+      // module directly, then retain only the serialisable site shape.
+      sites = options.sites ?? (await loadWebBuildConfig(context.appRoot)).sites;
 
       const result = await generatePagesBarrel({
         appRoot: context.appRoot,
@@ -237,6 +246,7 @@ export function createWebBuildContribution(
           .split(path.sep)
           .join("/"),
         publicFiles,
+        sites,
       });
 
       pageCount = result.pageCount;
@@ -294,6 +304,7 @@ export function createWebBuildContribution(
             ...appConventionAliases(path.join(context.appRoot, options.srcDir ?? "src")),
           ],
           external: options.external,
+          sites,
           plugins: connectorPlugins,
         });
 

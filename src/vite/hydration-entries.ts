@@ -56,3 +56,57 @@ export function createHydrationClientEntry(webRoot: string): HydrationClientEntr
     devUrl: `/@fs/${sourcePath}`,
   };
 }
+
+/** Query that tells the registry plugin which site's registry an entry's `virtual:warlock/pages` import means. */
+export const HYDRATION_SITE_QUERY = "warlock-site";
+
+/** Rollup entry name of one site's hydration entry: `hydration-<site>`. */
+export function hydrationSiteEntryName(site: string): string {
+  return `${HYDRATION_CLIENT_ENTRY_NAME}-${site}`;
+}
+
+/**
+ * The site a hydration entry id was built for, or `undefined` for the plain
+ * single-site entry. The id is the shared entry file plus `?warlock-site=<site>`,
+ * so the ONE entry source is reused per site with its registry import
+ * redirected by the plugin's `resolveId` rather than copied per site.
+ */
+export function siteOfHydrationEntryId(id: string | undefined): string | undefined {
+  if (id === undefined) return undefined;
+  const queryStart = id.indexOf("?");
+  if (queryStart === -1) return undefined;
+  return new URLSearchParams(id.slice(queryStart + 1)).get(HYDRATION_SITE_QUERY) ?? undefined;
+}
+
+/** Rollup `input` for multi-site mode: `{ "hydration-<site>": <entry>?warlock-site=<site> }`. */
+export function createHydrationSiteInputs(
+  entry: HydrationClientEntry,
+  sites: readonly string[],
+): Record<string, string> {
+  return Object.fromEntries(
+    sites.map((site) => [
+      hydrationSiteEntryName(site),
+      `${entry.sourcePath}?${HYDRATION_SITE_QUERY}=${encodeURIComponent(site)}`,
+    ]),
+  );
+}
+
+type ClientManifestEntry = { name?: string; isEntry?: boolean; file?: string };
+
+/**
+ * The S3b seam: a site's emitted hydration asset (`assets/hydration-<site>-<hash>.js`,
+ * relative to the client dir) read out of a parsed Vite client manifest
+ * (`<clientDir>/.vite/manifest.json`), or `undefined` when the site has no entry.
+ */
+export function findSiteHydrationEntryFile(
+  manifest: Record<string, ClientManifestEntry | undefined>,
+  site: string,
+): string | undefined {
+  const name = hydrationSiteEntryName(site);
+  for (const entry of Object.values(manifest)) {
+    if (entry?.isEntry === true && entry.name === name && typeof entry.file === "string") {
+      return entry.file;
+    }
+  }
+  return undefined;
+}

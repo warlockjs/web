@@ -39,7 +39,7 @@ export async function registerWebHttpRoutes(
     return;
   }
 
-  registerSitemapRoutes(router, { path: sitemapConfig.path, warn });
+  registerSitemapRoutes(router, { path: sitemapConfig.path, warn, appRoot: options.appRoot });
 }
 
 /**

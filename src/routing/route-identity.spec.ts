@@ -3,6 +3,7 @@ import {
   canonicalizeRouteExport,
   InvalidPageCacheOptInError,
   resolvePageRouteCache,
+  resolvePageRouteIdentity,
 } from "./route-identity";
 import { PageRoutePathNotSupportedError } from "./page-route-grammar";
 
@@ -88,6 +89,22 @@ describe("canonicalizeRouteExport", () => {
         expect((error as Error).message).toContain(path);
       }
     }
+  });
+});
+
+describe("resolvePageRouteIdentity", () => {
+  it.each([
+    [undefined, "index", "landing.index"],
+    ["/welcome", "index", "landing.index"],
+    [{ path: "/welcome" }, "index", "landing.index"],
+    [{ path: "/welcome", name: "welcome" }, "welcome", "welcome"],
+  ] as const)("keeps generated names site-scoped for %o routes", (route, singleSiteName, siteName) => {
+    expect(resolvePageRouteIdentity(route, "index.page.tsx", "index.page.tsx").name).toBe(
+      singleSiteName,
+    );
+    expect(resolvePageRouteIdentity(route, "index.page.tsx", "index.page.tsx", "landing").name).toBe(
+      siteName,
+    );
   });
 });
 

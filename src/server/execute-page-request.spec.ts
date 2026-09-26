@@ -4,21 +4,27 @@ import { Request, Response } from "@warlock.js/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { resolvePageMetadata as ResolvePageMetadata } from "./resolve-page-metadata";
 
-const { resolvePageMetadata } = vi.hoisted(() => ({
+const { resolvePageMetadata, shared } = vi.hoisted(() => ({
   resolvePageMetadata: vi.fn<typeof ResolvePageMetadata>((_input) => ({ metadata: {} })),
+  shared: {} as Record<string, unknown>,
 }));
 
 vi.mock("./resolve-page-metadata", () => ({ resolvePageMetadata }));
 vi.mock("../shared", () => ({
-  enterSharedScope: vi.fn(),
-  sealShared: vi.fn(async () => Object.freeze({})),
+  shared,
+  enterSharedScope: vi.fn(() => {
+    for (const key of Object.keys(shared)) delete shared[key];
+  }),
+  sealShared: vi.fn(async () => Object.freeze({ ...shared })),
 }));
 
 import {
   connectPageContext,
   executePageRequest,
+  RESOLVED_SITE_SHARED,
   type PageRouteEntry,
 } from "./execute-page-request";
+import { shared as liveShared } from "../shared";
 import { composeLayoutModules } from "./compose-layout-modules";
 import { PageLoaderTimeoutError } from "./page-loader-timeout-error";
 
@@ -69,6 +75,64 @@ beforeEach(() => {
 });
 
 describe("executePageRequest loaders", () => {
+  it("merges resolver shared data before middleware and exposes site to loaders", async () => {
+    const response = new Response();
+    (response as unknown as { baseResponse: { sent: boolean } }).baseResponse = { sent: false };
+    const site = { key: "tenant", host: "tenant.test", basePath: "", tenantKey: "tenant-1" };
+    const siteRequest = {
+      ...request,
+      method: "POST",
+      body: {},
+      validated: () => ({}),
+      header: () => undefined,
+      site,
+      [RESOLVED_SITE_SHARED]: { tenant: "tenant-1" },
+    } as unknown as Request;
+    const observed: unknown[] = [];
+    const entry: PageRouteEntry = {
+      path: "/account",
+      name: "account",
+      triple: {
+        app: {
+          middleware: [() => {
+            observed.push((liveShared as unknown as { tenant?: string }).tenant);
+          }],
+        },
+        layout: {},
+        page: {
+          action: (ctx) => observed.push({ actionSite: ctx.site }),
+          loader: (ctx) =>
+            observed.push({ shared: (ctx.shared as { tenant?: string }).tenant, site: ctx.site }),
+        },
+      },
+    };
+
+    await executePageRequest({
+      url: "/account",
+      routes: [entry],
+      createHttp: () => ({ request: siteRequest, response }),
+    });
+
+    expect(observed).toEqual([
+      "tenant-1",
+      { actionSite: site },
+      { shared: "tenant-1", site },
+    ]);
+  });
+
+  it("leaves site undefined for a single-site loader", async () => {
+    const observed: unknown[] = [];
+    const entry = route({ page: (ctx) => observed.push(ctx.site) });
+
+    await executePageRequest({
+      url: "/account",
+      routes: [entry],
+      createHttp: () => ({ request, response: new Response() }),
+    });
+
+    expect(observed).toEqual([undefined]);
+  });
+
   it("preserves a returned core Response and does not start lower loaders", async () => {
     const calls: string[] = [];
     const terminal = new Response();

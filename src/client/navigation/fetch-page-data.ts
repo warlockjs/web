@@ -27,6 +27,7 @@ import {
   WARLOCK_DATA_REQUEST_VALUE,
 } from "../../routing/data-request";
 import { isHydrationPayload, type HydrationDocumentPayloadSource } from "../../hydration-payload";
+import { currentHydrationSite } from "../hydrate-site";
 import {
   prepareDeferredPageData,
   rejectPendingDeferredKeys,
@@ -333,6 +334,8 @@ async function readNdjsonPageData(response: Response, url: string): Promise<Page
 export type FetchPageDataOptions = {
   /** Do not let the server persist its legacy locale cookie for this request. */
   provisionalLocale?: boolean;
+  /** The site that booted this client; absent preserves single-site behaviour. */
+  site?: string;
 };
 
 export async function fetchPageData(
@@ -383,7 +386,7 @@ export async function fetchPageData(
     return { type: "hard-navigate", url, reason: `status ${response.status}` };
   }
 
-  return readPageDataResponse(response, url);
+  return readPageDataResponse(response, url, options.site ?? currentHydrationSite());
 }
 
 /**
@@ -395,7 +398,19 @@ export async function fetchPageData(
 export async function readPageDataResponse(
   response: Response,
   url: string,
+  expectedSite = currentHydrationSite(),
 ): Promise<PageDataResult> {
+  const responseSite = response.headers.get("x-warlock-site");
+
+  if (expectedSite !== undefined && responseSite !== null && responseSite !== expectedSite) {
+    void response.body?.cancel().catch(() => undefined);
+
+    return {
+      type: "hard-navigate",
+      url,
+      reason: `site mismatch: expected "${expectedSite}", received "${responseSite}"`,
+    };
+  }
   // Checked BEFORE the plain-JSON gate: a page with no deferred keys never
   // gets an ndjson body even when it was accepted (`write-deferred-ndjson-response.ts`
   // is only ever invoked for a page that has some), so this branch is taken

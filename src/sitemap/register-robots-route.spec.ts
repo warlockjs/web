@@ -69,6 +69,59 @@ describe("registerRobotsRoute", () => {
     );
   });
 
+  it("selects the fixed site from the request host and uses its origin in the Sitemap line", async () => {
+    config.set("web", {
+      sites: {
+        landing: { pages: "(landing)", hosts: ["landing.test"] },
+        platform: { pages: "(platform)", hosts: ["app.test"], basePath: "/portal" },
+      },
+      robots: { enabled: true, groups: [{ userAgent: "*" }] },
+      sitemap: { enabled: true, path: "/sitemap.xml" },
+    });
+
+    const { router, routes } = capturingRouter();
+    registerRobotsRoute(router, { publicDir: publicDir() });
+    const response = { text: vi.fn() };
+
+    await routes.get("/robots.txt")!({
+      request: {
+        protocol: "https",
+        path: "/robots.txt",
+        header: (name: string) => (name === "host" ? "app.test:8443" : null),
+        baseRequest: { hostname: "app.test" },
+      } as never,
+      response: response as never,
+    });
+
+    expect(response.text).toHaveBeenCalledWith(
+      "User-agent: *\nSitemap: https://app.test:8443/portal/sitemap.xml\n",
+    );
+  });
+
+  it("disallows non-indexable dynamic sites without exposing a sitemap", async () => {
+    config.set("web", {
+      sites: { tenant: { pages: "(tenant)", dynamic: true } },
+      resolveHost: () => ({ site: "tenant", key: "acme", indexable: false }),
+      robots: { enabled: true, groups: [{ userAgent: "*" }] },
+      sitemap: { enabled: true },
+    });
+    const { router, routes } = capturingRouter();
+    registerRobotsRoute(router, { publicDir: publicDir() });
+    const response = { text: vi.fn() };
+
+    await routes.get("/robots.txt")!({
+      request: {
+        protocol: "https",
+        path: "/robots.txt",
+        header: (name: string) => (name === "host" ? "acme.test" : null),
+        baseRequest: { hostname: "acme.test" },
+      } as never,
+      response: response as never,
+    });
+
+    expect(response.text).toHaveBeenCalledWith("User-agent: *\nDisallow: /\n");
+  });
+
   it("registers /robots.txt with no Sitemap line when the sitemap is disabled", async () => {
     config.set("web", {
       robots: { enabled: true, groups: [{ userAgent: "*" }] },

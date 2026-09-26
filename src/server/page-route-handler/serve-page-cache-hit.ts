@@ -12,13 +12,22 @@ import {
 } from "./store-page-cache-after-render";
 import { persistRequestedLocale } from "./persist-requested-locale";
 
+type SelectedPageSite = {
+  key: string;
+  tenantKey?: string;
+};
+
 /**
- * With `app.url` configured, a request host outside it must not mint its own
- * cache entries (a forged `Host` would fill the cache and poison reflected-host
- * renders), so it is keyed as the configured host. Without `app.url` the
- * request host is used as before.
+ * Decides the host a page cache entry is keyed under. For a selected site, the
+ * host has already passed site selection, so it is lowercased (with its port)
+ * and never bypasses because of `app.url`. Without a selected site, `app.url`
+ * permits only its configured host (case-insensitive, port-aware); a foreign
+ * request host returns `"bypass"` — no lookup and no store. Without `app.url`
+ * (or if it is unparsable), the request host is used.
  */
-export function resolvePageCacheHost(requestHost: string): string {
+export function resolvePageCacheHost(requestHost: string, site?: SelectedPageSite): string | "bypass" {
+  if (site !== undefined) return requestHost.toLowerCase();
+
   const configured = config.get("app.url") as string | undefined;
 
   if (!configured) return requestHost;
@@ -31,7 +40,7 @@ export function resolvePageCacheHost(requestHost: string): string {
     return requestHost;
   }
 
-  return requestHost.toLowerCase() === configuredHost ? requestHost : configuredHost;
+  return requestHost.toLowerCase() === configuredHost ? requestHost : "bypass";
 }
 
 export type PageCacheLookupOutcome =
@@ -98,8 +107,20 @@ export async function resolvePageCacheHitOrMiss(options: {
     };
   }
 
+  const site = (request as { site?: SelectedPageSite }).site;
+  const cacheHost = resolvePageCacheHost(String(request.header("host", "") ?? ""), site);
+
+  if (cacheHost === "bypass") {
+    return {
+      served: false,
+      cacheHeaderValue: "bypass",
+      cacheKey: undefined,
+      attemptStorageAfterRender: false,
+    };
+  }
+
   const cacheKey = computePageCacheKey({
-    host: resolvePageCacheHost(String(request.header("host", "") ?? "")),
+    host: cacheHost,
     vary: cache.varyBy?.(request),
     path: request.path,
     query: request.query as Record<string, unknown>,
@@ -107,6 +128,8 @@ export async function resolvePageCacheHitOrMiss(options: {
     locale: request.locale,
     variant: pageCacheVariant,
     translationsRevision: options.translationsRevision,
+    site: site?.key,
+    tenantKey: site?.tenantKey,
   });
 
   let hit: Awaited<ReturnType<typeof getPageCacheEntry>>;

@@ -25,14 +25,19 @@ function isLocaleRoutingStrategy(value: unknown): value is LocaleRoutingStrategy
   return typeof value === "string" && (STRATEGIES as readonly string[]).includes(value);
 }
 
+/** The strategy-only shape accepted from either `web.localeRouting` or one site. */
+export type LocaleRoutingConfig = { readonly strategy?: LocaleRoutingStrategy };
+
 /**
  * Resolves `web.localeRouting.strategy` (default `"none"`) against
  * `app.localeCodes` / `app.localeCode`, throwing a clear config error rather
  * than booting with a routing table nothing can satisfy.
  */
-export function resolveLocaleRouting(): LocaleRouting {
-  const localeRoutingConfig = config.get("web", {}).localeRouting;
-  const strategy = localeRoutingConfig?.strategy ?? "none";
+export function resolveLocaleRouting(localeRoutingConfig?: LocaleRoutingConfig): LocaleRouting {
+  // An explicitly configured site (including `{}`) replaces the global
+  // strategy; absence is the only case that inherits `web.localeRouting`.
+  const effectiveConfig = localeRoutingConfig ?? config.get("web", {}).localeRouting;
+  const strategy = effectiveConfig?.strategy ?? "none";
 
   if (!isLocaleRoutingStrategy(strategy)) {
     throw new LocaleRoutingConfigError(

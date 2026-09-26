@@ -4,6 +4,7 @@ import type { RobotsConfig } from "./sitemap/robots-config-types";
 import type { WebSitemapConfig } from "./sitemap/sitemap-config-types";
 import type { WebErrorReportingConfigurations } from "./server/error-reporting-config";
 import type { SessionResolver } from "./session/session.types";
+import type { HostResolver, SitesConfig } from "./sites/site-config.types";
 
 /** Customises crawler detection for the fully resolved-document renderer. */
 export type CrawlerDetectionOptions = {
@@ -32,4 +33,14 @@ export type WebConfigurations = {
   errors?: WebErrorReportingConfigurations;
   /** Resolves the signed-in user for pages, e.g. auth's `pageSession()`. */
   session?: SessionResolver;
+  /** Opt-in multi-site mode: several sites (fixed hosts or resolver-driven) in one app. */
+  sites?: SitesConfig;
+  /** Maps a request host to a dynamic site; `null` means unknown host. */
+  resolveHost?: HostResolver;
+  /** Opt-in memoisation of `resolveHost`, keyed by host ONLY; `ttl` in seconds. */
+  resolveCache?: { ttl: number };
+  /** What an unmatched host gets: a plain 404 (default) or the key of a fallback site. */
+  unknownHost?: "not-found" | string;
+  /** Path of the opt-in Caddy on-demand TLS `ask` endpoint, e.g. `/.well-known/warlock/domain`. */
+  tlsAsk?: string;
 };

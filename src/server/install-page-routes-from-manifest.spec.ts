@@ -163,6 +163,45 @@ function install(
 }
 
 describe("production page route installation", () => {
+  it("uses each site's own error boundary when installing a multi-site manifest", async () => {
+    const landingError = { module: { default: () => "landing" }, sourceFile: "src/web/(landing)/error.page.tsx" };
+    const platformError = { module: { default: () => "platform" }, sourceFile: "src/web/(platform)/error.page.tsx" };
+    const landingPage = { ...homePage, site: "landing", sourceFile: "src/web/(landing)/index.page.tsx" };
+    const platformPage = {
+      ...homePage,
+      module: { default: () => null, config: { route: { path: "/", name: "platform.index" } } },
+      site: "platform",
+      sourceFile: "src/web/(platform)/index.page.tsx",
+    };
+    const { router } = recordingRouter();
+    const { createHandler, built } = recordingHandlerFactory();
+    const dispatch = { add() {}, setNotFound() {}, register() {} };
+
+    installPageRoutesFromManifest({
+      router,
+      createHandler,
+      siteDispatch: {
+        dispatch,
+        sites: {
+          landing: { pages: "(landing)", hosts: ["landing.test"] },
+          platform: { pages: "(platform)", hosts: ["platform.test"] },
+        },
+      },
+      manifest: {
+        pages: [landingPage, platformPage],
+        sites: {
+          landing: { app: { module: appModule, sourceFile: "src/web/(landing)/root.tsx" }, errorPage: landingError },
+          platform: { app: { module: appModule, sourceFile: "src/web/(platform)/root.tsx" }, errorPage: platformError },
+        },
+      },
+    });
+
+    const landingHandler = built.find((options) => options.pageFile === landingPage.sourceFile)!;
+    const platformHandler = built.find((options) => options.pageFile === platformPage.sourceFile)!;
+    expect(await landingHandler.loadErrorPage?.()).toBe(landingError.module);
+    expect(await platformHandler.loadErrorPage?.()).toBe(platformError.module);
+  });
+
   it("composes the layout prefix with the page's declared route path", () => {
     const { run, registered } = install(manifestOf([homePage, productsPage]));
 
@@ -1010,5 +1049,23 @@ describe("installPageRoutesFromManifest — route-local CSS", () => {
     run();
 
     expect(built[0].stylesheetUrls).toEqual([]);
+  });
+
+  it("refuses /blog/:id beside /blog/:slug, which answer the same URLs", () => {
+    const byId: PageManifestPageEntry = {
+      module: { default: () => null, config: { route: "/blog/:id" } },
+      sourceFile: "src/app/main/web/by-id.page.tsx",
+      layouts: [homeLayout],
+    };
+    const bySlug: PageManifestPageEntry = {
+      module: { default: () => null, config: { route: "/blog/:slug" } },
+      sourceFile: "src/app/main/web/by-slug.page.tsx",
+      layouts: [homeLayout],
+    };
+
+    const { run } = install(manifestOf([byId, bySlug]));
+
+    expect(run).toThrowError(/by-id.page.tsx/);
+    expect(run).toThrowError(/by-slug.page.tsx/);
   });
 });

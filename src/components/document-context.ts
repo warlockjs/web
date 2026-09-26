@@ -260,6 +260,8 @@ export type DocumentContextValue = {
    * present).
    */
   hydrationClientModuleUrl?: string;
+  /** Multi-site bootstrap marker, deliberately outside the hydration payload. */
+  siteKey?: string;
   /**
    * `modulepreload` URLs for the hydration entry's own STATICALLY imported
    * chunks (card 53f8647e) — the `vendor-react` chunk

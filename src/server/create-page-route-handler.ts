@@ -435,6 +435,11 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
 
     const wantsData = isDataRequest(request.header(WARLOCK_DATA_REQUEST_HEADER, undefined));
 
+    // A same-origin base-path crossing can select a different site's root.
+    // The hydrated client compares this marker with its bootstrap site before
+    // it tries to compose a tree from another site's registry.
+    if (wantsData && request.site !== undefined) response.header("x-warlock-site", request.site.key);
+
     // Always-on Origin/Referer check for an action POST, before any module
     // loads or middleware runs (design 2.7).
     if (actionMode) {

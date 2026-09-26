@@ -12,7 +12,7 @@ Web adds an SSR React page layer to a Warlock app. Pages live under `src/web/**`
 4. Post forms to a Core API route (`submit-a-form.md`), then `refresh()` to revalidate; or handle a form on the page itself with an `action` export and `<Form>` (`handle-a-form-action.md`).
 5. Guard pages and read the user (`protect-a-page.md`).
 6. Translate pages (`localize-pages.md`); stream slow data (`stream-deferred-data.md`).
-7. Polish: styles (`serve-styles.md`), sitemap and robots (`generate-sitemap.md`), themes (`multi-theme.md`), client-only UI (`render-client-only.md`), vitals (`measure-web-vitals.md`).
+7. Polish: styles (`serve-styles.md`), sitemap and robots (`generate-sitemap.md`), themes (`multi-theme.md`), multi-site apps (`multi-site/SKILL.md`), client-only UI (`render-client-only.md`), vitals (`measure-web-vitals.md`).
 
 ## Conventions and pitfalls
 - Route, cache, validation, middleware, metadata and sitemap policy go in `config`; keep loaders for data only.

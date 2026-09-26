@@ -25,13 +25,15 @@ const PAYLOAD = {
 
 function respondWith(
   body: unknown,
-  init: { status?: number; contentType?: string | null; url?: string } = {},
+  init: { status?: number; contentType?: string | null; url?: string; site?: string } = {},
 ): void {
   const headers = new Headers();
 
   if (init.contentType !== null) {
     headers.set("content-type", init.contentType ?? "application/json; charset=utf-8");
   }
+
+  if (init.site !== undefined) headers.set("x-warlock-site", init.site);
 
   const response = {
     ok: (init.status ?? 200) >= 200 && (init.status ?? 200) < 300,
@@ -99,6 +101,26 @@ describe("fetchPageData", () => {
       type: "payload",
       payload: { ...PAYLOAD, name: "auth.login" },
       url: "https://app.test/login",
+    });
+  });
+
+  it("falls back to a document navigation when the response belongs to another site", async () => {
+    respondWith(PAYLOAD, { site: "tenant-admin" });
+
+    await expect(fetchPageData("/admin", undefined, { site: "tenant" })).resolves.toEqual({
+      type: "hard-navigate",
+      url: "/admin",
+      reason: 'site mismatch: expected "tenant", received "tenant-admin"',
+    });
+  });
+
+  it("soft-navigates when the response site matches the boot site", async () => {
+    respondWith(PAYLOAD, { site: "tenant" });
+
+    await expect(fetchPageData("/products", undefined, { site: "tenant" })).resolves.toEqual({
+      type: "payload",
+      payload: PAYLOAD,
+      url: "/products",
     });
   });
 

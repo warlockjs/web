@@ -375,6 +375,60 @@ describe("installPageRoutesFromManifest — locale routing, none", () => {
   });
 });
 
+describe("installPageRoutesFromManifest — per-site locale routing", () => {
+  it("expands only the landing slice and keeps equal paths isolated by site", () => {
+    config.set("web", {});
+    config.set("app", { localeCodes: ["en", "ar"], localeCode: "en" });
+
+    const routes: Array<{ site: string; path: string }> = [];
+    const dispatch = {
+      add(site: string, _method: string, path: string) {
+        routes.push({ site, path });
+      },
+      setNotFound() {},
+      register() {},
+    };
+    const landingPage = {
+      ...postsPage,
+      module: { config: { route: { path: "/pricing", name: "landing.pricing" } }, default: () => null },
+      site: "landing",
+      sourceFile: "src/web/(landing)/pricing.page.tsx",
+    };
+    const platformPage = {
+      ...postsPage,
+      module: { config: { route: { path: "/pricing", name: "platform.pricing" } }, default: () => null },
+      site: "platform",
+      sourceFile: "src/web/(platform)/pricing.page.tsx",
+    };
+
+    installPageRoutesFromManifest({
+      router: recordingRouter().router,
+      createHandler: recordingHandlerFactory().createHandler,
+      siteDispatch: {
+        dispatch,
+        sites: {
+          landing: { pages: "(landing)", hosts: ["landing.test"], localeRouting: { strategy: "prefix" } },
+          platform: { pages: "(platform)", hosts: ["platform.test"] },
+        },
+      },
+      manifest: {
+        pages: [landingPage, platformPage],
+        sites: {
+          landing: { app: { module: appModule, sourceFile: "src/web/(landing)/root.tsx" } },
+          platform: { app: { module: appModule, sourceFile: "src/web/(platform)/root.tsx" } },
+        },
+      },
+    });
+
+    expect(routes).toEqual([
+      { site: "landing", path: "/pricing" },
+      { site: "landing", path: "/en/pricing" },
+      { site: "landing", path: "/ar/pricing" },
+      { site: "platform", path: "/pricing" },
+    ]);
+  });
+});
+
 describe("installPageRoutesFromManifest — locale routing, [locale] folder (card C)", () => {
   it("registers /:locale/posts whose handler pins request.locale to ar for a configured code", async () => {
     config.set("app", { localeCodes: ["en", "ar"], localeCode: "en" });

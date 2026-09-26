@@ -11,6 +11,13 @@ import type { SitemapGenerationFile, SitemapGenerationManifest } from "@warlock.
 import { getSitemapServingState } from "./sitemap-lifecycle";
 import { resolveSitemapHttpValidators } from "./sitemap-http-validators";
 import type { SitemapServingState } from "./sitemap-serving-state";
+import {
+  buildSiteSitemapXml,
+  createSitemapSiteSelector,
+  isNonIndexableDynamicSite,
+  selectSitemapSite,
+} from "./site-sitemap";
+import type { SitemapPageSource } from "./sitemap-page-source";
 
 const NOT_GENERATED_RETRY_AFTER_SECONDS = 30;
 const IMMUTABLE_GENERATION_CACHE_CONTROL = "public, max-age=31536000, immutable";
@@ -202,6 +209,9 @@ export type RegisterSitemapRoutesOptions = {
   readonly warn?: (message: string) => void;
   /** Test seam; production reads the lifecycle's serving-state getter. */
   readonly getServingState?: () => SitemapServingState | undefined;
+  /** App root and source are forwarded only by the multi-site in-memory reader. */
+  readonly appRoot?: string;
+  readonly pageSource?: SitemapPageSource;
 };
 
 /**
@@ -212,8 +222,25 @@ export type RegisterSitemapRoutesOptions = {
 export function registerSitemapRoutes(router: Router, options: RegisterSitemapRoutesOptions): void {
   const warn = options.warn ?? console.warn;
   const getServingState = options.getServingState ?? getSitemapServingState;
+  const siteSelector = createSitemapSiteSelector();
 
   const currentManifestHandler: SitemapRouteHandler = async (context) => {
+    const selected = await selectSitemapSite(context.request, siteSelector);
+    if (selected?.kind === "not-found" || (selected && isNonIndexableDynamicSite(selected))) {
+      return context.response.notFound() as ReturnedResponse;
+    }
+    if (selected) {
+      context.response.header("Content-Type", "application/xml");
+      return context.response.text(
+        await buildSiteSitemapXml({
+          request: context.request,
+          site: selected,
+          appRoot: options.appRoot,
+          pageSource: options.pageSource,
+        }),
+      ) as ReturnedResponse;
+    }
+
     const state = getServingState();
 
     if (!state) return serveNotGeneratedYet(context.response, warn);

@@ -30,6 +30,8 @@ import type { SitemapPageSource } from "./sitemap-page-source";
 
 export type CollectSitemapEntriesOptions = DiscoverPagesOptions & {
   readonly locales: LocaleMatrix;
+  /** Limits collection to one site when serving a multi-site sitemap. */
+  readonly site?: string;
   /** Injected page source — bypasses both the production registry and `listRoutablePages`. Primarily for tests. */
   readonly pageSource?: SitemapPageSource;
 };
@@ -116,6 +118,7 @@ export async function collectSitemapEntries(
   const models = new Set<SitemapModelLike>();
 
   for (const page of pages) {
+    if (options.site !== undefined && page.site !== options.site) continue;
     // THE one call site for the layout/page precedence rule. Both page sources
     // hand over raw declarations — the page's own and each layout's on its
     // path — and the rule is applied here, once, so dev and production cannot

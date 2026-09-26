@@ -28,6 +28,7 @@ import {
   type DiscoveredPage,
   type DiscoveredRoutablePage,
 } from "./discover-pages";
+import type { RegisteredSites, RouteTableEntry } from "../routing/route-table";
 
 export type GenerateClientRegistryOptions = {
   /**
@@ -43,10 +44,24 @@ export type GenerateClientRegistryOptions = {
   pages: readonly DiscoveredPage[];
   /** Maps an absolute source file path to the specifier the emitted module will import. */
   toImportSpecifier: (absoluteFilePath: string) => string;
+  /**
+   * The complete discovered graph when generating one site's hydration entry.
+   * It emits name/path/site data only: routes outside `pages` never import page
+   * code into this site's bundle.
+   */
+  routeTablePages?: readonly DiscoveredPage[];
+  /** Fixed-host metadata needed by client-side cross-site `href()`. */
+  sites?: RegisteredSites;
 };
 
 /** The name of the array the generated module exports. */
 export const CLIENT_REGISTRY_EXPORT_NAME = "pages";
+
+/** Compact name/path/site seed consumed by the hydration entry's route publisher. */
+export const CLIENT_ROUTE_TABLE_EXPORT_NAME = "routeTable";
+
+/** Shared with the hydration boot; carries the complete table without importing other-site pages. */
+export const CLIENT_ROUTE_TABLE_SLOT = "warlock.web.clientRouteTable";
 
 /** The specifier the generated module imports its entry type from. */
 const CLIENT_RUNTIME_SPECIFIER = "@warlock.js/web/client/runtime";
@@ -231,7 +246,7 @@ function entrySource(
  * rather than as a missing module.
  */
 export function generateClientRegistry(options: GenerateClientRegistryOptions): string {
-  const { pages, toImportSpecifier } = options;
+  const { pages, toImportSpecifier, routeTablePages = pages, sites } = options;
   const routablePages = pages.filter(isDiscoveredRoutablePage);
   const errorPage = pages.find((page) => page.type === "error");
   const errorPageFile = errorPage?.pageFile;
@@ -241,16 +256,25 @@ export function generateClientRegistry(options: GenerateClientRegistryOptions): 
 
   const declaration = `export const ${CLIENT_REGISTRY_EXPORT_NAME}: readonly ClientPageEntry[] =`;
 
-  if (routablePages.length === 0) {
-    return [...HEADER, "", `${declaration} [];`, ""].join("\n");
-  }
-
-  return [
+  const tableEntries: RouteTableEntry[] = routeTablePages
+    .filter(isDiscoveredRoutablePage)
+    .map((page) => ({
+      name: page.routeName,
+      path: page.routePath,
+      ...(page.site === undefined ? {} : { site: page.site }),
+    }));
+  const routeTable = [
+    `export const ${CLIENT_ROUTE_TABLE_EXPORT_NAME} = ${JSON.stringify({ entries: tableEntries, sites })};`,
+    `globalThis[Symbol.for(${quote(CLIENT_ROUTE_TABLE_SLOT)})] = ${CLIENT_ROUTE_TABLE_EXPORT_NAME};`,
+  ].join("\n");
+  const registry = routablePages.length === 0
+    ? [`${declaration} [];`]
+    : [
     ...HEADER,
-    "",
     `${declaration} [`,
     ...routablePages.flatMap((page) => entrySource(page, errorPageFile, errorSetupFile, toImportSpecifier)),
     "];",
-    "",
-  ].join("\n");
+  ];
+
+  return [...(routablePages.length === 0 ? [...HEADER, ""] : []), ...registry, routeTable, ""].join("\n");
 }

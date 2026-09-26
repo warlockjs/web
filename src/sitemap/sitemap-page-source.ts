@@ -11,7 +11,10 @@
 import type { ListedRoutablePage } from "../build/list-routable-pages";
 
 /** One routable page's identity + declared exports — the shape both sources produce. */
-export type SitemapPageSourceEntry = ListedRoutablePage;
+export type SitemapPageSourceEntry = ListedRoutablePage & {
+  /** Key of the owning site; absent for a single-site page graph. */
+  site?: string;
+};
 
 /** Every routable page, excluding the not-found/error page. May resolve sync or async. */
 export type SitemapPageSource = () =>

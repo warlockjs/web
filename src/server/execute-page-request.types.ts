@@ -1,6 +1,7 @@
 import type { HttpContext, Request, Response } from "@warlock.js/core";
 import type { BaseValidator } from "@warlock.js/seal";
 import type { SharedContext } from "../index";
+import type { PageSite } from "../context";
 import type { MetadataOutput, PageMetadata } from "../metadata";
 import type { PageActionConfig } from "../page-config";
 import type { SerializedErrorPageProps } from "../components/document-context";
@@ -36,6 +37,7 @@ export type PipelineLoaderContext = {
   request: Request;
   response: BufferedResponse;
   shared: SharedContext;
+  site?: PageSite;
   /**
    * Fires when the underlying HTTP request is abandoned (client
    * disconnected, socket closed) before the response finished — see

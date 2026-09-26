@@ -23,6 +23,8 @@ import { readModuleConfig } from "../build/read-module-config";
 import { pageSetupFileFor, pageSetupOwnerFileFor } from "../build/page-setup-file";
 import { resolveLocaleRouting } from "../server/locale-routing/resolve-locale-routing";
 import { toPosix } from "../shared/to-posix";
+import type { SitesConfig } from "../sites/site-config.types";
+import { siteOfHydrationEntryId } from "./hydration-entries";
 import { isProjectableFile, SERVER_EXPORT_NAMES } from "./projection";
 
 /**
@@ -41,6 +43,15 @@ export const CLIENT_PAGE_REGISTRY_ID = "virtual:warlock/pages";
  */
 export const RESOLVED_CLIENT_PAGE_REGISTRY_ID = `\0${CLIENT_PAGE_REGISTRY_ID}`;
 
+/** `virtual:warlock/pages/<site>` — one site's registry in multi-site mode. */
+export function siteRegistryId(site: string): string {
+  return `${CLIENT_PAGE_REGISTRY_ID}/${site}`;
+}
+
+export function resolvedSiteRegistryId(site: string): string {
+  return `\0${siteRegistryId(site)}`;
+}
+
 /** The literal client flag emitted from the static root config projection. */
 export const CLIENT_STRICT_MODE_EXPORT_NAME = "strictMode";
 
@@ -52,9 +63,12 @@ export const CLIENT_STRICT_MODE_EXPORT_NAME = "strictMode";
  * the browser, so only the resolved virtual module in the client graph is the
  * cache entry this operation owns.
  */
-export function invalidateClientPageRegistry(vite: ViteDevServer): void {
+export function invalidateClientPageRegistry(vite: ViteDevServer, site?: string): void {
   const moduleGraph = vite.environments.client.moduleGraph;
-  const registryModule = moduleGraph.getModuleById(RESOLVED_CLIENT_PAGE_REGISTRY_ID);
+  // A change inside one site's folder evicts only that site's registry.
+  const registryModule = moduleGraph.getModuleById(
+    site === undefined ? RESOLVED_CLIENT_PAGE_REGISTRY_ID : resolvedSiteRegistryId(site),
+  );
 
   if (registryModule) moduleGraph.invalidateModule(registryModule);
 
@@ -66,6 +80,8 @@ export type ClientPageRegistryPluginOptions = {
   appRoot?: string;
   /** Source directory name under `appRoot`; forwarded verbatim to `discoverPages`, which defaults it to `"src"`. */
   srcDir?: string;
+  /** `web.sites`. When set, `virtual:warlock/pages/<site>` serves only that site's pages. */
+  sites?: SitesConfig;
   /**
    * Optional server-side barrier run before this plugin decides how the browser
    * receives a page update. `true` means the callback already published the
@@ -99,8 +115,32 @@ function rootConfigFile(appRoot: string, srcDir: string | undefined): string {
   return path.join(appRoot, srcDir ?? "src", "web", "root.tsx");
 }
 
-function isRootSetupFile(file: string, appRoot: string, srcDir: string | undefined): boolean {
-  const rootFile = rootConfigFile(appRoot, srcDir);
+/** The site whose folder (`<src>/web/<site.pages>`) contains `file`, if any. */
+function siteOwningFile(
+  file: string,
+  appRoot: string,
+  srcDir: string | undefined,
+  sites: SitesConfig | undefined,
+): string | undefined {
+  if (sites === undefined) return undefined;
+  const target = path.resolve(file);
+  const webRoot = path.join(appRoot, srcDir ?? "src", "web");
+  return Object.keys(sites).find((key) => {
+    const folder = path.resolve(webRoot, sites[key]!.pages) + path.sep;
+    return target.startsWith(folder);
+  });
+}
+
+function siteRootFile(appRoot: string, srcDir: string | undefined, sites: SitesConfig, site: string): string {
+  return path.join(appRoot, srcDir ?? "src", "web", sites[site]!.pages, "root.tsx");
+}
+
+function isRootSetupFile(
+  file: string,
+  appRoot: string,
+  srcDir: string | undefined,
+  rootFile = rootConfigFile(appRoot, srcDir),
+): boolean {
   return path.resolve(file) === pageSetupFileFor(rootFile);
 }
 
@@ -118,8 +158,11 @@ function isSetupFile(file: string): boolean {
  * import `root.tsx`: that module can contain middleware and server-only
  * dependencies. `readModuleConfig` parses source without evaluating it.
  */
-function readClientStrictMode(appRoot: string, srcDir: string | undefined): boolean {
-  const rootFile = rootConfigFile(appRoot, srcDir);
+function readClientStrictMode(
+  appRoot: string,
+  srcDir: string | undefined,
+  rootFile = rootConfigFile(appRoot, srcDir),
+): boolean {
   if (!fs.existsSync(rootFile) || !fs.statSync(rootFile).isFile()) return false;
   const setupCandidate = pageSetupFileFor(rootFile);
   const configFile =
@@ -474,14 +517,32 @@ export function clientPageRegistry(options: ClientPageRegistryPluginOptions = {}
   return {
     name: "warlock:client-page-registry",
     enforce: "pre",
-    resolveId(source) {
-      if (source === CLIENT_PAGE_REGISTRY_ID) return RESOLVED_CLIENT_PAGE_REGISTRY_ID;
+    resolveId(source, importer) {
+      if (source === CLIENT_PAGE_REGISTRY_ID) {
+        // A per-site hydration entry (`<entry>?warlock-site=<site>`) imports the
+        // unqualified specifier; it means THAT site's registry.
+        const entrySite = siteOfHydrationEntryId(importer);
+        if (options.sites !== undefined && entrySite !== undefined && entrySite in options.sites) {
+          return resolvedSiteRegistryId(entrySite);
+        }
+        return RESOLVED_CLIENT_PAGE_REGISTRY_ID;
+      }
+      const prefix = `${CLIENT_PAGE_REGISTRY_ID}/`;
+      if (options.sites !== undefined && source.startsWith(prefix)) {
+        const site = source.slice(prefix.length);
+        if (site in options.sites) return resolvedSiteRegistryId(site);
+      }
       return undefined;
     },
     load(id) {
-      if (id !== RESOLVED_CLIENT_PAGE_REGISTRY_ID) return undefined;
+      let site: string | undefined;
+      if (options.sites !== undefined) {
+        site = Object.keys(options.sites).find((key) => id === resolvedSiteRegistryId(key));
+      }
+      if (id !== RESOLVED_CLIENT_PAGE_REGISTRY_ID && site === undefined) return undefined;
 
-      const pages = discoverPages({ appRoot, srcDir: options.srcDir });
+      const discovered = discoverPages({ appRoot, srcDir: options.srcDir, sites: options.sites });
+      const pages = site === undefined ? discovered : discovered.filter((page) => page.site === site);
       // Read the SAME way the server installers will (design note §Config):
       // `web.localeRouting.strategy`, `app.localeCodes`, `app.localeCode` —
       // via `resolveLocaleRouting`, the one function both sides call, so a
@@ -491,10 +552,24 @@ export function clientPageRegistry(options: ClientPageRegistryPluginOptions = {}
       // server installers (the process that calls `createServer`/`build`),
       // never Vite's SSR module runner — see `routing/locale-routing.ts`'s
       // own header for why that graph split matters at all.
-      const localeRouting = resolveLocaleRouting();
-      const strictMode = readClientStrictMode(appRoot, options.srcDir);
+      const localeRouting = resolveLocaleRouting(
+        site === undefined ? undefined : options.sites![site]!.localeRouting,
+      );
+      const strictMode =
+        site === undefined
+          ? readClientStrictMode(appRoot, options.srcDir)
+          : readClientStrictMode(
+              appRoot,
+              options.srcDir,
+              siteRootFile(appRoot, options.srcDir, options.sites!, site),
+            );
       const source = [
-        generateClientRegistry({ pages, toImportSpecifier }),
+        generateClientRegistry({
+          pages,
+          routeTablePages: discovered,
+          sites: options.sites,
+          toImportSpecifier,
+        }),
         generateLocaleRoutingSource(localeRouting),
         `export const ${CLIENT_STRICT_MODE_EXPORT_NAME} = ${strictMode};`,
       ].join("\n");
@@ -532,14 +607,21 @@ export function clientPageRegistry(options: ClientPageRegistryPluginOptions = {}
      * construction.
      */
     async hotUpdate(context) {
+      // Multi-site: a file under one site's folder concerns only that site's
+      // registry (and that site's own root), never the others'.
+      const owner = siteOwningFile(context.file, appRoot, options.srcDir, options.sites);
+      const ownerRoot =
+        owner === undefined
+          ? rootConfigFile(appRoot, options.srcDir)
+          : siteRootFile(appRoot, options.srcDir, options.sites!, owner);
       // The root is deliberately absent from the client registry: importing it
       // would expose its middleware and server-only dependency graph. Its
       // static strictMode projection instead lives in this virtual module, so
       // an edit must invalidate that module and reload even though there is no
       // client-side root transform skeleton to compare.
       if (
-        path.resolve(context.file) === rootConfigFile(appRoot, options.srcDir) ||
-        isRootSetupFile(context.file, appRoot, options.srcDir)
+        path.resolve(context.file) === ownerRoot ||
+        isRootSetupFile(context.file, appRoot, options.srcDir, ownerRoot)
       ) {
         // Vite calls this hook for every environment. SSR was invalidated by
         // its watcher already; only the client sends the document reload.
@@ -552,7 +634,7 @@ export function clientPageRegistry(options: ClientPageRegistryPluginOptions = {}
 
         if (routeGraphHandled) return [];
 
-        invalidateClientPageRegistry(context.server);
+        invalidateClientPageRegistry(context.server, owner);
         return [];
       }
 
@@ -563,7 +645,7 @@ export function clientPageRegistry(options: ClientPageRegistryPluginOptions = {}
         });
 
         if (routeGraphHandled) return [];
-        if (this.environment.name === "client") invalidateClientPageRegistry(context.server);
+        if (this.environment.name === "client") invalidateClientPageRegistry(context.server, owner);
         return [];
       }
 

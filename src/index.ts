@@ -56,6 +56,19 @@ export type {
   WebConfigurations,
 } from "./configurations";
 export type {
+  HostResolverInput,
+  HostResolution,
+  HostResolver,
+  FixedSiteConfig,
+  DynamicSiteConfig,
+  SiteConfig,
+  SitesConfig,
+} from "./sites/site-config.types";
+export { validateSitesConfig, normalizeHost, assertResolvedSite } from "./sites/validate-sites-config";
+export type { SiteConfigError, SiteConfigErrorCode } from "./sites/validate-sites-config";
+export { createSiteSelector, validateSitesAtBoot } from "./sites/site-selector";
+export type { SiteSelection } from "./sites/site-selector";
+export type {
   SessionRegistry,
   SessionUser,
   SessionModel,

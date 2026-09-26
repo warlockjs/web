@@ -2,6 +2,34 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.23.0 - Unreleased
+
+### Security
+
+- With `app.url` set, a request whose `Host` differs now bypasses the page cache (no lookup, no store) instead of being keyed as the configured host, closing cache poisoning via forged `Host`.
+
+### Added
+
+- Multi-site support (`web.sites`, `resolveHost`).
+
+### Changed
+
+- Build logs show app-relative output paths.
+
+- A page action's `response.cookie()` and `response.clearCookie()` now take the same arguments as core's `Response`, so auth's cookie helpers (which take `Response`; `CookieWriter` is removed) accept it.
+
+## Unreleased
+
+### Added
+
+- `PageActionContext<typeof schema>` accepts a bare Seal schema, typing `request.validated()` as its output; works with a plain `config: PageConfig` annotation. The `typeof config.action` form is unchanged.
+
+## 5.23.0 - 2026-09-25
+
+### Fixed
+
+- Page session resolution reads Core's shared config instance, so authenticated loaders, actions, and `useUser()` receive the signed-in user in installed apps.
+
 ## 5.22.1 - 2026-09-25
 
 ### Fixed

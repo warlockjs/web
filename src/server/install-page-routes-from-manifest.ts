@@ -31,7 +31,8 @@ import { ErrorPageDeclaresRouteError } from "../routing/error-page-declares-rout
 import { deriveFilesystemRoutePath } from "../routing/filesystem-route";
 import { resolveLayoutLevel } from "../routing/layout-level";
 import { resolvePageRouteIdentity } from "../routing/route-identity";
-import { publishRouteTable } from "../routing/route-table";
+import { routeIdentityKey } from "../routing/route-identity-key";
+import { publishRouteTable, registerSiteRoutes } from "../routing/route-table";
 import { publishLocaleRouting } from "../routing/locale-routing";
 import { config, type Router } from "@warlock.js/core";
 import path from "node:path";
@@ -64,6 +65,12 @@ import {
 import type { PageManifest, PageManifestLayoutEntry, PageManifestPageEntry } from "./page-manifest";
 import type { PageRouteExport } from "./page-module-shapes";
 import { createRouteTranslationsResolver } from "./route-translations";
+import { siteRegistrationRouter, type SiteDispatchInstall } from "./site-dispatch";
+
+type SiteSlice = {
+  readonly site: string;
+  readonly localeRouting?: { readonly strategy?: "none" | "prefix" | "prefix-except-default" };
+};
 
 function manifestModule(entry: {
   module: Record<string, unknown>;
@@ -126,7 +133,65 @@ export type InstallPageRoutesFromManifestOptions = {
   clientDir?: string;
   /** Same helper `dev-error-transport.ts` exports — passed in, never imported. */
   createHandler?: PageRouteHandlerFactory;
+  /**
+   * Multi-site mode, built by the connector. When present the manifest's pages
+   * are installed per site into the dispatcher's tables; absent means today's
+   * per-route registration, unchanged.
+   */
+  siteDispatch?: SiteDispatchInstall;
 };
+
+/** Installs each site's slice of a multi-site manifest through the single-site installer. */
+function installSitePagesFromManifest(
+  options: InstallPageRoutesFromManifestOptions,
+  siteDispatch: SiteDispatchInstall,
+): InstalledManifestPageRoute[] {
+  const { manifest, router } = options;
+  const { dispatch, sites } = siteDispatch;
+  const installed: InstalledManifestPageRoute[] = [];
+
+  if (manifest.sites === undefined) {
+    throw new Error(
+      "installPageRoutesFromManifest: web.sites is configured but the page manifest carries no " +
+        "`sites` table. Re-run the build so the generated pages barrel is multi-site.",
+    );
+  }
+
+  for (const [site, siteConfig] of Object.entries(sites)) {
+    const entry = manifest.sites[site];
+
+    if (entry === undefined) {
+      throw new Error(`installPageRoutesFromManifest: the page manifest has no entry for site "${site}".`);
+    }
+
+    const siteInstalled = installPageRoutesFromManifest(
+        {
+          ...options,
+          siteDispatch: undefined,
+          router: siteRegistrationRouter(dispatch, site, siteConfig.basePath ?? ""),
+          manifest: {
+            ...manifest,
+            sites: undefined,
+            errorPage: entry.errorPage,
+            app: {
+              ...entry.app,
+              ...(entry.appSetup === undefined
+                ? {}
+                : { setupModule: entry.appSetup.module, setupSourceFile: entry.appSetup.sourceFile }),
+            },
+            pages: manifest.pages.filter((page) => page.site === site),
+          },
+        },
+        { site, localeRouting: siteConfig.localeRouting },
+      );
+    installed.push(...siteInstalled);
+    registerSiteRoutes(site, siteInstalled, sites, "installPageRoutesFromManifest (production)");
+  }
+
+  dispatch.register(router);
+
+  return installed;
+}
 
 /**
  * `sourceFile`'s path relative to the web root — `src/web/**`, the only page
@@ -153,8 +218,9 @@ function webRelativeSourceFile(sourceFile: string): string {
 export function resolveRoute(
   routeExport: PageRouteExport | undefined,
   sourceFile: string,
+  site?: string,
 ): { path: string; name: string } {
-  return resolvePageRouteIdentity(routeExport, webRelativeSourceFile(sourceFile), sourceFile);
+  return resolvePageRouteIdentity(routeExport, webRelativeSourceFile(sourceFile), sourceFile, site);
 }
 
 /**
@@ -288,7 +354,13 @@ function composeLayoutLevel(
  */
 export function installPageRoutesFromManifest(
   options: InstallPageRoutesFromManifestOptions,
+  /** Internal: this call is one site's slice of a multi-site install. */
+  siteSlice?: SiteSlice,
 ): InstalledManifestPageRoute[] {
+  if (options.siteDispatch !== undefined) {
+    return installSitePagesFromManifest(options, options.siteDispatch);
+  }
+
   const {
     router,
     manifest,
@@ -357,7 +429,7 @@ export function installPageRoutesFromManifest(
   // Resolved once, up front — the same value dev resolves in
   // `../install-page-routes.ts`, so a page's registrations cannot disagree
   // between dev and production.
-  const localeRouting = resolveLocaleRouting();
+  const localeRouting = resolveLocaleRouting(siteSlice?.localeRouting);
 
   // Per-request `linkStylesheetsFor()` declarations, resolved against the same
   // client manifest the chains above read. Memoised per declared set: the
@@ -458,7 +530,7 @@ export function installPageRoutesFromManifest(
     const pageModule = normalizePageModule(manifestModule(page), "page", page.sourceFile);
     const routeExport = pageModule.route;
 
-    const { path: routePath, name } = resolveRoute(routeExport, page.sourceFile);
+    const { path: routePath, name } = resolveRoute(routeExport, page.sourceFile, siteSlice?.site);
 
     // Validated at INSTALL time — the same boot-time gate dev applies in its
     // own installer — so a malformed `cache` opt-in fails a production boot
@@ -477,7 +549,8 @@ export function installPageRoutesFromManifest(
             layoutPrefixes: layoutPrefixesOf(page),
           })
         : composeRoutePath(layoutPrefix, routePath);
-    const existingFile = fileByPath.get(effectivePath);
+    const identityKey = routeIdentityKey({ path: effectivePath });
+    const existingFile = fileByPath.get(identityKey);
 
     if (existingFile) {
       throw new Error(
@@ -490,7 +563,7 @@ export function installPageRoutesFromManifest(
       );
     }
 
-    fileByPath.set(effectivePath, page.sourceFile);
+    fileByPath.set(identityKey, page.sourceFile);
 
     // The layout slot's id resolves to the COMPOSED level — every layout's
     // middleware, in chain order — and every other id goes straight to the
@@ -604,8 +677,11 @@ export function installPageRoutesFromManifest(
     registered the routes. Production installs once at boot, so the wholesale
     replacement is a single write before the first request.
   */
-  publishRouteTable(installed, "installPageRoutesFromManifest (production)");
-  publishLocaleRouting(localeRouting);
+  // A site's slice publishes nothing: one site's table would replace another's.
+  if (siteSlice === undefined) {
+    publishRouteTable(installed, "installPageRoutesFromManifest (production)");
+    publishLocaleRouting(localeRouting);
+  }
 
   return installed;
 }

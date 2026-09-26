@@ -51,6 +51,7 @@ import {
   BaseConnector,
   ConnectorLifecyclePhase,
   type ConnectorName,
+  config,
   container,
   type FastifyInstance,
   requestContext,
@@ -78,6 +79,8 @@ import {
   registeredPageFiles,
 } from "./page-route-reload";
 import { consumePageManifest, type PageManifest } from "./page-manifest";
+import { createSiteDispatch, type SiteDispatchInstall } from "./site-dispatch";
+import { registerTlsAsk } from "./register-tls-ask";
 import { registerProductionPublicFiles } from "./register-production-public-files";
 import { createManifestSitemapPageSource } from "../sitemap/manifest-sitemap-page-source";
 import { setProductionSitemapPageSource } from "../sitemap/production-sitemap-page-source";
@@ -392,6 +395,11 @@ export class WebConnector extends BaseConnector {
       throw new WebPageManifestMissingError();
     }
 
+    // This is an application route, deliberately registered before the
+    // multi-site `/*` page dispatcher below. Core's route registry is complete
+    // at connector boot, so the same order holds in development and production.
+    registerTlsAsk(router, config.get("web", {}));
+
     // The manifest is guaranteed present by the guard above; naming it again is
     // what narrows the type, not a second check of the same condition.
     if (isProductionRuntime() && this.pageManifest) {
@@ -428,6 +436,7 @@ export class WebConnector extends BaseConnector {
         // reader, and production has one module graph, so resolving there
         // rather than here avoids loading the barrel twice.
         clientDir: this.pageManifest.clientDir,
+        ...siteDispatchOption(),
       });
 
       // SERVE THE CLIENT BUNDLE. Without this the whole production page path
@@ -570,6 +579,7 @@ export class WebConnector extends BaseConnector {
         // itself from inside Vite's SSR module graph. `fastify` is this same
         // request's `resolveFastify()` result, already in scope above.
         httpServer: fastify,
+        ...siteDispatchOption(),
       });
 
     this.installedPages = await this.installDevPageRoutes();
@@ -945,4 +955,28 @@ export class WebConnector extends BaseConnector {
       }),
     );
   }
+}
+
+/**
+ * Multi-site mode's dispatcher, built on the NODE side from `web.sites` (the
+ * SSR graph Vite evaluates cannot read this config). A FRESH one per call: dev
+ * re-installs on every restart and a stale table must not outlive it. Absent
+ * `web.sites` yields `{}`, so single-site installs receive no new option.
+ */
+function siteDispatchOption(): { siteDispatch?: SiteDispatchInstall } {
+  const web = config.get("web", {});
+
+  if (web.sites === undefined) return {};
+
+  return {
+    siteDispatch: {
+      sites: web.sites,
+      dispatch: createSiteDispatch({
+        sites: web.sites,
+        resolveHost: web.resolveHost,
+        resolveCache: web.resolveCache,
+        unknownHost: web.unknownHost,
+      }),
+    },
+  };
 }

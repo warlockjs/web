@@ -2,7 +2,11 @@ import { statSync } from "node:fs";
 import path from "node:path";
 import type { AliasOptions, PluginOption, Rollup } from "vite";
 import { cssModulesConfig } from "./css-modules-config";
-import { createHydrationClientEntry, type HydrationClientEntry } from "./hydration-entries";
+import {
+  createHydrationClientEntry,
+  createHydrationSiteInputs,
+  type HydrationClientEntry,
+} from "./hydration-entries";
 
 export interface BuildHydrationClientOptions {
   /** `@warlock.js/web` root containing the packaged or checkout hydration entry. */
@@ -27,6 +31,29 @@ export interface BuildHydrationClientOptions {
    * the server bundle uses, so SSR and client class names match.
    */
   cssModulesRoot?: string;
+  /** Multi-site mode: one `hydration-<site>` rollup entry per key. Absent = the single `hydration` entry. */
+  sites?: readonly string[];
+  /** Application root the build's log paths are shown relative to. Logging only; never used to read or write files. */
+  logRoot?: string;
+}
+
+/**
+ * Rewrites the output directory prefix Vite prints (`path.relative(root, outDir)`,
+ * relative to the `@warlock.js/web` package dir — `../../../../apps/web/dist/client/`
+ * from a monorepo app) so it reads relative to the app root instead.
+ *
+ * Chosen over `root: appRoot`: `root` also anchors PostCSS/Tailwind config lookup,
+ * `publicDir` and index resolution, and none of those can be proven unaffected
+ * without a real build. The logger touches only the printed text.
+ */
+export function formatBuildLogMessage(
+  message: string,
+  paths: { viteRoot: string; logRoot: string; outDir: string },
+): string {
+  const posix = (value: string) => value.split(path.sep).join("/");
+  const printed = `${posix(path.relative(paths.viteRoot, paths.outDir))}/`;
+  const wanted = `${posix(path.relative(paths.logRoot, paths.outDir))}/`;
+  return printed === wanted ? message : message.split(printed).join(wanted);
 }
 
 export type HydrationClientBuildOutput = Rollup.RollupOutput | Rollup.RollupOutput[];
@@ -167,8 +194,22 @@ export async function buildHydrationClient(
   const outDir = path.resolve(options.outDir);
   const manifestPath = path.join(outDir, ".vite/manifest.json");
   const { build } = await import("vite");
+  const viteRoot = options.webRoot;
+  const { createLogger } = await import("vite");
+  const logger = createLogger();
+  const logRoot = options.logRoot;
+  const customLogger = {
+    ...logger,
+    info: (message: string, logOptions?: Parameters<typeof logger.info>[1]) =>
+      logger.info(
+        logRoot === undefined ? message : formatBuildLogMessage(message, { viteRoot, logRoot, outDir }),
+        logOptions,
+      ),
+  };
+  const siteNames = options.sites !== undefined && options.sites.length > 0 ? options.sites : undefined;
   const viteResult = await build({
-    root: options.webRoot,
+    root: viteRoot,
+    customLogger,
     appType: "custom",
     configFile: false,
     plugins: [...options.plugins],
@@ -183,7 +224,10 @@ export async function buildHydrationClient(
       target: "es2022",
       rollupOptions: {
         external: options.external,
-        input: { [entry.name]: entry.sourcePath },
+        input:
+          siteNames === undefined
+            ? { [entry.name]: entry.sourcePath }
+            : createHydrationSiteInputs(entry, siteNames),
         output: {
           assetFileNames: "assets/[name]-[hash][extname]",
           chunkFileNames: "assets/[name]-[hash].js",

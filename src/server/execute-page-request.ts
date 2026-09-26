@@ -8,7 +8,7 @@ import {
   type Request,
 } from "@warlock.js/core";
 import { getSealConfig, v } from "@warlock.js/seal";
-import { enterSharedScope, sealShared } from "../shared";
+import { enterSharedScope, sealShared, shared } from "../shared";
 import { connectRequestSearch } from "../routing/query-string";
 import { enterAdditionalSharedScope, requireRunner } from "./page-context";
 import { createRequestAbortController } from "./request-abort-signal";
@@ -52,6 +52,16 @@ import type {
   PipelineStore,
 } from "./execute-page-request.types";
 import type { SharedContext } from "../index";
+import { RESOLVED_SITE_SHARED } from "./site-dispatch";
+
+export { RESOLVED_SITE_SHARED } from "./site-dispatch";
+
+/** Applies resolver data through the public proxy, preserving its write checks. */
+function mergeResolvedSiteShared(request: Request): void {
+  const resolverShared = request[RESOLVED_SITE_SHARED];
+
+  if (resolverShared !== undefined) Object.assign(shared, resolverShared);
+}
 
 export * from "./execute-page-request.types";
 export { connectPageContext } from "./page-context";
@@ -363,6 +373,7 @@ async function runActionStage(options: ActionStageOptions): Promise<ActionStageO
       request,
       response: createActionResponse(buffer),
       shared: options.shared,
+      site: request.site,
       pageInput,
       signal: bundle.abortSignal,
       ...(options.session === undefined ? {} : { session: options.session }),
@@ -407,6 +418,7 @@ export async function runPageMiddlewareGate(
 
   return runner.run(store, async () => {
     enterSharedScope(store);
+    mergeResolvedSiteShared(request);
     enterAdditionalSharedScope(store);
 
     const halted = await runMiddlewareChain(options);
@@ -444,6 +456,7 @@ export async function executePageRequest<TResult = PageDataBundle>(
 
   return runner.run(store, async () => {
     enterSharedScope(store);
+    mergeResolvedSiteShared(request);
     enterAdditionalSharedScope(store);
 
     const finish = async (bundle: PageDataBundle): Promise<TResult> =>
@@ -728,6 +741,7 @@ export async function executePageRequest<TResult = PageDataBundle>(
         request,
         response: createBufferedResponse(buffers[level]),
         shared: sealedShared,
+        site: request.site,
         signal: requestAbortController.signal,
         ...(stageSession === undefined ? {} : { session: stageSession }),
       };

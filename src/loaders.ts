@@ -3,7 +3,7 @@ import type { ActionResponse } from "./server/settle-page-response";
 import type { Request, Response } from "@warlock.js/core";
 import type { BaseValidator, Infer } from "@warlock.js/seal";
 import type { PageActionConfig } from "./page-config";
-import type { PageContext } from "./context";
+import type { PageContext, PageSite } from "./context";
 import type { PageSession, SharedContext } from "./index";
 import type { RouteDeclaration } from "./route";
 import type { PageValidation, ValidatedOutput } from "./validation";
@@ -27,6 +27,7 @@ export type PageLoaderContext<
   request: Request<ValidatedOutput<TValidation>>;
   response: Response;
   shared: SharedContext;
+  site?: PageSite;
   /** The resolved session; present only when `web.session` is configured. `user` is null for a guest. */
   session?: PageSession;
 };
@@ -62,17 +63,20 @@ type ActionValidatedOutput<TConfig> = TConfig extends {
   readonly validation: infer TValidator extends BaseValidator;
 }
   ? Infer.Output<TValidator>
-  : Record<string, never>;
+  : TConfig extends BaseValidator
+    ? Infer.Output<TConfig>
+    : Record<string, never>;
 
 /**
  * What a page `action` receives: the page loader's context with the action's
  * own validated body and the buffered `ActionResponse` (failure helpers
  * included). `TConfig` is `typeof config.action` (or one `config.actions.<name>`).
  */
-export type PageActionContext<TConfig extends PageActionConfig | undefined = undefined> = {
+export type PageActionContext<TConfig extends PageActionConfig | BaseValidator | undefined = undefined> = {
   request: Request<ActionValidatedOutput<TConfig>>;
   response: ActionResponse;
   shared: SharedContext;
+  site?: PageSite;
   /** The resolved session; present only when `web.session` is configured. */
   session?: PageSession;
 };

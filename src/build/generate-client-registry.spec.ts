@@ -5,6 +5,7 @@ import { validateClientRouteManifest } from "../client/runtime/manifest";
 import type { DiscoveredPage, DiscoveredRoutablePage } from "./discover-pages";
 import {
   CLIENT_REGISTRY_EXPORT_NAME,
+  CLIENT_ROUTE_TABLE_EXPORT_NAME,
   DuplicateClientPageNameError,
   generateClientRegistry,
 } from "./generate-client-registry";
@@ -278,5 +279,21 @@ describe("generateClientRegistry", () => {
 
   it("emits a valid, empty registry for zero pages", async () => {
     expect(await evaluate(generate([]))).toEqual([]);
+  });
+
+  it("ships compact cross-site route names and fixed hosts without importing other-site pages", () => {
+    const contents = generateClientRegistry({
+      pages: [aPage({ routeName: "landing.home", site: "landing" })],
+      routeTablePages: [
+        aPage({ routeName: "landing.home", site: "landing" }),
+        aPage({ routeName: "platform.home", routePath: "/dashboard", site: "platform" }),
+      ],
+      sites: { landing: { hosts: ["landing.test"] }, platform: { hosts: ["app.test"] } },
+      toImportSpecifier: stubSpecifier,
+    });
+
+    expect(contents).toContain(CLIENT_ROUTE_TABLE_EXPORT_NAME);
+    expect(contents).toContain('"name":"platform.home","path":"/dashboard","site":"platform"');
+    expect(contents).not.toContain('C:/app/src/web/main/home.page.tsx"),\n        import');
   });
 });

@@ -113,6 +113,7 @@ export function createManifestSitemapPageSource(manifest: PageManifest): Sitemap
         return {
           routeName: name,
           routePath: path,
+          ...(page.site === undefined ? {} : { site: page.site }),
           metadata: pageModule.metadata,
           sitemap: pageModule.sitemap,
           // Read off the layout MODULES the manifest already carries — the

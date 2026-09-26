@@ -1239,6 +1239,18 @@ describe("discoverPages — filesystem route derivation", () => {
   });
 });
 
+describe("discoverPages — param names do not make routes distinct", () => {
+  it("refuses /blog/:id beside a derived /blog/:slug", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/web/blog/[id].page.tsx": pageDeclaring(""),
+      "src/web/blog/[slug].page.tsx": pageDeclaring(""),
+    });
+
+    expect(() => discoverPages({ appRoot })).toThrowError(DuplicatePageRoutePathError);
+  });
+});
+
 describe("discoverPages — src/app/**/web/** is named, not registered, when ignored", () => {
   it("GUILTY: names a stray page under src/app/**/web/**, does not register it, does not crash", () => {
     const appRoot = makeAppTree({

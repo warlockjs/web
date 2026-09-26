@@ -12,12 +12,14 @@ import { Form, FieldError, useActionData, useIsSubmitting, href } from "@warlock
 import type { PageActionContext, PageConfig } from "@warlock.js/web";
 import { v } from "@warlock.js/seal";
 
-export const config = {
-  route: { path: "/contact", name: "contact" },
-  action: { validation: v.object({ email: v.string().email().required() }) },
-} satisfies PageConfig;
+const contactSchema = v.object({ email: v.string().email() });
 
-export async function action({ request, response }: PageActionContext<typeof config.action>) {
+export const config: PageConfig = {
+  route: { path: "/contact", name: "contact" },
+  action: { validation: contactSchema },
+};
+
+export async function action({ request, response }: PageActionContext<typeof contactSchema>) {
   const { email } = request.validated();
 
   if (email === "blocked@example.com") return response.forbidden({ message: "Not allowed." });
@@ -51,4 +53,5 @@ export default function Contact() {
 - Actions are never cached and always `private, no-store`; call `invalidatePageCache(tags)` to refresh other visitors' cached page.
 - Redirect after success: a no-JS action that returns data re-POSTs on reload.
 - `<Form>` defaults to `multipart/form-data`, so file inputs work; read them with `request.file(name)`.
+- Per-user limit: `config.action.middleware: [middleware.rateLimit({ max: 5, duration: 60_000, key: "user", guests: "ip" })]` (`import { middleware } from "@warlock.js/core"`). Keyed on `request.locals.user.id`, so it needs `pageSession()` from `@warlock.js/auth`. `guests`: `"ip"` (default) or `"skip"`. Over the limit: 429, action not run.
 - With `@mongez/react-form`, use `useSubmitAction` from `@warlock.js/web/form` and alias one of the two `Form`s.

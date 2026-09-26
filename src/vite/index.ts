@@ -16,6 +16,7 @@ import { gateCVerify } from "./gate-c-verify";
 import { clientPageRegistry, type ClientPageRegistryPluginOptions } from "./page-registry-plugin";
 import { projection } from "./projection";
 import { clientEnvironmentOnly, type SsrBoundaryState } from "./ssr-client-view";
+import type { SitesConfig } from "../sites/site-config.types";
 
 export {
   buildHydrationClient,
@@ -63,6 +64,8 @@ export type WarlockClientBoundaryOptions = Parameters<typeof gateAResolve>[0] & 
   beforePageHotUpdate?: ClientPageRegistryPluginOptions["beforePageHotUpdate"];
   /** Forwarded verbatim to {@link clientPageRegistry}; see its own `srcDir` doc. */
   srcDir?: ClientPageRegistryPluginOptions["srcDir"];
+  /** Static `web.sites` shape for per-site client page registries. */
+  sites?: ClientPageRegistryPluginOptions["sites"];
 };
 
 export type BuildWarlockHydrationClientOptions = Readonly<{
@@ -76,6 +79,8 @@ export type BuildWarlockHydrationClientOptions = Readonly<{
   external?: BuildHydrationClientOptions["external"];
   /** App-configured plugins, appended after Warlock's client-boundary pipeline. */
   plugins?: BuildHydrationClientOptions["plugins"];
+  /** Static `web.sites` shape; host resolution never enters the client build. */
+  sites?: SitesConfig;
 }>;
 
 /**
@@ -187,6 +192,7 @@ export function warlockClientBoundary(options: WarlockClientBoundaryOptions = {}
     clientPageRegistry({
       appRoot: options.appRoot,
       srcDir: options.srcDir,
+      sites: options.sites,
       beforePageHotUpdate: options.beforePageHotUpdate,
     }),
     projection(),
@@ -210,8 +216,9 @@ export async function buildWarlockHydrationClient(
     resolveAliases: options.resolveAliases,
     external: options.external,
     cssModulesRoot: options.appRoot,
+    sites: options.sites === undefined ? undefined : Object.keys(options.sites),
     plugins: [
-      ...warlockClientBoundary({ appRoot: options.appRoot, srcDir: options.srcDir }),
+      ...warlockClientBoundary({ appRoot: options.appRoot, srcDir: options.srcDir, sites: options.sites }),
       ...(options.plugins ?? []),
     ],
   });

@@ -21,7 +21,7 @@ export type ScriptsProps = {
  * and both disappear together on a non-hydrating document.
  */
 export function Scripts(props: ScriptsProps): ReactElement {
-  const { payload, nonce, hydrationClientModuleUrl, namedApiRoutes } = useDocumentContext("Scripts");
+  const { payload, nonce, hydrationClientModuleUrl, namedApiRoutes, siteKey } = useDocumentContext("Scripts");
 
   // `renderPageFailure` marks its payload non-hydrating (page-render-bundle.ts):
   // a module-load/registration throw happens before any triple exists, so
@@ -64,6 +64,7 @@ export function Scripts(props: ScriptsProps): ReactElement {
           type: "module",
           nonce: resolvedNonce,
           src: hydrationClientModuleUrl,
+          ...(siteKey === undefined ? {} : { "data-warlock-site": siteKey }),
         })
       : null,
   );

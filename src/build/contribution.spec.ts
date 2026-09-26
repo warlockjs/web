@@ -129,6 +129,25 @@ function stubGeneratedPages(pageCount: number): void {
 }
 
 describe("web build contribution — zero pages", () => {
+  it("forwards src/config/web.ts sites into the barrel generator", async () => {
+    const appRoot = makeTree({
+      "src/config/web.ts": 'export default { sites: { landing: { pages: "(landing)", hosts: ["estates.test"] } } };\n',
+      "src/web/(landing)/root.tsx": APP,
+      "src/web/(landing)/home.page.tsx": PAGE,
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    stubGeneratedPages(1);
+
+    await createWebBuildContribution().generate?.(buildContext(appRoot));
+
+    expect(generatePagesBarrelSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sites: { landing: { pages: "(landing)", hosts: ["estates.test"] } },
+      }),
+    );
+    log.mockRestore();
+  });
+
   it("contributes its entry import even when the generator reports no pages", async () => {
     const appRoot = makeTree({ "src/web/root.tsx": APP });
     const context = buildContext(appRoot);

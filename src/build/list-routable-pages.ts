@@ -24,6 +24,8 @@ import {
 export type ListedRoutablePage = {
   routeName: string;
   routePath: string;
+  /** Key of the owning site; absent for a single-site page graph. */
+  site?: string;
   /** The page module's `metadata` export, exactly as it declared it — static object or function form. */
   metadata?: PageMetadata;
   /** The page module's `sitemap` export, exactly as it declared it — a caller that cares about its shape (e.g. `@warlock.js/sitemap`) narrows it itself. */
@@ -100,6 +102,7 @@ export async function listRoutablePages(
       return {
         routeName: page.routeName,
         routePath: page.routePath,
+        ...(page.site === undefined ? {} : { site: page.site }),
         metadata: pageModule.metadata,
         sitemap: pageModule.sitemap,
         layoutSitemaps,

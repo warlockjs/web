@@ -35,6 +35,7 @@ import { readFileSync } from "node:fs";
 import type { ViteDevServer } from "vite";
 import {
   discoverPageFileGraph,
+  discoverPages,
   type DiscoveredPageFileGraph,
   ErrorPageDeclaresRouteError,
   isErrorPageFile,
@@ -47,10 +48,11 @@ import { composeRoutePath } from "../routing/compose-route-path";
 import { duplicateRoutePathMessage } from "../routing/duplicate-route-path";
 import { deriveFilesystemRoutePath } from "../routing/filesystem-route";
 import { resolveLayoutLevel as resolveComposedLayoutLevel } from "../routing/layout-level";
+import { routeIdentityKey } from "../routing/route-identity-key";
 import { PageFileSegmentNotSupportedError } from "../routing/page-file-segment";
 import { toPosix } from "../shared/to-posix";
 import { resolvePageRouteIdentity, resolvePageRouteName } from "../routing/route-identity";
-import { prepareRouteTable } from "../routing/route-table";
+import { prepareRouteTable, registerSiteRoutes } from "../routing/route-table";
 import { publishLocaleRouting } from "../routing/locale-routing";
 import { config, type FastifyInstance, type Router } from "@warlock.js/core";
 import {
@@ -84,6 +86,7 @@ import {
 } from "./not-found-page";
 import type { LayoutModuleShape, PageRouteExport } from "./page-module-shapes";
 import { createRouteTranslationsResolver } from "./route-translations";
+import { siteRegistrationRouter, type SiteDispatchInstall } from "./site-dispatch";
 
 export type { LayoutModuleShape, PageModuleShape, PageRouteExport } from "./page-module-shapes";
 
@@ -209,13 +212,14 @@ async function registerFailedPageRoute(input: {
     return;
   }
 
-  const existingFile = fileByPath.get(effectivePath);
+  const identityKey = routeIdentityKey({ path: effectivePath });
+  const existingFile = fileByPath.get(identityKey);
 
   if (existingFile) {
     throw new Error(duplicateRoutePathMessage({ effectivePath, existingFile, newFile: pageFile }));
   }
 
-  fileByPath.set(effectivePath, pageFile);
+  fileByPath.set(identityKey, pageFile);
 
   await router.withSourceFile(canonicalSourceFileFor(pageFile, appSrcRoot), () =>
     router.get(
@@ -308,8 +312,12 @@ async function resolveLayoutLevel(
   pageFile: string,
   webRoot: string,
   loadLayout: LoadLayout,
+  siteRoot?: string,
 ): Promise<LayoutLevel> {
-  const chain = layoutChainFor(pageFile, webRoot);
+  // A site's chain starts at its own folder: a layout above it belongs to no site.
+  const chain = layoutChainFor(pageFile, webRoot).filter(
+    (layoutFile) => siteRoot === undefined || layoutFile.startsWith(siteRoot + path.sep),
+  );
   const pairs = await Promise.all(
     chain.map(async (layoutFile) => ({ layoutFile, module: await loadLayout(layoutFile) })),
   );
@@ -411,6 +419,42 @@ export type InstallPageRoutesOptions = {
    * distinction `createPageRouteHandler` itself draws from `PageRouteHandlerOptions.httpServer`.
    */
   httpServer?: FastifyInstance;
+  /**
+   * Multi-site mode. Built by `web-connector.ts` on the NODE side (like
+   * `httpServer`, it cannot be read from config inside Vite's SSR graph).
+   * When present, pages are discovered per site and handed to the dispatcher
+   * instead of being registered on the router one by one; absent means today's
+   * single-site registration, unchanged.
+   */
+  siteDispatch?: SiteDispatchInstall;
+};
+
+/**
+ * Runs the same discovery + validation the build does (`discoverPages` with
+ * `sites`), so a bad multi-site layout fails dev boot with the build's own
+ * message. Returns each site's `root.tsx`.
+ */
+function discoverSiteAppFiles(options: InstallPageRoutesOptions): Map<string, string> {
+  const appFiles = new Map<string, string>();
+
+  if (options.siteDispatch === undefined) return appFiles;
+
+  for (const page of discoverPages({
+    appRoot: options.appRoot ?? path.dirname(options.appSrcRoot),
+    srcDir: path.basename(options.appSrcRoot),
+    sites: options.siteDispatch.sites,
+  })) {
+    if (page.site !== undefined && page.appFile !== undefined) appFiles.set(page.site, page.appFile);
+  }
+
+  return appFiles;
+}
+
+/** One site's slice of a multi-site install. */
+type SiteScope = {
+  site: string;
+  root: string;
+  localeRouting?: { readonly strategy?: "none" | "prefix" | "prefix-except-default" };
 };
 
 /**
@@ -425,12 +469,26 @@ export type InstallPageRoutesOptions = {
 export async function installPageRoutes(
   options: InstallPageRoutesOptions,
 ): Promise<InstalledPageRoute[]> {
-  normalizePageModule(await loadComposedModule(options.vite, options.appFile), "root", options.appFile);
+  const siteAppFiles = discoverSiteAppFiles(options);
+  const multiSite = options.siteDispatch !== undefined;
+
+  if (!multiSite) {
+    normalizePageModule(await loadComposedModule(options.vite, options.appFile), "root", options.appFile);
+  } else {
+    for (const siteAppFile of siteAppFiles.values()) {
+      normalizePageModule(await loadComposedModule(options.vite, siteAppFile), "root", siteAppFile);
+    }
+  }
   const discoveredGraph = discoverPageFileGraph(options.appSrcRoot);
   const graph = {
     pages: [
       ...discoveredGraph.pages,
-      { pageFile: options.appFile, webRoot: path.dirname(options.appFile) },
+      ...(!multiSite
+        ? [{ pageFile: options.appFile, webRoot: path.dirname(options.appFile) }]
+        : [...siteAppFiles.values()].map((siteAppFile) => ({
+            pageFile: siteAppFile,
+            webRoot: path.dirname(siteAppFile),
+          }))),
     ],
     localeFiles: discoveredGraph.localeFiles,
   };
@@ -448,12 +506,52 @@ export async function installPageRoutes(
           ...localeOptions,
         });
   try {
-    return await installDiscoveredPageRoutes(
-      options,
-      discoveredGraph,
-      artifact === undefined ? buildRouteLocaleManifest(graph, localeOptions) : artifact.manifest,
-      artifact?.commit,
-    );
+    const routeLocaleManifest =
+      artifact === undefined ? buildRouteLocaleManifest(graph, localeOptions) : artifact.manifest;
+
+    if (options.siteDispatch === undefined) {
+      return await installDiscoveredPageRoutes(
+        options,
+        discoveredGraph,
+        routeLocaleManifest,
+        artifact?.commit,
+      );
+    }
+
+    // MULTI-SITE: the single-site installer below runs once per site, against
+    // that site's pages and root, with a router that feeds the dispatcher
+    // instead of core's — so every page's handler is built by the exact code
+    // single-site mode uses. One catch-all pair is registered on the real
+    // router once every site is in.
+    const { dispatch, sites } = options.siteDispatch;
+    const installedPages: InstalledPageRoute[] = [];
+
+    for (const [site, siteConfig] of Object.entries(sites)) {
+      const root = path.join(options.appSrcRoot, "web", siteConfig.pages);
+      const siteAppFile = siteAppFiles.get(site) ?? path.join(root, "root.tsx");
+
+      const installed = await installDiscoveredPageRoutes(
+          {
+            ...options,
+            router: siteRegistrationRouter(dispatch, site, siteConfig.basePath ?? ""),
+            appFile: siteAppFile,
+          },
+          {
+            ...discoveredGraph,
+            pages: discoveredGraph.pages.filter((page) => page.pageFile.startsWith(root + path.sep)),
+          },
+          routeLocaleManifest,
+          undefined,
+          { site, root, localeRouting: siteConfig.localeRouting },
+        );
+      installedPages.push(...installed);
+      registerSiteRoutes(site, installed, sites, "installPageRoutes (development)");
+    }
+
+    dispatch.register(options.router);
+    artifact?.commit();
+
+    return installedPages;
   } finally {
     artifact?.dispose();
   }
@@ -464,6 +562,7 @@ async function installDiscoveredPageRoutes(
   discoveredGraph: DiscoveredPageFileGraph,
   routeLocaleManifest: RouteLocaleManifest | undefined,
   commitLocaleArtifact?: () => void,
+  siteScope?: SiteScope,
 ): Promise<InstalledPageRoute[]> {
   const { router, vite, appSrcRoot, appFile, hydrationClientModuleUrl, httpServer } = options;
   // Spread conditionally, never as a bare `httpServer,` property: an explicit
@@ -484,7 +583,8 @@ async function installDiscoveredPageRoutes(
   // Resolved once, up front: every page's registrations below (and the
   // catch-all's absence of them) are decided against this one value, and
   // publishing it once after the loop keeps it in step with `publishRouteTable`.
-  const localeRouting = resolveLocaleRouting();
+  const localeRouting = resolveLocaleRouting(siteScope?.localeRouting);
+
   const discovered = [...discoveredGraph.pages].sort((left, right) =>
     left.pageFile < right.pageFile ? -1 : left.pageFile > right.pageFile ? 1 : 0,
   );
@@ -568,6 +668,7 @@ async function installDiscoveredPageRoutes(
       pageModule.route,
       filesystemPageFileFor(pageFile, appSrcRoot),
       pageFile,
+      siteScope?.site,
     );
 
     // Validated at INSTALL time, with everything else — a malformed `cache`
@@ -576,7 +677,7 @@ async function installDiscoveredPageRoutes(
 
     const loadLayout: LoadLayout = async (layoutFile) =>
       normalizePageModule(await loadComposedModule(vite, layoutFile), "layout", layoutFile);
-    const layoutLevel = await resolveLayoutLevel(pageFile, webRoot, loadLayout);
+    const layoutLevel = await resolveLayoutLevel(pageFile, webRoot, loadLayout, siteScope?.root);
     const { layoutFile, prefix: layoutPrefix } = layoutLevel;
 
     const effectivePath =
@@ -587,7 +688,8 @@ async function installDiscoveredPageRoutes(
           })
         : composeRoutePath(layoutPrefix, routePath);
 
-    const existingFile = fileByPath.get(effectivePath);
+    const identityKey = routeIdentityKey({ path: effectivePath });
+    const existingFile = fileByPath.get(identityKey);
 
     if (existingFile) {
       throw new Error(
@@ -600,7 +702,7 @@ async function installDiscoveredPageRoutes(
       );
     }
 
-    fileByPath.set(effectivePath, pageFile);
+    fileByPath.set(identityKey, pageFile);
 
     // Every registered handler gets ITS OWN immutable, ordered, deduped CSS
     // chain: root, then every matched layout outer to inner
@@ -787,10 +889,14 @@ async function installDiscoveredPageRoutes(
     is why the table replaces wholesale instead of merging: a deleted page's
     name has to stop resolving.
   */
-  const publishRoutes = prepareRouteTable(installed, "installPageRoutes (dev)");
-  commitLocaleArtifact?.();
-  publishRoutes();
-  publishLocaleRouting(localeRouting);
+  // A multi-site install publishes nothing per site: one site's table would
+  // replace another's wholesale. `href()` across sites is a later seam.
+  if (siteScope === undefined) {
+    const publishRoutes = prepareRouteTable(installed, "installPageRoutes (dev)");
+    commitLocaleArtifact?.();
+    publishRoutes();
+    publishLocaleRouting(localeRouting);
+  }
 
   return installed;
 }

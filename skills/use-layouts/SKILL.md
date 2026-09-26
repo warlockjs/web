@@ -48,9 +48,9 @@ A page beside it can declare its path relative to the prefix:
 ```tsx title="src/web/products/index.page.tsx"
 import type { PageConfig } from "@warlock.js/web";
 
-export const config = {
+export const config: PageConfig = {
   route: { path: "/", name: "products.index" },
-} satisfies PageConfig;
+};
 
 export default function ProductsPage() {
   return <h1>Products</h1>;
@@ -78,9 +78,9 @@ export const config: LayoutConfig = { prefix: "/account" };
 ```tsx title="src/web/users/account/settings.page.tsx"
 import type { PageConfig } from "@warlock.js/web";
 
-export const config = {
+export const config: PageConfig = {
   route: { path: "/settings", name: "users.account.settings" },
-} satisfies PageConfig;
+};
 
 export default function SettingsPage() {
   return <h1>Account settings</h1>;

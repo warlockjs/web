@@ -10,6 +10,28 @@ const base: PageCacheKeyInput = {
 };
 
 describe("computePageCacheKey — tenant isolation", () => {
+  it("keeps a no-site key byte-identical to the legacy format", () => {
+    expect(computePageCacheKey(base)).toBe("alpha.test/products?|en|html");
+  });
+
+  it("partitions tenants within the same site", () => {
+    expect(computePageCacheKey({ ...base, site: "tenant", tenantKey: "acme" })).not.toBe(
+      computePageCacheKey({ ...base, site: "tenant", tenantKey: "globex" }),
+    );
+  });
+
+  it("partitions sites even when their tenant keys match", () => {
+    expect(computePageCacheKey({ ...base, site: "landing", tenantKey: "acme" })).not.toBe(
+      computePageCacheKey({ ...base, site: "tenant", tenantKey: "acme" }),
+    );
+  });
+
+  it("encodes site and tenant segments independently", () => {
+    expect(computePageCacheKey({ ...base, site: "a,tenant=b" })).not.toBe(
+      computePageCacheKey({ ...base, site: "a", tenantKey: "b" }),
+    );
+  });
+
   it("separates changed route copy from prior JSON and legacy cache entries", () => {
     const first = computePageCacheKey({ ...base, translationsRevision: "one" });
     expect(first).not.toBe(computePageCacheKey({ ...base, translationsRevision: "two" }));

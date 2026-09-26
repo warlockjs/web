@@ -36,6 +36,10 @@ export type PageCacheKeyInput = {
   queryAllowlist?: readonly string[];
   /** Content identity of route-owned translations, absent for legacy registration. */
   translationsRevision?: string;
+  /** Selected multi-site identity, absent in single-site applications. */
+  site?: string;
+  /** Resolver identity within a selected site, when applicable. */
+  tenantKey?: string;
 };
 
 /** Tracking params that never change the rendered bytes; ignored when no allowlist is set. */
@@ -108,8 +112,11 @@ export function computePageCacheKey(input: PageCacheKeyInput): string {
     input.translationsRevision === undefined
       ? ""
       : `|translations=${encodeURIComponent(input.translationsRevision)}`;
+  const site = input.site === undefined ? "" : `|site=${encodeURIComponent(input.site)}`;
+  const tenantKey =
+    input.tenantKey === undefined ? "" : `|tenantKey=${encodeURIComponent(input.tenantKey)}`;
 
   // The host is URI-component encoded so no host value can forge the path
   // part of another entry's key.
-  return `${encodeURIComponent(host)}${pathname}?${query}|${input.locale}|${input.variant}${vary}${translations}`;
+  return `${encodeURIComponent(host)}${pathname}?${query}|${input.locale}|${input.variant}${vary}${translations}${site}${tenantKey}`;
 }

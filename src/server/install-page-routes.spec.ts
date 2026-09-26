@@ -1377,4 +1377,23 @@ describe("installPageRoutes — the ignored src/app/**/web/** diagnostic fires a
       warn.mockRestore();
     }
   });
+
+  it("refuses /blog/:id beside /blog/:slug, which answer the same URLs", async () => {
+    const appRoot = makeAppTree({
+      "src/web/one.page.tsx": "",
+      "src/web/two.page.tsx": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+    const oneFile = path.join(appSrcRoot, "web", "one.page.tsx");
+    const twoFile = path.join(appSrcRoot, "web", "two.page.tsx");
+
+    const vite = fakeVite({
+      [oneFile]: { default: (): null => null, config: { route: "/blog/:id" } },
+      [twoFile]: { default: (): null => null, config: { route: "/blog/:slug" } },
+    });
+
+    const { run } = install(appSrcRoot, vite);
+
+    await expect(run()).rejects.toThrow(/declared by two pages.*one.page.tsx.*two.page.tsx/s);
+  });
 });

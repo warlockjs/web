@@ -4,6 +4,14 @@ import type { Router } from "@warlock.js/core";
 import { resolveLocaleRouting } from "../server/locale-routing/resolve-locale-routing";
 import { buildRobotsTxt } from "./build-robots-txt";
 import { resolveRobotsConfig, resolveSitemapReferenceUrl } from "./resolve-robots-config";
+import { resolveSitemapConfig } from "./resolve-sitemap-config";
+import { joinOrigin } from "@warlock.js/sitemap";
+import {
+  createSitemapSiteSelector,
+  isNonIndexableDynamicSite,
+  selectSitemapSite,
+  sitemapSiteBaseUrl,
+} from "./site-sitemap";
 
 export type RegisterRobotsRouteOptions = {
   /** The app's source `public/` directory — where a hand-written `robots.txt` would live. */
@@ -48,13 +56,26 @@ export function registerRobotsRoute(router: Router, options: RegisterRobotsRoute
   if (!robotsConfig.enabled) return;
 
   const sitemapUrl = resolveSitemapReferenceUrl();
+  const siteSelector = createSitemapSiteSelector();
   // `resolveLocaleRouting()`, not `readLocaleRouting()`: this route can be
   // registered standalone (e.g. directly in tests), before either page-route
   // installer has run `publishLocaleRouting()`. Reading `web.localeRouting`
   // straight from config works regardless of installer order.
   const localeRouting = resolveLocaleRouting();
 
-  router.get("/robots.txt", ({ response }) => {
-    return response.text(buildRobotsTxt(robotsConfig, sitemapUrl, localeRouting));
+  router.get("/robots.txt", async ({ request, response }) => {
+    const selected = await selectSitemapSite(request, siteSelector);
+    if (selected?.kind === "not-found") return response.notFound();
+    if (selected && isNonIndexableDynamicSite(selected)) {
+      return response.text("User-agent: *\nDisallow: /\n");
+    }
+
+    const sitemapConfig = resolveSitemapConfig();
+    const selectedSitemapUrl = selected
+      ? sitemapConfig.enabled
+        ? joinOrigin(sitemapSiteBaseUrl(request, selected), sitemapConfig.path)
+        : undefined
+      : sitemapUrl;
+    return response.text(buildRobotsTxt(robotsConfig, selectedSitemapUrl, localeRouting));
   });
 }

@@ -11,6 +11,7 @@ import { LevelErrorBoundary } from "./build-hydrated-tree";
 import { DefaultErrorBoundary } from "./default-error-boundary";
 import { reportClientError } from "./report-client-error";
 import { installStreamClosedRejection, prepareDeferredPageData } from "./runtime/defer-registry";
+import { installHydrationSite } from "./hydrate-site";
 
 /**
  * Installs the `window`-level floor of card 1db238ca's client error
@@ -177,6 +178,7 @@ function reportHydrationFailure(error: unknown): void {
  */
 export function hydratePage(buildTree: BuildHydratedTree, options: HydratePageOptions = {}): void {
   installWindowErrorReporters();
+  installHydrationSite(document);
 
   const payload = readHydrationPayload(document);
 

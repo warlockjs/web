@@ -28,6 +28,8 @@ export async function sendPageDataResponse(options: {
   // calls the same function, for the same reason.
   persistRequestedLocale(request, response);
 
+  if (request.site !== undefined) response.header("x-warlock-site", request.site.key);
+
   // `Vary` is already set by the caller, once, for both representations.
 
   // `bundle` is absent on exactly one path: nothing matched, so no pipeline

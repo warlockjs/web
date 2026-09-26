@@ -267,16 +267,15 @@ export function resolvePageRouteIdentity(
   route: DeclaredRouteExport | undefined,
   pageFile: string,
   errorContextFile: string,
+  site?: string,
 ): { path: string; name: string } {
-  if (route === undefined) {
-    return {
-      path: deriveFilesystemRoutePath({ pageFile }),
-      name: resolvePageRouteName(route, pageFile),
-    };
-  }
+  const canonicalRoute =
+    route === undefined ? undefined : canonicalizeRouteExport(route, errorContextFile);
+  const generatedName = canonicalRoute?.name === undefined;
+  const name = canonicalRoute?.name ?? deriveFilesystemRouteName(pageFile);
 
   return {
-    path: canonicalizeRouteExport(route, errorContextFile).path,
-    name: resolvePageRouteName(route, pageFile),
+    path: canonicalRoute?.path ?? deriveFilesystemRoutePath({ pageFile }),
+    name: site === undefined || !generatedName ? name : `${site}.${name}`,
   };
 }

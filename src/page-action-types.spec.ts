@@ -21,6 +21,14 @@ const namedConfig = {
 } satisfies PageConfig;
 
 describe("page action public types", () => {
+  it("types an optional site key as string", () => {
+    function siteAware({ site }: PageActionContext) {
+      expectTypeOf(site?.key).toEqualTypeOf<string | undefined>();
+    }
+
+    expectTypeOf(siteAware).toBeFunction();
+  });
+
   it("accepts config.action and config.actions on PageConfig", () => {
     expectTypeOf(config.action).toMatchTypeOf<PageActionConfig>();
     expectTypeOf(namedConfig.actions.remove).toMatchTypeOf<PageActionConfig>();
@@ -62,6 +70,26 @@ describe("page action public types", () => {
 
     expectTypeOf(bare).toBeFunction();
     expectTypeOf(archive).toBeFunction();
+  });
+
+  it("accepts a bare schema and a plain PageConfig annotation", () => {
+    const commentSchema = v.object({ body: v.string().required() });
+
+    function comment({ request }: PageActionContext<typeof commentSchema>) {
+      const body = request.validated();
+
+      expectTypeOf(body).not.toBeAny();
+      expectTypeOf(body).toMatchTypeOf<{ body: string }>();
+      expectTypeOf<{ body: string }>().toMatchTypeOf(body);
+    }
+
+    const annotated: PageConfig = {
+      route: { path: "/comments", name: "comments" },
+      actions: { comment: { validation: commentSchema } },
+    };
+
+    expectTypeOf(comment).toBeFunction();
+    expectTypeOf(annotated).toEqualTypeOf<PageConfig>();
   });
 
   it("rejects an unknown key inside an action config", () => {

@@ -62,6 +62,8 @@ import type { DeferSettlement } from "./defer-settlement";
 import { createSettledThenable } from "../loaders/settled-thenable";
 import { bindRequestRouteTranslations } from "./request-route-translations";
 import { resolveNamedApiRoutes } from "./named-api-routes";
+import { consumePageManifest } from "./page-manifest";
+import { HYDRATION_SITE_QUERY } from "../vite/hydration-entries";
 
 export { escapePayload, PAYLOAD_SCRIPT_ID };
 export type { BufferedCookie };
@@ -78,6 +80,25 @@ function sessionExtras(bundle: PageDataBundle): { session?: { user: unknown } } 
   const session = (bundle as Bundle).session;
 
   return session === undefined ? {} : { session };
+}
+
+/**
+ * Select the entry built for this request's site without changing the
+ * single-site document. Production barrels record the emitted asset per site;
+ * Vite development reuses the source entry and selects its virtual registry
+ * through the same query the page-registry plugin consumes.
+ */
+function hydrationClientUrlForRequest(url: string | undefined, request: Request): string | undefined {
+  const site = request.site?.key;
+
+  if (site === undefined || url === undefined) return url;
+
+  const emitted = consumePageManifest()?.sites?.[site]?.hydrationEntry;
+
+  if (emitted !== undefined) return emitted.startsWith("/") ? emitted : `/${emitted}`;
+
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}${HYDRATION_SITE_QUERY}=${encodeURIComponent(site)}`;
 }
 
 /** Reads the stage 7 commit into the lowercased header map `RenderedPage` carries. */
@@ -1041,7 +1062,8 @@ async function finishRender(
       requestStylesheetSources(request),
       streamOptions.resolveRequestStylesheetUrls,
     ),
-    hydrationClientModuleUrl: streamOptions.hydrationClientModuleUrl,
+    hydrationClientModuleUrl: hydrationClientUrlForRequest(streamOptions.hydrationClientModuleUrl, request),
+    siteKey: request.site?.key,
     hydrationClientModulePreloadUrls: streamOptions.hydrationClientModulePreloadUrls,
     localeAlternates,
     localeRouting,
@@ -1395,6 +1417,7 @@ export async function renderPageFailure(options: RenderPageFailureOptions): Prom
     lang: slots.locale,
     stylesheetUrls: options.stylesheetUrls,
     hydrationClientModuleUrl: options.hydrationClientModuleUrl,
+    siteKey: request.site?.key,
     // Same reasoning as `finishRender` — a module-load/registration failure
     // still owes the browser the runtime routing table, not the build-time
     // guess, or `<Link>`/`changeLocaleCode` go dead on this document too.

@@ -27,13 +27,25 @@
 
 import { queryStringOf, type QueryStringInput } from "./query-string";
 import { interpolateRoutePath } from "./route-path-interpolation";
+import { currentSite, siteOriginFor } from "./site-url";
 import type { HasGeneratedPageRoutes, PageRouteName, PageRouteParams } from "./route-types";
 
 /** The two fields `href` needs. Callers may pass richer entries; the rest is ignored. */
 export type RouteTableEntry = {
   readonly name: string;
   readonly path: string;
+  /** The multi-site owner. Absent in the byte-for-byte compatible single-site table. */
+  readonly site?: string;
 };
+
+/** Public, browser-safe subset of `web.sites` needed to make a cross-site URL. */
+export type RegisteredSite = {
+  readonly hosts?: readonly string[];
+  readonly dynamic?: true;
+  readonly basePath?: string;
+};
+
+export type RegisteredSites = Readonly<Record<string, RegisteredSite>>;
 
 /** What `href` accepts for a `:param` segment. Rendered with `String(value)`. */
 export type RouteParameters = Readonly<Record<string, unknown>>;
@@ -74,8 +86,10 @@ export type RouteQuery = QueryStringInput;
 const ROUTE_TABLE_SLOT = Symbol.for("warlock.web.routeTable");
 
 type RouteTableSlot = {
-  table: Map<string, string>;
+  table: Map<string, RouteTableEntry>;
   publishedBy: string;
+  sites: RegisteredSites;
+  bySite?: Map<string, readonly RouteTableEntry[]>;
 };
 
 type RouteTableHost = typeof globalThis & {
@@ -167,6 +181,18 @@ export class DuplicateRouteNameError extends Error {
   }
 }
 
+/** A dynamic site's hostname is runtime data, never a route parameter. */
+export class MissingDynamicSiteHostError extends Error {
+  public constructor(public readonly routeName: string) {
+    super(
+      `Warlock href(${JSON.stringify(routeName)}) targets a dynamic site and requires ` +
+        'the "$host" parameter. Pass `{ $host: "tenant.example" }`; it is used only for ' +
+        "the URL origin and is never interpolated into the route path.",
+    );
+    this.name = "MissingDynamicSiteHostError";
+  }
+}
+
 /**
  * Publish the table. WHOLESALE — the previous one is discarded, not merged
  * into.
@@ -178,8 +204,11 @@ export class DuplicateRouteNameError extends Error {
 export function publishRouteTable(
   entries: readonly RouteTableEntry[],
   publishedBy = "unnamed",
+  sites: RegisteredSites = {},
 ): void {
-  prepareRouteTable(entries, publishedBy)();
+  const publish = prepareRouteTable(entries, publishedBy);
+  publish();
+  readSlot()!.sites = sites;
 }
 
 /** Validate a candidate before publishing other installation artifacts. */
@@ -187,21 +216,44 @@ export function prepareRouteTable(
   entries: readonly RouteTableEntry[],
   publishedBy: string,
 ): () => void {
-  const table = new Map<string, string>();
+  const table = new Map<string, RouteTableEntry>();
 
   for (const entry of entries) {
     const existing = table.get(entry.name);
 
     if (existing !== undefined) {
-      throw new DuplicateRouteNameError(entry.name, [existing, entry.path]);
+      throw new DuplicateRouteNameError(entry.name, [existing.path, entry.path]);
     }
 
-    table.set(entry.name, entry.path);
+    table.set(entry.name, entry);
   }
 
   return () => {
-    (globalThis as RouteTableHost)[ROUTE_TABLE_SLOT] = { table, publishedBy };
+    (globalThis as RouteTableHost)[ROUTE_TABLE_SLOT] = { table, publishedBy, sites: {} };
   };
+}
+
+/**
+ * Incrementally publish one site's routes. Unlike `publishRouteTable`, this is
+ * intentionally a per-site replacement: installers call it once per site while
+ * dispatch is being assembled, and a later install of one site must be able to
+ * remove that site's deleted pages without dropping every other site's table.
+ */
+export function registerSiteRoutes(
+  site: string,
+  entries: readonly RouteTableEntry[],
+  sites: RegisteredSites,
+  publishedBy = "site route installer",
+): void {
+  const previous = readSlot();
+  const bySite = new Map(previous?.bySite);
+  bySite.set(site, entries.map((entry) => ({ ...entry, site })));
+  const all = [...bySite.values()].flat();
+  const publish = prepareRouteTable(all, publishedBy);
+  publish();
+  const slot = readSlot()!;
+  slot.sites = sites;
+  slot.bySite = bySite;
 }
 
 /**
@@ -235,7 +287,7 @@ export function knownRouteNames(): readonly string[] {
  * §C.2) is the one caller today.
  */
 export function routePathOf(name: string): string | undefined {
-  return readSlot()?.table.get(name);
+  return readSlot()?.table.get(name)?.path;
 }
 
 /** Who published the live table, for diagnosis. `undefined` when nothing has. */
@@ -273,13 +325,19 @@ export function href(name: string, params?: object, query?: RouteQuery): string 
 
   if (slot === undefined) throw new RouteTableNotPublishedError(name);
 
-  const routePath = slot.table.get(name);
+  const entry = slot.table.get(name);
 
-  if (routePath === undefined) {
+  if (entry === undefined) {
     throw new UnknownRouteNameError(name, [...slot.table.keys()]);
   }
 
-  return `${interpolateRoutePath(routePath, params as RouteParameters | undefined, {
+  const routePath = entry.path;
+  const pathParams =
+    params === undefined
+      ? undefined
+      : Object.fromEntries(Object.entries(params).filter(([parameter]) => parameter !== "$host"));
+
+  const path = `${interpolateRoutePath(routePath, pathParams, {
     rejectUnknownParameters: true,
     onMissingParameter: (parameterName) => {
       throw new MissingRouteParameterError(name, parameterName, routePath);
@@ -288,4 +346,17 @@ export function href(name: string, params?: object, query?: RouteQuery): string 
       throw new UnknownRouteParameterError(name, parameterNames, routePath);
     },
   })}${queryStringOf(query)}`;
+
+  if (entry.site === undefined || entry.site === currentSite()?.key) return path;
+
+  const target = slot.sites[entry.site];
+  if (target === undefined) return path;
+  if (target.dynamic === true) {
+    const host = (params as RouteParameters | undefined)?.$host;
+    if (typeof host !== "string" || host.length === 0) throw new MissingDynamicSiteHostError(name);
+    return `${siteOriginFor(host)}${path}`;
+  }
+
+  const host = target.hosts?.[0];
+  return host === undefined ? path : `${siteOriginFor(host)}${path}`;
 }

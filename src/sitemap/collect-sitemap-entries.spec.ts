@@ -42,6 +42,23 @@ describe("collectSitemapEntries", () => {
     expect(declaredRoutes.size).toBe(0);
   });
 
+  it("filters dev-discovered pages to the requested site", async () => {
+    const appRoot = makeAppTree({
+      "src/web/(a)/root.tsx": "export default function Root() { return null; }",
+      "src/web/(a)/home.page.tsx": "export default function Page() { return null; }",
+      "src/web/(b)/root.tsx": "export default function Root() { return null; }",
+      "src/web/(b)/home.page.tsx": "export default function Page() { return null; }",
+    });
+    const sites = {
+      a: { pages: "(a)", hosts: ["a.test"] },
+      b: { pages: "(b)", hosts: ["b.test"] },
+    };
+
+    const { items } = await collectSitemapEntries({ appRoot, sites, site: "a", locales: noLocales });
+
+    expect(items).toEqual([{ entry: { path: "/home" } }]);
+  });
+
   it("excludes a page that opts out with `config.sitemap = false`", async () => {
     const appRoot = makeAppTree({
       "src/web/draft.page.tsx": [

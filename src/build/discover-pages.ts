@@ -50,18 +50,27 @@ import {
 } from "../server/not-found-page";
 import { NestedLayoutsNotSupportedError, selectPageLayout } from "../routing/layout-policy";
 import { deriveFilesystemRoutePath } from "../routing/filesystem-route";
-import { canonicalizeRouteExport, resolvePageRouteName } from "../routing/route-identity";
+import { canonicalizeRouteExport, resolvePageRouteIdentity } from "../routing/route-identity";
+import { routeIdentityKey } from "../routing/route-identity-key";
 import { assertPageHasDefaultExport } from "./page-default-export";
 import { UnknownMetadataKeyError, readMetadataKeys } from "./read-metadata-keys";
 import { readModuleConfig, type ModuleConfigRead } from "./read-module-config";
 import { pageSetupFileFor } from "./page-setup-file";
 import { toPosix } from "../shared/to-posix";
+import { validateSitesConfig } from "../sites/validate-sites-config";
+import type { SitesConfig } from "../sites/site-config.types";
 
 export type DiscoverPagesOptions = {
   /** Absolute path to the application root (where `package.json` lives). */
   appRoot: string;
   /** Source directory name under `appRoot`; defaults to `"src"`. */
   srcDir?: string;
+  /**
+   * `web.sites`. When supplied, discovery runs in multi-site mode: each site's
+   * pages are read from `src/web/<site.pages>` only. Absent means today's
+   * single-site behaviour, unchanged.
+   */
+  sites?: SitesConfig;
 };
 
 export type DiscoveredRoutablePage = {
@@ -109,6 +118,8 @@ export type DiscoveredRoutablePage = {
   appFile?: string;
   /** Optional `root.setup.ts` companion for the application root. */
   appSetupFile?: string;
+  /** Key of the site this page belongs to; absent in single-site mode. */
+  site?: string;
   /** Page action names read statically (`"default"` or the `actions` keys); absent when none. */
   actions?: string[];
 };
@@ -123,6 +134,8 @@ export type DiscoveredErrorPage = {
   webRoot: string;
   appFile?: string;
   appSetupFile?: string;
+  /** Key of the site this error page belongs to; absent in single-site mode. */
+  site?: string;
 };
 
 /** The complete static web graph: routable leaves plus the optional error boundary. */
@@ -598,7 +611,7 @@ function assertUniqueRoutePaths(
 
     // `/blog/:id` and `/blog/:slug` answer the same URLs, so compare the
     // shape with every param name normalised.
-    const shape = page.routePath.replace(/(^|\/):[^/?*+]+/g, "$1:_");
+    const shape = routeIdentityKey({ site: page.site, path: page.routePath });
     const existing = fileByRoutePath.get(shape);
     const relative = toPosix(path.relative(appRoot, page.pageFile));
 
@@ -669,26 +682,163 @@ export function discoverPages(options: DiscoverPagesOptions): DiscoveredPage[] {
  * Scans the page root once and returns its page recipe alongside every locale
  * declaration file, including declarations in directories with no page.
  */
+
+/** One page root: the whole app in single-site mode, one site's folder otherwise. */
+type SiteUnit = {
+  key?: string;
+  /** Absolute site folder; absent in single-site mode. */
+  root?: string;
+  basePath?: string;
+  appFile?: string;
+  appSetupFile?: string;
+};
+
+function existingSetupFor(file: string): string | undefined {
+  const candidate = pageSetupFileFor(file);
+
+  return candidate !== undefined && isFile(candidate) ? candidate : undefined;
+}
+
+function singleSiteUnit(rootFile: string): SiteUnit {
+  if (!isFile(rootFile)) return {};
+
+  const appSetupFile = existingSetupFor(rootFile);
+
+  return { appFile: rootFile, ...(appSetupFile === undefined ? {} : { appSetupFile }) };
+}
+
+function unitOwning(units: readonly SiteUnit[], pageFile: string): SiteUnit | undefined {
+  return units.find((unit) => unit.root !== undefined && pageFile.startsWith(unit.root + path.sep));
+}
+
+/**
+ * Multi-site mode's structural checks. Every boot error is collected first and
+ * thrown together, each naming its file, so one run shows the whole list.
+ */
+function prepareSites(
+  sites: SitesConfig,
+  srcRoot: string,
+  pageFiles: readonly DiscoveredPageFile[],
+  relativeToApp: (file: string) => string,
+): SiteUnit[] {
+  // Resolver wiring is a runtime concern; discovery sees no `web.resolveHost`.
+  const runtimeOnly = new Set([
+    "DYNAMIC_SITE_WITHOUT_RESOLVER",
+    "RESOLVER_WITHOUT_DYNAMIC_SITE",
+    "UNKNOWN_HOST_SITE_MISSING",
+  ]);
+  const configErrors = validateSitesConfig({ sites }).filter(
+    (error) => !runtimeOnly.has(error.code),
+  );
+
+  if (configErrors.length > 0) {
+    throw new Error(
+      `Invalid web.sites configuration:\n${configErrors.map((error) => `  - ${error.message}`).join("\n")}`,
+    );
+  }
+
+  const webRoot = path.join(srcRoot, "web");
+  const problems: string[] = [];
+  const topLevelRoot = path.join(webRoot, "root.tsx");
+
+  if (isFile(topLevelRoot)) {
+    problems.push(
+      `${relativeToApp(topLevelRoot)}: a top-level root.tsx is not allowed when web.sites is set; give each site folder its own root.tsx.`,
+    );
+  }
+
+  const units: SiteUnit[] = Object.entries(sites).map(([key, site]) => {
+    const root = path.join(webRoot, site.pages);
+    const rootFile = path.join(root, "root.tsx");
+    const hasRoot = isFile(rootFile);
+
+    if (!isDirectory(root)) {
+      problems.push(`${relativeToApp(root)}: folder for site "${key}" does not exist.`);
+    } else if (!hasRoot) {
+      problems.push(`${relativeToApp(rootFile)}: site "${key}" has no root.tsx.`);
+    }
+
+    const appSetupFile = hasRoot ? existingSetupFor(rootFile) : undefined;
+
+    return {
+      key,
+      root,
+      ...(site.basePath === undefined ? {} : { basePath: site.basePath }),
+      ...(hasRoot ? { appFile: rootFile } : {}),
+      ...(appSetupFile === undefined ? {} : { appSetupFile }),
+    };
+  });
+
+  const special = new Map<string, { notFound: string[]; error: string[] }>();
+
+  for (const { pageFile } of pageFiles) {
+    const unit = unitOwning(units, pageFile);
+
+    if (unit === undefined) {
+      problems.push(`${relativeToApp(pageFile)}: unassigned page; it is outside every site folder.`);
+      continue;
+    }
+
+    const entry = special.get(unit.key as string) ?? { notFound: [], error: [] };
+    if (isNotFoundPageFile(pageFile)) entry.notFound.push(pageFile);
+    if (isErrorPageFile(pageFile)) entry.error.push(pageFile);
+    special.set(unit.key as string, entry);
+  }
+
+  for (const [key, entry] of special) {
+    for (const [label, files] of [
+      ["404", entry.notFound],
+      ["error", entry.error],
+    ] as const) {
+      if (files.length > 1) {
+        problems.push(
+          `${files.map(relativeToApp).join(", ")}: site "${key}" has more than one ${label} page.`,
+        );
+      }
+    }
+  }
+
+  if (problems.length > 0) {
+    throw new Error(
+      `Invalid multi-site page layout:\n${problems.map((problem) => `  - ${problem}`).join("\n")}`,
+    );
+  }
+
+  return units;
+}
+
 export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPageGraph {
   const { appRoot } = options;
   const srcRoot = path.join(appRoot, options.srcDir ?? "src");
-  const appFile = path.join(srcRoot, "web", "root.tsx");
-  const hasAppFile = isFile(appFile);
-  const appSetupCandidate = pageSetupFileFor(appFile);
-  const appSetupFile = appSetupCandidate !== undefined && isFile(appSetupCandidate) ? appSetupCandidate : undefined;
-  const declarations = new Map<string, ModuleConfigRead>();
-  if (hasAppFile) {
-    const declarationFile = appSetupFile ?? appFile;
-    readModuleConfig(declarationFile, fs.readFileSync(declarationFile, "utf-8"), "root");
-  }
   const relativeToApp = (file: string) => toPosix(path.relative(appRoot, file));
+  const declarations = new Map<string, ModuleConfigRead>();
+  const sourceGraph = discoverPageFileGraph(srcRoot);
+  const siteUnits =
+    options.sites === undefined
+      ? undefined
+      : prepareSites(options.sites, srcRoot, sourceGraph.pages, relativeToApp);
+
+  // One unit per site; single-site mode is one unit with no key, whose root is
+  // the hard-coded `src/web/root.tsx`.
+  const units: SiteUnit[] = siteUnits ?? [singleSiteUnit(path.join(srcRoot, "web", "root.tsx"))];
+
+  for (const unit of units) {
+    if (unit.appFile !== undefined) {
+      const declarationFile = unit.appSetupFile ?? unit.appFile;
+      readModuleConfig(declarationFile, fs.readFileSync(declarationFile, "utf-8"), "root");
+    }
+  }
 
   const pages: DiscoveredPage[] = [];
-  const sourceGraph = discoverPageFileGraph(srcRoot);
   const explicitRouteFiles = new Set<string>();
-  let errorPage: DiscoveredErrorPage | undefined;
+  const errorPages = new Map<string | undefined, DiscoveredErrorPage>();
 
   for (const { pageFile, webRoot } of sourceGraph.pages) {
+    const unit = siteUnits === undefined ? units[0] : unitOwning(units, pageFile);
+    if (unit === undefined) continue;
+    const { key: siteKey, basePath, appFile, appSetupFile } = unit;
+    const hasAppFile = appFile !== undefined;
+    const siteRootPrefix = unit.root === undefined ? undefined : unit.root + path.sep;
     const setupCandidate = pageSetupFileFor(pageFile);
     const setupFile = setupCandidate !== undefined && isFile(setupCandidate) ? setupCandidate : undefined;
     const pageSource = fs.readFileSync(pageFile, "utf-8");
@@ -705,21 +855,23 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
     if (isErrorPageFile(pageFile)) {
       if (route !== undefined) throw new ErrorPageDeclaresRouteError(relativeToApp(pageFile));
 
-      if (errorPage !== undefined) {
+      const existingErrorPage = errorPages.get(siteKey);
+      if (existingErrorPage !== undefined) {
         throw new DuplicateErrorPageError(
-          relativeToApp(errorPage.pageFile),
+          relativeToApp(existingErrorPage.pageFile),
           relativeToApp(pageFile),
         );
       }
 
-      errorPage = {
+      errorPages.set(siteKey, {
         type: "error",
         pageFile,
         webRoot,
+        ...(siteKey === undefined ? {} : { site: siteKey }),
         ...(setupFile === undefined ? {} : { setupFile }),
         ...(hasAppFile ? { appFile } : {}),
         ...(appSetupFile === undefined ? {} : { appSetupFile }),
-      };
+      });
       continue;
     }
     const isNotFoundPage = isNotFoundPageFile(pageFile);
@@ -757,7 +909,10 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
     // just one in the page's own directory. Discovery supplies the one fact
     // the rule needs and the pure policy cannot learn — whether each layout
     // renders anything at all.
-    const layouts = layoutChainFor(pageFile, webRoot);
+    // A site's chain starts at its own folder: a layout above it belongs to no site.
+    const layouts = layoutChainFor(pageFile, webRoot).filter(
+      (layout) => siteRootPrefix === undefined || layout.startsWith(siteRootPrefix),
+    );
     const layoutFacts = layouts.map((layout) => {
       const setupCandidate = pageSetupFileFor(layout);
       const declarationFile =
@@ -828,11 +983,21 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
     const canonicalRoute =
       !isNotFoundPage && route ? canonicalizeRouteExport(route, relativePageFile) : undefined;
 
-    const effectiveRoutePath = isNotFoundPage
+    const siteLocalRoutePath = isNotFoundPage
       ? NOT_FOUND_ROUTE_PATH
       : canonicalRoute
         ? composeRoutePath(layoutPrefix, canonicalRoute.path)
         : deriveFilesystemRoutePath({ pageFile: relativePageFile, layoutPrefixes });
+    const effectiveRoutePath =
+      basePath === undefined || isNotFoundPage
+        ? siteLocalRoutePath
+        : composeRoutePath(basePath, siteLocalRoutePath);
+
+    const routeName = isNotFoundPage
+      ? siteKey === undefined
+        ? NOT_FOUND_ROUTE_NAME
+        : `${siteKey}.${NOT_FOUND_ROUTE_NAME}`
+      : resolvePageRouteIdentity(route, relativePageFile, relativePageFile, siteKey).name;
 
     if (!isNotFoundPage && route !== undefined) {
       explicitRouteFiles.add(relativeToApp(pageFile));
@@ -840,9 +1005,7 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
 
     pages.push({
       type: "page",
-      routeName: isNotFoundPage
-        ? NOT_FOUND_ROUTE_NAME
-        : resolvePageRouteName(route, relativePageFile),
+      routeName,
       // The catch-all, which the client route matcher already understands as
       // a terminal `catch-all` token sorted LAST by specificity
       // (`../client/runtime/matcher.ts`) — so the browser resolves the
@@ -882,13 +1045,14 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
       ...(actionNames === undefined || isNotFoundPage ? {} : { actions: actionNames }),
       ...(hasAppFile ? { appFile } : {}),
       ...(appSetupFile === undefined ? {} : { appSetupFile }),
+      ...(siteKey === undefined ? {} : { site: siteKey }),
     });
   }
 
   // The error page is captured separately above so a second one can be
   // compared against the first before either is trusted — it joins the
   // returned graph here, once discovery knows there is exactly one.
-  if (errorPage !== undefined) pages.push(errorPage);
+  pages.push(...errorPages.values());
 
   pages.sort(comparePages);
 
