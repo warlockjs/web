@@ -58,6 +58,42 @@ const pagesOf = (pages: DiscoveredPage[]) =>
   pages.filter((page) => page.type === "page") as Extract<DiscoveredPage, { type: "page" }>[];
 
 describe("discoverPages with sites", () => {
+  it("discovers convention sites without exposing $sites in paths or names", () => {
+    const sites: SitesConfig = {
+      landing: { hosts: ["estates.app"] },
+      tenant: { dynamic: true },
+    };
+    const appRoot = makeAppTree({
+      "src/web/$sites/landing/root.tsx": COMPONENT,
+      "src/web/$sites/landing/index.page.tsx": COMPONENT,
+      "src/web/$sites/landing/pricing.page.tsx": COMPONENT,
+      "src/web/$sites/tenant/root.tsx": COMPONENT,
+      "src/web/$sites/tenant/index.page.tsx": COMPONENT,
+    });
+
+    expect(
+      pagesOf(discoverPages({ appRoot, sites })).map(({ site, routePath, routeName }) => [site, routePath, routeName]),
+    ).toEqual([
+      ["landing", "/", "landing.index"],
+      ["landing", "/pricing", "landing.pricing"],
+      ["tenant", "/", "tenant.index"],
+    ]);
+  });
+
+  it("mixes convention sites with explicit route-group sites", () => {
+    const sites: SitesConfig = {
+      landing: { hosts: ["estates.app"] },
+      platform: { pages: "(platform)", hosts: ["app.estates.app"] },
+    };
+    const appRoot = makeAppTree({
+      "src/web/$sites/landing/root.tsx": COMPONENT,
+      "src/web/$sites/landing/index.page.tsx": COMPONENT,
+      "src/web/(platform)/root.tsx": COMPONENT,
+      "src/web/(platform)/index.page.tsx": COMPONENT,
+    });
+
+    expect(pagesOf(discoverPages({ appRoot, sites })).map((page) => page.site)).toEqual(["landing", "platform"]);
+  });
   it("maps the same path on different sites without a collision", () => {
     const appRoot = makeAppTree(realEstate());
     const pages = pagesOf(discoverPages({ appRoot, sites: SITES }));
@@ -162,6 +198,21 @@ describe("discoverPages with sites", () => {
   });
 
   describe("boot errors", () => {
+    it("rejects an unconfigured $sites folder and a missing convention site folder", () => {
+      const unconfigured = makeAppTree({
+        "src/web/$sites/landing/root.tsx": COMPONENT,
+        "src/web/$sites/extra/root.tsx": COMPONENT,
+      });
+      const missing = makeAppTree({});
+
+      expect(() => discoverPages({ appRoot: unconfigured, sites: { landing: { hosts: ["a.app"] } } })).toThrow(
+        /src\/web\/\$sites\/extra.*no matching web\.sites entry/,
+      );
+      expect(() => discoverPages({ appRoot: missing, sites: { landing: { hosts: ["a.app"] } } })).toThrow(
+        /src\/web\/\$sites\/landing.*site "landing".*does not exist/,
+      );
+    });
+
     it("rejects a top-level root.tsx", () => {
       const appRoot = makeAppTree(realEstate({ "src/web/root.tsx": COMPONENT }));
 

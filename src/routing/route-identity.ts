@@ -272,10 +272,14 @@ export function resolvePageRouteIdentity(
   const canonicalRoute =
     route === undefined ? undefined : canonicalizeRouteExport(route, errorContextFile);
   const generatedName = canonicalRoute?.name === undefined;
-  const name = canonicalRoute?.name ?? deriveFilesystemRouteName(pageFile);
+  // `$sites/<site>/` is a site's home, never part of its URLs or route names.
+  // Stripped here, the one place every installer (dev, prod, discovery) derives
+  // identities, so no caller can pass the other form through.
+  const routeFile = pageFile.replace(/^\$sites\/[^/]+\//, "");
+  const name = canonicalRoute?.name ?? deriveFilesystemRouteName(routeFile);
 
   return {
-    path: canonicalRoute?.path ?? deriveFilesystemRoutePath({ pageFile }),
+    path: canonicalRoute?.path ?? deriveFilesystemRoutePath({ pageFile: routeFile }),
     name: site === undefined || !generatedName ? name : `${site}.${name}`,
   };
 }

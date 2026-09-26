@@ -47,6 +47,7 @@ import {
   NOT_FOUND_ROUTE_PATH,
 } from "../server/not-found-page";
 import { toPosix } from "../shared/to-posix";
+import { siteFolder } from "../sites/site-folder";
 
 // Re-exported, not redefined: `layoutChainFor` was this module's before the
 // split, and the callers that already reach for it here should keep getting
@@ -507,8 +508,8 @@ export async function generatePagesBarrel(
     options.sites === undefined
       ? []
       : Object.entries(options.sites).map(([site, configuration], index) => {
-          const rootFile = path.join(srcRoot, "web", configuration.pages, "root.tsx");
-          const setupFile = path.join(srcRoot, "web", configuration.pages, "root.setup.ts");
+          const rootFile = path.join(srcRoot, "web", siteFolder(site, configuration), "root.tsx");
+          const setupFile = path.join(srcRoot, "web", siteFolder(site, configuration), "root.setup.ts");
 
           return {
             site,

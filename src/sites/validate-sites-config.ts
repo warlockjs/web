@@ -60,13 +60,13 @@ export function validateSitesConfig({
     }
 
     const pages: unknown = site.pages;
-    if (typeof pages !== "string" || !PAGES_GROUP.test(pages)) {
+    if (pages !== undefined && (typeof pages !== "string" || !PAGES_GROUP.test(pages))) {
       errors.push({
         code: "SITE_PAGES_INVALID",
         site: key,
         message: `Site "${key}" has invalid pages "${String(pages)}"; it must be a single route-group folder name such as "(landing)".`,
       });
-    } else {
+    } else if (pages !== undefined) {
       const owner = pagesOwner.get(pages);
       if (owner !== undefined) {
         errors.push({

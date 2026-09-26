@@ -2,6 +2,12 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.23.1 - Unreleased
+
+### Added
+
+- Sites can live in `src/web/$sites/<name>/`: the folder name is the site key and `pages` becomes optional; `(group)` + `pages` still works.
+
 ## 5.23.0 - 2026-09-25
 
 ### Security

@@ -63,6 +63,23 @@ function hooks(plugin: ReturnType<typeof clientPageRegistry>) {
 }
 
 describe("per-site virtual page registries", () => {
+  it("maps a convention site folder to its site registry", () => {
+    const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), "warlock-convention-site-registry-"));
+    roots.push(appRoot);
+    for (const [relative, contents] of Object.entries({
+      "src/web/$sites/landing/root.tsx": COMPONENT,
+      "src/web/$sites/landing/home.page.tsx": page("home", "/"),
+    })) {
+      const full = path.join(appRoot, relative);
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, contents, "utf-8");
+    }
+
+    const { load } = hooks(clientPageRegistry({ appRoot, sites: { landing: { hosts: ["a.test"] } } }));
+
+    expect(load(resolvedSiteRegistryId("landing"))).toContain("$sites/landing/home.page.tsx");
+  });
+
   it("serves one registry per site containing only that site's pages", () => {
     const appRoot = makeApp(true);
     const { resolveId, load } = hooks(clientPageRegistry({ appRoot, sites: SITES }));

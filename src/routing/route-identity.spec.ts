@@ -106,6 +106,15 @@ describe("resolvePageRouteIdentity", () => {
       siteName,
     );
   });
+
+  it("keeps the $sites/<site> folder out of paths and names, whichever installer passes it", () => {
+    const fromSiteRoot = resolvePageRouteIdentity(undefined, "listings/[id].page.tsx", "x", "tenant");
+    const fromWebRoot = resolvePageRouteIdentity(undefined, "$sites/tenant/listings/[id].page.tsx", "x", "tenant");
+
+    expect(fromWebRoot).toEqual(fromSiteRoot);
+    expect(fromWebRoot.path).toBe("/listings/:id");
+    expect(fromWebRoot.name).not.toContain("$sites");
+  });
 });
 
 describe("resolvePageRouteCache", () => {

@@ -24,6 +24,7 @@ import { pageSetupFileFor, pageSetupOwnerFileFor } from "../build/page-setup-fil
 import { resolveLocaleRouting } from "../server/locale-routing/resolve-locale-routing";
 import { toPosix } from "../shared/to-posix";
 import type { SitesConfig } from "../sites/site-config.types";
+import { siteFolder } from "../sites/site-folder";
 import { siteOfHydrationEntryId } from "./hydration-entries";
 import { isProjectableFile, SERVER_EXPORT_NAMES } from "./projection";
 
@@ -115,7 +116,7 @@ function rootConfigFile(appRoot: string, srcDir: string | undefined): string {
   return path.join(appRoot, srcDir ?? "src", "web", "root.tsx");
 }
 
-/** The site whose folder (`<src>/web/<site.pages>`) contains `file`, if any. */
+/** The site whose configured or convention folder contains `file`, if any. */
 function siteOwningFile(
   file: string,
   appRoot: string,
@@ -126,13 +127,13 @@ function siteOwningFile(
   const target = path.resolve(file);
   const webRoot = path.join(appRoot, srcDir ?? "src", "web");
   return Object.keys(sites).find((key) => {
-    const folder = path.resolve(webRoot, sites[key]!.pages) + path.sep;
+    const folder = path.resolve(webRoot, siteFolder(key, sites[key]!)) + path.sep;
     return target.startsWith(folder);
   });
 }
 
 function siteRootFile(appRoot: string, srcDir: string | undefined, sites: SitesConfig, site: string): string {
-  return path.join(appRoot, srcDir ?? "src", "web", sites[site]!.pages, "root.tsx");
+  return path.join(appRoot, srcDir ?? "src", "web", siteFolder(site, sites[site]!), "root.tsx");
 }
 
 function isRootSetupFile(

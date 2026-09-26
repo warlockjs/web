@@ -87,6 +87,7 @@ import {
 import type { LayoutModuleShape, PageRouteExport } from "./page-module-shapes";
 import { createRouteTranslationsResolver } from "./route-translations";
 import { siteRegistrationRouter, type SiteDispatchInstall } from "./site-dispatch";
+import { siteFolder } from "../sites/site-folder";
 
 export type { LayoutModuleShape, PageModuleShape, PageRouteExport } from "./page-module-shapes";
 
@@ -527,7 +528,7 @@ export async function installPageRoutes(
     const installedPages: InstalledPageRoute[] = [];
 
     for (const [site, siteConfig] of Object.entries(sites)) {
-      const root = path.join(options.appSrcRoot, "web", siteConfig.pages);
+      const root = path.join(options.appSrcRoot, "web", siteFolder(site, siteConfig));
       const siteAppFile = siteAppFiles.get(site) ?? path.join(root, "root.tsx");
 
       const installed = await installDiscoveredPageRoutes(

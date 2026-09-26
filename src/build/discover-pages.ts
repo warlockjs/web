@@ -59,6 +59,7 @@ import { pageSetupFileFor } from "./page-setup-file";
 import { toPosix } from "../shared/to-posix";
 import { validateSitesConfig } from "../sites/validate-sites-config";
 import type { SitesConfig } from "../sites/site-config.types";
+import { siteFolder } from "../sites/site-folder";
 
 export type DiscoverPagesOptions = {
   /** Absolute path to the application root (where `package.json` lives). */
@@ -67,8 +68,9 @@ export type DiscoverPagesOptions = {
   srcDir?: string;
   /**
    * `web.sites`. When supplied, discovery runs in multi-site mode: each site's
-   * pages are read from `src/web/<site.pages>` only. Absent means today's
-   * single-site behaviour, unchanged.
+   * pages are read from each explicit `src/web/<site.pages>` or convention
+   * `src/web/$sites/<site key>` folder. Absent means today's single-site
+   * behaviour, unchanged.
    */
   sites?: SitesConfig;
 };
@@ -747,8 +749,20 @@ function prepareSites(
     );
   }
 
+  const conventionRoot = path.join(webRoot, "$sites");
+  if (isDirectory(conventionRoot)) {
+    for (const entry of fs.readdirSync(conventionRoot, { withFileTypes: true })) {
+      if (entry.isDirectory() && !(entry.name in sites)) {
+        problems.push(
+          `${relativeToApp(path.join(conventionRoot, entry.name))}: folder has no matching web.sites entry for key "${entry.name}".`,
+        );
+      }
+    }
+  }
+
   const units: SiteUnit[] = Object.entries(sites).map(([key, site]) => {
-    const root = path.join(webRoot, site.pages);
+    const folder = siteFolder(key, site);
+    const root = path.join(webRoot, folder);
     const rootFile = path.join(root, "root.tsx");
     const hasRoot = isFile(rootFile);
 
@@ -839,6 +853,10 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
     const { key: siteKey, basePath, appFile, appSetupFile } = unit;
     const hasAppFile = appFile !== undefined;
     const siteRootPrefix = unit.root === undefined ? undefined : unit.root + path.sep;
+    // `$sites/<key>` is a routing-neutral ownership boundary, just like an
+    // explicit route group. Derive identities from the site root so neither
+    // convention segment reaches a URL or generated route name.
+    const siteRouteRoot = unit.root ?? webRoot;
     const setupCandidate = pageSetupFileFor(pageFile);
     const setupFile = setupCandidate !== undefined && isFile(setupCandidate) ? setupCandidate : undefined;
     const pageSource = fs.readFileSync(pageFile, "utf-8");
@@ -960,7 +978,7 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
       "/",
     );
 
-    const relativePageFile = toPosix(path.relative(webRoot, pageFile));
+    const relativePageFile = toPosix(path.relative(siteRouteRoot, pageFile));
     const layoutPrefixes = Object.fromEntries(
       layouts.flatMap((layoutFile) => {
         const setupCandidate = pageSetupFileFor(layoutFile);
@@ -969,7 +987,7 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
         const prefix = readDeclarations(declarationFile, declarations, undefined, "layout").prefix;
         if (prefix === undefined) return [];
 
-        const directory = toPosix(path.relative(webRoot, path.dirname(layoutFile)));
+        const directory = toPosix(path.relative(siteRouteRoot, path.dirname(layoutFile)));
         return [[directory, prefix]];
       }),
     );
