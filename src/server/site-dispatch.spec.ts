@@ -479,3 +479,13 @@ describe("single-site mode", () => {
     expect(registered).not.toContain("GET /*");
   });
 });
+
+describe("resolver shared hand-off across module copies", () => {
+  it("uses one registry symbol, so Vite's SSR copy of the page pipeline finds it", async () => {
+    const { RESOLVED_SITE_SHARED: first } = await import("./site-dispatch");
+    vi.resetModules();
+    const { RESOLVED_SITE_SHARED: second } = await import("./site-dispatch");
+
+    expect(second).toBe(first);
+  });
+});

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MissingDynamicSiteHostError,
   href,
@@ -40,5 +40,15 @@ describe("site-aware href", () => {
   it("reads siteUrl from the request origin and mount", () => {
     connectCurrentSite(() => ({ key: "admin", host: "acme.localhost", basePath: "/admin", protocol: "http:", port: "2030" }));
     expect(siteUrl()).toBe("http://acme.localhost:2030/admin");
+  });
+});
+
+describe("site resolver across module copies", () => {
+  it("a second copy of the module (Vite's SSR instance in dev) sees the connected site", async () => {
+    connectCurrentSite(() => ({ key: "tenant", host: "acme.localhost", basePath: "", protocol: "http:", port: "2030" }));
+    vi.resetModules();
+    const secondCopy = await import("./site-url");
+
+    expect(secondCopy.siteUrl()).toBe("http://acme.localhost:2030");
   });
 });

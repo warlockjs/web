@@ -33,7 +33,9 @@ import { NOT_FOUND_ROUTE_PATH } from "./not-found-page";
 export type RequestSite = PageSite;
 
 /** Internal hand-off from site selection to the page pipeline's ALS scope. */
-export const RESOLVED_SITE_SHARED = Symbol("warlock.resolved-site-shared");
+// Registry symbol: in dev the connector and the page pipeline run in two
+// module copies (Node and Vite SSR), and both must name the same slot.
+export const RESOLVED_SITE_SHARED = Symbol.for("warlock.resolved-site-shared");
 
 declare module "@warlock.js/core" {
   interface Request {

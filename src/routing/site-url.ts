@@ -9,19 +9,30 @@ export type CurrentSite = {
 
 export type CurrentSiteResolver = () => CurrentSite | undefined;
 
-let resolveCurrentSite: CurrentSiteResolver | undefined;
+/**
+ * The resolver lives on a global slot, not in module state: in dev the
+ * connector connects it from the Node copy of this module, while pages call
+ * `href()` / `siteUrl()` from Vite's SSR copy.
+ */
+const CURRENT_SITE_RESOLVER_SLOT = Symbol.for("warlock.web.currentSiteResolver");
+
+type CurrentSiteResolverHost = typeof globalThis & {
+  [CURRENT_SITE_RESOLVER_SLOT]?: CurrentSiteResolver;
+};
+
 let browserSite: Pick<CurrentSite, "key" | "basePath"> | undefined;
 
 /** Connect core's ALS-backed request reader without making the client bundle import core. */
 export function connectCurrentSite(resolve: CurrentSiteResolver | undefined): CurrentSiteResolver | undefined {
-  const previous = resolveCurrentSite;
-  resolveCurrentSite = resolve;
+  const host = globalThis as CurrentSiteResolverHost;
+  const previous = host[CURRENT_SITE_RESOLVER_SLOT];
+  host[CURRENT_SITE_RESOLVER_SLOT] = resolve;
   return previous;
 }
 
 /** The current site on the server; browser callers have an origin but no site key. */
 export function currentSite(): CurrentSite | undefined {
-  const serverSite = resolveCurrentSite?.();
+  const serverSite = (globalThis as CurrentSiteResolverHost)[CURRENT_SITE_RESOLVER_SLOT]?.();
   if (serverSite !== undefined || typeof location === "undefined" || browserSite === undefined) return serverSite;
   return { ...browserSite, host: location.hostname, protocol: location.protocol, port: location.port };
 }
