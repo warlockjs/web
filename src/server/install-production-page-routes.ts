@@ -69,6 +69,12 @@ export type InstallProductionPageRoutesOptions = {
    * name — and no page that could need a stylesheet either.
    */
   clientDir?: string;
+  /**
+   * Multi-site mode's dispatcher (`web.sites`). Forwarded so each site's
+   * slice of the manifest installs under its own root; absent means a
+   * single-site install.
+   */
+  siteDispatch?: SiteDispatchInstall;
 };
 
 /**
@@ -91,6 +97,7 @@ export async function installProductionPageRoutes(
     resolveHydrationClientModuleUrl,
     resolveHydrationClientModulePreloadUrls,
     clientDir,
+    siteDispatch,
   } = options;
 
   if (manifest.pages.length === 0) return [];
@@ -112,5 +119,6 @@ export async function installProductionPageRoutes(
     hydrationClientModuleUrl: resolveHydrationClientModuleUrl(),
     hydrationClientModulePreloadUrls: resolveHydrationClientModulePreloadUrls?.(),
     clientDir,
+    ...(siteDispatch === undefined ? {} : { siteDispatch }),
   });
 }

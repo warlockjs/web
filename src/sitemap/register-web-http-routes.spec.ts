@@ -53,6 +53,16 @@ describe("registerWebHttpRoutes", () => {
     expect(startSitemapRuntime).toHaveBeenCalledWith({ appRoot: "/app" });
   });
 
+  it("leaves multi-site sitemaps to each site's request: no single-origin runtime at startup", async () => {
+    config.set("web", {
+      sitemap: { enabled: true },
+      sites: { landing: { pages: "(landing)", hosts: ["estates.test"] } },
+    });
+
+    await regenerateSitemapOnStartup({ appRoot: "/app" });
+
+    expect(startSitemapRuntime).not.toHaveBeenCalled();
+  });
   it("does not generate at startup when regenerate.onBoot is false", async () => {
     config.set("app", { publicUrl: "https://example.com" });
     config.set("web", { sitemap: { enabled: true, regenerate: { onBoot: false } } });

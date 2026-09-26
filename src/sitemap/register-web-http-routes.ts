@@ -10,6 +10,7 @@ import { registerRobotsRoute } from "./register-robots-route";
 import { registerSitemapRoutes } from "./register-sitemap-routes";
 import { startSitemapRuntime } from "./sitemap-lifecycle";
 import { resolveSitemapConfig } from "./resolve-sitemap-config";
+import { multiSiteConfig } from "./site-sitemap";
 
 export type RegisterWebHttpRoutesOptions = {
   appRoot?: string;
@@ -51,6 +52,10 @@ export async function regenerateSitemapOnStartup(
   options: { appRoot?: string } = {},
 ): Promise<void> {
   if (!resolveSitemapConfig().enabled) return;
+  // Multi-site: each site's sitemap is built for its own origin when its host
+  // asks. The managed runtime publishes one sitemap for one `app.publicUrl`,
+  // which a multi-site app neither has nor wants.
+  if (multiSiteConfig() !== undefined) return;
   // Restoration/subscriptions happen even when onBoot generation is disabled.
   // startSitemapRuntime already logs via reportFailure; startup stays non-fatal.
   await startSitemapRuntime({ appRoot: options.appRoot }).catch(() => undefined);
