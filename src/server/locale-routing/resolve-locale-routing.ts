@@ -67,3 +67,24 @@ export function resolveLocaleRouting(localeRoutingConfig?: LocaleRoutingConfig):
 
   return { strategy, codes, defaultLocale };
 }
+
+/**
+ * The locale routing a client page registry is BUILT with — a fallback only:
+ * the browser prefers the routing the server embeds in each document
+ * (`../../entry/publish-document-locale-routing.ts`), resolved at boot with
+ * the full config and validated there by {@link resolveLocaleRouting}.
+ *
+ * `warlock build` loads `web.ts`'s static shape but not `app.ts`, so a site's
+ * own `localeRouting` reaches the build while `app.localeCodes` does not.
+ * Validating that pair here would refuse every multi-site build with per-site
+ * locale routing; the global `web.localeRouting` never hit this only because
+ * it is absent at build time too. Without the app's locale config the fallback
+ * is `none`, exactly what the global path has always produced.
+ */
+export function resolveClientLocaleRoutingFallback(localeRoutingConfig?: LocaleRoutingConfig): LocaleRouting {
+  if (!Array.isArray(config.key<unknown>("app.localeCodes"))) {
+    return { strategy: "none", codes: [], defaultLocale: "" };
+  }
+
+  return resolveLocaleRouting(localeRoutingConfig);
+}

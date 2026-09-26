@@ -176,6 +176,42 @@ describe("discoverPages — the recipe", () => {
     if (page.type === "page") expect(page.routePath).toBe("/products");
   });
 
+  // Real-Estate #15 (warlock-5.22.1-scaffold-bugs.md item 15): a page whose
+  // `config` needs `typeof loader` types it `satisfies PageConfig<typeof
+  // loader>` and moves the loader into a companion `.setup.ts` — `config`
+  // itself stays in the `.page.tsx`. Discovery used to always read the
+  // setup file's declarations INSTEAD of the page's own once a setup
+  // companion existed, so a declared `route.name` living in the page file
+  // was silently dropped in favour of the filesystem-derived one.
+  it("keeps a page's declared route name when `config` is typed with a generic and paired with a setup file", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/web/index.page.tsx": pageDeclaring(
+        'export const config = { route: { path: "/", name: "tenant.home" } } satisfies PageConfig<typeof loader>;',
+      ),
+      "src/web/index.setup.ts": "export const loader = () => ({});",
+    });
+
+    const [page] = discoverPages({ appRoot });
+
+    expect(page.routePath).toBe("/");
+    expect(page.routeName).toBe("tenant.home");
+  });
+
+  it("keeps a page's declared route name when `config` uses `as X` and is paired with a setup file", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": APP,
+      "src/web/index.page.tsx": pageDeclaring(
+        'export const config = { route: { path: "/", name: "tenant.asHome" } } as PageConfig<typeof loader>;',
+      ),
+      "src/web/index.setup.ts": "export const loader = () => ({});",
+    });
+
+    const [page] = discoverPages({ appRoot });
+
+    expect(page.routeName).toBe("tenant.asHome");
+  });
+
   it("discovers src/web pages and ignores page-like files under src/app", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,

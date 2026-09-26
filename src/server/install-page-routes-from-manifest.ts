@@ -677,10 +677,17 @@ export function installPageRoutesFromManifest(
     registered the routes. Production installs once at boot, so the wholesale
     replacement is a single write before the first request.
   */
-  // A site's slice publishes nothing: one site's table would replace another's.
+  // A site's slice publishes nothing to the ROUTE table: one site's table
+  // would replace another's (`installSitePagesFromManifest`'s own
+  // `registerSiteRoutes` call builds that up incrementally instead). Locale
+  // routing is keyed by site, so it has no such conflict — a site's slice
+  // publishes its OWN entry here, every time, alongside the others already
+  // published.
   if (siteSlice === undefined) {
     publishRouteTable(installed, "installPageRoutesFromManifest (production)");
     publishLocaleRouting(localeRouting);
+  } else {
+    publishLocaleRouting(localeRouting, siteSlice.site);
   }
 
   return installed;

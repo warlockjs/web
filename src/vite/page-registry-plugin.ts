@@ -21,7 +21,7 @@ import { generateClientRegistry } from "../build/generate-client-registry";
 import { generateLocaleRoutingSource } from "../build/generate-locale-routing";
 import { readModuleConfig } from "../build/read-module-config";
 import { pageSetupFileFor, pageSetupOwnerFileFor } from "../build/page-setup-file";
-import { resolveLocaleRouting } from "../server/locale-routing/resolve-locale-routing";
+import { resolveClientLocaleRoutingFallback } from "../server/locale-routing/resolve-locale-routing";
 import { toPosix } from "../shared/to-posix";
 import type { SitesConfig } from "../sites/site-config.types";
 import { siteFolder } from "../sites/site-folder";
@@ -552,8 +552,10 @@ export function clientPageRegistry(options: ClientPageRegistryPluginOptions = {}
       // constructed and its `load` hook runs in the SAME module graph as the
       // server installers (the process that calls `createServer`/`build`),
       // never Vite's SSR module runner — see `routing/locale-routing.ts`'s
-      // own header for why that graph split matters at all.
-      const localeRouting = resolveLocaleRouting(
+      // own header for why that graph split matters at all. Under `warlock
+      // build` the app config is not loaded, so this is the client FALLBACK
+      // only; the document the server renders carries the authoritative one.
+      const localeRouting = resolveClientLocaleRoutingFallback(
         site === undefined ? undefined : options.sites![site]!.localeRouting,
       );
       const strictMode =

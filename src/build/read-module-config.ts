@@ -17,6 +17,14 @@ export type ModuleConfigRead = {
   strictMode?: boolean;
   hasMiddleware: boolean;
   hasDefault: boolean;
+  /**
+   * Whether the module declares a runtime `config` export at all, regardless
+   * of which (if any) of its fields could be read. Distinguishes "no
+   * `config` export" from "a `config` export with nothing this cares about",
+   * which {@link route}/{@link prefix}/{@link strictMode} alone cannot: both
+   * leave every one of those fields `undefined`.
+   */
+  hasConfig: boolean;
   /** Present (true) only when the module exports `action` or `actions`. */
   declaresAction?: true;
   /**
@@ -296,7 +304,112 @@ export function readModuleConfig(
     ...(strictMode === undefined ? {} : { strictMode }),
     hasMiddleware,
     hasDefault,
+    hasConfig: configSeen,
     ...(actionNames.size > 0 ? { actionNames: [...actionNames].sort() } : {}),
     ...(declaresAction ? { declaresAction: true as const } : {}),
   };
+}
+
+/**
+ * Raised when a page/layout/root module and its setup companion BOTH export
+ * `config`.
+ *
+ * Mirrors the runtime contract a setup file is composed under
+ * (`../server/compose-page-module.ts`'s `composePageModule`, which spreads
+ * `{ ...uiModule, ...setupModule }` and refuses exactly this): `config` is one
+ * export, owned by exactly one file, never assembled field-by-field out of
+ * both. Refusing it here, statically, means a build fails with this message
+ * instead of quietly reading whichever file happened to come first and
+ * shipping a page under the wrong declared name.
+ */
+export class DuplicateModuleConfigExportError extends Error {
+  public constructor(
+    public readonly primaryFile: string,
+    public readonly setupFile: string,
+  ) {
+    super(
+      `Cannot read module config: both "${primaryFile}" and "${setupFile}" export \`config\`. ` +
+        "A module and its setup companion may declare `config` in exactly one file.",
+    );
+    this.name = "DuplicateModuleConfigExportError";
+  }
+}
+
+/**
+ * Merges a module's own declarations with its optional setup companion's, the
+ * STATIC equivalent of the runtime's `composePageModule`.
+ *
+ * `config` — and therefore `route`/`prefix`/`strictMode`/`hasMiddleware`, all
+ * of which live inside it — comes from WHICHEVER of the two files declares
+ * it, never unconditionally from the setup file. That is the fix for Real-
+ * Estate #15: a page whose `config` needs `typeof loader` types it `satisfies
+ * PageConfig<typeof loader>` and keeps `config` in the `.page.tsx` itself,
+ * moving only `loader` into the companion `.setup.ts` — so a setup file's
+ * mere existence must never make the primary file's own `config` invisible.
+ *
+ * `action`/`actions` may still live in either file (or both, additively, the
+ * way `actionNames`/`declaresAction` already worked before this fix) — those
+ * are independent exports the runtime also composes by spreading, and nothing
+ * here changes their contract.
+ *
+ * Takes already-parsed reads (rather than reading files itself) so a caller
+ * that already caches `readModuleConfig` per physical file — discovery reads
+ * every layout on a page's chain repeatedly — spends no extra parse on this.
+ */
+export function mergeModuleConfigReads(
+  primaryFile: string,
+  primaryRead: ModuleConfigRead,
+  setupFile: string | undefined,
+  setupRead: ModuleConfigRead | undefined,
+): ModuleConfigRead {
+  if (setupFile === undefined || setupRead === undefined) return primaryRead;
+
+  if (primaryRead.hasConfig && setupRead.hasConfig) {
+    throw new DuplicateModuleConfigExportError(primaryFile, setupFile);
+  }
+
+  const configOwner = primaryRead.hasConfig
+    ? primaryRead
+    : setupRead.hasConfig
+      ? setupRead
+      : undefined;
+
+  const actionNames = [
+    ...new Set([...(primaryRead.actionNames ?? []), ...(setupRead.actionNames ?? [])]),
+  ].sort();
+
+  return {
+    ...(configOwner?.route === undefined ? {} : { route: configOwner.route }),
+    ...(configOwner?.prefix === undefined ? {} : { prefix: configOwner.prefix }),
+    ...(configOwner?.strictMode === undefined ? {} : { strictMode: configOwner.strictMode }),
+    hasMiddleware: configOwner?.hasMiddleware ?? false,
+    hasDefault: primaryRead.hasDefault,
+    hasConfig: primaryRead.hasConfig || setupRead.hasConfig,
+    ...(actionNames.length > 0 ? { actionNames } : {}),
+    ...(primaryRead.declaresAction || setupRead.declaresAction
+      ? { declaresAction: true as const }
+      : {}),
+  };
+}
+
+/**
+ * Reads a module's declarations composed with its optional setup companion in
+ * one call, for callers that have no reason to cache the individual reads
+ * themselves. See {@link mergeModuleConfigReads} for the composition rule.
+ */
+export function readComposedModuleConfig(
+  primary: { sourceFile: string; source: string },
+  setup: { sourceFile: string; source: string } | undefined,
+  kind: ModuleKind,
+): ModuleConfigRead {
+  const primaryRead = readModuleConfig(primary.sourceFile, primary.source, kind, {
+    allowMissingDefault: true,
+  });
+
+  const setupRead =
+    setup === undefined
+      ? undefined
+      : readModuleConfig(setup.sourceFile, setup.source, kind, { allowMissingDefault: true });
+
+  return mergeModuleConfigReads(primary.sourceFile, primaryRead, setup?.sourceFile, setupRead);
 }

@@ -11,15 +11,20 @@ describe("readModuleConfig — accepted modules", () => {
       page(
         `${component} export const config = ({ route: ({ path: "/posts", name: "posts" } as const) satisfies RouteDeclaration, middleware: guard } as const) satisfies PageConfig; export default Page;`,
       ),
-    ).toEqual({ route: { path: "/posts", name: "posts" }, hasMiddleware: true, hasDefault: true });
+    ).toEqual({
+      route: { path: "/posts", name: "posts" },
+      hasMiddleware: true,
+      hasDefault: true,
+      hasConfig: true,
+    });
     expect(
       page(
         `${component} export const config = { route: "/posts", metadata: metadata }; export default Page;`,
       ),
-    ).toEqual({ route: { path: "/posts" }, hasMiddleware: false, hasDefault: true });
+    ).toEqual({ route: { path: "/posts" }, hasMiddleware: false, hasDefault: true, hasConfig: true });
     expect(
       page(`${component} export const config = { route: \`/template\` }; export default Page;`),
-    ).toEqual({ route: { path: "/template" }, hasMiddleware: false, hasDefault: true });
+    ).toEqual({ route: { path: "/template" }, hasMiddleware: false, hasDefault: true, hasConfig: true });
   });
 
   it("does not evaluate helper values and accepts page metadata methods", () => {
@@ -27,7 +32,7 @@ describe("readModuleConfig — accepted modules", () => {
       page(
         `${component} export const config = { cache: cachePolicy, validation: schemaFor(Page), metadata(props) { return { title: props.title }; }, sitemap: makeSitemap }; export default Page;`,
       ),
-    ).toEqual({ hasMiddleware: false, hasDefault: true });
+    ).toEqual({ hasMiddleware: false, hasDefault: true, hasConfig: true });
   });
 
   it("allows erased types, known re-exports, and function-form runtime exports", () => {
@@ -35,12 +40,12 @@ describe("readModuleConfig — accepted modules", () => {
       page(
         "interface PageConfig {} export type { PageConfig }; export type * from './types'; export { default as default, loader, register, ErrorBoundary } from './page-runtime'; export const config = {}; ",
       ),
-    ).toEqual({ hasMiddleware: false, hasDefault: true });
+    ).toEqual({ hasMiddleware: false, hasDefault: true, hasConfig: true });
     expect(
       page(
         `${component} export const config = {}; export async function loader() {} export function register() {} export function ErrorBoundary() { return null; } export default Page;`,
       ),
-    ).toEqual({ hasMiddleware: false, hasDefault: true });
+    ).toEqual({ hasMiddleware: false, hasDefault: true, hasConfig: true });
   });
 
   it("reads layout and root schemas", () => {
@@ -50,24 +55,24 @@ describe("readModuleConfig — accepted modules", () => {
         'export const config = { prefix: "/admin", middleware: undefined, metadata: metadata };',
         "layout",
       ),
-    ).toEqual({ prefix: "/admin", hasMiddleware: true, hasDefault: false });
+    ).toEqual({ prefix: "/admin", hasMiddleware: true, hasDefault: false, hasConfig: true });
     expect(
       readModuleConfig(
         "root.tsx",
         "export const config = { middleware: guard, strictMode: (true as const) };",
         "root",
       ),
-    ).toEqual({ strictMode: true, hasMiddleware: true, hasDefault: false });
+    ).toEqual({ strictMode: true, hasMiddleware: true, hasDefault: false, hasConfig: true });
     expect(
       readModuleConfig(
         "root.tsx",
         'export const config = { strictMode: false, metadata: { title: { template: "%s | App" } } };',
         "root",
       ),
-    ).toEqual({ strictMode: false, hasMiddleware: false, hasDefault: false });
+    ).toEqual({ strictMode: false, hasMiddleware: false, hasDefault: false, hasConfig: true });
     expect(
       readModuleConfig("root.tsx", "export const config = { middleware: guard };", "root"),
-    ).toEqual({ hasMiddleware: true, hasDefault: false });
+    ).toEqual({ hasMiddleware: true, hasDefault: false, hasConfig: true });
   });
 
   it("admits metadata callbacks on every module kind without evaluating them", () => {
@@ -75,21 +80,21 @@ describe("readModuleConfig — accepted modules", () => {
       page(
         `${component} export const config = { metadata() { throw new Error("not evaluated"); } }; export default Page;`,
       ),
-    ).toEqual({ hasMiddleware: false, hasDefault: true });
+    ).toEqual({ hasMiddleware: false, hasDefault: true, hasConfig: true });
     expect(
       readModuleConfig(
         "layout.tsx",
         'export const config = { metadata() { throw new Error("not evaluated"); } };',
         "layout",
       ),
-    ).toEqual({ hasMiddleware: false, hasDefault: false });
+    ).toEqual({ hasMiddleware: false, hasDefault: false, hasConfig: true });
     expect(
       readModuleConfig(
         "root.tsx",
         'export const config = { strictMode: true, metadata() { throw new Error("not evaluated"); } };',
         "root",
       ),
-    ).toEqual({ strictMode: true, hasMiddleware: false, hasDefault: false });
+    ).toEqual({ strictMode: true, hasMiddleware: false, hasDefault: false, hasConfig: true });
   });
 });
 

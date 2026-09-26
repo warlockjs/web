@@ -54,7 +54,7 @@ import { canonicalizeRouteExport, resolvePageRouteIdentity } from "../routing/ro
 import { routeIdentityKey } from "../routing/route-identity-key";
 import { assertPageHasDefaultExport } from "./page-default-export";
 import { UnknownMetadataKeyError, readMetadataKeys } from "./read-metadata-keys";
-import { readModuleConfig, type ModuleConfigRead } from "./read-module-config";
+import { mergeModuleConfigReads, readModuleConfig, type ModuleConfigRead } from "./read-module-config";
 import { pageSetupFileFor } from "./page-setup-file";
 import { toPosix } from "../shared/to-posix";
 import { validateSitesConfig } from "../sites/validate-sites-config";
@@ -640,18 +640,58 @@ function readDeclarations(
   cache: Map<string, ModuleConfigRead>,
   source?: string,
   kind: "page" | "layout" | "root" = path.basename(sourceFile) === "layout.tsx" ? "layout" : "page",
-  allowMissingDefault = false,
 ) {
   let result = cache.get(sourceFile);
 
   if (result === undefined) {
+    // `allowMissingDefault` is always true here: a `.page.tsx`'s own default
+    // export is asserted separately, with a friendlier error
+    // (`assertPageHasDefaultExport`), before this ever runs for a page file —
+    // and neither a layout nor a root module is required to have one at all
+    // (`readModuleConfig`'s check only fires for `kind === "page"`). A setup
+    // companion is read under the SAME `kind` as the file it pairs with (see
+    // {@link readComposedDeclarations}) and never renders anything itself, so
+    // it must never be held to the default-export rule either.
     result = readModuleConfig(sourceFile, source ?? fs.readFileSync(sourceFile, "utf-8"), kind, {
-      allowMissingDefault,
+      allowMissingDefault: true,
     });
     cache.set(sourceFile, result);
   }
 
   return result;
+}
+
+/**
+ * A file's declarations, composed with its optional setup companion's — the
+ * one seam every static reader of `config` (route, prefix, middleware,
+ * strictMode) goes through, so none of them can disagree about which file's
+ * `config` wins.
+ *
+ * Real-Estate #15: a page whose `config` needs `typeof loader` types it
+ * `satisfies PageConfig<typeof loader>` and keeps `config` in the `.page.tsx`
+ * itself, moving only `loader` into a companion `.setup.ts`. Reading
+ * unconditionally from the setup file when one exists — the previous
+ * behaviour — made that page's own declared `route.name` invisible and fell
+ * back to the filesystem-derived name instead. `config` now comes from
+ * WHICHEVER file declares it (exactly one, the same rule the runtime enforces
+ * when it composes the two modules — `../server/compose-page-module.ts`), so
+ * the declared name wins regardless of how `config` is typed or which of the
+ * two files it lives in.
+ */
+function readComposedDeclarations(
+  primaryFile: string,
+  cache: Map<string, ModuleConfigRead>,
+  primarySource: string | undefined,
+  setupFile: string | undefined,
+  kind: "page" | "layout" | "root",
+): ModuleConfigRead {
+  const primaryRead = readDeclarations(primaryFile, cache, primarySource, kind);
+
+  if (setupFile === undefined) return primaryRead;
+
+  const setupRead = readDeclarations(setupFile, cache, undefined, kind);
+
+  return mergeModuleConfigReads(primaryFile, primaryRead, setupFile, setupRead);
 }
 
 /**
@@ -837,8 +877,7 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
 
   for (const unit of units) {
     if (unit.appFile !== undefined) {
-      const declarationFile = unit.appSetupFile ?? unit.appFile;
-      readModuleConfig(declarationFile, fs.readFileSync(declarationFile, "utf-8"), "root");
+      readComposedDeclarations(unit.appFile, declarations, undefined, unit.appSetupFile, "root");
     }
   }
 
@@ -860,15 +899,20 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
     const setupFile = setupCandidate !== undefined && isFile(setupCandidate) ? setupCandidate : undefined;
     const pageSource = fs.readFileSync(pageFile, "utf-8");
     assertPageHasDefaultExport(relativeToApp(pageFile), pageSource);
-    const declarationFile = setupFile ?? pageFile;
-    const declarationSource = setupFile === undefined ? pageSource : fs.readFileSync(setupFile, "utf-8");
-    const { route, actionNames } = readDeclarations(
-      declarationFile,
-      declarations,
-      declarationSource,
-      "page",
-      setupFile !== undefined,
-    );
+    const pageRead = readDeclarations(pageFile, declarations, pageSource, "page");
+    const setupRead =
+      setupFile === undefined ? undefined : readDeclarations(setupFile, declarations, undefined, "page");
+    const { route, actionNames } = mergeModuleConfigReads(pageFile, pageRead, setupFile, setupRead);
+    // `config.metadata` lives inside whichever file's `config` won above — a
+    // setup file that merely PAIRS with this page (and does not itself
+    // export `config`) is never where metadata is read from, for the same
+    // reason its `route` isn't (Real-Estate #15).
+    const metadataFile =
+      setupFile !== undefined && !pageRead.hasConfig && setupRead?.hasConfig === true
+        ? setupFile
+        : pageFile;
+    const metadataSource =
+      metadataFile === pageFile ? pageSource : fs.readFileSync(metadataFile, "utf-8");
     if (isErrorPageFile(pageFile)) {
       if (route !== undefined) throw new ErrorPageDeclaresRouteError(relativeToApp(pageFile));
 
@@ -915,7 +959,7 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
     //
     // AFTER the reserved-404 route check on purpose: an impossible 404 route
     // contract is more fundamental than a malformed `<head>` declaration.
-    const unknownMetadataKeys = readMetadataKeys(relativeToApp(declarationFile), declarationSource);
+    const unknownMetadataKeys = readMetadataKeys(relativeToApp(metadataFile), metadataSource);
 
     if (unknownMetadataKeys.length > 0) {
       throw new UnknownMetadataKeyError(relativeToApp(pageFile), unknownMetadataKeys);
@@ -932,9 +976,8 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
     );
     const layoutFacts = layouts.map((layout) => {
       const setupCandidate = pageSetupFileFor(layout);
-      const declarationFile =
-        setupCandidate !== undefined && isFile(setupCandidate) ? setupCandidate : layout;
-      const declaration = readDeclarations(declarationFile, declarations, undefined, "layout");
+      const setupFile = setupCandidate !== undefined && isFile(setupCandidate) ? setupCandidate : undefined;
+      const declaration = readComposedDeclarations(layout, declarations, undefined, setupFile, "layout");
       return {
         layout,
         renders: declaration.hasDefault,
@@ -967,11 +1010,10 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
     const layoutPrefix = layouts.reduce(
       (composed, layoutFile) => {
         const setupCandidate = pageSetupFileFor(layoutFile);
-        const declarationFile =
-          setupCandidate !== undefined && isFile(setupCandidate) ? setupCandidate : layoutFile;
+        const setupFile = setupCandidate !== undefined && isFile(setupCandidate) ? setupCandidate : undefined;
         return composeRoutePath(
           composed,
-          readDeclarations(declarationFile, declarations, undefined, "layout").prefix ?? "/",
+          readComposedDeclarations(layoutFile, declarations, undefined, setupFile, "layout").prefix ?? "/",
         );
       },
       "/",
@@ -981,9 +1023,8 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
     const layoutPrefixes = Object.fromEntries(
       layouts.flatMap((layoutFile) => {
         const setupCandidate = pageSetupFileFor(layoutFile);
-        const declarationFile =
-          setupCandidate !== undefined && isFile(setupCandidate) ? setupCandidate : layoutFile;
-        const prefix = readDeclarations(declarationFile, declarations, undefined, "layout").prefix;
+        const setupFile = setupCandidate !== undefined && isFile(setupCandidate) ? setupCandidate : undefined;
+        const prefix = readComposedDeclarations(layoutFile, declarations, undefined, setupFile, "layout").prefix;
         if (prefix === undefined) return [];
 
         const directory = toPosix(path.relative(siteRouteRoot, path.dirname(layoutFile)));

@@ -1,6 +1,10 @@
 import config from "@mongez/config";
 import { afterEach, describe, expect, it } from "vitest";
-import { LocaleRoutingConfigError, resolveLocaleRouting } from "./resolve-locale-routing";
+import {
+  LocaleRoutingConfigError,
+  resolveClientLocaleRoutingFallback,
+  resolveLocaleRouting,
+} from "./resolve-locale-routing";
 
 afterEach(() => {
   config.set("web", {});
@@ -56,5 +60,29 @@ describe("resolveLocaleRouting — default not in codes", () => {
     config.set("app", { localeCodes: ["en", "ar"], localeCode: "fr" });
 
     expect(() => resolveLocaleRouting()).toThrow(LocaleRoutingConfigError);
+  });
+});
+
+describe("resolveClientLocaleRoutingFallback — the build-time client registry", () => {
+  it("falls back to none when the app config is not loaded (warlock build), even for a site strategy", () => {
+    config.set("app", undefined);
+
+    expect(resolveClientLocaleRoutingFallback({ strategy: "prefix-except-default" })).toEqual({
+      strategy: "none",
+      codes: [],
+      defaultLocale: "",
+    });
+  });
+
+  it("resolves and validates normally once app.localeCodes is loaded (dev)", () => {
+    config.set("app", { localeCodes: ["en", "ar"], localeCode: "en" });
+
+    expect(resolveClientLocaleRoutingFallback({ strategy: "prefix-except-default" })).toEqual({
+      strategy: "prefix-except-default",
+      codes: ["en", "ar"],
+      defaultLocale: "en",
+    });
+    config.set("app", { localeCodes: [], localeCode: "en" });
+    expect(() => resolveClientLocaleRoutingFallback({ strategy: "prefix" })).toThrow(LocaleRoutingConfigError);
   });
 });

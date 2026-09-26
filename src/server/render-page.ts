@@ -33,6 +33,7 @@ import { registerModules, type RegisterableModuleNamespace } from "../register-m
 import { markNonHydrating } from "./page-render-bundle";
 import { resolveDocumentLocaleRouting, resolveLocaleAlternates } from "./resolve-locale-alternates";
 import { readLocaleRouting } from "../routing/locale-routing";
+import { siteOriginFor } from "../routing/site-url";
 import type { ServerErrorPageProps } from "../props";
 import {
   buildErrorRecord,
@@ -1034,11 +1035,14 @@ async function finishRender(
   // and still lists its hreflang siblings; `localizedPath()` builds that
   // self-canonical (see `DocumentContextValue.localeAlternates`).
   const activeLocaleRouting = readLocaleRouting();
+  // Multi-site: a site's absolute URLs (canonical, og:url, hreflang) use THIS
+  // request's site origin; the app has no single public URL across sites.
+  const publicUrl = request.site === undefined ? getPublicUrl() : siteOriginFor(request.site.host);
   const localeAlternates = resolveLocaleAlternates(
     request.path,
     bundle.route.path,
     activeLocaleRouting,
-    getPublicUrl(),
+    publicUrl,
   );
   // RELEASE BLOCKER fix: the runtime table the browser must hydrate with,
   // not the build-time `virtual:warlock/pages` guess — see
@@ -1051,7 +1055,7 @@ async function finishRender(
   // on (`buildHydrationPayload`), so the two cannot disagree. The error paths
   // below replace `bundle.metadata` wholesale and are never enriched.
   bundle.metadata = enrichMetadata(bundle.metadata, {
-    publicUrl: getPublicUrl(),
+    publicUrl,
     requestPath: request.path,
     locale: documentSlots.locale,
     alternateLocales: localeAlternates?.map((alternate) => alternate.hreflang),

@@ -144,6 +144,27 @@ describe("discoverPages with sites", () => {
     ).toEqual(["landing.welcome", "platform.welcome"]);
   });
 
+  // Real-Estate #15 (warlock-5.22.1-scaffold-bugs.md item 15): the tenant
+  // site's `index.page.tsx` declares `route.name: "tenant.home"` but types
+  // `config` `satisfies PageConfig<typeof loader>`, with `loader` living in a
+  // companion `index.setup.ts`. An explicit name is never site-prefixed (see
+  // "prefixes generated names…" above), so this must come back verbatim.
+  it("keeps a site page's declared route name when config is split into a setup companion", () => {
+    const appRoot = makeAppTree(
+      realEstate({
+        "src/web/$sites/tenant/index.page.tsx":
+          'export const config = { route: { path: "/", name: "tenant.home" } } satisfies PageConfig<typeof loader>;\n' +
+          COMPONENT,
+        "src/web/$sites/tenant/index.setup.ts": "export const loader = () => ({});",
+      }),
+    );
+
+    const pages = pagesOf(discoverPages({ appRoot, sites: SITES }));
+    const tenantHome = pages.find((page) => page.site === "tenant" && page.routePath === "/");
+
+    expect(tenantHome?.routeName).toBe("tenant.home");
+  });
+
   it("prepends basePath to every path in that site", () => {
     const appRoot = makeAppTree(
       realEstate({ "src/web/$sites/tenantAdmin/listings/[id].page.tsx": COMPONENT }),

@@ -2,6 +2,15 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.23.2 - Unreleased
+
+### Fixed
+
+- Multi-site locale routing is per site. `<Link to>`, `localizedPath()`, hreflang alternates and the routing handed to the browser now follow the rendering request's own site (its `localeRouting`, over `web.localeRouting`). Before, a multi-site app never published locale routing, so none of them added a locale prefix, in dev or production.
+- Multi-site pages build canonical, `og:url` and hreflang URLs from the request's site origin instead of the app's single public URL.
+- `warlock build` no longer fails with "app.localeCodes declares no locale codes" when a site sets its own `localeRouting`.
+- A page's declared `route.name` wins in the generated route types when its loader lives in a companion `.setup.ts` and `config` stays in the page file (for example, typed `satisfies PageConfig<typeof loader>`). Discovery now reads `config` from whichever of the two files declares it, and rejects it in both, as the runtime already did.
+
 ## 5.23.1 - 2026-09-26
 
 ### Changed

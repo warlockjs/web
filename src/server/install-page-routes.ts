@@ -895,13 +895,19 @@ async function installDiscoveredPageRoutes(
     is why the table replaces wholesale instead of merging: a deleted page's
     name has to stop resolving.
   */
-  // A multi-site install publishes nothing per site: one site's table would
-  // replace another's wholesale. `href()` across sites is a later seam.
+  // A multi-site install publishes nothing to the ROUTE table per site: one
+  // site's table would replace another's wholesale (`registerSiteRoutes`,
+  // called by this function's multi-site caller, builds that up instead).
+  // Locale routing has no such conflict — it is keyed by site — so a site's
+  // slice publishes its OWN entry here, every time, alongside the others
+  // already published.
   if (siteScope === undefined) {
     const publishRoutes = prepareRouteTable(installed, "installPageRoutes (dev)");
     commitLocaleArtifact?.();
     publishRoutes();
     publishLocaleRouting(localeRouting);
+  } else {
+    publishLocaleRouting(localeRouting, siteScope.site);
   }
 
   return installed;
