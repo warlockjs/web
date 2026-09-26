@@ -89,6 +89,8 @@ const tenantListing = href("tenant.listings.show", { $host: "acme.estates.app", 
 const originAndMount = siteUrl();
 ```
 
+`<Link to="platform.home">` and `navigateTo()` take the same names; a link to another site loads that site in full. `src/config/web.ts` may import the resolver from `app/...`: `warlock build` resolves the alias when it reads `web.sites`.
+
 With sitemap and robots enabled, `/sitemap.xml` and `/robots.txt` are selected per site. A dynamic site is indexable only when its resolver result says `indexable: true`; otherwise its sitemap is a 404 and robots disallows crawling. Set `web.tlsAsk` to expose Caddy's domain check endpoint; it requires `web.sites` and permits configured fixed hosts or domains claimed by `resolveHost`.
 
 ```caddyfile
