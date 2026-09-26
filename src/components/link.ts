@@ -366,6 +366,9 @@ function assertNotARouteName(url: string): void {
  * code is the active one.
  */
 function prefixForActiveLocale(url: string, localeOverride?: string): string {
+  // An absolute URL (a cross-site `href()`) belongs to another site's routing.
+  if (!url.startsWith("/") || url.startsWith("//")) return url;
+
   const routing = readLocaleRouting();
 
   if (routing.strategy === "none") return url;

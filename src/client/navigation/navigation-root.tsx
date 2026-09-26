@@ -522,6 +522,10 @@ export function NavigationRoot({
     );
 
     const previousNavigator = connectNavigator((url, options) => {
+      // Another origin — a cross-site `href()` — is not this runtime's
+      // document to fetch or swap. Declining leaves the anchor to the browser.
+      if (new URL(url, window.location.href).origin !== window.location.origin) return false;
+
       const replace = options?.replace === true;
 
       /*

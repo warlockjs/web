@@ -56,7 +56,17 @@ export function navigateTo(
       ? localizedPath(destination)
       : localizedHref(destination.name, destination.params, destination.query);
 
-  return navigator(path, options);
+  if (navigator(path, options)) return true;
+
+  // The runtime declines another origin (a cross-site route name): load it.
+  if (typeof window !== "undefined" && new URL(path, window.location.href).origin !== window.location.origin) {
+    if (options?.replace === true) window.location.replace(path);
+    else window.location.assign(path);
+
+    return true;
+  }
+
+  return false;
 }
 
 /**

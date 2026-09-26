@@ -24,6 +24,7 @@ All notable changes to `@warlock.js/web` are documented here.
 - Multi-site in dev: tenant data from `resolveHost({ shared })` now reaches `useShared()`, and `siteUrl()` / cross-site `href()` see the current site. The connector and the page pipeline run in two module copies in dev (Node and Vite SSR); both hand-offs now use global slots, as production already effectively did.
 - `siteUrl()` and the `CurrentSite` type are exported from `@warlock.js/web`, as the multi-site guide documents.
 - `warlock build` with `web.sites` no longer fails when `src/config/web.ts` imports app code through a tsconfig alias (a `resolveHost` from `app/...`): the build bundles `web.ts` with esbuild before reading `sites`.
+- A `<Link>` or `navigateTo()` to another site's route (an absolute URL on another origin) now loads that site instead of silently doing nothing; the locale prefix is no longer applied to absolute URLs.
 
 ## Unreleased
 
