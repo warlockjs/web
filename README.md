@@ -76,8 +76,12 @@ production.
 - **React Fast Refresh in dev.** Edit a component, keep your state, and the
   server renders the new output too.
 - **Named links.** `href(name, params, query)` validates the published route
-  table at runtime; an unknown route name throws. Generated route-name and
-  parameter types are not available in 5.17.
+  table at runtime; an unknown route name throws. Builds and dev registration
+  generate `.warlock/typings/web-routes.d.ts`, which augments the page and API
+  route registries with route names, paths, parameters, page action names, and
+  API methods. Once at least one page route is generated, `href()` rejects an
+  unknown literal page name at type-check time; use `runtimeRoute()` for a
+  deliberately dynamic name.
 - **Loaders that are controllers.** Full request context, guards, DI, and the
   ability to set headers, cookies and status during the render.
 - **`refresh()`.** POST to your own API, call it, and the page's loaders
@@ -200,10 +204,9 @@ Every `*.page.tsx` must have a **default export**. A page file with only named
 exports is a hard discovery/build failure naming the file — it used to build
 and then serve a blank `200` at its URL.
 
-**Catch-all routes are not supported.** `[...slug].page.tsx` is not a rest
-parameter: only `[name]` is recognized as dynamic, so `[...slug]` is taken as a
-literal segment and derives the unreachable path `/[...slug]`. Nothing warns
-about it. Use a terminal wildcard with an explicit route
+**Catch-all routes are not supported.** `[...slug].page.tsx` is rejected during
+discovery: page routes support only a whole-segment parameter such as `[id]`,
+not a catch-all. Use a terminal wildcard with an explicit route
 (`config = { route: { path: "/docs/*" } }`) until a real catch-all exists.
 
 `src/web` is the only page root — a per-module `src/app/<module>/web/` tree is

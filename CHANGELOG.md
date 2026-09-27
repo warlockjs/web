@@ -12,6 +12,10 @@ All notable changes to `@warlock.js/web` are documented here.
 
 - `PageLoaderContext`'s type parameters default to `undefined`, so a loader with no validation or route can be typed `({ request }: PageLoaderContext)`.
 
+### Fixed
+
+- Added the missing `web.forms.redactValues` configuration type for redacting submitted values echoed in failed page-action state.
+
 ## 5.23.2 - 2026-09-26
 
 ### Fixed

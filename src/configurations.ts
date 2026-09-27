@@ -22,9 +22,16 @@ export type WebStreamingConfigurations = {
   deferTimeout?: number;
 };
 
+/** Configuration for page-action form state. */
+export type WebFormsConfigurations = {
+  /** Field-name patterns to redact from submitted values echoed in failed action state. */
+  redactValues?: readonly string[];
+};
+
 /** Application-owned configuration for the Web connector's server features. */
 export type WebConfigurations = {
   streaming?: WebStreamingConfigurations;
+  forms?: WebFormsConfigurations;
   /** Milliseconds for the non-deferred app → layout → page loader chain; `0` disables it. */
   loaderTimeout?: number;
   sitemap?: WebSitemapConfig;
