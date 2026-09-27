@@ -862,6 +862,58 @@ export default function Contact() {
 - Per-user limit: `config.action.middleware: [middleware.rateLimit({ max: 5, duration: 60_000, key: "user", guests: "ip" })]` (`import { middleware } from "@warlock.js/core"`). Keyed on `request.locals.user.id`, so it needs `pageSession()` from `@warlock.js/auth`. `guests`: `"ip"` (default) or `"skip"`. Over the limit: 429, action not run.
 - With `@mongez/react-form`, use `useSubmitAction` from `@warlock.js/web/form` and alias one of the two `Form`s.
 
+## Validate in the browser with the same schema
+
+Put browser-safe, shared constraints in a separate schema module. Import that one
+constant into the page for `config.action.validation` and into the
+`@mongez/react-form` form's `schema` prop:
+
+```tsx
+// src/web/contact/contact.schema.ts
+import { v } from "@warlock.js/seal";
+
+export const contactSchema = v.object({
+  email: v.string().email(),
+  message: v.string().min(10),
+});
+```
+
+```tsx
+// src/web/contact/contact.page.tsx
+import { Form as ReactForm } from "@mongez/react-form";
+import { useSubmitAction } from "@warlock.js/web/form";
+import type { PageActionContext, PageConfig } from "@warlock.js/web";
+import { contactSchema } from "./contact.schema";
+
+export const config: PageConfig = {
+  route: { path: "/contact", name: "contact" },
+  action: { validation: contactSchema },
+};
+
+export async function action({ request, response }: PageActionContext<typeof contactSchema>) {
+  const values = request.validated();
+  // Handle values, then redirect or return data.
+  return response.redirect("/contact");
+}
+
+export default function ContactPage() {
+  const submit = useSubmitAction<typeof contactSchema>();
+
+  return (
+    <ReactForm method="post" schema={contactSchema} onSubmit={submit.submit}>
+      {/* Your registered controls must be named "email" and "message". */}
+    </ReactForm>
+  );
+}
+```
+
+`schema` provides immediate browser feedback, but `config.action.validation`
+remains authoritative: a request that bypasses the browser is still rejected
+with 422 before the action runs. `useSubmitForm` is for Core API routes; use
+`useSubmitAction` for a page action. Keep database uniqueness checks and any
+other server-only rule out of this shared schema: keep them server-side or
+split the browser-safe constraints into a shared schema.
+
 ## load-page-data  `@warlock.js/web/load-page-data/SKILL.md`
 
 ---
@@ -2203,6 +2255,46 @@ function LocalePicker() {
 
 The switch re-fetches the current page and commits after its tree is ready. In the default strategy, the browser writes its locale preference only at that commit, so a failed or superseded switch leaves the displayed page and the next document load unchanged. Prefix and `[locale]` routes update their path as part of the successful navigation. Await the returned promise when failure handling matters.
 
+## observe-page-requests  `@warlock.js/web/observe-page-requests/SKILL.md`
+
+---
+name: observe-page-requests
+description: 'Observe SSR page request phases through core `TracingHooks`: page middleware, cache lookup, loader/render streaming, and deferred-value settlement. Triggers: `page.middleware`, `page.cache`, `defer.settle`, `render.shell`, `TracingHooks`, `http.tracing`; "trace a page request", "page cache telemetry", "deferred stream observability".'
+---
+
+# Observe page requests
+
+Web emits page spans through core's `TracingHooks.onPhase`; there is no
+web-specific tracing API. Configure or register the hook as documented in
+[`@warlock.js/core/request-tracing/SKILL.md`](@warlock.js/core/request-tracing/SKILL.md).
+
+```ts
+import { registerTracingHooks } from "@warlock.js/core";
+
+registerTracingHooks({
+  onPhase(_ctx, phase) {
+    if (phase.name === "page.cache") {
+      console.log(phase.attrs?.status); // hit | miss | bypass
+    }
+  },
+});
+```
+
+## Page-specific phases
+
+| Phase             | Attributes                   | Meaning                                            |
+| ----------------- | ---------------------------- | -------------------------------------------------- |
+| `page.middleware` | `count`, `outcome` (`next`   | `response`                                         | `error`)                           | All page middleware settling |
+| `page.cache`      | `status` (`hit`              | `miss`                                             | `bypass`)                          | Page-cache lookup settling   |
+| `loader`          | `level`, `layoutPath?`       | An app, layout, or page loader                     |
+| `render.shell`    | —                            | Rendering until React's shell is ready to stream   |
+| `stream.end`      | —                            | Whole streamed response, including deferred values |
+| `defer.settle`    | `key`, `status` (`fulfilled` | `rejected`)                                        | One deferred loader value settling |
+
+Every phase has `name`, `durationMs`, and `startedAt` (epoch milliseconds).
+Use `key` only to identify a deferred value; do not put sensitive loader data
+in tracing attributes.
+
 ## protect-a-page  `@warlock.js/web/protect-a-page/SKILL.md`
 
 ---
@@ -2911,6 +3003,33 @@ The default client is the configured `@mongez/http` singleton, so its base URL a
 `response`, `data`, and `error` start as `null`; `onSuccess`, `onError`, and `onComplete` receive the full `HttpResult`. Duplicate calls share the active submission. `cancel()` cancels it, and `reset()` clears hook state and errors assigned by the hook.
 
 Validation mapping is on by default. Known server field errors are assigned to controls; unknown fields and general messages go to `formErrors`. Set `mapFieldErrors: false` to leave controls untouched or provide a mapper returning `{ [field]: message }`.
+
+## Validate in the browser with the same schema
+
+`@mongez/react-form` accepts a Standard Schema through its `schema` prop, so a
+browser-safe Seal schema can be shared with the API route's server validation:
+
+```tsx
+import { Form } from "@mongez/react-form";
+import { useSubmitForm } from "@warlock.js/web/form";
+import { contactSchema } from "./contact.schema";
+
+export default function ContactForm() {
+  const submit = useSubmitForm({ path: "/api/contact" });
+
+  return (
+    <Form schema={contactSchema} onSubmit={submit.submit}>
+      {/* Registered controls use the schema's field names. */}
+    </Form>
+  );
+}
+```
+
+Client validation is feedback, not authorization: the API must validate the
+same schema itself, because a browser can be bypassed. For a page action, put
+the schema in `config.action.validation` and submit with `useSubmitAction`, not
+`useSubmitForm`. Do not share database uniqueness checks or other server-only
+rules with the browser; keep those server-side or split the schema.
 
 Named route metadata contains only name, path, and method. A route declared with method `all` cannot select a browser verb: use a direct `path` and explicit `method`.
 
