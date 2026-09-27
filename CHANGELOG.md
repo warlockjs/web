@@ -2,7 +2,11 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
-## 5.23.3 - 2026-09-27
+## 5.24.0 - 2026-09-27
+
+### Added
+
+- Named page, layout, and root `ErrorBoundary` components now receive the resolved HTTP `status` alongside `error`.
 
 ### Changed
 

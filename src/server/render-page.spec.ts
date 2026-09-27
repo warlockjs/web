@@ -1,5 +1,12 @@
 import config from "@mongez/config";
-import { Response, setEnvironment, type Request } from "@warlock.js/core";
+import {
+  BadRequestError,
+  ForbiddenError,
+  Response,
+  ServerError,
+  setEnvironment,
+  type Request,
+} from "@warlock.js/core";
 import { v } from "@warlock.js/seal";
 import { parse } from "devalue";
 import { createElement, isValidElement, StrictMode, type ReactNode } from "react";
@@ -55,6 +62,46 @@ function createHttp(locale = "en") {
 
   return { request, response };
 }
+
+describe("named ErrorBoundary status props", () => {
+  it.each([
+    [400, "page", () => new BadRequestError("bad request")],
+    [403, "layout", () => new ForbiddenError("forbidden")],
+    [500, "app", () => new ServerError("server error")],
+  ] as const)("passes status %i to the %s boundary", async (status, level, createError) => {
+    const Boundary = ({ status: receivedStatus }: { error: unknown; status: number }) =>
+      createElement("p", null, `boundary status: ${receivedStatus}`);
+    const throwingLoader = () => {
+      throw createError();
+    };
+    const entry: PageRouteEntry = {
+      path: `/${level}-boundary-status`,
+      name: `${level}-boundary-status`,
+      triple: {
+        app: {
+          default: ({ children }: { children?: ReactNode }) =>
+            createElement(DefaultApp, { children }),
+          ...(level === "app" ? { loader: throwingLoader, ErrorBoundary: Boundary } : {}),
+        },
+        layout: {
+          ...(level === "layout" ? { loader: throwingLoader, ErrorBoundary: Boundary } : {}),
+        },
+        page: {
+          ...(level === "page" ? { loader: throwingLoader, ErrorBoundary: Boundary } : {}),
+        },
+      },
+    };
+
+    const rendered = await renderPageRequest(entry.path, {
+      routes: [entry],
+      createHttp: () => createHttp(),
+    });
+
+    if (rendered instanceof Response) throw new Error("unexpected terminal Response");
+    expect(rendered.status).toBe(status);
+    expect(rendered.html).toContain(`boundary status: ${status}`);
+  });
+});
 
 describe("root strictMode SSR composition", () => {
   it.each([true, false, undefined])(

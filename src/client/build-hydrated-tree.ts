@@ -18,6 +18,7 @@ import type {
   HydrationDocumentPayloadSource,
   SerializedErrorPageProps,
 } from "../hydration-payload";
+import type { PageErrorBoundaryProps } from "../page-config";
 import { registerModules } from "../register-modules";
 import { renderBuiltInFallback } from "./built-in-error-fallback";
 import { statusOf } from "./client-error-status";
@@ -129,7 +130,7 @@ type LevelErrorBoundaryProps = {
   readonly resetToken: number;
   readonly routeName: string;
   /** The level's own exported `ErrorBoundary`, when it has one. */
-  readonly Boundary?: ComponentType<{ error: unknown }>;
+  readonly Boundary?: ComponentType<PageErrorBoundaryProps>;
   /** The route's app `error.page.tsx`, used by the page-leaf floor only. */
   readonly ErrorPage?: ComponentType<SerializedErrorPageProps>;
 };
@@ -170,7 +171,7 @@ export class LevelErrorBoundary extends Component<
     const { Boundary, ErrorPage } = this.props;
     const { error } = this.state;
 
-    if (Boundary !== undefined) return createElement(Boundary, { error });
+    if (Boundary !== undefined) return createElement(Boundary, { error, status: statusOf(error) });
 
     if (ErrorPage !== undefined) {
       return createElement(ErrorPageRenderGuard, {
@@ -183,11 +184,11 @@ export class LevelErrorBoundary extends Component<
   }
 }
 
-function boundaryOf(module: ClientProjectedModule): ComponentType<{ error: unknown }> | undefined {
+function boundaryOf(module: ClientProjectedModule): ComponentType<PageErrorBoundaryProps> | undefined {
   const boundary = module.ErrorBoundary;
 
   return typeof boundary === "function"
-    ? (boundary as ComponentType<{ error: unknown }>)
+    ? (boundary as ComponentType<PageErrorBoundaryProps>)
     : undefined;
 }
 

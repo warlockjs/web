@@ -12,6 +12,7 @@ import type {
   HydrationDocumentPayloadSource,
   SerializedErrorPageProps,
 } from "../hydration-payload";
+import { DeferredValueError } from "./runtime/deferred-value-error";
 
 type LevelProps = { data: unknown; shared: unknown; children?: ReactNode };
 type PageProps = {
@@ -101,6 +102,21 @@ function levelTypesOf(node: ReactNode): unknown[] {
 }
 
 describe("buildHydratedTree", () => {
+  it.each([400, 403, 500])("passes deferred-error status %i to its named boundary", (status) => {
+    const Boundary = (_props: { error: unknown; status: number }): null => null;
+    const boundary = new LevelErrorBoundary({
+      resetToken: 1,
+      routeName: "main.home",
+      Boundary,
+    });
+    boundary.state = { error: new DeferredValueError("failed", status), caught: true };
+
+    const rendered = rawElement(boundary.render());
+
+    expect(rendered.type).toBe(Boundary);
+    expect(rendered.props.status).toBe(status);
+  });
+
   it("wraps a layout that exports ErrorBoundary and keeps the outer layout outside it", async () => {
     const LayoutBoundary = (_props: { error: unknown }): null => null;
     const pages = [

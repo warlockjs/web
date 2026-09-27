@@ -35,6 +35,7 @@ import { resolveDocumentLocaleRouting, resolveLocaleAlternates } from "./resolve
 import { readLocaleRouting } from "../routing/locale-routing";
 import { siteOriginFor } from "../routing/site-url";
 import type { ServerErrorPageProps } from "../props";
+import type { PageErrorBoundaryProps } from "../page-config";
 import {
   buildErrorRecord,
   designateBoundary,
@@ -430,10 +431,10 @@ function buildBoundaryElement(
 ): ReactNode {
   const { boundary, error } = record;
   const Boundary = triple[boundary.boundaryLevel].ErrorBoundary as
-    ((props: { error: unknown }) => ReactNode) | undefined;
+    ((props: PageErrorBoundaryProps) => ReactNode) | undefined;
 
   const element = Boundary
-    ? createElement(Boundary, { error })
+    ? createElement(Boundary, { error, status: record.statusCode ?? 500 })
     : createElement(FrameworkRootBoundary, {});
 
   const wrapped = wrapRootward(triple, bundle, boundary.boundaryLevel, element);

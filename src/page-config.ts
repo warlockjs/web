@@ -41,7 +41,11 @@ export type PageActionConfig = {
 };
 
 /** Props of a page-owned, named server-rendered `ErrorBoundary` component. */
-export type PageErrorBoundaryProps = { readonly error: unknown };
+export type PageErrorBoundaryProps = {
+  readonly error: unknown;
+  /** HTTP status resolved for the error being rendered. */
+  readonly status: number;
+};
 
 /**
  * Server/build policy for a page's single `config` export.
