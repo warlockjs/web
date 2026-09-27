@@ -7,6 +7,18 @@ description: "Create an SSR React page under `src/web/**`. Put route, cache, val
 
 A page is any `*.page.tsx` beneath `src/web/` — the page root. Its URL is either a declared `route` or one derived from its own location; its default export renders React.
 
+## Named `ErrorBoundary`
+
+Export a named `ErrorBoundary` from an app, layout, or page module to render a failure at that level. It receives the original `error` and the resolved HTTP `status`; an error without a resolved status is `500`.
+
+```tsx
+export function ErrorBoundary({ error, status }: { error: unknown; status: number }) {
+  return <main><h1>{status}</h1><p>{String(error)}</p></main>;
+}
+```
+
+The closest authored boundary handles the failure. Keep the boundary itself defensive: if it throws, Warlock escalates to the next boundary or framework fallback.
+
 ## The shape
 
 ## Optional server setup module

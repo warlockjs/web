@@ -123,6 +123,18 @@ description: "Create an SSR React page under `src/web/**`. Put route, cache, val
 
 A page is any `*.page.tsx` beneath `src/web/` — the page root. Its URL is either a declared `route` or one derived from its own location; its default export renders React.
 
+## Named `ErrorBoundary`
+
+Export a named `ErrorBoundary` from an app, layout, or page module to render a failure at that level. It receives the original `error` and the resolved HTTP `status`; an error without a resolved status is `500`.
+
+```tsx
+export function ErrorBoundary({ error, status }: { error: unknown; status: number }) {
+  return <main><h1>{status}</h1><p>{String(error)}</p></main>;
+}
+```
+
+The closest authored boundary handles the failure. Keep the boundary itself defensive: if it throws, Warlock escalates to the next boundary or framework fallback.
+
 ## The shape
 
 ## Optional server setup module
@@ -605,7 +617,7 @@ Creating a page, deleting one, or editing `config.route` is route-table churn ra
 - **Do not annotate the loader with `: PageLoader`.** That erases the return type `PageProps` needs.
 - **Components receive data, not HTTP objects.** `request` and `response` belong to loaders; the component also renders in the browser.
 - **A default component is synchronous.** Fetch in the loader, then render its result.
-- **There are no server actions.** Mutations remain ordinary API requests; call `refresh()` after a successful mutation.
+- **A page can export `action` (or `actions`) to handle its own form POST.** Use `<Form>` and `useActionData`; see [`handle-a-form-action/SKILL.md`](../handle-a-form-action/SKILL.md). Mutations through API routes remain ordinary requests; call `refresh()` after them.
 - **Do not import the hydration entry.** `esm/hydration/index.mjs` is a framework build input, not a consumer API. The public low-level runtime subpath is `@warlock.js/web/client/runtime`.
 
 ## See also
@@ -677,12 +689,12 @@ async function productSitemap() {
   }));
 }
 
-export const config = {
+export const config: PageConfig = {
   sitemap: {
     entries: productSitemap,
     invalidateOn: [Product],
   },
-} satisfies PageConfig;
+};
 ```
 
 The query helper above is application-owned: select eligible published rows.
@@ -789,6 +801,66 @@ with `sitemap.cacheControl`. Versioned generation URLs use immutable caching.
 `extra` lines. `referenceSitemap` defaults true and adds the configured
 sitemap URL when enabled and an origin exists. A hand-written
 `public/robots.txt` wins; maintain its Sitemap line yourself.
+
+## handle-a-form-action  `@warlock.js/web/handle-a-form-action/SKILL.md`
+
+---
+name: handle-a-form-action
+description: "Handle a form POST on a page with an `action` (or named `actions`) export, `<Form>`, `useActionData`, `<FieldError>`, and `useIsSubmitting` from @warlock.js/web. Triggers: page action, action export, actions, <Form>, useActionData, FieldError, useIsSubmitting, config.action validation, response.redirect after POST, redactValues, no-JS form."
+---
+
+# Handle a form action
+
+Use a page action when a form belongs to a page and the result should re-render it or redirect. To post to an API route from the browser, use `submit-a-form.md` instead.
+
+```tsx
+import { Form, FieldError, useActionData, useIsSubmitting, href } from "@warlock.js/web";
+import type { PageActionContext, PageConfig } from "@warlock.js/web";
+import { v } from "@warlock.js/seal";
+
+const contactSchema = v.object({ email: v.string().email() });
+
+export const config: PageConfig = {
+  route: { path: "/contact", name: "contact" },
+  action: { validation: contactSchema },
+};
+
+export async function action({ request, response }: PageActionContext<typeof contactSchema>) {
+  const { email } = request.validated();
+
+  if (email === "blocked@example.com") return response.forbidden({ message: "Not allowed." });
+
+  return response.redirect(href("contact"));
+}
+
+export default function Contact() {
+  const result = useActionData<typeof action>();
+  const pending = useIsSubmitting();
+
+  return (
+    <Form>
+      <input name="email" defaultValue={result?.values?.email} />
+      <FieldError name="email" />
+      {result?.formErrors.map(message => <p key={message}>{message}</p>)}
+      <button disabled={pending}>Send</button>
+    </Form>
+  );
+}
+```
+
+## Rules
+- Export `action` OR `actions` (a record), never both; page modules only. Policy goes in `config.action` / `config.actions.<name>` (`validation`, `middleware`), and the key must match an export.
+- Several forms: `actions = { save, remove }`, `<Form action="remove">`. The name travels as the body field `_action`; names match `/^[a-z][a-zA-Z0-9]*$/`; `default` is reserved.
+- Validation runs on the body only (files included); use `request.validated()`. Failure is a 422 `ActionState`, the action does not run.
+- Return `response.redirect(url)`, data, or a failure helper: `badRequest`, `unauthorized`, `forbidden`, `conflict`, `unprocessableEntity`, `tooManyRequests`, each with optional `{ message, errors }`.
+- Outcomes: no JS redirect is 303; JS redirect is 204 + `x-warlock-redirect`; failure is 422/4xx (page rendered at that status without JS, `actionData` body only with JS).
+- `values` is echoed on failure only, never files, and omits names in `web.forms.redactValues` (default `password`, `password_confirmation`, `*token*`, `*secret*`). `web.forms.redactValues` is a typed config key of `readonly string[]`; set it at boot to replace that list (patterns support `*`).
+- Same-origin `Origin`/`Referer` is always required (403 otherwise); no opt-out.
+- Actions are never cached and always `private, no-store`; call `invalidatePageCache(tags)` to refresh other visitors' cached page.
+- Redirect after success: a no-JS action that returns data re-POSTs on reload.
+- `<Form>` defaults to `multipart/form-data`, so file inputs work; read them with `request.file(name)`.
+- Per-user limit: `config.action.middleware: [middleware.rateLimit({ max: 5, duration: 60_000, key: "user", guests: "ip" })]` (`import { middleware } from "@warlock.js/core"`). Keyed on `request.locals.user.id`, so it needs `pageSession()` from `@warlock.js/auth`. `guests`: `"ip"` (default) or `"skip"`. Over the limit: 429, action not run.
+- With `@mongez/react-form`, use `useSubmitAction` from `@warlock.js/web/form` and alias one of the two `Form`s.
 
 ## load-page-data  `@warlock.js/web/load-page-data/SKILL.md`
 
@@ -1590,6 +1662,115 @@ all.
 - [`stream-deferred-data/SKILL.md`](../stream-deferred-data/SKILL.md) —
   `defer()` and `<Suspense>`, relevant to the CLS guidance above.
 
+## multi-site  `@warlock.js/web/multi-site/SKILL.md`
+
+---
+name: multi-site
+description: 'Configure one @warlock.js/web app to serve several fixed-host and resolver-selected sites from `src/web/$sites/<name>/`: separate roots, `web.sites`, `web.resolveHost`, `resolveCache`, `basePath`, `unknownHost`, and `request.site`. Use for: marketing plus dashboard domains, white-label tenant domains, or tenant admin under a host path. Not this package → API host restrictions and middleware: @warlock.js/core; tenant query scoping: @warlock.js/cascade; per-tenant theme rendering: @warlock.js/web/multi-theme/SKILL.md.'
+---
+
+# One app, multiple sites
+
+Use `web.sites` when one Web deployment needs separate documents and route tables by host. This is opt-in; without it, the normal single `src/web/root.tsx` layout remains unchanged.
+
+## 1. Give every site a folder and root
+
+```text
+src/web/
+  $sites/
+    landing/root.tsx
+    landing/index.page.tsx
+    platform/root.tsx
+    tenant/root.tsx
+    tenantAdmin/root.tsx
+  components/
+```
+
+The folder name is the site key, and neither `$sites` nor the site folder appears in URLs. Each configured site folder needs its own `root.tsx`; it also holds that site's 404/error pages and routes. Shared components can live outside `$sites`, but pages cannot. Do not leave a top-level `src/web/root.tsx` in multi-site mode.
+
+## 2. Declare fixed and dynamic sites
+
+```ts title="src/config/web.ts"
+import type { WebConfigurations } from "@warlock.js/web";
+
+const web: WebConfigurations = {
+  sites: {
+    landing: {
+      hosts: ["estates.app", "www.estates.app"],
+      localeRouting: { strategy: "prefix-except-default" },
+    },
+    platform: { hosts: ["app.estates.app"] },
+    tenant: { dynamic: true, localeRouting: {} },
+    tenantAdmin: { dynamic: true, basePath: "/admin" },
+  },
+  resolveHost: async ({ host, request }) => {
+    const domain = await findTenantDomain(host);
+    if (!domain) return null;
+    return {
+      site: domain.kind === "dashboard" ? "tenantAdmin" : "tenant",
+      key: String(domain.tenantId),
+      indexable: domain.tenant.isPublic,
+      shared: { theme: domain.tenant.theme },
+    };
+  },
+  resolveCache: { ttl: 60 },
+  unknownHost: "not-found",
+  tlsAsk: "/.well-known/warlock/domain",
+};
+
+export default web;
+```
+
+Upgrade: move each `src/web/(group)` site folder to `src/web/$sites/<key>` and delete `pages` from `web.sites`. Fixed `hosts` are exact lowercase hostnames without ports; list `www` separately. A site uses either `hosts` or `dynamic: true`, never both. The exact listed host is selected before the resolver is called.
+
+## 3. Keep resolver identity deliberate
+
+`resolveHost` receives a normalized `{ host, request }` and returns `{ site, key, indexable?, shared? } | null`. Its `site` must name a dynamic site. `null` is a 404; a throw is a 500. `key` partitions tenant state and cache identity, so use a durable tenant identifier rather than a display name.
+
+`resolveCache.ttl` is measured in seconds and caches by host only. It is disabled by default because a resolver that reads cookies or headers cannot be safely shared across visitors. Enable it only for host-only lookup results.
+
+`basePath` selects a site below a path prefix; the longest matching prefix wins. `unknownHost` is `"not-found"` by default, or may name a configured fallback site. During development use hosts such as `acme.localhost:2030`.
+
+`localeRouting` on a site replaces global `web.localeRouting`; omit it to inherit, and use `{}` to disable it for one site. Locale codes and the default locale still come from `app.localeCodes` and `app.localeCode`.
+
+## 4. Read the result in a page handler
+
+```ts
+import type { PageLoaderContext } from "@warlock.js/web";
+
+export async function loader({ site }: PageLoaderContext<undefined, undefined>) {
+  if (!site?.tenantKey) return { tenant: null };
+  return { site: site.key, tenant: await loadTenant(site.tenantKey) };
+}
+```
+
+`ctx.site` is a `PageSite`, available in loaders and actions in multi-site mode. It has `key`, `host`, `basePath`, and `tenantKey` for a resolver-selected site. The resolver's `shared` fields merge into the regular shared payload before page middleware; use that for a theme hand-off, then follow `multi-theme/SKILL.md` for rendering and CSS.
+
+## 5. Route and error rules
+
+Same paths in different sites are valid. Generated route names always get the site-key prefix (`landing.pricing`, `tenant.listings.show`), while explicit names are global. `href()` returns an absolute URL across sites; a dynamic target requires `{ $host: "tenant.example" }`, used only as its origin. `siteUrl()` returns the current origin plus the site's `basePath`.
+
+```ts
+const tenantListing = href("tenant.listings.show", { $host: "acme.estates.app", id: "42" });
+const originAndMount = siteUrl();
+```
+
+`<Link to="platform.home">` and `navigateTo()` take the same names; a link to another site loads that site in full. `src/config/web.ts` may import the resolver from `app/...`: `warlock build` resolves the alias when it reads `web.sites`.
+
+With sitemap and robots enabled, `/sitemap.xml` and `/robots.txt` are selected per site. A dynamic site is indexable only when its resolver result says `indexable: true`; otherwise its sitemap is a 404 and robots disallows crawling. Set `web.tlsAsk` to expose Caddy's domain check endpoint; it requires `web.sites` and permits configured fixed hosts or domains claimed by `resolveHost`.
+
+```caddyfile
+{
+  on_demand_tls {
+    ask http://127.0.0.1:<port>/.well-known/warlock/domain
+  }
+}
+```
+
+Boot fails for an unassigned page, a `$sites` folder without a matching `web.sites` entry, a configured site whose `$sites/<name>` folder is missing, a missing site root, overlapping fixed host plus base path, a page shadowing an `src/app` route, or inconsistent dynamic/resolver configuration. Page cache entries are partitioned by site and tenant key. Fix the declared ownership rather than depending on route order.
+
+Out of scope: path- or session-selected tenants, sharing a root between sites, cross-site prefetch, API host scoping, and automatic Cascade query scoping.
+
 ## multi-theme  `@warlock.js/web/multi-theme/SKILL.md`
 
 ---
@@ -1656,7 +1837,7 @@ const selectTheme = async ({ request }: HttpContext) => {
   linkStylesheetsFor(request, themeSources[theme]);
 };
 
-export const config = { middleware: [selectTheme] } satisfies RootConfig;
+export const config: RootConfig = { middleware: [selectTheme] };
 ```
 
 Each theme imports its own stylesheet (`import "./alpha.css";`). Never inline a `<style>` tag.
@@ -1695,7 +1876,7 @@ The server cannot see which lazy module rendered, and it never follows `dynamicI
 ```ts
 import type { PageConfig } from "@warlock.js/web";
 
-export const config = {
+export const config: PageConfig = {
   route: "/",
   cache: {
     public: true,
@@ -1703,7 +1884,7 @@ export const config = {
     serverCache: true,
     tags: (_data, { shared }) => [`theme:${shared.theme}`],
   },
-} satisfies PageConfig;
+};
 ```
 
 - The key always includes the request host, so tenants on different hosts never share an entry.
@@ -2022,6 +2203,46 @@ function LocalePicker() {
 
 The switch re-fetches the current page and commits after its tree is ready. In the default strategy, the browser writes its locale preference only at that commit, so a failed or superseded switch leaves the displayed page and the next document load unchanged. Prefix and `[locale]` routes update their path as part of the successful navigation. Await the returned promise when failure handling matters.
 
+## protect-a-page  `@warlock.js/web/protect-a-page/SKILL.md`
+
+---
+name: protect-a-page
+description: "Guard a Web page and read the signed-in user with web.session, useUser, requireUser and requireGuest. Triggers: useUser, requireUser, requireGuest, safeRedirectTarget, SessionRegistry, web.session, pageSession, login redirect, guest-only page."
+---
+
+# Protect a page
+
+Wire the resolver once; web never imports auth.
+
+```ts
+// src/config/web.ts
+import { pageSession } from "@warlock.js/auth";
+
+export default { session: pageSession({ project: (user: User) => userSessionResource(user) }) };
+```
+
+`project` is required; only its result reaches the browser as the payload's optional `session` key. Type it by augmenting `SessionRegistry { user; model }` in module `"@warlock.js/web"`.
+
+```tsx
+import { useUser } from "@warlock.js/web";
+import { requireGuest, requireUser } from "@warlock.js/web/session";
+
+// account page
+export const config = { route: "/account", middleware: [requireUser({ loginPath: "/login" })] };
+
+// login page
+export const config = { route: "/login", middleware: [requireGuest({ to: "/account" })] };
+```
+
+- `useUser()` returns the projection or `null`.
+- A guest is redirected (302) to `loginPath?redirect=<url>`, locale-prefixed; `loginPath` defaults to `auth.pageAuth.loginPath`. A bearer (`Authorization`) request or no `loginPath` gives 401. A `userType` or `when` failure gives 403.
+- Loader form: `const model = requireUser(ctx, options)`; `when` must be synchronous there.
+- `requireGuest` sends a signed-in user to a safe `redirect` query, else `to` (default `/`). Use `safeRedirectTarget(value)` for any return URL.
+- Signed-in pages are never page-cached; guests stay cacheable.
+- Renewal is automatic (refresh cookie). Do not resolve the session from deferred work.
+- After login or logout call `clearPrefetchCache()` before `navigateTo`/`refresh()`.
+- Log in with `authService.loginWithSessionCookies`, which requires an Origin/Referer.
+
 ## render-client-only  `@warlock.js/web/render-client-only/SKILL.md`
 
 ---
@@ -2241,9 +2462,9 @@ A page may import CSS directly:
 import "./products.css";
 import type { PageConfig } from "@warlock.js/web";
 
-export const config = {
+export const config: PageConfig = {
   route: { path: "/products", name: "products.index" },
-} satisfies PageConfig;
+};
 
 export default function ProductsPage() {
   return (
@@ -2759,9 +2980,9 @@ A page beside it can declare its path relative to the prefix:
 ```tsx title="src/web/products/index.page.tsx"
 import type { PageConfig } from "@warlock.js/web";
 
-export const config = {
+export const config: PageConfig = {
   route: { path: "/", name: "products.index" },
-} satisfies PageConfig;
+};
 
 export default function ProductsPage() {
   return <h1>Products</h1>;
@@ -2789,9 +3010,9 @@ export const config: LayoutConfig = { prefix: "/account" };
 ```tsx title="src/web/users/account/settings.page.tsx"
 import type { PageConfig } from "@warlock.js/web";
 
-export const config = {
+export const config: PageConfig = {
   route: { path: "/settings", name: "users.account.settings" },
-} satisfies PageConfig;
+};
 
 export default function SettingsPage() {
   return <h1>Account settings</h1>;
