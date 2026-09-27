@@ -199,9 +199,13 @@ async function runMiddlewareChain(
   options: MiddlewareChainOptions,
 ): Promise<MiddlewareHalt | undefined> {
   const { triple, request, response, pathname, routeName, routePath, session } = options;
+  const tracingEnabled = isTracingEnabled();
+  const middlewareStartedAt = tracingEnabled ? performance.timeOrigin + performance.now() : 0;
+  let count = 0;
 
   for (const level of LEVEL_ORDER) {
     for (const middleware of triple[level].middleware ?? []) {
+      count += 1;
       let output: unknown;
 
       try {
@@ -225,11 +229,20 @@ async function runMiddlewareChain(
 
         response.setStatusCode(resolvedStatus ?? 500);
 
+        if (tracingEnabled) {
+          dispatchPhase(buildTracingContext(request), {
+            name: "page.middleware",
+            durationMs: performance.timeOrigin + performance.now() - middlewareStartedAt,
+            startedAt: middlewareStartedAt,
+            attrs: { count, outcome: "error" },
+          });
+        }
+
         return { error };
       }
 
       if (output !== undefined) {
-        return {
+        const halted: MiddlewareHalt = {
           shortCircuit: {
             stage: "middleware",
             level,
@@ -241,8 +254,28 @@ async function runMiddlewareChain(
             responseSent: response.sent,
           },
         };
+
+        if (tracingEnabled) {
+          dispatchPhase(buildTracingContext(request), {
+            name: "page.middleware",
+            durationMs: performance.timeOrigin + performance.now() - middlewareStartedAt,
+            startedAt: middlewareStartedAt,
+            attrs: { count, outcome: "response" },
+          });
+        }
+
+        return halted;
       }
     }
+  }
+
+  if (tracingEnabled) {
+    dispatchPhase(buildTracingContext(request), {
+      name: "page.middleware",
+      durationMs: performance.timeOrigin + performance.now() - middlewareStartedAt,
+      startedAt: middlewareStartedAt,
+      attrs: { count, outcome: "next" },
+    });
   }
 
   return undefined;
@@ -820,6 +853,7 @@ export async function executePageRequest<TResult = PageDataBundle>(
               pathname,
               method: request.method,
               requestId: request.id,
+              request,
             });
 
             // The component receives the wrapped (timeout-bound) promise —

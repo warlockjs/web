@@ -577,6 +577,8 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
       // The cache lookup runs AFTER the modules load so a HIT can be gated by
       // the app, layout and page middleware first (the cache sits behind them).
       if (cache?.serverCache === true) {
+        const tracingEnabled = isTracingEnabled();
+        const cacheStartedAt = tracingEnabled ? performance.timeOrigin + performance.now() : 0;
         const outcome = await resolvePageCacheHitOrMiss({
           request,
           response,
@@ -592,8 +594,20 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
               pathname: requestPathname,
               routeName: name,
               routePath: entry.path,
-            }),
+          }),
         });
+
+        if (tracingEnabled) {
+          dispatchPhase(buildTracingContext(request), {
+            name: "page.cache",
+            durationMs: performance.timeOrigin + performance.now() - cacheStartedAt,
+            startedAt: cacheStartedAt,
+            attrs: {
+              status: outcome.served ? "hit" : (outcome.cacheHeaderValue ?? "miss"),
+              ...(outcome.served || outcome.cacheKey === undefined ? {} : { key: outcome.cacheKey }),
+            },
+          });
+        }
 
         if (outcome.served) return;
 

@@ -21,6 +21,12 @@
 import { serializePageError } from "./error-page";
 import { reportServerError } from "./report-server-error";
 import { resolveThrownHttpStatus } from "./resolve-thrown-http-status";
+import {
+  buildTracingContext,
+  dispatchPhase,
+  isTracingEnabled,
+  type Request,
+} from "@warlock.js/core";
 import type { ServerErrorContext } from "./error-reporting-config";
 import type { SerializedPageError } from "../components/document-context";
 
@@ -31,6 +37,8 @@ export type DeferredSettlementReportContext = {
   pathname: string;
   method: string;
   requestId?: string;
+  /** Request carried only so tracing can retain its route and request identity. */
+  request?: Request;
 };
 
 /** Raised when a deferred value does not settle within `web.streaming.deferTimeout`. */
@@ -80,6 +88,18 @@ export function createDeferredSettlement(
   timeoutMs: number,
   reportContext?: DeferredSettlementReportContext,
 ): DeferredSettlementPair {
+  const tracingEnabled = isTracingEnabled();
+  const deferredStartedAt = tracingEnabled ? performance.timeOrigin + performance.now() : 0;
+  const dispatchSettlementPhase = (status: "fulfilled" | "rejected"): void => {
+    if (!tracingEnabled || reportContext?.request === undefined) return;
+
+    dispatchPhase(buildTracingContext(reportContext.request), {
+      name: "defer.settle",
+      durationMs: performance.timeOrigin + performance.now() - deferredStartedAt,
+      startedAt: deferredStartedAt,
+      attrs: { key, status },
+    });
+  };
   const buildReportContext = (phase: string): ServerErrorContext => ({
     kind: "defer",
     phase,
@@ -111,6 +131,7 @@ export function createDeferredSettlement(
 
     const timeoutError = new DeferTimeoutError(key, timeoutMs);
     const settlementError = toSettlementError(timeoutError);
+    dispatchSettlementPhase("rejected");
     resolveSettlement(settlementError);
     rejectComponent(timeoutError);
     // Rule 7: every timeout goes to the server error sink UNCONDITIONALLY —
@@ -136,6 +157,7 @@ export function createDeferredSettlement(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      dispatchSettlementPhase("fulfilled");
       resolveSettlement({ ok: true, value });
       resolveComponent(value);
     },
@@ -144,6 +166,7 @@ export function createDeferredSettlement(
       settled = true;
       clearTimeout(timer);
       const settlementError = toSettlementError(thrown);
+      dispatchSettlementPhase("rejected");
       resolveSettlement(settlementError);
       rejectComponent(thrown);
       // Rule 7: every rejection goes to the server error sink UNCONDITIONALLY.

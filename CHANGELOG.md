@@ -2,6 +2,12 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.25.0
+
+### Added
+
+- Page tracing now reports middleware, page-cache, and deferred-settlement phases.
+
 ## 5.24.0 - 2026-09-27
 
 ### Added
