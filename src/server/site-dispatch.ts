@@ -12,7 +12,7 @@
  * Path matching reuses the web's own matcher (`matchClientRoute`); this module
  * writes no matcher of its own.
  */
-import { requestContext, type HttpContext, type Request, type Router } from "@warlock.js/core";
+import { Application, requestContext, type HttpContext, type Request, type Router } from "@warlock.js/core";
 import { matchClientRoute } from "../client/runtime/matcher";
 import type { ClientPageEntry } from "../client/runtime/types";
 import {
@@ -103,6 +103,37 @@ export type SiteDispatchInstall = {
 };
 
 export type SiteDispatchOptions = SiteSelectorOptions;
+
+/**
+ * Narrows `web.sites` down to `Application.sites` — the `--sites` filter
+ * (`warlock start --sites=a`, `WARLOCK_SITES`). `undefined` means every site,
+ * so this returns `sites` unchanged for every process that was not told to
+ * filter, including `warlock dev`, which never sets the variable.
+ *
+ * Called where a site is about to be REGISTERED or SELECTED, never where it
+ * is DISCOVERED: discovery walks and validates every `$sites/*` folder that
+ * exists on disk against the full config, and a filtered table would turn a
+ * real, correctly-configured sibling site's folder into a false "unknown
+ * site" error.
+ *
+ * Rejects, never repairs: a filter key absent from `sites` names every valid
+ * key in its error rather than being silently dropped.
+ */
+export function filterActiveSites(sites: SitesConfig): SitesConfig {
+  const filter = Application.sites;
+
+  if (filter === undefined) return sites;
+
+  const unknown = [...filter].filter((key) => !(key in sites));
+
+  if (unknown.length > 0) {
+    throw new Error(
+      `--sites named unknown site key(s): ${unknown.join(", ")}. Valid site keys: ${Object.keys(sites).join(", ")}.`,
+    );
+  }
+
+  return Object.fromEntries(Object.entries(sites).filter(([key]) => filter.has(key)));
+}
 
 function tableOf(tables: Map<string, Map<Method, SiteTable>>, site: string, method: Method) {
   let byMethod = tables.get(site);

@@ -65,7 +65,11 @@ import {
 import type { PageManifest, PageManifestLayoutEntry, PageManifestPageEntry } from "./page-manifest";
 import type { PageRouteExport } from "./page-module-shapes";
 import { createRouteTranslationsResolver } from "./route-translations";
-import { siteRegistrationRouter, type SiteDispatchInstall } from "./site-dispatch";
+import {
+  filterActiveSites,
+  siteRegistrationRouter,
+  type SiteDispatchInstall,
+} from "./site-dispatch";
 
 type SiteSlice = {
   readonly site: string;
@@ -157,7 +161,11 @@ function installSitePagesFromManifest(
     );
   }
 
-  for (const [site, siteConfig] of Object.entries(sites)) {
+  // `--sites` (`Application.sites`) narrows which sites actually get pages
+  // registered; `sites` itself (passed to `registerSiteRoutes` below) stays
+  // the FULL table, since `href()` still needs every site's config to build a
+  // cross-site URL from a process that only serves a subset of them.
+  for (const [site, siteConfig] of Object.entries(filterActiveSites(sites))) {
     const entry = manifest.sites[site];
 
     if (entry === undefined) {

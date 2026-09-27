@@ -7,6 +7,7 @@ All notable changes to `@warlock.js/web` are documented here.
 ### Added
 
 - Page tracing now reports middleware, page-cache, and deferred-settlement phases.
+- Deploy in parts: a process started without the `web` role (`warlock start --role=api|worker`) installs no pages, public files or site dispatch, and `--sites=a,b` installs only those sites (plus shared pages). Other hosts get the normal unknown-host response. An unknown site key, or `--sites` on an app without `web.sites`, fails at boot.
 
 ## 5.24.0 - 2026-09-27
 

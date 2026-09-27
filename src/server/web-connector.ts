@@ -81,7 +81,7 @@ import {
   registeredPageFiles,
 } from "./page-route-reload";
 import { consumePageManifest, type PageManifest } from "./page-manifest";
-import { createSiteDispatch, type SiteDispatchInstall } from "./site-dispatch";
+import { createSiteDispatch, filterActiveSites, type SiteDispatchInstall } from "./site-dispatch";
 import { registerTlsAsk } from "./register-tls-ask";
 import { registerProductionPublicFiles } from "./register-production-public-files";
 import { createManifestSitemapPageSource } from "../sitemap/manifest-sitemap-page-source";
@@ -386,6 +386,20 @@ export class WebConnector extends BaseConnector {
    * `start()`.
    */
   public async boot() {
+    // ROLE GATE. Ahead of everything else: a process without the `web` role
+    // serves no pages, no public files, no site dispatch and mounts no Vite
+    // middleware, this connector's entire reason to exist. `registerTlsAsk`
+    // is the one exception, registered here rather than below the gate: it is
+    // Caddy's ordinary application route (its own header comment), not a
+    // page, so a role-less TLS ask config keeps answering on every role.
+    if (!Application.hasRole("web")) {
+      registerTlsAsk(router, config.get("web", {}));
+
+      console.info(`web: pages not installed (role: ${[...Application.roles].join(", ")})`);
+
+      return;
+    }
+
     // THE MODE BRANCH. One `if`, and it reads the mode Ã¢â‚¬â€ never the value.
     // `consumePageManifest()` returning `undefined` must not mean two different
     // things at one call site, so the only
@@ -691,6 +705,12 @@ export class WebConnector extends BaseConnector {
    * listen on here: `HttpConnector.start()` owns the process listener.
    */
   public async start(): Promise<void> {
+    // Mirrors `boot()`'s own role gate: `sitemapAppRoot` is only ever set by
+    // the page-serving branches there, so a `web`-less boot leaves it
+    // `undefined` and there is no sitemap to regenerate for a process serving
+    // no pages.
+    if (!Application.hasRole("web")) return;
+
     await regenerateSitemapOnStartup({ appRoot: this.sitemapAppRoot });
 
     if (this.vite) this.active = true;
@@ -980,17 +1000,34 @@ export class WebConnector extends BaseConnector {
  * SSR graph Vite evaluates cannot read this config). A FRESH one per call: dev
  * re-installs on every restart and a stale table must not outlive it. Absent
  * `web.sites` yields `{}`, so single-site installs receive no new option.
+ *
+ * `SiteDispatchInstall.sites` itself stays the FULL `web.sites` table — the
+ * installers' own DISCOVERY step (`discoverSiteAppFiles`,
+ * `install-page-routes.ts`) walks and validates every `$sites/*` folder on
+ * disk against it, and a `--sites` filter narrowing that table would turn
+ * every OTHER site's real, correctly-configured folder into a false "no
+ * matching web.sites entry" error. The filter instead applies where
+ * `Application.sites` says it should: the dispatcher's own host selector
+ * (`filterActiveSites`, so an excluded site's host gets the existing
+ * unknown-host behaviour) and each installer's registration loop (so pages
+ * are only actually registered for the listed sites).
  */
 function siteDispatchOption(): { siteDispatch?: SiteDispatchInstall } {
   const web = config.get("web", {});
 
-  if (web.sites === undefined) return {};
+  if (web.sites === undefined) {
+    if (Application.sites !== undefined) {
+      throw new Error("--sites was given but this application has no web.sites configuration.");
+    }
+
+    return {};
+  }
 
   return {
     siteDispatch: {
       sites: web.sites,
       dispatch: createSiteDispatch({
-        sites: web.sites,
+        sites: filterActiveSites(web.sites),
         resolveHost: web.resolveHost,
         resolveCache: web.resolveCache,
         unknownHost: web.unknownHost,

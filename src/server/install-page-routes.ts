@@ -86,7 +86,11 @@ import {
 } from "./not-found-page";
 import type { LayoutModuleShape, PageRouteExport } from "./page-module-shapes";
 import { createRouteTranslationsResolver } from "./route-translations";
-import { siteRegistrationRouter, type SiteDispatchInstall } from "./site-dispatch";
+import {
+  filterActiveSites,
+  siteRegistrationRouter,
+  type SiteDispatchInstall,
+} from "./site-dispatch";
 import { siteFolder } from "../sites/site-folder";
 
 export type { LayoutModuleShape, PageModuleShape, PageRouteExport } from "./page-module-shapes";
@@ -530,7 +534,10 @@ export async function installPageRoutes(
     const { dispatch, sites } = options.siteDispatch;
     const installedPages: InstalledPageRoute[] = [];
 
-    for (const [site, siteConfig] of Object.entries(sites)) {
+    // `--sites` (`Application.sites`) narrows registration to the listed
+    // keys; `sites` itself stays the full table so `discoverSiteAppFiles`
+    // above validated every site's folder, filtered or not.
+    for (const [site, siteConfig] of Object.entries(filterActiveSites(sites))) {
       const root = path.join(options.appSrcRoot, "web", siteFolder(site));
       const siteAppFile = siteAppFiles.get(site) ?? path.join(root, "root.tsx");
 
