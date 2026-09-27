@@ -30,6 +30,33 @@ The default client is the configured `@mongez/http` singleton, so its base URL a
 
 Validation mapping is on by default. Known server field errors are assigned to controls; unknown fields and general messages go to `formErrors`. Set `mapFieldErrors: false` to leave controls untouched or provide a mapper returning `{ [field]: message }`.
 
+## Validate in the browser with the same schema
+
+`@mongez/react-form` accepts a Standard Schema through its `schema` prop, so a
+browser-safe Seal schema can be shared with the API route's server validation:
+
+```tsx
+import { Form } from "@mongez/react-form";
+import { useSubmitForm } from "@warlock.js/web/form";
+import { contactSchema } from "./contact.schema";
+
+export default function ContactForm() {
+  const submit = useSubmitForm({ path: "/api/contact" });
+
+  return (
+    <Form schema={contactSchema} onSubmit={submit.submit}>
+      {/* Registered controls use the schema's field names. */}
+    </Form>
+  );
+}
+```
+
+Client validation is feedback, not authorization: the API must validate the
+same schema itself, because a browser can be bypassed. For a page action, put
+the schema in `config.action.validation` and submit with `useSubmitAction`, not
+`useSubmitForm`. Do not share database uniqueness checks or other server-only
+rules with the browser; keep those server-side or split the schema.
+
 Named route metadata contains only name, path, and method. A route declared with method `all` cannot select a browser verb: use a direct `path` and explicit `method`.
 
 Generated API declarations live in `ApiRouteRegistry`, separately from page

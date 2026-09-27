@@ -55,3 +55,55 @@ export default function Contact() {
 - `<Form>` defaults to `multipart/form-data`, so file inputs work; read them with `request.file(name)`.
 - Per-user limit: `config.action.middleware: [middleware.rateLimit({ max: 5, duration: 60_000, key: "user", guests: "ip" })]` (`import { middleware } from "@warlock.js/core"`). Keyed on `request.locals.user.id`, so it needs `pageSession()` from `@warlock.js/auth`. `guests`: `"ip"` (default) or `"skip"`. Over the limit: 429, action not run.
 - With `@mongez/react-form`, use `useSubmitAction` from `@warlock.js/web/form` and alias one of the two `Form`s.
+
+## Validate in the browser with the same schema
+
+Put browser-safe, shared constraints in a separate schema module. Import that one
+constant into the page for `config.action.validation` and into the
+`@mongez/react-form` form's `schema` prop:
+
+```tsx
+// src/web/contact/contact.schema.ts
+import { v } from "@warlock.js/seal";
+
+export const contactSchema = v.object({
+  email: v.string().email(),
+  message: v.string().min(10),
+});
+```
+
+```tsx
+// src/web/contact/contact.page.tsx
+import { Form as ReactForm } from "@mongez/react-form";
+import { useSubmitAction } from "@warlock.js/web/form";
+import type { PageActionContext, PageConfig } from "@warlock.js/web";
+import { contactSchema } from "./contact.schema";
+
+export const config: PageConfig = {
+  route: { path: "/contact", name: "contact" },
+  action: { validation: contactSchema },
+};
+
+export async function action({ request, response }: PageActionContext<typeof contactSchema>) {
+  const values = request.validated();
+  // Handle values, then redirect or return data.
+  return response.redirect("/contact");
+}
+
+export default function ContactPage() {
+  const submit = useSubmitAction<typeof contactSchema>();
+
+  return (
+    <ReactForm method="post" schema={contactSchema} onSubmit={submit.submit}>
+      {/* Your registered controls must be named "email" and "message". */}
+    </ReactForm>
+  );
+}
+```
+
+`schema` provides immediate browser feedback, but `config.action.validation`
+remains authoritative: a request that bypasses the browser is still rejected
+with 422 before the action runs. `useSubmitForm` is for Core API routes; use
+`useSubmitAction` for a page action. Keep database uniqueness checks and any
+other server-only rule out of this shared schema: keep them server-side or
+split the browser-safe constraints into a shared schema.
