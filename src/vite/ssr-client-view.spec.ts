@@ -7,7 +7,9 @@ import {
   type SsrBoundaryState,
 } from "./ssr-client-view";
 
-const APP_ROOT = "C:/fixture";
+// An ABSOLUTE root on this platform: the plugin only projects absolute app paths,
+// and `C:/fixture` is not absolute on POSIX.
+const APP_ROOT = process.platform === "win32" ? "C:/fixture" : "/fixture";
 const SETUP_FILE = `${APP_ROOT}/src/web/layout.setup.ts`;
 const SETUP_REGISTER_ID = `${SETUP_FILE}?warlock-setup-register`;
 
