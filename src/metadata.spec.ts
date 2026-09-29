@@ -136,6 +136,10 @@ const CASE_FOR_KEY: Record<string, RenderCase> = {
     metadata: { image: "og-image" },
     tag: '<meta property="og:image" content="og-image"/>',
   },
+  alternates: {
+    metadata: { alternates: { fr: "https://example.com/fr/products" } },
+    tag: '<link rel="alternate" href="https://example.com/fr/products" hrefLang="fr"/>',
+  },
   authors: {
     metadata: { authors: ["Ada", "Grace"] },
     tag: '<meta name="author" content="Ada, Grace"/>',

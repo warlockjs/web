@@ -142,10 +142,10 @@ describe("hydration payload name / client registry key parity", () => {
       "src/web/(marketing)/about.page.tsx": page(),
     });
 
-    // Every path below is an OS-native absolute path — on this win32 suite,
-    // that means real backslashes, exercised through the same disk reads and
-    // `path.relative` calls the running application would make.
-    expect(appRoot.includes("\\")).toBe(true);
+    // Every path below is an OS-native absolute path — on win32 that means real
+    // backslashes, exercised through the same disk reads and `path.relative`
+    // calls the running application would make; elsewhere, forward slashes.
+    expect(appRoot.includes("\\")).toBe(process.platform === "win32");
 
     const appSrcRoot = path.join(appRoot, "src");
     const clientNames = await clientRegistryNames(appRoot);
