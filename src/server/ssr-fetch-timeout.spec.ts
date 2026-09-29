@@ -14,7 +14,9 @@ describe("SSR module-fetch timeout", () => {
     ).catch((error: unknown) => error);
 
     expect(error).toBeInstanceOf(SsrModuleFetchTimeoutError);
-    expect((error as SsrModuleFetchTimeoutError).elapsedMs).toBeGreaterThanOrEqual(10);
+    // elapsedMs comes from Date.now(), whose millisecond rounding can read one
+    // tick short of the timer that fired (9 for 10 on a CI runner).
+    expect((error as SsrModuleFetchTimeoutError).elapsedMs).toBeGreaterThanOrEqual(9);
   });
 
   it("names the module, elapsed time, and overload remedy", async () => {
