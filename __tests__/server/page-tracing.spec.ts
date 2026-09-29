@@ -121,7 +121,9 @@ describe("page tracing — enabled: loader (per level), render.shell, stream.end
     await handler({ request: http.request, response: http.response } as unknown as HttpContext);
     const wallClockMs = Date.now() - startedAt;
 
+    // `page.middleware` opens every traced page request (5.25, devtools).
     expect(phases.map(({ phase }) => phase.name)).toEqual([
+      "page.middleware",
       "loader",
       "loader",
       "loader",
@@ -129,9 +131,10 @@ describe("page tracing — enabled: loader (per level), render.shell, stream.end
       "stream.end",
     ]);
 
-    expect(phases[0]!.phase.attrs).toEqual({ level: "app" });
-    expect(phases[1]!.phase.attrs).toEqual({ level: "layout", layoutPath: LAYOUT_FILE });
-    expect(phases[2]!.phase.attrs).toEqual({ level: "page" });
+    const loaders = phases.filter(({ phase }) => phase.name === "loader");
+    expect(loaders[0]!.phase.attrs).toEqual({ level: "app" });
+    expect(loaders[1]!.phase.attrs).toEqual({ level: "layout", layoutPath: LAYOUT_FILE });
+    expect(loaders[2]!.phase.attrs).toEqual({ level: "page" });
 
     // Every phase has a real, non-negative numeric duration, and every one
     // fits within the wall-clock window this one request actually took —

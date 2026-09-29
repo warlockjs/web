@@ -44,6 +44,13 @@ vi.mock("vite", async (importOriginal) => {
   return { ...actual, createServer: createServerMock };
 });
 
+// The fake Vite server has no module-runner environment; the SSR fetch-timeout
+// runner has its own suite (src/server/ssr-fetch-timeout.spec.ts), so here it
+// is a step that leaves the fake's own ssrLoadModule in place.
+vi.mock("../../src/server/install-ssr-fetch-timeout", () => ({
+  installSsrFetchTimeout: vi.fn(async () => undefined),
+}));
+
 vi.mock("../../src/server/hydration-client-url", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/server/hydration-client-url")>();
 
