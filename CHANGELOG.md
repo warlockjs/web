@@ -13,6 +13,7 @@ All notable changes to `@warlock.js/web` are documented here.
 
 ### Fixed
 
+- `warlock dev` now lets `webConnector({ ssrFetchTimeoutMs })` configure Vite SSR module fetching; `WARLOCK_SSR_FETCH_TIMEOUT_MS` takes precedence. Invalid values warn and retain the 60000ms default, while timeout errors name the module and point to CPU overload and the environment override.
 - Metadata callbacks now correctly retain child metadata with `child.metadata`; diagnostic errors also identify the common mistaken `...child` spread and show the correct form.
 - The "runtime exports must use one of ..." page-discovery error now names the offending export and the source file, and its allowlist is built from the same list the check enforces, so it can no longer omit `action`/`actions` or drift from what's actually accepted.
 - `warlock dev` keeps serving Vite assets (`theme.css`, `app.css?direct`, the client entry) after an HTTP-only restart: the web connector re-attaches its Vite middleware to the rebuilt HTTP instance instead of leaving pages unstyled and unhydrated.

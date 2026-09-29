@@ -61,6 +61,7 @@ import {
 import { resolveWebPackageRoot } from "../build/contribution";
 import { createHydrationClientEntry, invalidateClientPageRegistry } from "../vite";
 import { createWebConnectorViteConfig } from "../vite/dev-server-config";
+import { resolveSsrFetchTimeoutMs, withSsrFetchTimeout } from "./ssr-fetch-timeout";
 import { CLIENT_ASSET_URL_PREFIX } from "./client-asset-url-prefix";
 import { devErrorTransportPlugin, sendCapturedDevError } from "./dev-error-transport";
 import {
@@ -301,6 +302,8 @@ export type WebConnectorOptions = {
   ssrExternal?: string[];
   /** Extra Vite plugins, appended after the client-boundary gates. */
   plugins?: PluginOption[];
+  /** Milliseconds Vite's development SSR module fetch may take before failing. */
+  ssrFetchTimeoutMs?: number;
 };
 
 /**
@@ -992,14 +995,16 @@ export class WebConnector extends BaseConnector {
     fastify: FastifyInstance,
     paths: Awaited<ReturnType<WebConnector["resolvePaths"]>>,
   ): Promise<ViteDevServer> {
-    const { createServer, buildErrorMessage, searchForWorkspaceRoot } = await import("vite");
+    const { createServer, buildErrorMessage, createServerModuleRunnerTransport, searchForWorkspaceRoot } =
+      await import("vite");
+    const { ModuleRunner } = await import("vite/module-runner");
 
     // Vite's own default for `server.fs.allow`, reproduced rather than dropped:
     // naming the key at all REPLACES the default, and an application that
     // legitimately serves files from above its own root has to keep working.
     const workspaceRoot = searchForWorkspaceRoot(paths.appRoot);
 
-    return createServer(
+    const vite = await createServer(
       await createWebConnectorViteConfig({
         appRoot: paths.appRoot,
         appSrcRoot: paths.appSrcRoot,
@@ -1015,6 +1020,46 @@ export class WebConnector extends BaseConnector {
         plugins: this.options.plugins,
       }),
     );
+
+    const timeoutMs = resolveSsrFetchTimeoutMs(this.options.ssrFetchTimeoutMs);
+    let fetchingModuleId: string | undefined;
+    const transport = createServerModuleRunnerTransport({ channel: vite.environments.ssr.hot });
+    const send = transport.send!;
+
+    transport.send = (payload) => {
+      if (
+        payload.type === "custom" &&
+        payload.event === "vite:invoke" &&
+        payload.data.name === "fetchModule"
+      ) {
+        const moduleId = payload.data.data[0];
+        if (typeof moduleId === "string") fetchingModuleId = moduleId;
+      }
+
+      return send(payload);
+    };
+
+    const runner = new ModuleRunner({
+      // Vite's legacy `ssrLoadModule()` compatibility runner hard-codes its
+      // transport's 60s invoke timeout. Supplying the transport here is the
+      // supported module-runner seam and retains HMR through Vite's channel.
+      transport: {
+        ...transport,
+        send: transport.send!,
+        timeout: timeoutMs,
+      },
+    });
+
+    vite.ssrLoadModule = (moduleId) =>
+      withSsrFetchTimeout(() => fetchingModuleId ?? moduleId, () => runner.import(moduleId), timeoutMs);
+
+    const close = vite.close.bind(vite);
+    vite.close = async () => {
+      await runner.close();
+      await close();
+    };
+
+    return vite;
   }
 }
 

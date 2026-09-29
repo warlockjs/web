@@ -42,6 +42,8 @@ Every added `@warlock.js/*` package is saved at the exact version of the Core CL
 
 The command adds `webConnector()` to `warlock.config.ts`. If the config cannot be patched safely, add the same wiring yourself:
 
+For development-only connector tuning, `webConnector({ ssrFetchTimeoutMs })` sets the Vite SSR module-fetch bound; `WARLOCK_SSR_FETCH_TIMEOUT_MS` overrides it.
+
 ```ts title="warlock.config.ts"
 import { defineConfig } from "@warlock.js/core";
 import { webConnector } from "@warlock.js/web/connector";
