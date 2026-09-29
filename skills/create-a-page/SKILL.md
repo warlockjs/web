@@ -394,18 +394,36 @@ export const config: PageConfig = {
 };
 ```
 
-Supported fields are `title`, `description`, `keywords`, `canonical`, `robots`, `openGraph`, and `twitter`. A title may be a string, `{ default?, template? }`, or `{ absolute }`. Function metadata runs after a successful loader. If a loader fails, Warlock uses error metadata instead of calling the page function with missing data. Layout and root metadata use the same input shape; their callbacks receive readonly `{ data, shared, child? }` and run server-side only. A callback returns its complete level: explicit returned fields override `child`, and omitted child fields are not retained. Spread `child` when retaining descendant metadata:
+Supported fields are `title`, `description`, `keywords`, `canonical`, `robots`, `openGraph`, and `twitter`. A title may be a string, `{ default?, template? }`, or `{ absolute }`. Function metadata runs after a successful loader. If a loader fails, Warlock uses error metadata instead of calling the page function with missing data. Layout and root metadata use the same input shape; their callbacks receive readonly `{ data, shared, child? }` and run server-side only. A callback returns its complete level: explicit returned fields override `child.metadata`, and omitted child fields are not retained. Spread `child.metadata` when retaining descendant metadata:
 
 ```tsx
 export const config: LayoutConfig = {
   metadata: ({ data, child }) => ({
-    ...child,
-    title: `${data.sectionName} | ${child?.title ?? "Products"}`,
+    ...child?.metadata,
+    title: `${data.sectionName} | ${child?.metadata.title ?? "Products"}`,
   }),
 };
 ```
 
 That callback may override the child title; an absolute child title remains authoritative. A supplied title resolves to a string in SSR and navigation output.
+
+### Per-locale content slugs (`metadata.alternates`)
+
+A locale-routed page's hreflang alternates are generated automatically from the current request's path (swapping only the locale prefix). That is wrong for a page whose SLUG also differs per locale — a listing page like `/en/apartments-for-rent-in-zamalek` vs. `/ar/شقق-للإيجار-في-الزمالك`. Set `metadata.alternates` to replace the generated set with the page's real per-locale URLs:
+
+```tsx
+export const config: PageConfig<typeof loader> = {
+  metadata: ({ data }) => ({
+    alternates: {
+      en: `/apartments-for-rent-in-${data.listing.slug.en}`,
+      ar: `/شقق-للإيجار-في-${data.listing.slug.ar}`,
+      "x-default": `/apartments-for-rent-in-${data.listing.slug.en}`,
+    },
+  }),
+};
+```
+
+Keys are locale codes plus the optional `"x-default"` key; values are paths (joined onto the public URL, same as `canonical`) or absolute URLs, taken as-is. Setting `alternates` REPLACES the generated locale-alternate `<link>` set entirely — no generated entries render alongside it — and it travels through client navigation the same way any other metadata field does. A page with no `alternates` keeps the generated set unchanged. `metadata.links` entries with `rel: "alternate"` for the same locale code are dropped in favor of `alternates`; don't declare both for the same hreflang.
 
 ## The error boundary — `error.page.tsx`
 

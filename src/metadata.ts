@@ -1,3 +1,4 @@
+import type { PageRoute } from "./context";
 import type { SharedContext } from "./index";
 import type { LoaderData, LoaderFunction } from "./props";
 
@@ -103,7 +104,10 @@ export type MetadataOutput = {
   /**
    * Extra `<link>` tags. `rel="canonical"` belongs to `canonical` and is
    * dropped; an invalid `rel` or a `javascript:` href is dropped with a dev
-   * warning. Replaced, not concatenated, like `meta`.
+   * warning. Replaced, not concatenated, like `meta`. An entry with
+   * `rel: "alternate"` and an `hreflang` also present as a key of
+   * {@link alternates} is dropped with a dev warning — `alternates` is the
+   * supported way to declare hreflang alternates; see its own doc for why.
    */
   links?: readonly {
     rel: string;
@@ -116,6 +120,35 @@ export type MetadataOutput = {
     crossOrigin?: "anonymous" | "use-credentials";
     title?: string;
   }[];
+  /**
+   * Explicit `<link rel="alternate" hreflang="...">` targets for THIS page,
+   * keyed by locale code plus the optional `"x-default"` key. A value is a
+   * path (joined onto the public URL exactly like {@link canonical}) or an
+   * absolute URL, taken as-is.
+   *
+   * When set, this REPLACES the framework's generated locale-alternate set
+   * (`server/resolve-locale-alternates.ts`) entirely for this page — no
+   * generated entries are added alongside it. This exists for per-locale
+   * content slugs: a listing page whose slug differs by locale
+   * (`/en/apartments-for-rent-in-zamalek` vs.
+   * `/ar/شقق-للإيجار-في-الزمالك`) cannot be described by the framework's
+   * default, which only swaps the locale prefix on the CURRENT request's
+   * path — it would pair the English slug with a same-slug (and therefore
+   * wrong) Arabic alternate. Pages that don't set this keep the generated
+   * set unchanged.
+   *
+   * @example
+   * ```ts
+   * export const metadata: PageMetadata<typeof loader> = ({ data }) => ({
+   *   alternates: {
+   *     en: `/apartments-for-rent-in-${data.listing.slug.en}`,
+   *     ar: `/شقق-للإيجار-في-${data.listing.slug.ar}`,
+   *     "x-default": `/apartments-for-rent-in-${data.listing.slug.en}`,
+   *   },
+   * });
+   * ```
+   */
+  alternates?: Readonly<Record<string, string>>;
 };
 
 export type MetadataTitleInput =
@@ -128,13 +161,14 @@ export type MetadataInput = Omit<MetadataOutput, "title"> & { readonly title?: M
 
 // Primitives first: a branded string such as `string & {}` (used for open
 // unions like `openGraph.type`) must stay a string, not become a mapped object.
-type DeepReadonlyMetadataValue<Value> = Value extends string | number | boolean | bigint | symbol | null | undefined
+type DeepReadonlyMetadataValue<Value> = Value extends
+  string | number | boolean | bigint | symbol | null | undefined
   ? Value
   : Value extends readonly (infer Item)[]
-  ? readonly DeepReadonlyMetadataValue<Item>[]
-  : Value extends object
-    ? Readonly<{ [Key in keyof Value]: DeepReadonlyMetadataValue<Value[Key]> }>
-    : Value;
+    ? readonly DeepReadonlyMetadataValue<Item>[]
+    : Value extends object
+      ? Readonly<{ [Key in keyof Value]: DeepReadonlyMetadataValue<Value[Key]> }>
+      : Value;
 
 export type ResolvedMetadata = Readonly<{
   [Key in keyof MetadataOutput]: DeepReadonlyMetadataValue<MetadataOutput[Key]>;
@@ -149,6 +183,8 @@ export type MetadataChild = Readonly<{
 export type MetadataContext<TLoader> = Readonly<{
   data: TLoader;
   shared: Readonly<SharedContext>;
+  /** The matched page's route (not core's `/*` catch-all under `sites`). */
+  route: PageRoute;
   child?: MetadataChild;
 }>;
 
@@ -180,6 +216,7 @@ export const METADATA_KEYS = [
   "twitter",
   "meta",
   "links",
+  "alternates",
 ] as const;
 
 /** The members of `openGraph`, on the same terms as {@link METADATA_KEYS}. */

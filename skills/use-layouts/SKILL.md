@@ -131,14 +131,14 @@ A layout is projected for the browser the same way a page is: `config` and `load
 loader data, readonly shared state, and resolved child metadata; they run only
 on the server after loaders. Titles accept a string, `{ default?, template? }`,
 or `{ absolute }`. A callback returns that layout's complete metadata: explicit
-fields override `child`, and fields omitted from its result are not retained.
-Spread `child` when retaining descendant fields:
+fields override `child.metadata`, and fields omitted from its result are not retained.
+Spread `child.metadata` when retaining descendant fields:
 
 ```tsx
 export const config: LayoutConfig = {
   metadata: ({ data, child }) => ({
-    ...child,
-    title: `${data.workspaceName} | ${child?.title ?? "Workspace"}`,
+    ...child?.metadata,
+    title: `${data.workspaceName} | ${child?.metadata.title ?? "Workspace"}`,
   }),
 };
 ```

@@ -280,6 +280,33 @@ export function createWebBuildContribution(
       };
     },
 
+    // `warlock generate.typings`: the same writer and the same inputs `generate`
+    // uses (page discovery + Core's named API snapshot), minus the barrel and
+    // every other build artifact.
+    async typings(context: ConnectorBuildContext): Promise<void> {
+      if (context.namedApiRoutes === undefined) {
+        throw new Error(
+          "Web typings require Core's fresh named API route snapshot. Run this contribution through `warlock generate.typings` with the Web connector configured.",
+        );
+      }
+
+      const { discoverPageRoutes } = await import("./generate-pages-barrel");
+      const { loadWebBuildConfig } = await import("./load-web-build-config");
+      const { writeRouteTypes } = await import("./write-route-types");
+
+      const routes = discoverPageRoutes({
+        appRoot: context.appRoot,
+        srcDir: options.srcDir,
+        sites: options.sites ?? (await loadWebBuildConfig(context.appRoot)).sites,
+      });
+
+      await writeRouteTypes({
+        appRoot: context.appRoot,
+        pages: routes.routes,
+        apis: context.namedApiRoutes,
+      });
+    },
+
     async emit(context: ConnectorBuildContext): Promise<void> {
       if (pageCount > 0) {
         const { buildWarlockHydrationClient } = await import("../vite");

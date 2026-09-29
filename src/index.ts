@@ -40,7 +40,7 @@ export type TranslationKey = keyof TranslationKeyRegistry extends never
   ? string
   : Extract<keyof TranslationKeyRegistry, string>;
 
-export type { HttpContext, PageContext } from "./context";
+export type { HttpContext, PageContext, PageRoute } from "./context";
 export type {
   PageLoader,
   PageLoaderContext,

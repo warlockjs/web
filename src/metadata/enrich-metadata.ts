@@ -121,5 +121,17 @@ export function enrichMetadata(
   // A page with nothing to say about Open Graph and no derived value stays as it was.
   if (Object.keys(openGraph).length > 0) result.openGraph = openGraph;
 
+  // Explicit hreflang alternates: absolutized the same way `canonical` is,
+  // so the resolved metadata carries real URLs regardless of which renderer
+  // (SSR `<Head/>` or the client navigation applier) reads it next.
+  if (metadata.alternates !== undefined) {
+    result.alternates = Object.fromEntries(
+      Object.entries(metadata.alternates).map(([hreflang, href]) => [
+        hreflang,
+        absolutize(publicUrl, href),
+      ]),
+    );
+  }
+
   return result;
 }

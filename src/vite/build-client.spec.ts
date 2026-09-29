@@ -1,6 +1,17 @@
 import path from "node:path";
-import { describe, expect, it } from "vitest";
-import { VENDOR_REACT_CHUNK_NAME, warlockHydrationManualChunks } from "./build-client";
+import { describe, expect, it, vi } from "vitest";
+import {
+  buildHydrationClient,
+  VENDOR_REACT_CHUNK_NAME,
+  warlockHydrationManualChunks,
+} from "./build-client";
+
+const vite = vi.hoisted(() => ({
+  build: vi.fn(),
+  createLogger: vi.fn(() => ({ info: vi.fn() })),
+}));
+
+vi.mock("vite", () => vite);
 
 /**
  * Card 53f8647e — `warlockHydrationManualChunks` is the whole vendor-split
@@ -78,5 +89,24 @@ describe("warlockHydrationManualChunks", () => {
 
   it("leaves an unrelated dependency unchunked", () => {
     expect(warlockHydrationManualChunks(nodeModulesId("devalue", "index.js"))).toBeUndefined();
+  });
+});
+
+describe("buildHydrationClient CSS configuration", () => {
+  it("resolves PostCSS from the app root", async () => {
+    vite.build.mockImplementationOnce(async () => ({ output: [] }));
+    const appRoot = path.join("/repo", "app");
+
+    await buildHydrationClient({
+      webRoot: process.cwd(),
+      outDir: path.join(appRoot, "dist", "client"),
+      plugins: [{ name: "fixture" }],
+      resolveAliases: { "app/": `${appRoot}/src/` },
+      cssModulesRoot: appRoot,
+    });
+
+    expect(vite.build).toHaveBeenCalledWith(
+      expect.objectContaining({ css: expect.objectContaining({ postcss: appRoot }) }),
+    );
   });
 });

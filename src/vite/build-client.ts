@@ -215,7 +215,18 @@ export async function buildHydrationClient(
     plugins: [...options.plugins],
     // Mirrors dev-server-config: one React copy for entry and pages.
     resolve: { alias: options.resolveAliases, dedupe: ["react", "react-dom"] },
-    ...(options.cssModulesRoot === undefined ? {} : { css: cssModulesConfig(options.cssModulesRoot) }),
+    ...(options.cssModulesRoot === undefined
+      ? {}
+      : {
+          css: {
+            ...cssModulesConfig(options.cssModulesRoot),
+            // Vite itself stays rooted at the framework package for the
+            // hydration entry, so make PostCSS discovery explicitly match the
+            // application's root as it does in dev. Plugin config hooks still
+            // merge after this inline baseline and may override `postcss`.
+            postcss: options.cssModulesRoot,
+          },
+        }),
     build: {
       copyPublicDir: false,
       emptyOutDir: true,

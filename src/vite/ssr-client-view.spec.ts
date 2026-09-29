@@ -157,6 +157,39 @@ describe("clientEnvironmentOnly setup-register projection", () => {
     expect(resolved).toEqual(["./register-layout"]);
   });
 
+  it("validates a raw setup file's projection in dev SSR, refusing an unread top-level call like build", async () => {
+    const plugin = clientEnvironmentOnly(gate([], new Set()), state());
+    const transform = transformOf(plugin);
+
+    await expect(
+      transform.call(
+        serverContext as any,
+        [
+          `import { requireUser } from "./require-user";`,
+          `const memberGuard = requireUser({});`,
+          `export const loader = async () => memberGuard;`,
+          `export function register() {}`,
+        ].join("\n"),
+        SETUP_FILE,
+        {},
+      ),
+    ).rejects.toThrow(/ProjectionAmbiguityError|refused to guess/);
+  });
+
+  it("lets a valid raw setup file through validation and keeps serving raw source to SSR", async () => {
+    const resolved: string[] = [];
+    const plugin = clientEnvironmentOnly(gate(resolved, new Set()), state());
+    const transform = transformOf(plugin);
+    const code = [
+      `import { registerLayout } from "./register-layout";`,
+      `export const config = { title: "x" };`,
+      `export function register() { registerLayout(); }`,
+    ].join("\n");
+
+    await expect(transform.call(serverContext as any, code, SETUP_FILE, {})).resolves.toBeNull();
+    expect(resolved).toEqual([]);
+  });
+
   it("still lets Gate A reject a server-only dependency used by register", async () => {
     const resolved: string[] = [];
     const plugin = clientEnvironmentOnly(gate(resolved, new Set(["@warlock.js/auth"])), state());

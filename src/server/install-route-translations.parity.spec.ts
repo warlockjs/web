@@ -6,6 +6,8 @@ import config from "@mongez/config";
 import type { Router } from "@warlock.js/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { discoverPageGraph } from "../build/discover-pages";
+import { serializeRouteLocales } from "../build/serialize-route-locales";
 import * as createPageRouteHandlerModule from "./create-page-route-handler";
 import type { PageRouteHandler, PageRouteHandlerOptions } from "./create-page-route-handler";
 import { installPageRoutes, type InstallPageRoutesOptions } from "./install-page-routes";
@@ -127,6 +129,54 @@ afterEach(() => {
 });
 
 describe("route-locales installer parity", () => {
+  it("resolves a site dictionary from a generated multi-site manifest slice", () => {
+    const appRoot = makeAppTree({
+      "src/web/$sites/platform/root.tsx": "export default function Root() { return null; }",
+      "src/web/$sites/platform/index.page.tsx": "export default function Page() { return null; }",
+      "src/web/$sites/platform/locales.json": '{"platform":{"title":{"en":"Platform","ar":"Ø§Ù„Ù…Ù†ØµØ©"}}}',
+      "src/web/$sites/landing/root.tsx": "export default function Root() { return null; }",
+      "src/web/$sites/landing/index.page.tsx": "export default function Page() { return null; }",
+      "src/web/$sites/landing/locales.json": '{"landing":{"title":{"en":"Landing","ar":"Ø§Ù„Ù‡Ø¨ÙˆØ·"}}}',
+    });
+    const localeFiles = serializeRouteLocales(
+      discoverPageGraph({
+        appRoot,
+        sites: {
+          landing: { hosts: ["landing.test"] },
+          platform: { hosts: ["platform.test"] },
+        },
+      }).localeFiles,
+      appRoot,
+    );
+    const { createHandler, captured } = captureProductionHandlers();
+    const manifest: PageManifest = {
+      app: {
+        module: { default: (): null => null },
+        sourceFile: "src/web/$sites/platform/root.tsx",
+      },
+      pages: [
+        {
+          module: { default: (): null => null, config: { route: "/" } },
+          sourceFile: "src/web/$sites/platform/index.page.tsx",
+          layouts: [],
+          site: "platform",
+        },
+      ],
+      localeFiles: [
+        ...localeFiles,
+      ],
+    };
+
+    installPageRoutesFromManifest({ router: router(), manifest, createHandler });
+
+    expect(snapshotsByPage(captured, "ar")).toEqual({
+      "src/web/$sites/platform/index.page.tsx": {
+        locale: "ar",
+        keywords: { platform: { title: "Ø§Ù„Ù…Ù†ØµØ©" } },
+      },
+    });
+  });
+
   it("projects the same root and nested $group snapshot for ordinary and 404 handlers", async () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": "",

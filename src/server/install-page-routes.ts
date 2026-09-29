@@ -857,6 +857,7 @@ async function installDiscoveredPageRoutes(
         ? undefined
         : createPageRouteHandler({
             ...notFoundPageHandlerOptions({
+              site: siteScope?.site,
               appFile,
               pageFile: notFoundPageFile,
               loadModule: (moduleId) => loadComposedModule(vite, moduleId),

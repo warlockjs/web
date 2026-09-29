@@ -54,6 +54,7 @@ import {
   config,
   container,
   type FastifyInstance,
+  onHttpServerRebuilt,
   requestContext,
   router,
 } from "@warlock.js/core";
@@ -323,6 +324,9 @@ export class WebConnector extends BaseConnector {
 
   protected vite?: ViteDevServer;
 
+  /** Detaches the dev hook re-attach from core's HTTP rebuild signal. */
+  protected unsubscribeHttpRebuilt?: () => void;
+
   protected installedPages: InstalledPageRoute[] = [];
 
   /** The app root resolved during boot and used by the one startup sitemap job. */
@@ -544,37 +548,19 @@ export class WebConnector extends BaseConnector {
     // explanation away. `devErrorTransportPlugin` captures it upstream; this
     // reads it back.
     // Dev-only on both sides Ã¢â‚¬â€ nothing below this line runs in production.
-    fastify.addHook(
-      "onRequest",
-      (request: FastifyRequest, reply: FastifyReply, done: HookHandlerDoneFunction) => {
-        this.vite?.middlewares(request.raw, reply.raw, (error?: Error) => {
-          if (sendCapturedDevError(request.raw, reply.raw)) return;
+    // The hooks live on the Fastify INSTANCE and an HTTP-only restart replaces
+    // it, so they are re-attached to every rebuilt instance (Vite is reused).
+    this.attachDevHooks(fastify);
+    this.unsubscribeHttpRebuilt?.();
+    this.unsubscribeHttpRebuilt = onHttpServerRebuilt((next) => {
+      if (this.vite) this.attachDevHooks(next);
+    });
 
-          done(error);
-        });
-      },
-    );
-
-    this.reportUnregisteredPages = createUnregisteredPageReporter({
+    this.reportUnregisteredPages =createUnregisteredPageReporter({
       appRoot: paths.appRoot,
       appSrcRoot: paths.appSrcRoot,
       registeredPageFiles: () => registeredPageFiles(router.list(), paths.appSrcRoot),
     });
-
-    fastify.addHook(
-      "onResponse",
-      (request: FastifyRequest, reply: FastifyReply, done: HookHandlerDoneFunction) => {
-        if (reply.statusCode === 404) {
-          this.reportUnregisteredPages?.({
-            method: request.method,
-            url: request.url,
-            pathname: new URL(request.url, "http://warlock.local").pathname,
-          });
-        }
-
-        done();
-      },
-    );
 
     this.installDevPageRoutes = () =>
       webServerSsr.installPageRoutes({
@@ -594,7 +580,7 @@ export class WebConnector extends BaseConnector {
         // why `createPageRouteHandler` cannot read this out of the container
         // itself from inside Vite's SSR module graph. `fastify` is this same
         // request's `resolveFastify()` result, already in scope above.
-        httpServer: fastify,
+        httpServer: this.resolveFastify(),
         ...siteDispatchOption(),
       });
 
@@ -605,7 +591,40 @@ export class WebConnector extends BaseConnector {
   }
 
   /**
-   * Where the browser fetches the hydration entry from Ã¢â‚¬â€ the one line that
+   * Mount Vite's connect stack (`onRequest`) and the dev 404 diagnostic
+   * (`onResponse`) on `fastify`. Called at boot and for every rebuilt HTTP
+   * instance; `this.vite` is read lazily so the reused server is what answers.
+   */
+  protected attachDevHooks(fastify: FastifyInstance): void {
+    fastify.addHook(
+      "onRequest",
+      (request: FastifyRequest, reply: FastifyReply, done: HookHandlerDoneFunction) => {
+        this.vite?.middlewares(request.raw, reply.raw, (error?: Error) => {
+          if (sendCapturedDevError(request.raw, reply.raw)) return;
+
+          done(error);
+        });
+      },
+    );
+
+    fastify.addHook(
+      "onResponse",
+      (request: FastifyRequest, reply: FastifyReply, done: HookHandlerDoneFunction) => {
+        if (reply.statusCode === 404) {
+          this.reportUnregisteredPages?.({
+            method: request.method,
+            url: request.url,
+            pathname: new URL(request.url, "http://warlock.local").pathname,
+          });
+        }
+
+        done();
+      },
+    );
+  }
+
+  /**
+   * Where the browser fetches the hydration entry fromÃ¢â‚¬â€ the one line that
    * differs between the two modes, so it is the only thing that branches.
    *
    * Dev keeps Vite's `/@fs/` URL, which Vite's own middleware transforms on
@@ -739,6 +758,10 @@ export class WebConnector extends BaseConnector {
     await flushPendingServerErrorReports();
 
     await shutdownSitemapRuntime();
+
+    // Before the `active` guard: boot subscribes, `start()` is what sets `active`.
+    this.unsubscribeHttpRebuilt?.();
+    this.unsubscribeHttpRebuilt = undefined;
 
     if (!this.active) return;
 

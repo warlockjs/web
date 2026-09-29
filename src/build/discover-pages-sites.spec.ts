@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SitesConfig } from "../sites/site-config.types";
 import {
+  discoverPageGraph,
   discoverPages,
   DuplicatePageRouteNameError,
   DuplicatePageRoutePathError,
@@ -58,6 +59,30 @@ const pagesOf = (pages: DiscoveredPage[]) =>
   pages.filter((page) => page.type === "page") as Extract<DiscoveredPage, { type: "page" }>[];
 
 describe("discoverPages with sites", () => {
+  it("assigns each site's locale files to that site's discovery root", () => {
+    const appRoot = makeAppTree(
+      realEstate({
+        "src/web/$sites/platform/locales.json": '{"platform":{"title":{"en":"Platform"}}}',
+        "src/web/$sites/landing/locales.json": '{"landing":{"title":{"en":"Landing"}}}',
+      }),
+    );
+    const rel = (file: string) => path.relative(appRoot, file).split(path.sep).join("/");
+
+    expect(discoverPageGraph({ appRoot, sites: SITES }).localeFiles.map((file) => ({
+      sourceFile: rel(file.sourceFile),
+      webRoot: rel(file.webRoot),
+    }))).toEqual([
+      {
+        sourceFile: "src/web/$sites/landing/locales.json",
+        webRoot: "src/web/$sites/landing",
+      },
+      {
+        sourceFile: "src/web/$sites/platform/locales.json",
+        webRoot: "src/web/$sites/platform",
+      },
+    ]);
+  });
+
   it("discovers convention sites without exposing $sites in paths or names", () => {
     const sites: SitesConfig = {
       landing: { hosts: ["estates.app"] },
@@ -346,5 +371,16 @@ describe("discoverPages with sites", () => {
         appFile: "src/web/root.tsx",
       },
     ]);
+  });
+
+  it("keeps single-site locale ownership at src/web", () => {
+    const appRoot = makeAppTree({
+      "src/web/root.tsx": COMPONENT,
+      "src/web/index.page.tsx": COMPONENT,
+      "src/web/locales.json": '{"site":{"title":{"en":"Site"}}}',
+    });
+    const [localeFile] = discoverPageGraph({ appRoot }).localeFiles;
+
+    expect(path.relative(appRoot, localeFile!.webRoot).split(path.sep).join("/")).toBe("src/web");
   });
 });

@@ -13,6 +13,7 @@ import {
   DuplicatePageRoutePathError,
   ErrorPageDeclaresRouteError,
   isDiscoveredRoutablePage,
+  OrphanPageSetupFileError,
   type DiscoverPagesOptions,
   type DiscoveredRoutablePage,
 } from "./discover-pages";
@@ -121,6 +122,28 @@ function withReversedDirectoryListings<T>(discover: () => T): T {
 }
 
 describe("discoverPages — the recipe", () => {
+  it("rejects an orphan layout setup file before its middleware can be silently ignored", () => {
+    const appRoot = makeAppTree({
+      "src/web/members/layout.setup.ts": "export const middleware = () => undefined;",
+      "src/web/members/index.page.tsx": APP,
+    });
+
+    expect(() => discoverPages({ appRoot })).toThrow(OrphanPageSetupFileError);
+    expect(() => discoverPages({ appRoot })).toThrow(
+      "src/web/members/layout.setup.ts has no layout.tsx beside it, so its middleware and metadata would never run. Add src/web/members/layout.tsx that renders {children}, or delete the setup file.",
+    );
+  });
+
+  it("accepts a setup file when its UI owner exists", () => {
+    const appRoot = makeAppTree({
+      "src/web/members/layout.tsx": LAYOUT,
+      "src/web/members/layout.setup.ts": "export const loader = () => undefined;",
+      "src/web/members/index.page.tsx": APP,
+    });
+
+    expect(() => discoverPages({ appRoot })).not.toThrow();
+  });
+
   it("carries the page, its (single) layout chain, and the app root", () => {
     const appRoot = makeAppTree({
       "src/web/root.tsx": APP,

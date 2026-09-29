@@ -3,7 +3,7 @@ import type { ActionResponse } from "./server/settle-page-response";
 import type { Request, Response } from "@warlock.js/core";
 import type { BaseValidator, Infer } from "@warlock.js/seal";
 import type { PageActionConfig } from "./page-config";
-import type { PageContext, PageSite } from "./context";
+import type { PageContext, PageRoute, PageSite } from "./context";
 import type { PageSession, SharedContext } from "./index";
 import type { RouteDeclaration } from "./route";
 import type { PageValidation, ValidatedOutput } from "./validation";
@@ -28,6 +28,8 @@ export type PageLoaderContext<
   response: Response;
   shared: SharedContext;
   site?: PageSite;
+  /** The matched page's route (not core's `/*` catch-all under `sites`). */
+  route: PageRoute;
   /** The resolved session; present only when `web.session` is configured. `user` is null for a guest. */
   session?: PageSession;
 };
@@ -77,6 +79,8 @@ export type PageActionContext<TConfig extends PageActionConfig | BaseValidator |
   response: ActionResponse;
   shared: SharedContext;
   site?: PageSite;
+  /** The matched page's route (not core's `/*` catch-all under `sites`). */
+  route: PageRoute;
   /** The resolved session; present only when `web.session` is configured. */
   session?: PageSession;
 };

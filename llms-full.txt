@@ -15,6 +15,17 @@ description: 'Install the SSR page layer with `warlock add web`: add React/Vite 
 
 `warlock add web` turns an existing Warlock API application into an application that can also serve SSR React pages. It installs the web and React packages, adds the Vite development peers, scaffolds the smallest page layer, and registers the late-phase web connector.
 
+## Keep Vitest setup out of development
+
+`warlock dev` (and `warlock build`) load your app's `vite.config.ts`. Anything you put there for tests runs in development too. Guard vitest-only setup:
+
+```ts
+// vite.config.ts
+if (process.env.VITEST) {
+  Object.assign(process.env, testEnv); // test database, test keys...
+}
+```
+
 ## The shape
 
 ```bash

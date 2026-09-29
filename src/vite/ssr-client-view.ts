@@ -131,10 +131,22 @@ export function collectImportSpecifiers(code: string): Set<string> {
   return imports;
 }
 
+/**
+ * Dev SSR loads a setup file raw, so build's projection refusal (an unread
+ * top-level call such as `const guard = requireUser(opts)`) would never surface
+ * there. Run the same register projection for its refusal only: the output is
+ * discarded and SSR keeps receiving the raw source.
+ */
+function validateRawSetupProjection(state: SsrBoundaryState, code: string, bare: string): void {
+  if (!bare.endsWith(".setup.ts") || !isAppSourcePath(bare, state.appRoot)) return;
+  projectSetupRegisterModule(code, `${bare}?warlock-setup-register`);
+}
+
 function clientViewOf(state: SsrBoundaryState, code: string, id: string): string | undefined {
   const key = clientBoundaryKey(id);
   const bare = moduleKey(id);
   const setupRegisterProjection = isSetupRegisterProjectionFile(id);
+  if (!setupRegisterProjection) validateRawSetupProjection(state, code, bare);
   if (
     !state.clientBoundModules.has(key) &&
     !setupRegisterProjection &&

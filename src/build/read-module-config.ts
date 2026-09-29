@@ -262,7 +262,7 @@ export function readModuleConfig(
       if (!name || !allowedExports.has(name) || name === "config" || name === "default") {
         fail(
           sourceFile,
-          "runtime exports must use one of config, loader, register, ErrorBoundary, or default",
+          `runtime export "${name ?? "<unnamed>"}" is not allowed. Allowed exports: ${MODULE_EXPORT_NAMES.join(", ")}`,
         );
       }
       if (name === "action" || name === "actions") declaresAction = true;

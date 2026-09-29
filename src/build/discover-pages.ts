@@ -55,7 +55,7 @@ import { routeIdentityKey } from "../routing/route-identity-key";
 import { assertPageHasDefaultExport } from "./page-default-export";
 import { UnknownMetadataKeyError, readMetadataKeys } from "./read-metadata-keys";
 import { mergeModuleConfigReads, readModuleConfig, type ModuleConfigRead } from "./read-module-config";
-import { pageSetupFileFor } from "./page-setup-file";
+import { pageSetupFileFor, pageSetupOwnerFileFor } from "./page-setup-file";
 import { toPosix } from "../shared/to-posix";
 import { validateSitesConfig } from "../sites/validate-sites-config";
 import type { SitesConfig } from "../sites/site-config.types";
@@ -170,6 +170,18 @@ export class DuplicateErrorPageError extends Error {
       `Two error pages were found: "${firstFile}" and "${secondFile}". An application may own exactly one \`error.page.tsx\` anywhere beneath src/web.`,
     );
     this.name = "DuplicateErrorPageError";
+  }
+}
+
+/** Raised when a setup sidecar would otherwise be discovered by no UI module. */
+export class OrphanPageSetupFileError extends Error {
+  public constructor(setupFile: string, ownerFile: string) {
+    const ownerName = path.basename(ownerFile);
+    super(
+      `${setupFile} has no ${ownerName} beside it, so its middleware and metadata would never run. ` +
+        `Add ${ownerFile} that renders {children}, or delete the setup file.`,
+    );
+    this.name = "OrphanPageSetupFileError";
   }
 }
 
@@ -456,6 +468,15 @@ export function discoverPageFileGraph(srcRoot: string): DiscoveredPageFileGraph 
 
   for (const webRoot of discoverWebRoots(srcRoot)) {
     const found = walkPageGraphFiles(webRoot);
+    for (const setupFile of found.setupFiles) {
+      const ownerFile = pageSetupOwnerFileFor(setupFile);
+      if (ownerFile !== undefined && !isFile(ownerFile)) {
+        throw new OrphanPageSetupFileError(
+          toPosix(path.relative(path.dirname(srcRoot), setupFile)),
+          toPosix(path.relative(path.dirname(srcRoot), ownerFile)),
+        );
+      }
+    }
     pages.push(...found.pageFiles.map((pageFile) => ({ pageFile, webRoot })));
     localeFiles.push(...found.localeFiles.map((sourceFile) => ({ sourceFile, webRoot })));
   }
@@ -488,6 +509,7 @@ export function walkFiles(dir: string, predicate: (fileName: string) => boolean)
 type PageGraphFiles = {
   pageFiles: string[];
   localeFiles: string[];
+  setupFiles: string[];
 };
 
 /**
@@ -498,6 +520,7 @@ type PageGraphFiles = {
 function walkPageGraphFiles(dir: string): PageGraphFiles {
   const pageFiles: string[] = [];
   const localeFiles: string[] = [];
+  const setupFiles: string[] = [];
 
   for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort(byName)) {
     const full = path.join(dir, entry.name);
@@ -506,14 +529,17 @@ function walkPageGraphFiles(dir: string): PageGraphFiles {
       const nested = walkPageGraphFiles(full);
       pageFiles.push(...nested.pageFiles);
       localeFiles.push(...nested.localeFiles);
+      setupFiles.push(...nested.setupFiles);
     } else if (entry.isFile() && entry.name.endsWith(".page.tsx")) {
       pageFiles.push(full);
     } else if (entry.isFile() && entry.name === "locales.json") {
       localeFiles.push(full);
+    } else if (entry.isFile() && entry.name.endsWith(".setup.ts")) {
+      setupFiles.push(full);
     }
   }
 
-  return { pageFiles, localeFiles };
+  return { pageFiles, localeFiles, setupFiles };
 }
 
 /**
@@ -927,7 +953,7 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
       errorPages.set(siteKey, {
         type: "error",
         pageFile,
-        webRoot,
+        webRoot: siteRouteRoot,
         ...(siteKey === undefined ? {} : { site: siteKey }),
         ...(setupFile === undefined ? {} : { setupFile }),
         ...(hasAppFile ? { appFile } : {}),
@@ -1072,7 +1098,7 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
       routePath: effectiveRoutePath,
       pageFile,
       ...(setupFile === undefined ? {} : { setupFile }),
-      webRoot,
+      webRoot: siteRouteRoot,
       // THE NOT-FOUND PAGE RENDERS INSIDE THE APPLICATION ROOT AND NOTHING
       // ELSE — an EMPTY chain, not the one enumerated above.
       //
@@ -1118,5 +1144,13 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
   assertUniqueRoutePaths(routablePages, appRoot, explicitRouteFiles);
   assertUniqueRouteNames(routablePages, appRoot);
 
-  return { pages, localeFiles: sourceGraph.localeFiles };
+  const localeFiles = sourceGraph.localeFiles.map((localeFile) => ({
+    ...localeFile,
+    webRoot:
+      siteUnits === undefined
+        ? localeFile.webRoot
+        : (unitOwning(siteUnits, localeFile.sourceFile)?.root ?? localeFile.webRoot),
+  }));
+
+  return { pages, localeFiles };
 }

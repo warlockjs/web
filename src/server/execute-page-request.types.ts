@@ -1,7 +1,7 @@
 import type { HttpContext, Request, Response } from "@warlock.js/core";
 import type { BaseValidator } from "@warlock.js/seal";
 import type { SharedContext } from "../index";
-import type { PageSite } from "../context";
+import type { PageRoute, PageSite } from "../context";
 import type { MetadataOutput, PageMetadata } from "../metadata";
 import type { PageActionConfig } from "../page-config";
 import type { SerializedErrorPageProps } from "../components/document-context";
@@ -38,6 +38,8 @@ export type PipelineLoaderContext = {
   response: BufferedResponse;
   shared: SharedContext;
   site?: PageSite;
+  /** The matched page's route (not core's `/*` catch-all under `sites`). */
+  route: PageRoute;
   /**
    * Fires when the underlying HTTP request is abandoned (client
    * disconnected, socket closed) before the response finished — see

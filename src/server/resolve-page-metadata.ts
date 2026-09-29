@@ -1,3 +1,4 @@
+import type { PageRoute } from "../context";
 import type { SharedContext } from "../index";
 import type {
   MetadataChild,
@@ -29,6 +30,8 @@ export type ResolvePageMetadataInput = {
   shared: Readonly<SharedContext>;
   deferredKeys?: readonly string[];
   pagePath: string;
+  /** Always supplied by the pipeline; optional so direct metadata-composition callers stay valid. */
+  route?: PageRoute;
 };
 export type ResolvedPageMetadata = {
   metadata: MetadataOutput | undefined;
@@ -139,6 +142,7 @@ function evaluate(
   metadata: PageMetadata<PipelineLoader> | undefined,
   data: unknown,
   shared: Readonly<SharedContext>,
+  route: PageRoute,
   childMetadata?: MetadataChild,
 ): { input: MetadataInput; callback: boolean } {
   if (typeof metadata !== "function") return { input: metadata ?? {}, callback: false };
@@ -146,6 +150,7 @@ function evaluate(
     input: (metadata as MetadataFunction)({
       data: data as Parameters<MetadataFunction>[0]["data"],
       shared,
+      route,
       ...(childMetadata ? { child: childMetadata } : {}),
     }),
     callback: true,
@@ -159,13 +164,13 @@ export function resolvePageMetadata(input: ResolvePageMetadataInput): ResolvedPa
   let throwingLevel: "app" | "layout" | "page" = "page";
   try {
     const data = guardMetadataAgainstDeferredKeys(input.data, input.deferredKeys, input.pagePath);
-    const page = evaluate(input.metadata, data, input.shared);
+    const page = evaluate(input.metadata, data, input.shared, input.route as PageRoute);
     let resolved = page.callback ? composeCallback(page.input) : composeStatic(page.input);
     let nested: MetadataChild | undefined = child("page", resolved.metadata);
     for (const ancestor of [...(input.ancestors ?? [])].reverse()) {
       if (!ancestor.metadata) continue;
       throwingLevel = ancestor.kind === "root" ? "app" : "layout";
-      const own = evaluate(ancestor.metadata, ancestor.data, input.shared, nested);
+      const own = evaluate(ancestor.metadata, ancestor.data, input.shared, input.route as PageRoute, nested);
       resolved = own.callback
         ? composeCallback(own.input, resolved)
         : composeStatic(own.input, resolved);

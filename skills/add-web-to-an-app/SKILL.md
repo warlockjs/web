@@ -7,6 +7,17 @@ description: 'Install the SSR page layer with `warlock add web`: add React/Vite 
 
 `warlock add web` turns an existing Warlock API application into an application that can also serve SSR React pages. It installs the web and React packages, adds the Vite development peers, scaffolds the smallest page layer, and registers the late-phase web connector.
 
+## Keep Vitest setup out of development
+
+`warlock dev` (and `warlock build`) load your app's `vite.config.ts`. Anything you put there for tests runs in development too. Guard vitest-only setup:
+
+```ts
+// vite.config.ts
+if (process.env.VITEST) {
+  Object.assign(process.env, testEnv); // test database, test keys...
+}
+```
+
 ## The shape
 
 ```bash
@@ -96,6 +107,7 @@ The desired result is one page route at `/` and, when the stock JSON route exist
 - **A partial scaffold exits non-zero.** `root.tsx` and connector registration may still have been written; complete only the missing home page after resolving the collision.
 - **Do not register the connector twice.** Use `warlock.config.ts`, not an additional `connectorsManager.register(...)` call.
 - **Do not import the hydration entry.** The connector and build contribution own it.
+- **Run `warlock start` with the app root as cwd.** The manifest's `clientDir` (e.g. `dist/client`) resolves from `process.cwd()`, so copying `dist` elsewhere without the app root won't find client assets.
 
 ## See also
 

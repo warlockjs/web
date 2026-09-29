@@ -91,7 +91,10 @@ function sessionExtras(bundle: PageDataBundle): { session?: { user: unknown } } 
  * Vite development reuses the source entry and selects its virtual registry
  * through the same query the page-registry plugin consumes.
  */
-function hydrationClientUrlForRequest(url: string | undefined, request: Request): string | undefined {
+function hydrationClientUrlForRequest(
+  url: string | undefined,
+  request: Request,
+): string | undefined {
   const site = request.site?.key;
 
   if (site === undefined || url === undefined) return url;
@@ -1062,6 +1065,16 @@ async function finishRender(
     alternateLocales: localeAlternates?.map((alternate) => alternate.hreflang),
   });
 
+  // A page whose resolved metadata declares `alternates` (per-locale content
+  // slugs — real-estate #22) owns its own hreflang set entirely: `<Head/>`
+  // renders it from `bundle.metadata.alternates` via `resolveMetadataDescriptors`
+  // instead, so the path-swapped generated set is dropped rather than rendered
+  // alongside it (mixing the two is the bug this replaces). It travels to a
+  // client navigation the same way any other `metadata` field already does —
+  // no separate wire slot needed.
+  const hasExplicitAlternates =
+    bundle.metadata?.alternates !== undefined && Object.keys(bundle.metadata.alternates).length > 0;
+
   let documentValue: DocumentContextValue = {
     metadata: bundle.metadata,
     payload: buildHydrationPayload(bundle, documentSlots.locale, sessionExtras(bundle)),
@@ -1072,10 +1085,13 @@ async function finishRender(
       requestStylesheetSources(request),
       streamOptions.resolveRequestStylesheetUrls,
     ),
-    hydrationClientModuleUrl: hydrationClientUrlForRequest(streamOptions.hydrationClientModuleUrl, request),
+    hydrationClientModuleUrl: hydrationClientUrlForRequest(
+      streamOptions.hydrationClientModuleUrl,
+      request,
+    ),
     siteKey: request.site?.key,
     hydrationClientModulePreloadUrls: streamOptions.hydrationClientModulePreloadUrls,
-    localeAlternates,
+    localeAlternates: hasExplicitAlternates ? undefined : localeAlternates,
     localeRouting,
     namedApiRoutes: resolveNamedApiRoutes(),
   };

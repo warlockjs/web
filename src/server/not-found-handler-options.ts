@@ -37,6 +37,8 @@ import type { RouteTranslationsResolver } from "./route-translations";
 import { NOT_FOUND_ROUTE_NAME, NOT_FOUND_ROUTE_PATH } from "./not-found-page";
 
 export type NotFoundPageHandlerInput = {
+  /** The current site key in a multi-site install, if any. */
+  site?: string;
   /** The single global app-root file/source-id. */
   appFile: string;
   /** The application's own `404.page.tsx` file/source-id. */
@@ -63,7 +65,7 @@ export function notFoundPageHandlerOptions(
 ): Omit<PageRouteHandlerOptions, "httpServer"> {
   return {
     path: NOT_FOUND_ROUTE_PATH,
-    name: NOT_FOUND_ROUTE_NAME,
+    name: input.site === undefined ? NOT_FOUND_ROUTE_NAME : `${input.site}.${NOT_FOUND_ROUTE_NAME}`,
     appFile: input.appFile,
     pageFile: input.pageFile,
     // NO LAYOUT, deliberately — see both installers' own comments: a guard

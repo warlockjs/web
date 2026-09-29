@@ -510,6 +510,7 @@ export function installPageRoutesFromManifest(
       ? undefined
       : createHandler(
           notFoundPageHandlerOptions({
+            site: siteSlice?.site,
             appFile: app.sourceFile,
             pageFile: notFoundPage.sourceFile,
             loadModule,

@@ -201,14 +201,14 @@ export const config: RootConfig = {
 `sitemap` or route-policy exports are invalid. Root metadata may be static or a
 server-only callback; it participates in title and field composition with
 layouts and the page. A callback returns the root's complete level: explicit
-fields override `child`, while omitted child fields are not retained. Preserve
-descendant metadata deliberately by spreading `child`:
+fields override `child.metadata`, while omitted child fields are not retained. Preserve
+descendant metadata deliberately by spreading `child.metadata`:
 
 ```tsx
 export const config: RootConfig = {
   metadata: ({ data, child }) => ({
-    ...child,
-    title: `${data.applicationName} | ${child?.title ?? "Home"}`,
+    ...child?.metadata,
+    title: `${data.applicationName} | ${child?.metadata.title ?? "Home"}`,
   }),
 };
 ```

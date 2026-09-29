@@ -113,6 +113,9 @@ const HTTP_EQUIV_VALUES: readonly string[] = [
 
 const LINK_OPTIONAL_ATTRIBUTES = ["hreflang", "type", "sizes", "media", "as", "title"] as const;
 
+/** Shared, allocation-free default for `dynamicLinkDescriptors` when `metadata.alternates` is unset. */
+const EMPTY_HREFLANGS: ReadonlySet<string> = new Set();
+
 function warnDropped(what: string, reason: string): void {
   if (import.meta.env?.DEV) {
     console.warn(`[warlock] metadata: dropped ${what} — ${reason}.`);
@@ -240,7 +243,10 @@ function dynamicMetaDescriptors(entries: MetadataOutput["meta"]): MetadataDescri
   return result;
 }
 
-function dynamicLinkDescriptors(entries: MetadataOutput["links"]): MetadataDescriptor[] {
+function dynamicLinkDescriptors(
+  entries: MetadataOutput["links"],
+  alternateHreflangs: ReadonlySet<string>,
+): MetadataDescriptor[] {
   const result: MetadataDescriptor[] = [];
   const seen = new Set<string>();
 
@@ -259,6 +265,18 @@ function dynamicLinkDescriptors(entries: MetadataOutput["links"]): MetadataDescr
 
     if (rel.toLowerCase().split(" ").includes("canonical")) {
       warnDropped(`link rel="${rel}"`, "use the `canonical` metadata field");
+      continue;
+    }
+
+    if (
+      rel.toLowerCase() === "alternate" &&
+      typeof entry.hreflang === "string" &&
+      alternateHreflangs.has(entry.hreflang)
+    ) {
+      warnDropped(
+        `link rel="alternate" hreflang="${entry.hreflang}"`,
+        "use the `alternates` metadata field",
+      );
       continue;
     }
 
@@ -282,6 +300,31 @@ function dynamicLinkDescriptors(entries: MetadataOutput["links"]): MetadataDescr
     seen.add(key);
 
     result.push({ kind: "link", key, attrs, dynamic: true });
+  }
+
+  return result;
+}
+
+/**
+ * `<link rel="alternate" hreflang="...">` for each entry of `metadata.alternates`
+ * — the explicit, per-page replacement for the framework's generated locale
+ * alternates (`server/resolve-locale-alternates.ts`, suppressed by
+ * `render-page.ts` whenever this is set). Values are rendered as-is: the
+ * server already absolutized them (`enrich-metadata.ts`) the same way it
+ * absolutizes `canonical`.
+ */
+function alternateLinkDescriptors(alternates: MetadataOutput["alternates"]): MetadataDescriptor[] {
+  const result: MetadataDescriptor[] = [];
+
+  for (const [hreflang, href] of Object.entries(alternates ?? {})) {
+    if (typeof href !== "string" || href === "") continue;
+
+    result.push({
+      kind: "link",
+      key: `link[rel="alternate"][hreflang="${selectorValue(hreflang)}"]`,
+      attrs: { rel: "alternate", href, hreflang },
+      dynamic: true,
+    });
   }
 
   return result;
@@ -452,6 +495,12 @@ export function resolveMetadataDescriptors(
     ...repeated,
     ...authorLinks,
     ...dynamicMetaDescriptors(metadata?.meta),
-    ...dynamicLinkDescriptors(metadata?.links),
+    ...dynamicLinkDescriptors(
+      metadata?.links,
+      metadata?.alternates === undefined
+        ? EMPTY_HREFLANGS
+        : new Set(Object.keys(metadata.alternates)),
+    ),
+    ...alternateLinkDescriptors(metadata?.alternates),
   ];
 }

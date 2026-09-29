@@ -104,6 +104,23 @@ describe("normalizePageModule", () => {
     ).toThrow("src/web/metadata.page.tsx");
   });
 
+  it("suggests spreading child.metadata only for mistaken metadata child fields", () => {
+    expect(() => {
+      normalizePageModule(
+        page({ metadata: { kind: "layout", metadata: {} } }),
+        "page",
+        "child.page.tsx",
+      );
+    }).toThrow(
+      "It looks like you spread `child` — spread `child.metadata` instead: `({ child }) => ({ ...child?.metadata, … })`.",
+    );
+    expect(() => {
+      normalizePageModule(page({ metadata: { tittle: "Products" } }), "page", "typo.page.tsx");
+    }).not.toThrow(
+      "It looks like you spread `child` — spread `child.metadata` instead",
+    );
+  });
+
   it("keeps function metadata lazy and validates its result when invoked", () => {
     const metadata = vi.fn(function (this: { prefix: string }, _context: unknown) {
       return { title: `${this.prefix} Products` };

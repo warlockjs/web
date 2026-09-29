@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MODULE_EXPORT_NAMES } from "../module-config-schema";
 import { readModuleConfig } from "./read-module-config";
 
 const pageFile = "src/pages/example.page.tsx";
@@ -207,6 +208,25 @@ describe("readModuleConfig — rejected modules", () => {
     ],
   ])("rejects %s", (_label, source, diagnostic) => {
     expect(() => page(source)).toThrow(diagnostic);
+  });
+
+  it("names the offending export, the file, and the real allowlist", () => {
+    expect(() =>
+      page(`${component} export async function merge() {} export default Page;`),
+    ).toThrow(
+      `Cannot read module config in "${pageFile}": runtime export "merge" is not allowed. Allowed exports: ${MODULE_EXPORT_NAMES.join(", ")}.`,
+    );
+    expect(MODULE_EXPORT_NAMES).toContain("action");
+    expect(MODULE_EXPORT_NAMES).toContain("actions");
+  });
+
+  it("accepts `action` and `actions` function-form exports", () => {
+    expect(() =>
+      page(`${component} export async function action() {} export default Page;`),
+    ).not.toThrow();
+    expect(() =>
+      page(`${component} export function actions() {} export default Page;`),
+    ).not.toThrow();
   });
 
   it("names the source file for a missing page default", () => {

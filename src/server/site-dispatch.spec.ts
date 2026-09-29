@@ -75,7 +75,7 @@ function pageSource(fixture: Fixture): string {
 }
 
 /** One recorded page render. */
-type Rendered = { page: string; params: Record<string, string>; site: unknown };
+type Rendered = { page: string; name: string; params: Record<string, string>; site: unknown };
 
 type RecordedRoutes = { path: string; method: "GET" | "POST"; handler: PageRouteHandler }[];
 
@@ -115,6 +115,7 @@ async function installFixtures(mode: Mode, rendered: Rendered[]) {
     return async (context) => {
       rendered.push({
         page: tagOf(options.pageFile),
+        name: options.name,
         params: { ...(context.request.params as Record<string, string>) },
         site: context.request.site,
       });
@@ -311,7 +312,12 @@ describe.each<Mode>(["dev", "prod"])("multi-site dispatch (%s)", (mode) => {
     const { router, routes } = recordingRouter();
     const dispatch = createSiteDispatch({ sites, resolveHost });
     dispatch.add("tenant", "GET", "/", async (context) => {
-      rendered.push({ page: "tenant/home", params: {}, site: context.request.site });
+      rendered.push({
+        page: "tenant/home",
+        name: "tenant.home",
+        params: {},
+        site: context.request.site,
+      });
     });
     dispatch.register(router);
     const handler = await dispatchOf(routes);
@@ -347,6 +353,7 @@ describe.each<Mode>(["dev", "prod"])("multi-site dispatch (%s)", (mode) => {
     await handler(missingOnA.context);
 
     expect(rendered.map((entry) => entry.page)).toEqual(["b/404"]);
+    expect(rendered.map((entry) => entry.name)).toEqual(["b.warlock.not-found"]);
     // No 404 page on site "a": the framework default document answers 404.
     expect(missingOnA.sent).toEqual([{ body: "html", status: 404 }]);
   });

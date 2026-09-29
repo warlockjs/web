@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { setTranslationsList } from "@mongez/localization";
+import { afterEach, describe, expect, it } from "vitest";
 import { bindRequestRouteTranslations } from "./request-route-translations";
 import type { RouteTranslationsResolver } from "./route-translations";
 
@@ -15,6 +16,8 @@ const resolver: RouteTranslationsResolver = (source, locale) => {
 };
 
 describe("bindRequestRouteTranslations", () => {
+  afterEach(() => setTranslationsList({}));
+
   it("isolates concurrent bags and reads request.locale when t/trans run", () => {
     const first: RequestLike = { locale: "en" };
     const second: RequestLike = { locale: "ar" };
@@ -39,5 +42,16 @@ describe("bindRequestRouteTranslations", () => {
     bindRequestRouteTranslations(first as any, resolver, "root");
     expect(first.trans("title")).toBe("Root");
     expect(second.t("title")).toBe("Page");
+  });
+
+  it("falls back to global translations while page translations retain precedence", () => {
+    setTranslationsList({
+      ar: { validation: { required: "هذا الحقل مطلوب" }, title: "Global title" },
+    });
+    const request: RequestLike = { locale: "ar" };
+    bindRequestRouteTranslations(request as any, resolver, "page");
+
+    expect(request.trans("validation.required")).toBe("هذا الحقل مطلوب");
+    expect(request.trans("title")).toBe("Page AR");
   });
 });

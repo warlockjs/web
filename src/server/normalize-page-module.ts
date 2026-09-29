@@ -83,7 +83,13 @@ function assertExactKeys(
 ): void {
   const allowedKeys = allowed instanceof Set ? allowed : new Set(allowed);
   const unknown = Object.keys(value).filter((key) => !allowedKeys.has(key));
-  if (unknown.length > 0) fail(sourceFile, `${subject} has unknown key(s): ${unknown.join(", ")}.`);
+  if (unknown.length > 0) {
+    const childSpreadHint =
+      subject === "config.metadata" && (unknown.includes("kind") || unknown.includes("metadata"))
+        ? " It looks like you spread `child` — spread `child.metadata` instead: `({ child }) => ({ ...child?.metadata, … })`."
+        : "";
+    fail(sourceFile, `${subject} has unknown key(s): ${unknown.join(", ")}.${childSpreadHint}`);
+  }
 }
 
 function isReactComponentType(value: unknown): boolean {

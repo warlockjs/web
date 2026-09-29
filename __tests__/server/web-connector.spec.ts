@@ -9,6 +9,7 @@ import {
   ConnectorLifecyclePhase,
   ConnectorPriority,
   container,
+  notifyHttpServerRebuilt,
   router,
   type Router,
   type RuntimeStrategy,
@@ -289,6 +290,9 @@ function recordRoutes(graph: WebGraph) {
   return registered;
 }
 
+/** Booted dev connectors, so `afterEach` can drop their rebuild subscriptions. */
+const bootedConnectors: { unsubscribeHttpRebuilt?: () => void }[] = [];
+
 /**
  * Stand up a booted connector against doubles, recording the teardown call
  * order on a single shared array so `shutdown()` sequencing is observable.
@@ -341,6 +345,7 @@ async function bootHarness(
     appSrcRoot: harnessAppSrcRoot,
   });
 
+  bootedConnectors.push(connector);
   await connector.boot();
 
   return {
@@ -380,6 +385,7 @@ function onResponseHook(harness: Harness) {
 }
 
 afterEach(() => {
+  for (const booted of bootedConnectors.splice(0)) booted.unsubscribeHttpRebuilt?.();
   container.delete("http.server");
   createServerMock.mockReset();
   vi.restoreAllMocks();
@@ -487,6 +493,36 @@ describe("WebConnector — the Vite config it builds", () => {
     expect(next).not.toBe(done);
     expect(done).toHaveBeenCalledTimes(1);
     expect(done).toHaveBeenCalledWith(undefined);
+  });
+
+  it("re-attaches the reused Vite middleware, once, to a rebuilt HTTP instance", async () => {
+    const harness = await bootHarness();
+    const rebuilt = { server: harness.rawServer, listen: vi.fn(), addHook: vi.fn() };
+
+    // What `HttpConnector.restart()` does after `boot()` builds a new instance.
+    notifyHttpServerRebuilt(rebuilt as never);
+
+    const onRequestCalls = rebuilt.addHook.mock.calls.filter(([event]) => event === "onRequest");
+
+    expect(onRequestCalls).toHaveLength(1);
+    expect(harness.fastify.addHook.mock.calls.filter(([e]) => e === "onRequest")).toHaveLength(1);
+
+    const request = { raw: {} } as unknown as FastifyRequest;
+    const reply = { raw: {} } as unknown as FastifyReply;
+    const done = vi.fn();
+
+    (onRequestCalls[0]![1] as (...args: unknown[]) => void)(request, reply, done);
+
+    // The SAME Vite server answers — it was not recreated.
+    expect(createServerMock).toHaveBeenCalledTimes(1);
+    expect(harness.vite.middlewares).toHaveBeenCalledTimes(1);
+    expect(done).toHaveBeenCalledTimes(1);
+
+    await harness.connector.shutdown();
+
+    const afterShutdown = { server: harness.rawServer, listen: vi.fn(), addHook: vi.fn() };
+    notifyHttpServerRebuilt(afterShutdown as never);
+    expect(afterShutdown.addHook).not.toHaveBeenCalled();
   });
 
   it("answers a request Vite refused with the captured error instead of yielding", async () => {

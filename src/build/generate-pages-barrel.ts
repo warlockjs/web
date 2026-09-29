@@ -39,6 +39,7 @@ import {
   isFile,
   walkFiles,
 } from "./discover-pages";
+import type { DiscoveredRoutablePage } from "./discover-pages";
 import type { SitesConfig } from "../sites/site-config.types";
 import { serializeRouteLocales } from "./serialize-route-locales";
 import {
@@ -460,6 +461,55 @@ async function writeBarrel(productionDir: string, contents: string): Promise<str
 }
 
 /**
+ * The route table a build records for the routable pages. ONE definition, shared
+ * by the barrel and by `generate.typings`, so both describe the same routes.
+ */
+function buildPageRoutes(
+  routablePages: readonly DiscoveredRoutablePage[],
+  appRoot: string,
+): PageRoutesManifest {
+  const notFoundPage = routablePages.find((page) => isNotFoundPageFile(page.pageFile));
+
+  return {
+    version: 1,
+    routes: [
+      ...routablePages
+        .filter((page) => !isNotFoundPageFile(page.pageFile))
+        .map((page) => ({
+          method: "GET" as const,
+          path: normalizeRoutePath(page.routePath),
+          name: page.routeName,
+          source: toPosix(path.relative(appRoot, page.pageFile)),
+          ...(page.actions === undefined ? {} : { actions: page.actions }),
+        })),
+      {
+        method: "GET" as const,
+        path: normalizeRoutePath(NOT_FOUND_ROUTE_PATH),
+        name: NOT_FOUND_ROUTE_NAME,
+        source:
+          notFoundPage === undefined
+            ? "\u0000warlock:framework-default-404"
+            : toPosix(path.relative(appRoot, notFoundPage.pageFile)),
+      },
+    ],
+  };
+}
+
+/**
+ * Discover the page route table without writing anything. Zero pages yields the
+ * empty table {@link generatePagesBarrel} records.
+ */
+export function discoverPageRoutes(
+  options: Pick<GeneratePagesBarrelOptions, "appRoot" | "srcDir" | "sites">,
+): PageRoutesManifest {
+  const graph = discoverPageGraph(options);
+
+  if (graph.pages.length === 0) return { version: 1, routes: [] };
+
+  return buildPageRoutes(graph.pages.filter(isDiscoveredRoutablePage), options.appRoot);
+}
+
+/**
  * Discovers the page graph, runs the tripwire, and writes
  * `<productionDir>/pages.ts`.
  *
@@ -535,30 +585,7 @@ export async function generatePagesBarrel(
   // manifest records a spelling the router never serves — the catch-all is
   // literally `"*"` here and `"/*"` once registered — and `warlock routes:diff`
   // reports drift on an untouched checkout right after a successful build.
-  const notFoundPage = routablePages.find((page) => isNotFoundPageFile(page.pageFile));
-  const pageRoutes: PageRoutesManifest = {
-    version: 1,
-    routes: [
-      ...routablePages
-        .filter((page) => !isNotFoundPageFile(page.pageFile))
-        .map((page) => ({
-          method: "GET" as const,
-          path: normalizeRoutePath(page.routePath),
-          name: page.routeName,
-          source: toPosix(path.relative(appRoot, page.pageFile)),
-          ...(page.actions === undefined ? {} : { actions: page.actions }),
-        })),
-      {
-        method: "GET" as const,
-        path: normalizeRoutePath(NOT_FOUND_ROUTE_PATH),
-        name: NOT_FOUND_ROUTE_NAME,
-        source:
-          notFoundPage === undefined
-            ? "\u0000warlock:framework-default-404"
-            : toPosix(path.relative(appRoot, notFoundPage.pageFile)),
-      },
-    ],
-  };
+  const pageRoutes = buildPageRoutes(routablePages, appRoot);
 
   for (const [index, page] of routablePages.entries()) {
     const layouts = page.layouts.map((layoutFile, index) => {

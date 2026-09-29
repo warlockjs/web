@@ -10,6 +10,7 @@ import {
 import { getSealConfig, v } from "@warlock.js/seal";
 import { enterSharedScope, sealShared, shared } from "../shared";
 import { connectRequestSearch } from "../routing/query-string";
+import type { PageRoute } from "../context";
 import { enterAdditionalSharedScope, requireRunner } from "./page-context";
 import { createRequestAbortController } from "./request-abort-signal";
 import { beginLayoutLoaderCapture, endLayoutLoaderCapture } from "./layout-loader-capture";
@@ -301,6 +302,7 @@ type ActionStageOptions = {
   pathname: string;
   routeName: string;
   routePath: string;
+  pageRoute: PageRoute;
   bundle: Bundle;
   buffer: LevelBuffer;
   shared: SharedContext;
@@ -407,6 +409,7 @@ async function runActionStage(options: ActionStageOptions): Promise<ActionStageO
       response: createActionResponse(buffer),
       shared: options.shared,
       site: request.site,
+      route: options.pageRoute,
       pageInput,
       signal: bundle.abortSignal,
       ...(options.session === undefined ? {} : { session: options.session }),
@@ -504,6 +507,22 @@ export async function executePageRequest<TResult = PageDataBundle>(
       },
       abortSignal: requestAbortController.signal,
     };
+
+    // What `request.route` would be for this page without `sites`. Under
+    // `sites` the router only knows core's `/*` catch-all, and the entry name of
+    // a page with no declared `route.name` carries a `<site>.` prefix (which
+    // keeps names unique across sites) that the plain route never had.
+    const declaredRouteName =
+      typeof triple.page.route === "object" ? triple.page.route.name : undefined;
+    const sitePrefix = request.site === undefined ? undefined : `${request.site.key}.`;
+    const pageRoute: PageRoute = Object.freeze({
+      name:
+        declaredRouteName === undefined && sitePrefix !== undefined && matched.entry.name.startsWith(sitePrefix)
+          ? matched.entry.name.slice(sitePrefix.length)
+          : matched.entry.name,
+      path: matched.entry.path,
+      params: match.params,
+    });
 
     // Stage 2.5 — SESSION. Only when `web.session` is configured. Resolved
     // ONCE, before the middleware loop and before any header is committed, so a
@@ -645,6 +664,7 @@ export async function executePageRequest<TResult = PageDataBundle>(
         pathname,
         routeName: matched.entry.name,
         routePath: matched.entry.path,
+        pageRoute,
         bundle,
         buffer: buffers.page,
         shared: sealedShared,
@@ -775,6 +795,7 @@ export async function executePageRequest<TResult = PageDataBundle>(
         response: createBufferedResponse(buffers[level]),
         shared: sealedShared,
         site: request.site,
+        route: pageRoute,
         signal: requestAbortController.signal,
         ...(stageSession === undefined ? {} : { session: stageSession }),
       };
@@ -1011,6 +1032,7 @@ export async function executePageRequest<TResult = PageDataBundle>(
       shared: sealedShared,
       deferredKeys: bundle.deferredKeys,
       pagePath: bundle.route.path,
+      route: pageRoute,
       ancestors: [
         { kind: "root", metadata: triple.app.metadata, data: bundle.appData },
         ...(triple.layout.layoutMetadata !== undefined

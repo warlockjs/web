@@ -281,12 +281,13 @@ export type DocumentContextValue = {
    * The `<link rel="alternate" hreflang>` set for THIS request — design note
    * §D.2, built by `server/resolve-locale-alternates.ts` and rendered
    * verbatim by `<Head/>`. `undefined` for a page that is not locale-routed
-   * at all (strategy `"none"` and not a `:locale` route), and also when the
-   * page's own `metadata.canonical` is set — an author who already declared
-   * their own canonical owns their own alternates too, so the framework
-   * never adds a second, possibly-conflicting set (design note §D.2, "A
-   * page's own metadata alternates/canonical, if any exists, wins; don't
-   * duplicate").
+   * at all (strategy `"none"` and not a `:locale` route), and also whenever
+   * the page's own resolved `metadata.alternates` is set (`render-page.ts`) —
+   * an author who declared explicit per-locale hreflang targets (per-locale
+   * content slugs) owns the whole set, so the framework never renders a
+   * second, possibly-conflicting one alongside it. `<Head/>` still renders
+   * `metadata.alternates` itself, through `resolveMetadataDescriptors`, same
+   * as any other metadata-driven `<link>`.
    */
   localeAlternates?: readonly { readonly hreflang: string; readonly href: string }[];
   /**

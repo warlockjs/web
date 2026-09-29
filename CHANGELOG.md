@@ -8,6 +8,21 @@ All notable changes to `@warlock.js/web` are documented here.
 
 - Page tracing now reports middleware, page-cache, and deferred-settlement phases.
 - Deploy in parts: a process started without the `web` role (`warlock start --role=api|worker`) installs no pages, public files or site dispatch, and `--sites=a,b` installs only those sites (plus shared pages). Other hosts get the normal unknown-host response. An unknown site key, or `--sites` on an app without `web.sites`, fails at boot.
+- New page metadata field `alternates` (`Record<string, string>`, keyed by locale code plus optional `x-default`) lets a page declare its own per-locale hreflang targets — for per-locale content slugs that the framework's path-swapped generated alternates can't describe — and replaces the generated set entirely, in both SSR and client navigation, when set.
+- Page loaders, layout loaders, metadata callbacks and page actions receive `route: { name, path, params }` — the matched page's route. Under `sites`, `request.route` is core's `/*` catch-all; `ctx.route` is the page (`PageRoute` is exported).
+
+### Fixed
+
+- Metadata callbacks now correctly retain child metadata with `child.metadata`; diagnostic errors also identify the common mistaken `...child` spread and show the correct form.
+- The "runtime exports must use one of ..." page-discovery error now names the offending export and the source file, and its allowlist is built from the same list the check enforces, so it can no longer omit `action`/`actions` or drift from what's actually accepted.
+- `warlock dev` keeps serving Vite assets (`theme.css`, `app.css?direct`, the client entry) after an HTTP-only restart: the web connector re-attaches its Vite middleware to the rebuilt HTTP instance instead of leaving pages unstyled and unhydrated.
+- `createWebBuildContribution()` gains a `typings` hook that writes `web-routes.d.ts` with the same writer and inputs as `generate`, so `warlock generate.typings` produces the route types before any build.
+- Multi-site production pages now retain their site-local translation snapshots.
+- Multi-site not-found documents now emit the site-qualified page name registered by client hydration.
+- Page-scoped request translations now fall back to global translations in the active locale when a page bag lacks the key.
+- Production hydration-client builds now resolve PostCSS configuration from the application root, matching development.
+- Page discovery now fails when a `*.setup.ts` file has no paired UI module, preventing middleware and metadata from being silently ignored.
+- `warlock dev` now reports the same setup-file projection errors as `warlock build` (e.g. an unread top-level call like `const guard = requireUser(opts)` in a `*.setup.ts`), on first load and on every edit, instead of only failing at build time.
 
 ## 5.24.0 - 2026-09-27
 
