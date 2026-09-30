@@ -1372,9 +1372,9 @@ export default function AccountPage() {
 
 A page receives only `locales.json` files on its physical ancestor chain. A child file can contribute additional keys for that page. A sibling cannot contribute. Current ownership validation rejects duplicate flattened keys globally, including matching ancestor/child keys; any key that conflicts with a namespace prefix also fails the build.
 
-The server selects one immutable snapshot for route source and locale. The hydration payload contains only that locale's keywords and does not register them globally. `useTrans()`, `request.t()`, and `request.trans()` use the same snapshot, so concurrent renders cannot leak copy. A missing scoped key returns the key itself.
+The server selects one immutable snapshot for route source and locale. The hydration payload contains only that locale's keywords and does not register them globally. `useTrans()` on the client and `t()` from `@warlock.js/core` on the server (loaders, `metadata`) use the same snapshot, so concurrent renders cannot leak copy. A missing scoped key returns the key itself.
 
-`request.t()`, `request.trans()`, and `request.transFrom(localeCode, keyword, placeholders?)` all resolve through the route snapshot while one applies. Without route-locales JSON, they retain the legacy global-registry behavior. `@mongez/localization` 3.5.0 exposes `transFromKeywords(localeCode, keywords, keyword, placeholders?, converter?)` for callers that supply a dictionary.
+In loaders and `metadata`, translate with `t()` from `@warlock.js/core`, not `request.t()`. It resolves through the route snapshot while one applies, then falls back to module translations; `request.transFrom(localeCode, keyword, placeholders?)` is there for an explicit locale. Without route-locales JSON, it keeps the legacy global-registry behavior. `@mongez/localization` 3.5.0 exposes `transFromKeywords(localeCode, keywords, keyword, placeholders?, converter?)` for callers that supply a dictionary.
 
 Error pages rebind to their own snapshot. If rendering falls through to the framework root, it uses the app/root snapshot, keeping error metadata, rendered copy, and hydration data aligned.
 
