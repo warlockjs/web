@@ -50,6 +50,8 @@ Every added `@warlock.js/*` package is saved at the exact version of the Core CL
 
 The command adds `webConnector()` to `warlock.config.ts`. If the config cannot be patched safely, add the same wiring yourself:
 
+For development-only connector tuning, `webConnector({ ssrFetchTimeoutMs })` sets the Vite SSR module-fetch bound; `WARLOCK_SSR_FETCH_TIMEOUT_MS` overrides it.
+
 ```ts title="warlock.config.ts"
 import { defineConfig } from "@warlock.js/core";
 import { webConnector } from "@warlock.js/web/connector";
@@ -115,6 +117,7 @@ The desired result is one page route at `/` and, when the stock JSON route exist
 - **A partial scaffold exits non-zero.** `root.tsx` and connector registration may still have been written; complete only the missing home page after resolving the collision.
 - **Do not register the connector twice.** Use `warlock.config.ts`, not an additional `connectorsManager.register(...)` call.
 - **Do not import the hydration entry.** The connector and build contribution own it.
+- **Run `warlock start` with the app root as cwd.** The manifest's `clientDir` (e.g. `dist/client`) resolves from `process.cwd()`, so copying `dist` elsewhere without the app root won't find client assets.
 
 ## See also
 
@@ -521,18 +524,36 @@ export const config: PageConfig = {
 };
 ```
 
-Supported fields are `title`, `description`, `keywords`, `canonical`, `robots`, `openGraph`, and `twitter`. A title may be a string, `{ default?, template? }`, or `{ absolute }`. Function metadata runs after a successful loader. If a loader fails, Warlock uses error metadata instead of calling the page function with missing data. Layout and root metadata use the same input shape; their callbacks receive readonly `{ data, shared, child? }` and run server-side only. A callback returns its complete level: explicit returned fields override `child`, and omitted child fields are not retained. Spread `child` when retaining descendant metadata:
+Supported fields are `title`, `description`, `keywords`, `canonical`, `robots`, `openGraph`, and `twitter`. A title may be a string, `{ default?, template? }`, or `{ absolute }`. Function metadata runs after a successful loader. If a loader fails, Warlock uses error metadata instead of calling the page function with missing data. Layout and root metadata use the same input shape; their callbacks receive readonly `{ data, shared, child? }` and run server-side only. A callback returns its complete level: explicit returned fields override `child.metadata`, and omitted child fields are not retained. Spread `child.metadata` when retaining descendant metadata:
 
 ```tsx
 export const config: LayoutConfig = {
   metadata: ({ data, child }) => ({
-    ...child,
-    title: `${data.sectionName} | ${child?.title ?? "Products"}`,
+    ...child?.metadata,
+    title: `${data.sectionName} | ${child?.metadata.title ?? "Products"}`,
   }),
 };
 ```
 
 That callback may override the child title; an absolute child title remains authoritative. A supplied title resolves to a string in SSR and navigation output.
+
+### Per-locale content slugs (`metadata.alternates`)
+
+A locale-routed page's hreflang alternates are generated automatically from the current request's path (swapping only the locale prefix). That is wrong for a page whose SLUG also differs per locale — a listing page like `/en/apartments-for-rent-in-zamalek` vs. `/ar/شقق-للإيجار-في-الزمالك`. Set `metadata.alternates` to replace the generated set with the page's real per-locale URLs:
+
+```tsx
+export const config: PageConfig<typeof loader> = {
+  metadata: ({ data }) => ({
+    alternates: {
+      en: `/apartments-for-rent-in-${data.listing.slug.en}`,
+      ar: `/شقق-للإيجار-في-${data.listing.slug.ar}`,
+      "x-default": `/apartments-for-rent-in-${data.listing.slug.en}`,
+    },
+  }),
+};
+```
+
+Keys are locale codes plus the optional `"x-default"` key; values are paths (joined onto the public URL, same as `canonical`) or absolute URLs, taken as-is. Setting `alternates` REPLACES the generated locale-alternate `<link>` set entirely — no generated entries render alongside it — and it travels through client navigation the same way any other metadata field does. A page with no `alternates` keeps the generated set unchanged. `metadata.links` entries with `rel: "alternate"` for the same locale code are dropped in favor of `alternates`; don't declare both for the same hreflang.
 
 ## The error boundary — `error.page.tsx`
 
@@ -1126,6 +1147,8 @@ below.
 
 All receive one context object with `request`, `response`, `shared`, and `signal`. Page loaders add generics that connect their sibling `validation` and `route` exports to `request.validated()` and `request.input()`.
 
+Page loaders, layout loaders, metadata callbacks, and page actions also receive `route: { name, path, params }` — the MATCHED page's route. Read it instead of `request.route`: under `sites`, core registers one `/*` catch-all per method, so `request.route` is that catch-all there. `name` is the page's `config.route.name`, or its generated name (never a `<site>.` prefixed or internal key); it is `undefined` only if the page has none.
+
 ## Abandoned-request signal
 
 `ctx.signal` is an `AbortSignal` that fires when the client disconnects before the response finishes. Hand it to anything cancelable:
@@ -1298,6 +1321,7 @@ Only put browser-safe data in `shared`: scalars, arrays, plain objects, or value
 - **Do not use loader return values as cross-level communication.** Levels run in order but are not wired to each other; use `shared`, written in middleware.
 - **`404.page.tsx` never runs its own loader.** The not-found page's module is registered and rendered for real — `register()` and its middleware still run — but the page loader is omitted from the request in both dev and production, so a missing URL cannot trigger application data work or fail a second time. Its ancestry contributes nothing either: the 404 page renders with an empty layout chain by construction. **The root `AppLoader` in `root.tsx` still runs** for a 404 request, so keep it cheap and make sure it tolerates a request that matched nothing.
 - **`process.env` is refused in the client/universal graph, with no `PUBLIC_` exception.** Read it in a loader and return it as page data.
+- **In `warlock dev`, app modules can load twice.** Loaders import through Vite SSR while HTTP handlers load natively, so a module-level singleton (`AsyncLocalStorage`, cache, registry) may exist in two copies. Until the single module graph (planned 5.26), store it on `globalThis[Symbol.for("your-app.name")]`; `warlock start` has one graph and is unaffected.
 - **Server actions are not supported.** POST to an ordinary Warlock API route and call `refresh()` after success.
 - **Responses now stream via React's streaming renderer.** The response still waits for every loader, middleware short-circuit and validation to settle before the first byte goes out — status codes, headers and cookies are unchanged — so this is not an API change for apps built on the framework.
 
@@ -2036,7 +2060,7 @@ Modified clicks, middle clicks, downloads, another browsing context, or an earli
 
 ## Build a URL without React
 
-`href(name, params?, query?)` is the durable primitive for redirects, headers, email bodies, and other non-component callers:
+`href(name, params?, query?)` is the durable primitive for redirects, headers, email bodies, and other non-component callers. It also accepts `href(name, { params, query })`:
 
 ```ts
 import { href } from "@warlock.js/web";
@@ -2046,7 +2070,19 @@ const productUrl = href(
   { id: "42" },
   { tab: "reviews", tags: ["featured", "sale"] },
 );
+
+const productApiUrl = apiHref("products.show", {
+  params: { id: "42" },
+  query: { include: "reviews" },
+});
 ```
+
+Import `apiHref` from `@warlock.js/web` for a generated named API route. It uses
+the separate `ApiRouteRegistry`, requires its path params, and serializes query
+values exactly like `href()`. Object form is recognized only for objects whose
+only keys are object-shaped `params` and/or `query`; therefore a positional
+route-param object such as `{ params: "one", query: "two" }` is never
+misread as options.
 
 Generated declarations make known route names and parameters type-safe when
 they are available. Runtime validation remains active before generation, and
@@ -2057,15 +2093,11 @@ eager module initializer before boot.
 ## Programmatic navigation
 
 ```tsx title="src/web/components/checkout-button.tsx"
-import { href, navigateBack, navigateTo } from "@warlock.js/web";
+import { navigateBack, navigateTo } from "@warlock.js/web";
 
 export function CheckoutButtons() {
   const openCheckout = () => {
-    const url = href("checkout.index");
-
-    if (!navigateTo(url)) {
-      window.location.assign(url);
-    }
+    navigateTo({ name: "checkout.index", query: { step: "shipping" } });
   };
 
   return (
@@ -2081,7 +2113,7 @@ export function CheckoutButtons() {
 }
 ```
 
-`navigateTo(path, { replace?: boolean })` accepts a path, not a route name. Resolve a name with `href()` first. It returns `false` when no client runtime accepted the navigation; use a real browser navigation when arrival is mandatory. `navigateBack()` is a no-op without a browser.
+`navigateTo(pathOrTarget, { replace?: boolean })` accepts a path or a `{ name, params, query }` route target. In a browser with no client runtime connected (before hydration), it falls back to a real browser navigation and returns `true`, so callers never hand-write `window.location.assign`. It returns `false` on the server, or when the runtime declines a same-origin URL. `navigateBack()` is a no-op without a browser.
 
 ## Re-fetch after a mutation
 
@@ -2153,6 +2185,7 @@ correlated:
 
 ```ts
 navigateTo({ name: "products.details", params: { id: "42" } });
+navigateTo({ name: "products.details", params: { id: "42" }, query: { tab: "reviews" } });
 ```
 
 The existing string form remains a literal URL/path. A route declared with a
@@ -3193,14 +3226,14 @@ A layout is projected for the browser the same way a page is: `config` and `load
 loader data, readonly shared state, and resolved child metadata; they run only
 on the server after loaders. Titles accept a string, `{ default?, template? }`,
 or `{ absolute }`. A callback returns that layout's complete metadata: explicit
-fields override `child`, and fields omitted from its result are not retained.
-Spread `child` when retaining descendant fields:
+fields override `child.metadata`, and fields omitted from its result are not retained.
+Spread `child.metadata` when retaining descendant fields:
 
 ```tsx
 export const config: LayoutConfig = {
   metadata: ({ data, child }) => ({
-    ...child,
-    title: `${data.workspaceName} | ${child?.title ?? "Workspace"}`,
+    ...child?.metadata,
+    title: `${data.workspaceName} | ${child?.metadata.title ?? "Workspace"}`,
   }),
 };
 ```
@@ -3431,14 +3464,14 @@ export const config: RootConfig = {
 `sitemap` or route-policy exports are invalid. Root metadata may be static or a
 server-only callback; it participates in title and field composition with
 layouts and the page. A callback returns the root's complete level: explicit
-fields override `child`, while omitted child fields are not retained. Preserve
-descendant metadata deliberately by spreading `child`:
+fields override `child.metadata`, while omitted child fields are not retained. Preserve
+descendant metadata deliberately by spreading `child.metadata`:
 
 ```tsx
 export const config: RootConfig = {
   metadata: ({ data, child }) => ({
-    ...child,
-    title: `${data.applicationName} | ${child?.title ?? "Home"}`,
+    ...child?.metadata,
+    title: `${data.applicationName} | ${child?.metadata.title ?? "Home"}`,
   }),
 };
 ```

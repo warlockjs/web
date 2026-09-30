@@ -16,8 +16,8 @@
 
 ## Skills
 
-- [add-web-to-an-app](@warlock.js/web/add-web-to-an-app/SKILL.md): Install the SSR page layer with `warlock add web`: add React/Vite peers, scaffold `src/web/root.tsx` and `src/web/index.page.tsx`, register `webConnector()`, and safely relocate the stock top-level `GET "/"` JSON route to `/welcome`. Triggers: `warlock add web`, `webConnector`, `src/web/root.tsx`, `src/web/index.page.tsx`, `GET "/welcome"`; "add web to an app", "install Warlock web", "scaffold SSR", "homepage route collision". Skip: author a page — `@warlock.js/web/create-a-page/SKILL.md`; customize the document — `@warlock.js/web/write-the-root/SKILL.md`; dev/build/start commands — `@warlock.js/core/run-app/SKILL.md`; competing installers `create-next-app`, `vite create`, `remix init`.
-- [create-a-page](@warlock.js/web/create-a-page/SKILL.md): Create an SSR React page under `src/web/**`. Put route, cache, validation, middleware, metadata, and sitemap policy in `config`; keep `loader`, `register`, `ErrorBoundary`, and the default component as exports. Triggers: `*.page.tsx`, `PageConfig`, `config.route`, `config.cache`, `config.validation`, `config.middleware`, `config.metadata`, `config.sitemap`, `PageLoader`, `PageProps`, `error.page.tsx`, `register`, `[...slug]`.
+- [add-web-to-an-app](@warlock.js/web/add-web-to-an-app/SKILL.md): (no description)
+- [create-a-page](@warlock.js/web/create-a-page/SKILL.md): (no description)
 - [generate-sitemap](@warlock.js/web/generate-sitemap/SKILL.md): (no description)
 - [handle-a-form-action](@warlock.js/web/handle-a-form-action/SKILL.md): Handle a form POST on a page with an `action` (or named `actions`) export, `<Form>`, `useActionData`, `<FieldError>`, and `useIsSubmitting` from @warlock.js/web. Triggers: page action, action export, actions, <Form>, useActionData, FieldError, useIsSubmitting, config.action validation, response.redirect after POST, redactValues, no-JS form.
 - [load-page-data](@warlock.js/web/load-page-data/SKILL.md): (no description)
