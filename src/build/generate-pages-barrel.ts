@@ -208,6 +208,8 @@ export type PageRouteManifestEntry = {
   source: string;
   /** Page action names discovered from the page's static declarations. */
   actions?: readonly string[];
+  /** `"user"` when the page, a layout on its chain, or the root statically guards with `requireUser()`. */
+  guard?: "user";
 };
 
 export type PageRoutesManifest = {
@@ -481,6 +483,7 @@ function buildPageRoutes(
           name: page.routeName,
           source: toPosix(path.relative(appRoot, page.pageFile)),
           ...(page.actions === undefined ? {} : { actions: page.actions }),
+          ...(page.guard === undefined ? {} : { guard: page.guard }),
         })),
       {
         method: "GET" as const,

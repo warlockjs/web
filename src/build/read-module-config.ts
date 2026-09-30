@@ -16,6 +16,14 @@ export type ModuleConfigRead = {
   prefix?: string;
   strictMode?: boolean;
   hasMiddleware: boolean;
+  /**
+   * Present (true) only when a DIRECT element of a LITERAL `config.middleware`
+   * array is a `requireUser(...)` call, where `requireUser` is imported from
+   * `"@warlock.js/web/session"` (aliased imports count). Spreads, identifiers,
+   * conditionals, wrapper calls, `requireGuest()` and `config.action.middleware`
+   * never count: the generator only types a guard it can prove.
+   */
+  guardsUser?: true;
   hasDefault: boolean;
   /**
    * Whether the module declares a runtime `config` export at all, regardless
@@ -121,11 +129,59 @@ function readRoute(value: ValueNode, sourceFile: string): { path: string; name?:
   return name === undefined ? { path: routePath } : { path: routePath, name };
 }
 
+const SESSION_MODULE = "@warlock.js/web/session";
+
+/**
+ * Local names bound to `requireUser` imported (as a value) from
+ * `"@warlock.js/web/session"`, so `import { requireUser as ru }` is honoured.
+ */
+function requireUserBindings(body: ReturnType<typeof parse>["program"]["body"]): Set<string> {
+  const names = new Set<string>();
+
+  for (const statement of body) {
+    if (statement.type !== "ImportDeclaration") continue;
+    if (statement.source.value !== SESSION_MODULE || statement.importKind === "type") continue;
+
+    for (const specifier of statement.specifiers) {
+      if (specifier.type !== "ImportSpecifier" || specifier.importKind === "type") continue;
+
+      const imported =
+        specifier.imported.type === "Identifier" ? specifier.imported.name : specifier.imported.value;
+
+      if (imported === "requireUser") names.add(specifier.local.name);
+    }
+  }
+
+  return names;
+}
+
+/** Whether a direct element of a literal `middleware` array is a `requireUser(...)` call. */
+function middlewareGuardsUser(node: ValueNode, bindings: ReadonlySet<string>): boolean {
+  if (bindings.size === 0) return false;
+
+  const array = unwrap(node);
+
+  if (array.type !== "ArrayExpression") return false;
+
+  return array.elements.some((element) => {
+    if (element === null || element.type === "SpreadElement") return false;
+
+    const call = unwrap(element as ValueNode);
+
+    return (
+      call.type === "CallExpression" &&
+      call.callee.type === "Identifier" &&
+      bindings.has(call.callee.name)
+    );
+  });
+}
+
 function inspectConfig(
   declarator: { id: { type: string; name?: string }; init?: ValueNode | null },
   sourceFile: string,
   kind: ModuleKind,
-): Pick<ModuleConfigRead, "route" | "prefix" | "strictMode" | "hasMiddleware"> & {
+  bindings: ReadonlySet<string>,
+): Pick<ModuleConfigRead, "route" | "prefix" | "strictMode" | "hasMiddleware" | "guardsUser"> & {
   actionKeys: string[];
 } {
   if (declarator.id.type !== "Identifier" || declarator.id.name !== "config" || !declarator.init) {
@@ -137,6 +193,7 @@ function inspectConfig(
   let prefix: string | undefined;
   let strictMode: boolean | undefined;
   let hasMiddleware = false;
+  let guardsUser = false;
   const actionKeys: string[] = [];
 
   for (const member of object.properties) {
@@ -157,7 +214,10 @@ function inspectConfig(
       continue;
     }
 
-    if (key === "middleware") hasMiddleware = true;
+    if (key === "middleware") {
+      hasMiddleware = true;
+      guardsUser = middlewareGuardsUser(member.value, bindings);
+    }
     if (key === "actions") actionKeys.push(...literalKeys(member.value));
     if (key === "route") route = readRoute(member.value, sourceFile);
     if (key === "prefix") {
@@ -177,6 +237,7 @@ function inspectConfig(
     ...(prefix === undefined ? {} : { prefix }),
     ...(strictMode === undefined ? {} : { strictMode }),
     hasMiddleware,
+    ...(guardsUser ? { guardsUser: true as const } : {}),
     actionKeys,
   };
 }
@@ -220,11 +281,13 @@ export function readModuleConfig(
   let prefix: string | undefined;
   let strictMode: boolean | undefined;
   let hasMiddleware = false;
+  let guardsUser = false;
   let hasDefault = false;
   let declaresAction = false;
   let hasSingleAction = false;
   const actionNames = new Set<string>();
   let configSeen = false;
+  const bindings = requireUserBindings(program.body);
 
   for (const statement of program.body) {
     if (statement.type === "ExportAllDeclaration") {
@@ -286,11 +349,12 @@ export function readModuleConfig(
         fail(sourceFile, "the \`config\` export must be declared with \`const\`");
       }
       configSeen = true;
-      const read = inspectConfig(declarator, sourceFile, kind);
+      const read = inspectConfig(declarator, sourceFile, kind, bindings);
       route = read.route;
       prefix = read.prefix;
       strictMode = read.strictMode;
       hasMiddleware = read.hasMiddleware;
+      guardsUser = read.guardsUser === true;
       for (const key of read.actionKeys) actionNames.add(key);
     }
   }
@@ -303,6 +367,7 @@ export function readModuleConfig(
     ...(prefix === undefined ? {} : { prefix }),
     ...(strictMode === undefined ? {} : { strictMode }),
     hasMiddleware,
+    ...(guardsUser ? { guardsUser: true as const } : {}),
     hasDefault,
     hasConfig: configSeen,
     ...(actionNames.size > 0 ? { actionNames: [...actionNames].sort() } : {}),
@@ -383,6 +448,7 @@ export function mergeModuleConfigReads(
     ...(configOwner?.prefix === undefined ? {} : { prefix: configOwner.prefix }),
     ...(configOwner?.strictMode === undefined ? {} : { strictMode: configOwner.strictMode }),
     hasMiddleware: configOwner?.hasMiddleware ?? false,
+    ...(configOwner?.guardsUser === true ? { guardsUser: true as const } : {}),
     hasDefault: primaryRead.hasDefault,
     hasConfig: primaryRead.hasConfig || setupRead.hasConfig,
     ...(actionNames.length > 0 ? { actionNames } : {}),

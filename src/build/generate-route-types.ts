@@ -7,6 +7,8 @@ export type RegisteredRouteTypeSnapshot = {
   method: string;
   /** Page action names read statically from `config.action` / `config.actions` keys. */
   actions?: readonly string[];
+  /** `"user"` for a page every request to which passes a static `requireUser()` guard (pages only). */
+  guard?: "user";
   /**
    * Declared response bodies by HTTP status, from the handler's `responseSchema`. Each value is a
    * self-contained TypeScript type expression, emitted verbatim (API routes only).
@@ -106,6 +108,7 @@ function emitRegistry(
       ...(snapshot.actions && snapshot.actions.length > 0
         ? [`actions: ${[...new Set(snapshot.actions)].sort().map(quote).join(" | ")}`]
         : []),
+      ...(!includesMethod && snapshot.guard === "user" ? [`guard: "user"`] : []),
       ...(includesMethod && snapshot.response && Object.keys(snapshot.response).length > 0
         ? [`response: ${responseType(snapshot.response)}`]
         : []),

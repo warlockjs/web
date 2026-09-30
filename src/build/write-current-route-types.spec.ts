@@ -29,4 +29,22 @@ describe("writeCurrentRouteTypes", () => {
     expect(output).toContain('"blog.show"');
     expect(output).toContain('"comments.create"');
   });
+
+  it("keeps the actions and guard the dev installer read for a page", async () => {
+    const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), "warlock-current-route-types-"));
+    temporaryDirectories.push(appRoot);
+    publishRouteTable(
+      [
+        { name: "account.show", path: "/account", actions: ["save"], guard: "user" },
+        { name: "about", path: "/about" },
+      ],
+      "connector",
+    );
+
+    await writeCurrentRouteTypes({ appRoot, apis: [] });
+
+    const output = fs.readFileSync(path.join(appRoot, ".warlock/typings/web-routes.d.ts"), "utf8");
+    expect(output).toContain('"account.show": { path: "/account"; params: {}; actions: "save"; guard: "user" };');
+    expect(output).toContain('"about": { path: "/about"; params: {} };');
+  });
 });

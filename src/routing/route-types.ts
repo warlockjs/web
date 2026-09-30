@@ -58,6 +58,17 @@ export type HasGeneratedApiRoutes = RegistryHasNames<ApiRouteRegistry>;
 /** Page names emitted by the application's generated registry. */
 export type RegisteredPageRouteName = RegistryName<PageRouteRegistry>;
 
+/**
+ * Page names whose generated registry entry carries `guard: "user"`: the page, a layout on its
+ * chain, or the root declares `requireUser(...)` as a direct element of a literal
+ * `config.middleware` array. `never` when no page is guarded (or no route types are generated).
+ */
+export type GuardedPageRouteName = {
+  [Name in RegistryName<PageRouteRegistry>]: PageRouteRegistry[Name] extends { guard: "user" }
+    ? Name
+    : never;
+}[RegistryName<PageRouteRegistry>];
+
 /** Known generated page names, plus an explicit branded escape for dynamic-only names. */
 export type PageRouteName = HasGeneratedPageRoutes extends true
   ? RegistryName<PageRouteRegistry> | RuntimeRouteName

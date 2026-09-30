@@ -13,6 +13,8 @@ const projects = [
   "__tests__/types/tsconfig.without-generation.json",
   "__tests__/types/tsconfig.route-types.json",
   "__tests__/types/tsconfig.loader-data.json",
+  "__tests__/types/tsconfig.guarded-loader.json",
+  "__tests__/types/tsconfig.guarded-loader-unregistered.json",
 ];
 
 for (const project of projects) {

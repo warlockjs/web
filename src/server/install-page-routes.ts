@@ -44,6 +44,7 @@ import {
 } from "../build/discover-pages";
 import { pageSetupFileFor } from "../build/page-setup-file";
 import { readModuleConfig } from "../build/read-module-config";
+import { readPageGuard } from "../build/read-page-guard";
 import { composeRoutePath } from "../routing/compose-route-path";
 import { duplicateRoutePathMessage } from "../routing/duplicate-route-path";
 import { deriveFilesystemRoutePath } from "../routing/filesystem-route";
@@ -116,6 +117,10 @@ export type InstalledPageRoute = {
   name: string;
   file: string;
   layoutFile: string | undefined;
+  /** Action names the page exports (`"default"` for `action`); absent when none. */
+  actions?: readonly string[];
+  /** `"user"` when the page, a layout on its chain, or the root statically guards with `requireUser()`. */
+  guard?: "user";
 };
 
 /**
@@ -315,6 +320,26 @@ type LayoutLevel = {
   /** Declared prefixes keyed by layout directory relative to this page's web root. */
   prefixesByDirectory: Readonly<Record<string, string>>;
 };
+
+/**
+ * What the dev route-type writer re-emits for a page: its action names (from the loaded module)
+ * and its static guard (the build's own rule, read from source).
+ */
+function devRouteTypeFacts(
+  pageModule: ReturnType<typeof normalizePageModule>,
+  guardInput: { pageFile: string; layouts: readonly string[]; appFile: string },
+): Pick<InstalledPageRoute, "actions" | "guard"> {
+  const actions = [
+    ...(pageModule.action === undefined ? [] : ["default"]),
+    ...Object.keys(pageModule.actions ?? {}),
+  ].sort();
+  const guard = readPageGuard(guardInput);
+
+  return {
+    ...(actions.length === 0 ? {} : { actions }),
+    ...(guard === undefined ? {} : { guard }),
+  };
+}
 
 async function resolveLayoutLevel(
   pageFile: string,
@@ -817,6 +842,7 @@ async function installDiscoveredPageRoutes(
       name,
       file: pageFile,
       layoutFile,
+      ...devRouteTypeFacts(pageModule, { pageFile, layouts: layoutLevel.chain, appFile }),
     });
   }
 

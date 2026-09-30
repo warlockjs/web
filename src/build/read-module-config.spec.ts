@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MODULE_EXPORT_NAMES } from "../module-config-schema";
-import { readModuleConfig } from "./read-module-config";
+import { mergeModuleConfigReads, readModuleConfig } from "./read-module-config";
 
 const pageFile = "src/pages/example.page.tsx";
 const page = (source: string) => readModuleConfig(pageFile, source, "page");
@@ -289,5 +289,93 @@ describe("readModuleConfig — action names", () => {
   it("omits actionNames when the page declares none", () => {
     const read = readModuleConfig("a.page.tsx", "export default function P() { return null; }", "page");
     expect(read.actionNames).toBeUndefined();
+  });
+});
+
+describe("readModuleConfig — guardsUser", () => {
+  const imports = 'import { requireUser, requireGuest } from "@warlock.js/web/session";\n';
+  const guarded = (source: string, kind: "page" | "layout" | "root" = "page") =>
+    readModuleConfig(
+      `x.${kind}.tsx`,
+      `${imports}${source}\nexport default function P() { return null; }`,
+      kind,
+    ).guardsUser;
+
+  it("is true for a direct requireUser() element of a literal middleware array", () => {
+    expect(guarded("export const config = { middleware: [requireUser()] };")).toBe(true);
+    expect(guarded("export const config = { middleware: [audit, requireUser({ userType: 'a' })] };")).toBe(true);
+    expect(guarded("export const config = { middleware: [requireUser()] } as const;")).toBe(true);
+    expect(guarded("export const config = { middleware: [requireUser()] };", "layout")).toBe(true);
+    expect(guarded("export const config = { middleware: [requireUser()] };", "root")).toBe(true);
+  });
+
+  it("honours an aliased import", () => {
+    const read = readModuleConfig(
+      "a.page.tsx",
+      'import { requireUser as ru } from "@warlock.js/web/session";\nexport const config = { middleware: [ru()] };\nexport default function P() { return null; }',
+      "page",
+    );
+
+    expect(read.guardsUser).toBe(true);
+  });
+
+  it.each([
+    ["a spread element", "export const config = { middleware: [...shared, audit] };"],
+    ["a spread of requireUser()", "export const config = { middleware: [...[requireUser()]] };"],
+    ["an identifier", "const guard = requireUser();\nexport const config = { middleware: [guard] };"],
+    ["an identifier array", "const list = [requireUser()];\nexport const config = { middleware: list };"],
+    ["a conditional", "export const config = { middleware: [cond ? requireUser() : audit] };"],
+    ["a wrapper call", "export const config = { middleware: [wrap(requireUser())] };"],
+    ["requireGuest()", "export const config = { middleware: [requireGuest()] };"],
+    ["a member call", "export const config = { middleware: [session.requireUser()] };"],
+    [
+      "action-only middleware",
+      "export const config = { action: { middleware: [requireUser()] }, middleware: [audit] };",
+    ],
+    ["no middleware", "export const config = { route: '/x' };"],
+  ])("is unguarded for %s", (_case, source) => {
+    expect(guarded(source)).toBeUndefined();
+  });
+
+  it("ignores a requireUser that is not imported from @warlock.js/web/session", () => {
+    const read = (importLine: string) =>
+      readModuleConfig(
+        "a.page.tsx",
+        `${importLine}\nexport const config = { middleware: [requireUser()] };\nexport default function P() { return null; }`,
+        "page",
+      );
+
+    expect(read('import { requireUser } from "./my-guard";').guardsUser).toBeUndefined();
+    expect(read('import { requireUser } from "@warlock.js/web";').guardsUser).toBeUndefined();
+    expect(read('import type { requireUser } from "@warlock.js/web/session";').guardsUser).toBeUndefined();
+    expect(read("").guardsUser).toBeUndefined();
+  });
+
+  it("follows the config owner when a setup companion exists", () => {
+    const primary = readModuleConfig("a.page.tsx", "export default function P() { return null; }", "page", {
+      allowMissingDefault: true,
+    });
+    const setup = readModuleConfig(
+      "a.setup.ts",
+      `${imports}export const config = { middleware: [requireUser()] };`,
+      "page",
+      { allowMissingDefault: true },
+    );
+
+    expect(mergeModuleConfigReads("a.page.tsx", primary, "a.setup.ts", setup).guardsUser).toBe(true);
+
+    const uiConfig = readModuleConfig(
+      "b.page.tsx",
+      `${imports}export const config = { middleware: [requireUser()] };\nexport default function P() { return null; }`,
+      "page",
+    );
+    const plainSetup = readModuleConfig("b.setup.ts", "export const loader = () => 1;", "page", {
+      allowMissingDefault: true,
+    });
+
+    expect(mergeModuleConfigReads("b.page.tsx", uiConfig, "b.setup.ts", plainSetup).guardsUser).toBe(true);
+    expect(
+      mergeModuleConfigReads("a.page.tsx", primary, "a.setup.ts", plainSetup).guardsUser,
+    ).toBeUndefined();
   });
 });

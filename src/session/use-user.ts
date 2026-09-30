@@ -1,5 +1,6 @@
-import { createContext, useContext, useSyncExternalStore } from "react";
+import { createContext, useContext, useRef, useSyncExternalStore } from "react";
 import { clearPrefetchCache } from "../client/navigation/prefetch";
+import type { GuardedPageRouteName } from "../routing/route-types";
 import type { SessionUser } from "./session.types";
 
 /** The wire shape of the payload's optional `session` key. */
@@ -71,10 +72,34 @@ export const SessionContext = createContext<{ readonly user: SessionUser | null 
   undefined,
 );
 
-/** The signed-in user's projection, or `null` for a guest. Typed by `SessionRegistry`. */
-export function useUser(): SessionUser | null {
+/**
+ * The signed-in user's projection, or `null` for a guest. Typed by `SessionRegistry`.
+ */
+export function useUser(): SessionUser | null;
+/**
+ * The user of a page guarded by `requireUser()`: non-null in the type, because the page's
+ * guard means a guest never reaches it. Pass the page's own route name (a `guard: "user"` entry of
+ * the generated registry; any other name fails to compile).
+ *
+ * The name is the opt-in, not just a type hint. Signing out (or a session expiring) while the page
+ * is still mounted flips the store to a guest before the navigation away completes; a plain
+ * `useUser()` would then return `null` for a frame and crash a component that reads
+ * `user.name`. With a name, the hook keeps returning the LAST signed-in user it saw in this
+ * mounted component instead of `null`. Components that do not pass a name are unaffected.
+ *
+ * @example
+ * const user = useUser("account.show"); // SessionUser, never null
+ */
+export function useUser<Name extends GuardedPageRouteName>(routeName: Name): SessionUser;
+export function useUser(routeName?: string): SessionUser | null {
   const provided = useContext(SessionContext);
   const stored = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const current = provided !== undefined ? provided.user : stored;
+  const lastSignedIn = useRef<SessionUser | null>(null);
 
-  return provided !== undefined ? provided.user : stored;
+  if (routeName === undefined) return current;
+
+  if (current !== null) lastSignedIn.current = current;
+
+  return current ?? lastSignedIn.current;
 }

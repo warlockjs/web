@@ -123,6 +123,13 @@ export type DiscoveredRoutablePage = {
   site?: string;
   /** Page action names read statically (`"default"` or the `actions` keys); absent when none. */
   actions?: string[];
+  /**
+   * `"user"` when the page, any layout on its chain, or the application root declares
+   * `requireUser(...)` as a direct element of a literal `config.middleware` array
+   * (read statically, see {@link ModuleConfigRead.guardsUser}); absent otherwise. Never set
+   * on the not-found page.
+   */
+  guard?: "user";
 };
 
 /** The one application error boundary. It deliberately has no route identity. */
@@ -928,7 +935,11 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
     const pageRead = readDeclarations(pageFile, declarations, pageSource, "page");
     const setupRead =
       setupFile === undefined ? undefined : readDeclarations(setupFile, declarations, undefined, "page");
-    const { route, actionNames } = mergeModuleConfigReads(pageFile, pageRead, setupFile, setupRead);
+    const {
+      route,
+      actionNames,
+      guardsUser: pageGuardsUser,
+    } = mergeModuleConfigReads(pageFile, pageRead, setupFile, setupRead);
     // `config.metadata` lives inside whichever file's `config` won above — a
     // setup file that merely PAIRS with this page (and does not itself
     // export `config`) is never where metadata is read from, for the same
@@ -1008,6 +1019,7 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
         layout,
         renders: declaration.hasDefault,
         hasMiddleware: declaration.hasMiddleware,
+        guardsUser: declaration.guardsUser === true,
       };
     });
     const selection = selectPageLayout(
@@ -1029,6 +1041,17 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
     const middlewareLayouts = layoutFacts
       .filter(({ hasMiddleware }) => hasMiddleware)
       .map(({ layout }) => layout);
+
+    // A guard anywhere above the page types its loaders as signed-in: the page itself,
+    // any layout on the chain, or the application root (whose middleware wraps every
+    // page). The not-found page renders outside all of it and is never guarded.
+    const rootGuardsUser =
+      appFile !== undefined &&
+      readComposedDeclarations(appFile, declarations, undefined, appSetupFile, "root").guardsUser ===
+        true;
+    const guardsUser =
+      !isNotFoundPage &&
+      (pageGuardsUser === true || rootGuardsUser || layoutFacts.some((fact) => fact.guardsUser));
 
     // EVERY prefix on the path, outermost first: a `prefix`-only layout is
     // still a segment of the URL, and composing only the rendering layout's
@@ -1127,6 +1150,7 @@ export function discoverPageGraph(options: DiscoverPagesOptions): DiscoveredPage
       }),
       middlewareLayouts: isNotFoundPage ? [] : middlewareLayouts,
       ...(actionNames === undefined || isNotFoundPage ? {} : { actions: actionNames }),
+      ...(guardsUser ? { guard: "user" as const } : {}),
       ...(hasAppFile ? { appFile } : {}),
       ...(appSetupFile === undefined ? {} : { appSetupFile }),
       ...(siteKey === undefined ? {} : { site: siteKey }),

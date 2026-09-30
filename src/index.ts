@@ -160,6 +160,7 @@ export type {
   RouteParamValue,
   RegisteredApiRouteName,
   RegisteredPageRouteName,
+  GuardedPageRouteName,
   RuntimeRouteName,
   SubmittableApiRouteName,
 } from "./routing/route-types";

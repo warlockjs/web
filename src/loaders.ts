@@ -1,17 +1,65 @@
 import type { ActionState } from "./server/action-state";
 import type { ActionResponse } from "./server/settle-page-response";
-import type { Request, Response } from "@warlock.js/core";
+import type { Request, RequestLocals, Response } from "@warlock.js/core";
 import type { BaseValidator, Infer } from "@warlock.js/seal";
 import type { PageActionConfig } from "./page-config";
 import type { PageContext, PageRoute, PageSite } from "./context";
 import type { PageSession, SharedContext } from "./index";
 import type { RouteDeclaration } from "./route";
+import type { GuardedPageRouteName } from "./routing/route-types";
+import type { SessionModel, SessionUser } from "./session/session.types";
 import type { PageValidation, ValidatedOutput } from "./validation";
 
+/** The declared route name of a `route` type (`typeof config.route`), or `undefined` when it has none. */
+type DeclaredRouteName<TRoute> = TRoute extends { readonly name: infer Name extends string }
+  ? Name
+  : undefined;
+
+/** Whether `TName` is (every member of) the statically guarded page names. */
+type IsGuardedName<TName> = [TName] extends [never]
+  ? false
+  : [TName] extends [GuardedPageRouteName]
+    ? true
+    : false;
+
+/**
+ * What `request.locals.user` holds on a guarded page. The registered `SessionModel` when the
+ * app declares one; otherwise whatever the app's own `RequestLocals["user"]` augmentation
+ * (auth's `RequestUser`) says, read off core's interface so web still never imports auth.
+ */
+type GuardedLocalsUser = NonNullable<
+  unknown extends SessionModel
+    ? RequestLocals extends { user?: infer LocalUser }
+      ? LocalUser
+      : unknown
+    : SessionModel
+>;
+
+/** The session a guarded page is guaranteed to have: signed in, so neither field is null. */
+export type GuardedPageSession = {
+  user: NonNullable<SessionUser>;
+  model: NonNullable<SessionModel>;
+};
+
+/**
+ * A page loader's context. `TName` is the page's route name and defaults to the `name` in
+ * `TRoute`; when it is a statically guarded page (see {@link GuardedPageRouteName}) the
+ * signed-in user is part of the type: `request.locals.user` and `session` are non-null.
+ */
 export type PageLoaderContext<
   TValidation extends PageValidation | undefined = undefined,
   TRoute extends RouteDeclaration | undefined = undefined,
-> = {
+  TName extends string | undefined = DeclaredRouteName<TRoute>,
+> = IsGuardedName<TName> extends true
+  ? Omit<UnguardedPageLoaderContext<TValidation>, "request" | "session"> & {
+      request: UnguardedPageLoaderContext<TValidation>["request"] & {
+        locals: { user: GuardedLocalsUser };
+      };
+      session: GuardedPageSession;
+    }
+  : UnguardedPageLoaderContext<TValidation>;
+
+type UnguardedPageLoaderContext<TValidation extends PageValidation | undefined> = {
   /**
    * `validated()` carries the page's ONE validation surface: the top-level
    * `validation` export. `route.validate` was withdrawn after 5.6.0 and is
@@ -37,7 +85,8 @@ export type PageLoaderContext<
 export type PageLoader<
   TValidation extends PageValidation | undefined = undefined,
   TRoute extends RouteDeclaration | undefined = undefined,
-> = (context: PageLoaderContext<TValidation, TRoute>) => unknown;
+  TName extends string | undefined = DeclaredRouteName<TRoute>,
+> = (context: PageLoaderContext<TValidation, TRoute, TName>) => unknown;
 
 /**
  * The layout loader receives the same resolved session as a page loader.

@@ -36,6 +36,13 @@ export type RouteTableEntry = {
   readonly path: string;
   /** The multi-site owner. Absent in the byte-for-byte compatible single-site table. */
   readonly site?: string;
+  /**
+   * Page action names, carried only so the dev route-type writer can re-emit them
+   * (`writeCurrentRouteTypes`); `href` never reads it.
+   */
+  readonly actions?: readonly string[];
+  /** `"user"` for a statically guarded page; same dev-writer-only purpose as `actions`. */
+  readonly guard?: "user";
 };
 
 /** Public, browser-safe subset of `web.sites` needed to make a cross-site URL. */
@@ -291,6 +298,11 @@ export function knownRouteNames(): readonly string[] {
  */
 export function routePathOf(name: string): string | undefined {
   return readSlot()?.table.get(name)?.path;
+}
+
+/** The published entry for `name`, or `undefined` when the name is not known. */
+export function routeEntryOf(name: string): RouteTableEntry | undefined {
+  return readSlot()?.table.get(name);
 }
 
 /** Who published the live table, for diagnosis. `undefined` when nothing has. */

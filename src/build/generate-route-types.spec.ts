@@ -108,3 +108,21 @@ describe("generateRouteTypes typed responses", () => {
     expect(empty).toBe(without);
   });
 });
+
+describe("generateRouteTypes page guards", () => {
+  it("emits guard after actions for a guarded page and nothing for the rest", () => {
+    const source = generateRouteTypes({
+      pages: [
+        { name: "account.show", path: "/account", method: "GET", actions: ["save"], guard: "user" },
+        { name: "account.plain", path: "/plain", method: "GET" },
+      ],
+      apiRoutes: [{ name: "x.api", path: "/api/x", method: "GET", guard: "user" }],
+    });
+
+    expect(source).toContain(
+      '"account.show": { path: "/account"; params: {}; actions: "save"; guard: "user" };',
+    );
+    expect(source).toContain('"account.plain": { path: "/plain"; params: {} };');
+    expect(source).toContain('"x.api": { path: "/api/x"; params: {}; method: "GET" };');
+  });
+});
