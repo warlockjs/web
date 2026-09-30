@@ -9,10 +9,10 @@ Web adds an SSR React page layer to a Warlock app. Pages live under `src/web/**`
 ## The 80% path
 
 1. Install the layer with `warlock add web` (`add-web-to-an-app.md`), then edit the document in `src/web/root.tsx` (`write-the-root.md`).
-2. Create pages with `config` and a loader (`create-a-page.md`, `load-page-data.md`); wrap them with `use-layouts.md`.
+2. Create pages with `config` and a loader (`create-a-page.md`, `load-page-data.md`, which also covers how loader data is typed on the page); wrap them with `use-layouts.md`.
 3. Link and navigate with `<Link>`, `href()`, `navigateTo` (`navigate-on-the-client.md`).
-4. Post forms to a Core API route (`submit-a-form.md`), then `refresh()` to revalidate; or handle a form on the page itself with an `action` export and `<Form>` (`handle-a-form-action.md`).
-5. Guard pages and read the user (`protect-a-page.md`).
+4. Post forms to a Core API route (`submit-a-form.md`), then `refresh()` to revalidate (a route whose handler declares `responseSchema` types `data` and `onSuccess`); or handle a form on the page itself with an `action` export and `<Form>` (`handle-a-form-action.md`).
+5. Guard pages and read the user (`protect-a-page.md`); a `requireUser()`-guarded page is typed as signed-in (`useUser("route.name")` is non-null).
 6. Translate pages (`localize-pages.md`); stream slow data (`stream-deferred-data.md`).
 7. Polish: styles (`serve-styles.md`), sitemap and robots (`generate-sitemap.md`), themes (`multi-theme.md`), multi-site apps (`multi-site/SKILL.md`), client-only UI (`render-client-only.md`), vitals (`measure-web-vitals.md`).
 8. Observe SSR phases and deferred values with `TracingHooks` (`observe-page-requests.md`).

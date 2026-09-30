@@ -1,6 +1,6 @@
 ---
 name: load-page-data
-description: "Load App, Layout, and Page data with named loaders; page validation and middleware belong in `config`. Triggers: `PageLoader`, `LayoutLoader`, `AppLoader`, `PageProps`, `config.validation`, `config.middleware`, `request.validated`, `shared`."
+description: "Load App, Layout, and Page data with named loaders; page validation and middleware belong in `config`. Also how loader data is typed on the page (`Serialized` on the devalue wire). Triggers: `PageLoader`, `LayoutLoader`, `AppLoader`, `PageProps`, `Serialized`, `ModelResourceRegistry`, `config.validation`, `config.middleware`, `request.validated`, `shared`."
 ---
 
 # Warlock — load page data
@@ -140,8 +140,7 @@ export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
 }
 ```
 
-`LoaderShortCircuit` values from
-otFound()`and redirects are excluded from`PageProps["data"]`, so the component sees only the successful loader return.
+`LoaderShortCircuit` values from `notFound()` and redirects are excluded from `PageProps["data"]`, so the component sees only the successful loader return.
 
 ## What survives the wire
 
@@ -186,6 +185,57 @@ stricter gate (scalars, arrays, plain objects, or `toJSON()` — `Date`, `Map`,
 `Set`, functions, and arbitrary class instances are rejected there
 regardless) — see [Declare the shared payload](#declare-the-shared-payload)
 below.
+
+## What the component sees: `Serialized<Return, "devalue">`
+
+`data` in `PageProps`, `LayoutProps`, `AppProps` and in `config.metadata` callbacks is typed as what actually reaches the page, not the loader's raw return: `Serialized<Return, "devalue">` from `@warlock.js/core` (a `Response` the loader may return is excluded first). The loader's own declared return type is untouched.
+
+```tsx title="src/web/products/product.page.tsx"
+import type { PageProps } from "@warlock.js/web";
+import { getProduct } from "app/products/services/get-product.service";
+
+export async function loader() {
+  const product = await getProduct(); // a Product model
+
+  return { product, publishedAt: new Date() };
+}
+
+export default function ProductPage({ data }: PageProps<typeof loader>) {
+  // data.product      -> the output of the model's resource (see below)
+  // data.publishedAt  -> Date (devalue keeps it native)
+  return <h1>{data.product.title}</h1>;
+}
+```
+
+What each loader value becomes:
+
+| Loader returns                                              | The page reads                                                          |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------- |
+| a cascade model registered in `ModelResourceRegistry`       | that resource's output (`ResourceOutput<typeof XResource>`)             |
+| a model with no registry entry                              | its serialized `data` type                                              |
+| any value with `toJSON()`                                   | the (awaited) result of `toJSON()`                                      |
+| `Date`, `Map`, `Set`, `RegExp`, `URL`                       | the same native type                                                    |
+| a function-valued key                                       | removed from the type; devalue refuses a function at render, so do not return one |
+| a class instance with private members and no `toJSON()`     | `never` (devalue would throw at render)                                 |
+| a `defer()` key holding a promise                           | `Promise<Serialized<settled value>>`: the key stays a promise for `use()` |
+| plain JSON-ish data                                         | unchanged                                                               |
+
+Register a model once so its resource output is what the page types as:
+
+```ts title="src/app/products/product-resource.type.ts"
+import type { Product } from "app/products/models/product";
+import type { ProductResource } from "app/products/resources/product.resource";
+
+declare module "@warlock.js/core" {
+  interface ModelResourceRegistry {
+    Product: { model: Product; resource: typeof ProductResource };
+  }
+}
+```
+
+See [`define-resource`](../../../core/skills/define-resource/SKILL.md) in core for `Serialized<T, W>` and the registry.
+
+**A promise nested in plain loader data is awaited, and its settled value is serialized.** `return { product: getProduct() }` delivers the resolved `product` (a model resolved from a promise reaches the page as its `toJSON()` output instead of making devalue throw), and the type reads `Serialized` of the settled value. This is not streaming: only a top-level `defer()` key streams, and inside `defer()` a promise nested under a key is still refused with `NestedDeferredValueError`.
 
 ## Three loader levels
 
@@ -282,8 +332,7 @@ return response.permanentRedirect("/products");
 return response.notFound();
 ```
 
-Do not continue after a redirect or
-otFound`; return the result. Surviving buffers are committed root to leaf. For the same header key, the leafward write wins. A loader that throws or a lower level discarded by a short-circuit does not leak its buffered writes.
+Do not continue after a redirect or `notFound`; return the result. Surviving buffers are committed root to leaf. For the same header key, the leafward write wins. A loader that throws or a lower level discarded by a short-circuit does not leak its buffered writes.
 
 ## Declare the shared payload
 
