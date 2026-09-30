@@ -87,6 +87,7 @@ export function createDeferredSettlement(
   rawPromise: Promise<unknown>,
   timeoutMs: number,
   reportContext?: DeferredSettlementReportContext,
+  serialize?: (value: unknown) => unknown,
 ): DeferredSettlementPair {
   const tracingEnabled = isTracingEnabled();
   const deferredStartedAt = tracingEnabled ? performance.timeOrigin + performance.now() : 0;
@@ -152,35 +153,58 @@ export function createDeferredSettlement(
   // handle merely existing.
   timer.unref?.();
 
+  const reject = (thrown: unknown): void => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    const settlementError = toSettlementError(thrown);
+    dispatchSettlementPhase("rejected");
+    resolveSettlement(settlementError);
+    rejectComponent(thrown);
+    // Rule 7: every rejection goes to the server error sink UNCONDITIONALLY.
+    // The error's own `errorCode` (production only) is folded into this
+    // same report line so an operator can join the two.
+    reportServerError(
+      `deferred value "${key}" rejected` +
+        (settlementError.error.errorCode ? ` (errorCode ${settlementError.error.errorCode})` : ""),
+      thrown,
+      buildReportContext("rejected"),
+    );
+  };
+
+  const fulfil = (value: unknown): void => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    dispatchSettlementPhase("fulfilled");
+    resolveSettlement({ ok: true, value });
+    resolveComponent(value);
+  };
+
   Promise.resolve(rawPromise).then(
     (value) => {
       if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      dispatchSettlementPhase("fulfilled");
-      resolveSettlement({ ok: true, value });
-      resolveComponent(value);
+      // Loader data is serialized like a response body (canon f03ac21b). The
+      // walk is synchronous unless a `toJSON()` is async, so plain values
+      // settle in the same microtask turn they always did.
+      let serialized: unknown;
+      try {
+        serialized = serialize ? serialize(value) : value;
+      } catch (thrown) {
+        reject(thrown);
+        return;
+      }
+      if (
+        typeof serialized === "object" &&
+        serialized !== null &&
+        typeof (serialized as { then?: unknown }).then === "function"
+      ) {
+        Promise.resolve(serialized).then(fulfil, reject);
+        return;
+      }
+      fulfil(serialized);
     },
-    (thrown) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      const settlementError = toSettlementError(thrown);
-      dispatchSettlementPhase("rejected");
-      resolveSettlement(settlementError);
-      rejectComponent(thrown);
-      // Rule 7: every rejection goes to the server error sink UNCONDITIONALLY.
-      // The error's own `errorCode` (production only) is folded into this
-      // same report line so an operator can join the two.
-      reportServerError(
-        `deferred value "${key}" rejected` +
-          (settlementError.error.errorCode
-            ? ` (errorCode ${settlementError.error.errorCode})`
-            : ""),
-        thrown,
-        buildReportContext("rejected"),
-      );
-    },
+    (thrown) => reject(thrown),
   );
 
   return { componentPromise, settlement };

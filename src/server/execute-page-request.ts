@@ -25,6 +25,7 @@ import { PageValidationFailedError } from "./page-validation-failed-error";
 import { resolveThrownHttpStatus } from "./resolve-thrown-http-status";
 import { DeferredInNonPageLoaderError, isDeferred, splitDeferredPageData } from "../loaders/defer";
 import { createDeferredSettlement, type DeferSettlement } from "./defer-settlement";
+import { serializeLoaderData } from "./serialize-loader-data";
 import { resolveDeferTimeoutMs, resolveLoaderTimeoutMs } from "./streaming-config";
 import { PageLoaderTimeoutError } from "./page-loader-timeout-error";
 import {
@@ -91,8 +92,7 @@ type Bundle = PageDataBundle & {
  */
 function hasCommittedResponseHeaders(response: Response): boolean {
   const raw = response.baseResponse?.raw as
-    | { headersSent?: boolean; writableEnded?: boolean }
-    | undefined;
+    { headersSent?: boolean; writableEnded?: boolean } | undefined;
 
   return raw?.headersSent === true || raw?.writableEnded === true;
 }
@@ -211,7 +211,8 @@ async function runMiddlewareChain(
 
       try {
         // `session` rides along for action middleware only; HttpContext predates it.
-        const middlewareContext = session === undefined ? { request, response } : { request, response, session };
+        const middlewareContext =
+          session === undefined ? { request, response } : { request, response, session };
 
         output = await middleware(middlewareContext);
       } catch (thrown) {
@@ -391,10 +392,7 @@ async function runActionStage(options: ActionStageOptions): Promise<ActionStageO
 
     if (!result.isValid) {
       return fail(
-        toActionState(
-          { kind: "errors", errors: result.errors as SealActionError[] },
-          stateOptions,
-        ),
+        toActionState({ kind: "errors", errors: result.errors as SealActionError[] }, stateOptions),
       );
     }
 
@@ -517,7 +515,9 @@ export async function executePageRequest<TResult = PageDataBundle>(
     const sitePrefix = request.site === undefined ? undefined : `${request.site.key}.`;
     const pageRoute: PageRoute = Object.freeze({
       name:
-        declaredRouteName === undefined && sitePrefix !== undefined && matched.entry.name.startsWith(sitePrefix)
+        declaredRouteName === undefined &&
+        sitePrefix !== undefined &&
+        matched.entry.name.startsWith(sitePrefix)
           ? matched.entry.name.slice(sitePrefix.length)
           : matched.entry.name,
       path: matched.entry.path,
@@ -868,14 +868,20 @@ export async function executePageRequest<TResult = PageDataBundle>(
 
           for (const key of split.deferredKeys) {
             const rawPromise = split.pageData[key] as Promise<unknown>;
-            const pair = createDeferredSettlement(key, rawPromise, deferTimeoutMs, {
-              routeName: matched.entry.name,
-              routePath: matched.entry.path,
-              pathname,
-              method: request.method,
-              requestId: request.id,
-              request,
-            });
+            const pair = createDeferredSettlement(
+              key,
+              rawPromise,
+              deferTimeoutMs,
+              {
+                routeName: matched.entry.name,
+                routePath: matched.entry.path,
+                pathname,
+                method: request.method,
+                requestId: request.id,
+                request,
+              },
+              (resolved) => serializeLoaderData(resolved, request),
+            );
 
             // The component receives the wrapped (timeout-bound) promise —
             // contract rule 4 — never the loader's raw promise, so a
@@ -889,11 +895,18 @@ export async function executePageRequest<TResult = PageDataBundle>(
           bundle.deferredSettlements = settlements;
         }
 
+        // Serialize the resolved keys in place: the bundle keeps this exact
+        // object (deferred keys hold the component promises set above).
+        for (const key of Object.keys(split.pageData)) {
+          if (split.deferredKeys.includes(key)) continue;
+          split.pageData[key] = await serializeLoaderData(split.pageData[key], request);
+        }
+
         bundle[dataKeys[level]] = split.pageData;
         continue;
       }
 
-      bundle[dataKeys[level]] = value;
+      bundle[dataKeys[level]] = await serializeLoaderData(value, request);
     }
 
     if (loaderTimeoutTimer) clearTimeout(loaderTimeoutTimer);

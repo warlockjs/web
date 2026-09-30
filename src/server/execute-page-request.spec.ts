@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import config from "@mongez/config";
 import { Request, Response } from "@warlock.js/core";
+import { parse, stringify } from "devalue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { resolvePageMetadata as ResolvePageMetadata } from "./resolve-page-metadata";
 
@@ -27,6 +28,18 @@ import {
 import { shared as liveShared } from "../shared";
 import { composeLayoutModules } from "./compose-layout-modules";
 import { PageLoaderTimeoutError } from "./page-loader-timeout-error";
+import { buildHydrationPayload } from "./build-hydration-payload";
+import { defer } from "../loaders/defer";
+
+class ResourceLike {
+  public request: unknown;
+
+  public constructor(private readonly value: string) {}
+
+  public toJSON(): unknown {
+    return { value: this.value, requestId: (this.request as { id?: string } | undefined)?.id };
+  }
+}
 
 const request = {
   setValidatedData: vi.fn(),
@@ -94,9 +107,11 @@ describe("executePageRequest loaders", () => {
       name: "account",
       triple: {
         app: {
-          middleware: [() => {
-            observed.push((liveShared as unknown as { tenant?: string }).tenant);
-          }],
+          middleware: [
+            () => {
+              observed.push((liveShared as unknown as { tenant?: string }).tenant);
+            },
+          ],
         },
         layout: {},
         page: {
@@ -113,11 +128,7 @@ describe("executePageRequest loaders", () => {
       createHttp: () => ({ request: siteRequest, response }),
     });
 
-    expect(observed).toEqual([
-      "tenant-1",
-      { actionSite: site },
-      { shared: "tenant-1", site },
-    ]);
+    expect(observed).toEqual(["tenant-1", { actionSite: site }, { shared: "tenant-1", site }]);
   });
 
   it("leaves site undefined for a single-site loader", async () => {
@@ -192,6 +203,43 @@ describe("executePageRequest loaders", () => {
       appData: { app: true },
       layoutData: 0,
       pageData: false,
+    });
+  });
+
+  it("serializes loader toJSON values into the hydration payload without rewriting caller data", async () => {
+    const resource = new ResourceLike("direct");
+    const nested = new ResourceLike("nested");
+    const listed = new ResourceLike("listed");
+    const pageRequest = { ...request, id: "loader-request" } as Request;
+    const result = await executePageRequest({
+      url: "/account",
+      routes: [route({ page: () => ({ resource, nested: { nested }, list: [listed] }) })],
+      createHttp: () => ({ request: pageRequest, response: new Response() }),
+    });
+
+    expect(parse(stringify(buildHydrationPayload(result as never, "en")))).toMatchObject({
+      pageData: {
+        resource: { value: "direct", requestId: "loader-request" },
+        nested: { nested: { value: "nested", requestId: "loader-request" } },
+        list: [{ value: "listed", requestId: "loader-request" }],
+      },
+    });
+    expect(resource).toBeInstanceOf(ResourceLike);
+    expect(resource.request).toBe(pageRequest);
+  });
+
+  it("serializes a deferred toJSON value when it settles", async () => {
+    const pageRequest = { ...request, id: "deferred-request" } as Request;
+    const deferred = Promise.resolve(new ResourceLike("later"));
+    const result = (await executePageRequest({
+      url: "/account",
+      routes: [route({ page: () => defer({ deferred }) })],
+      createHttp: () => ({ request: pageRequest, response: new Response() }),
+    })) as { deferredSettlements: Record<string, Promise<unknown>> };
+
+    await expect(result.deferredSettlements.deferred).resolves.toEqual({
+      ok: true,
+      value: { value: "later", requestId: "deferred-request" },
     });
   });
 
