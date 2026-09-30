@@ -12,6 +12,8 @@ export type PageRouteDefinition = {
 /** A generated API-route entry contributed through {@link ApiRouteRegistry}. */
 export type ApiRouteDefinition = PageRouteDefinition & {
   method: string;
+  /** Response bodies by HTTP status, present when the handler declares `responseSchema`. */
+  response?: Readonly<Record<number, unknown>>;
 };
 
 declare const runtimeRouteBrand: unique symbol;
@@ -132,3 +134,42 @@ type KnownApiRouteTarget = {
 export type ApiRouteTarget = HasGeneratedApiRoutes extends true
   ? KnownApiRouteTarget | (DynamicTarget & { method: string })
   : { name: string; method: string; params?: Record<string, RouteParamValue> };
+
+type ApiEntryResponses<Name extends string> = Name extends keyof ApiRouteRegistry
+  ? ApiRouteRegistry[Name] extends { response: infer Responses extends object }
+    ? Responses
+    : Record<never, never>
+  : Record<never, never>;
+
+/**
+ * The response bodies one API route declares through `handler.responseSchema`, keyed by HTTP
+ * status. Empty for an undeclared or dynamic (`runtimeRoute`) route.
+ */
+export type ApiResponses<Name extends ApiRouteName> = ApiEntryResponses<Extract<Name, string>>;
+
+/**
+ * The body a route declares for one status (200 by default), or `unknown` when the route or the
+ * status is not declared. Never `any`.
+ */
+export type ApiResponse<
+  Name extends ApiRouteName,
+  Status extends number = 200,
+> = Status extends keyof ApiResponses<Name> ? ApiResponses<Name>[Status] : unknown;
+
+type SuccessStatus<Responses> = {
+  [Status in keyof Responses]: Status extends number
+    ? `${Status}` extends `2${string}`
+      ? Status
+      : never
+    : never;
+}[keyof Responses];
+
+/**
+ * The union of every 2xx body a route declares, or `unknown` when it declares none. This is the
+ * body type a named form submission resolves `onSuccess` and `data` with.
+ */
+export type ApiSuccessResponse<Name extends ApiRouteName> = [
+  SuccessStatus<ApiResponses<Name>>,
+] extends [never]
+  ? unknown
+  : ApiResponses<Name>[SuccessStatus<ApiResponses<Name>>];

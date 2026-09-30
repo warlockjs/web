@@ -1,13 +1,16 @@
+import { expectTypeOf } from "vitest";
 import {
   apiHref,
   href,
   navigateTo,
   runtimeRoute,
+  type ApiResponse,
+  type ApiResponses,
   type ApiRouteTarget,
   type LinkProps,
   type PageRouteTarget,
 } from "@warlock.js/web";
-import type { UseSubmitFormOptions } from "@warlock.js/web/form";
+import { useSubmitForm, type UseSubmitFormOptions } from "@warlock.js/web/form";
 
 declare module "@warlock.js/web" {
   interface PageRouteRegistry {
@@ -20,6 +23,15 @@ declare module "@warlock.js/web" {
     "posts.update": { path: "/api/posts/:id"; params: { id: number }; method: "PATCH" };
     "posts.list": { path: "/api/posts"; params: {}; method: "GET" };
     fallback: { path: "/api/*"; params: { "*": string }; method: "ALL" };
+    "auth.login": {
+      path: "/api/login";
+      params: {};
+      method: "POST";
+      response: {
+        200: { user: { id: number; name: string }; token: string; expiresAt?: number };
+        400: { error: string };
+      };
+    };
   }
 }
 
@@ -102,3 +114,37 @@ void [
   missingApiHrefParams,
   omittedApiHrefOptions,
 ];
+
+// Typed API responses: a declared body is exact, everything else is `unknown`, never `any`.
+type LoginOk = { user: { id: number; name: string }; token: string; expiresAt?: number };
+
+expectTypeOf<ApiResponse<"auth.login">>().toEqualTypeOf<LoginOk>();
+expectTypeOf<ApiResponse<"auth.login", 200>>().toEqualTypeOf<LoginOk>();
+expectTypeOf<ApiResponse<"auth.login", 400>>().toEqualTypeOf<{ error: string }>();
+expectTypeOf<ApiResponses<"auth.login">>().toHaveProperty(400);
+// An undeclared status, an undeclared route and a dynamic route are all `unknown`.
+expectTypeOf<ApiResponse<"auth.login", 500>>().toBeUnknown();
+expectTypeOf<ApiResponse<"posts.list">>().toBeUnknown();
+expectTypeOf<ApiResponse<ReturnType<typeof runtimeRoute>>>().toBeUnknown();
+
+declare const login: ApiResponse<"auth.login">;
+void login.user.name;
+// @ts-expect-error A field the route does not declare fails to compile.
+void login.nonexistent;
+declare const unknownBody: ApiResponse<"posts.list">;
+// @ts-expect-error An undeclared route body is `unknown`, so property access is refused.
+void unknownBody.anything;
+
+// Named form targets resolve their success body from the route's declared response.
+const loginForm = useSubmitForm({
+  route: "auth.login",
+  onSuccess: (response) => {
+    expectTypeOf(response.data).toEqualTypeOf<LoginOk | null>();
+  },
+});
+expectTypeOf(loginForm.data).toEqualTypeOf<LoginOk | null>();
+const listForm = useSubmitForm({ route: "posts.list" });
+expectTypeOf(listForm.data).toEqualTypeOf<unknown>();
+// An explicit response type still wins for callers that provide one.
+const explicitForm = useSubmitForm<undefined, { ok: true }>({ path: "/api/x" });
+expectTypeOf(explicitForm.data).toEqualTypeOf<{ ok: true } | null>();

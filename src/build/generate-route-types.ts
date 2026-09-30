@@ -7,6 +7,11 @@ export type RegisteredRouteTypeSnapshot = {
   method: string;
   /** Page action names read statically from `config.action` / `config.actions` keys. */
   actions?: readonly string[];
+  /**
+   * Declared response bodies by HTTP status, from the handler's `responseSchema`. Each value is a
+   * self-contained TypeScript type expression, emitted verbatim (API routes only).
+   */
+  response?: Readonly<Record<string, string>>;
 };
 
 /** Inputs remain separate because page and API names may legitimately overlap. */
@@ -67,6 +72,25 @@ function paramsType(path: string): string {
     .join("; ")} }`;
 }
 
+function isNumericStatus(status: string): boolean {
+  return /^\d+$/.test(status);
+}
+
+/** `{ 200: <expr>; 400: <expr> }` with numeric status keys in ascending order. */
+function responseType(response: Readonly<Record<string, string>>): string {
+  const statuses = Object.keys(response).sort((left, right) => {
+    if (isNumericStatus(left) && isNumericStatus(right)) return Number(left) - Number(right);
+    if (isNumericStatus(left)) return -1;
+    if (isNumericStatus(right)) return 1;
+
+    return left.localeCompare(right);
+  });
+
+  return `{ ${statuses
+    .map((status) => `${isNumericStatus(status) ? status : quote(status)}: ${response[status]}`)
+    .join("; ")} }`;
+}
+
 function emitRegistry(
   interfaceName: "PageRouteRegistry" | "ApiRouteRegistry",
   snapshots: readonly RegisteredRouteTypeSnapshot[],
@@ -81,6 +105,9 @@ function emitRegistry(
       ...(includesMethod ? [`method: ${quote(snapshot.method.toUpperCase())}`] : []),
       ...(snapshot.actions && snapshot.actions.length > 0
         ? [`actions: ${[...new Set(snapshot.actions)].sort().map(quote).join(" | ")}`]
+        : []),
+      ...(includesMethod && snapshot.response && Object.keys(snapshot.response).length > 0
+        ? [`response: ${responseType(snapshot.response)}`]
         : []),
     ];
     lines.push(`    ${quote(snapshot.name)}: { ${fields.join("; ")} };`);

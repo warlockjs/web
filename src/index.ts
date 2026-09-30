@@ -142,6 +142,9 @@ export type { RouteParameters, RouteQuery } from "./routing/route-table";
 export { runtimeRoute } from "./routing/route-types";
 export type {
   ApiRouteDefinition,
+  ApiResponse,
+  ApiResponses,
+  ApiSuccessResponse,
   ApiHrefName,
   ApiHrefParams,
   ApiRouteMethod,

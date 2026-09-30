@@ -2,6 +2,7 @@ import type { Http, HttpError, HttpResult, RequestOptions } from "@mongez/http";
 import type { FormSubmitOptions } from "@mongez/react-form";
 import type {
   ApiRouteMethodInput,
+  ApiSuccessResponse,
   ApiRouteParams,
   HasGeneratedApiRoutes,
   RouteParamValue,
@@ -44,7 +45,7 @@ type PathSubmitTarget = {
 
 export type SubmitFormTarget = LegacyNamedSubmitTarget | TypedNamedSubmitTarget | PathSubmitTarget;
 
-export type UseSubmitFormOptions<Schema = undefined, Data = unknown> = SubmitFormTarget & {
+type SubmitFormBehavior<Schema, Data> = {
   query?: RequestOptions["params"];
   headers?: RequestOptions["headers"];
   client?: Http;
@@ -54,6 +55,27 @@ export type UseSubmitFormOptions<Schema = undefined, Data = unknown> = SubmitFor
   onComplete?: (response: HttpResult<Data>) => void | Promise<void>;
   mapFieldErrors?: boolean | ((error: HttpError) => Record<string, string>);
 };
+
+export type UseSubmitFormOptions<Schema = undefined, Data = unknown> = SubmitFormTarget &
+  SubmitFormBehavior<Schema, Data>;
+
+/** One generated API route as a submit target; the route name alone fixes the method and params. */
+type NamedRouteSubmitTarget<Name extends SubmittableApiRouteName> = {
+  route: Name;
+  path?: never;
+  method?: ApiRouteMethodInput<Name>;
+} & ({} extends ApiRouteParams<Name>
+  ? { params?: ApiRouteParams<Name> }
+  : { params: ApiRouteParams<Name> });
+
+/**
+ * Options for submitting to one generated API route by name. The response body is the route's
+ * declared 2xx `responseSchema` body (`unknown` when it declares none).
+ */
+export type UseNamedSubmitFormOptions<
+  Schema,
+  Name extends SubmittableApiRouteName,
+> = NamedRouteSubmitTarget<Name> & SubmitFormBehavior<Schema, ApiSuccessResponse<Name>>;
 
 export type SubmitFormResult<Schema = undefined, Data = unknown> = {
   submit: (context: FormSubmitOptions<Schema>) => Promise<void>;

@@ -77,3 +77,34 @@ describe("generateRouteTypes page actions", () => {
     expect(source).toContain('"home": { path: "/"; params: {} };');
   });
 });
+
+describe("generateRouteTypes typed responses", () => {
+  const login =
+    '{ "user": import("@warlock.js/core").ResourceOutput<typeof import("../../src/app/users/resources/user.resource")["userResource"]>; "token": import("@warlock.js/core").CastOutput<"string"> }';
+  const failure = '{ "error": import("@warlock.js/core").CastOutput<"string"> }';
+
+  it("emits declared response bodies on the API entry with ascending numeric status keys", () => {
+    const source = generateRouteTypes({
+      pages: [],
+      apiRoutes: [
+        { name: "auth.login", path: "/login", method: "POST", response: { 400: failure, 200: login } },
+      ],
+    });
+
+    expect(source).toContain(
+      `    "auth.login": { path: "/login"; params: {}; method: "POST"; response: { 200: ${login}; 400: ${failure} } };`,
+    );
+  });
+
+  it("emits nothing extra for routes without a response, and ignores response on pages", () => {
+    const plain = { name: "posts.list", path: "/posts", method: "GET" };
+    const without = generateRouteTypes({ pages: [plain], apiRoutes: [plain] });
+    const empty = generateRouteTypes({
+      pages: [{ ...plain, response: { 200: login } }],
+      apiRoutes: [{ ...plain, response: {} }],
+    });
+
+    expect(without).not.toContain("response");
+    expect(empty).toBe(without);
+  });
+});

@@ -10,7 +10,8 @@ import type { FormSubmitOptions } from "@mongez/react-form";
 import { clearPrefetchCache } from "../client/navigation/prefetch";
 import { resolveApiRoute } from "../routing/named-api-routes";
 import { interpolateRoutePath } from "../routing/route-path-interpolation";
-import type { SubmitFormResult, UseSubmitFormOptions } from "./types";
+import type { ApiSuccessResponse, SubmittableApiRouteName } from "../routing/route-types";
+import type { SubmitFormResult, UseNamedSubmitFormOptions, UseSubmitFormOptions } from "./types";
 
 function resolveTarget<Schema, Data>(
   options: UseSubmitFormOptions<Schema, Data>,
@@ -65,10 +66,22 @@ function queryValues(
   return { ...result, ...(query as typeof result | undefined) };
 }
 
-/** Submit a @mongez/react-form through the app's configured HTTP singleton. */
+/**
+ * Submit a @mongez/react-form through the app's configured HTTP singleton. A generated route name
+ * types `data` and `onSuccess` from that route's declared `responseSchema`.
+ */
+export function useSubmitForm<Schema = undefined, Name extends SubmittableApiRouteName = never>(
+  options: UseNamedSubmitFormOptions<Schema, Name>,
+): SubmitFormResult<Schema, ApiSuccessResponse<Name>>;
+/** Submit to a path, or to a route name with an explicit response type. */
 export function useSubmitForm<Schema = undefined, Data = unknown>(
   options: UseSubmitFormOptions<Schema, Data>,
+): SubmitFormResult<Schema, Data>;
+export function useSubmitForm<Schema = undefined, Data = unknown>(
+  // Wide on purpose: the overloads above are the public contract; both shapes are one at runtime.
+  submitOptions: object,
 ): SubmitFormResult<Schema, Data> {
+  const options = submitOptions as UseSubmitFormOptions<Schema, Data>;
   const active = useRef<CancellablePromise<HttpResult<Data>> | null>(null);
   const pendingPromise = useRef<Promise<void> | null>(null);
   const pending = useRef(false);

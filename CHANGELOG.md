@@ -2,6 +2,12 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.27.0
+
+### Added
+
+- Typed API responses. Each generated `ApiRouteRegistry` entry now carries `response: { 200: ...; 400: ... }` when the route's handler declares `responseSchema` (the generator accepts an optional `response` on the route snapshot and emits it verbatim). New public types `ApiResponse<Name, Status = 200>` (the declared body, or `unknown` when the route or status is undeclared, never `any`), `ApiResponses<Name>` (the whole status map) and `ApiSuccessResponse<Name>` (the union of declared 2xx bodies). `useSubmitForm({ route: "auth.login" })` now types `data`, `response` and `onSuccess` from the route's declared 2xx body; path targets and explicit `useSubmitForm<Schema, Data>` calls are unchanged, and apps with no `responseSchema` generate a byte-identical file.
+
 ## 5.26.0 - 2026-09-30
 
 ### Added
