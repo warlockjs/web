@@ -25,6 +25,10 @@ import type { PageRouteTarget } from "../../routing/route-types";
  * Throwing here would cost the page rather than the navigation.
  */
 
+export type NamedNavigationTarget = PageRouteTarget & {
+  query?: RouteQuery;
+};
+
 /**
  * Navigate to a path client-side.
  *
@@ -32,15 +36,12 @@ import type { PageRouteTarget } from "../../routing/route-types";
  * job, so this is not parsed, resolved or prefixed here.
  * @param options `replace: true` swaps the current history entry instead of
  * pushing a new one, so Back skips it.
- * @returns `true` if the client runtime accepted the navigation. `false` means
- * nothing handled it — either no runtime is connected yet (server render, or
- * pre-hydration) or the runtime declined the URL. A `false` caller that needs
- * the user to arrive anyway should fall back to a real browser navigation.
+ * @returns `true` when the user is on their way: the client runtime accepted
+ * the navigation, or — in a browser with no runtime connected (pre-hydration,
+ * or a page without the client runtime) or for another origin — a real
+ * browser navigation was started. `false` only on the server, or when the
+ * runtime declined a same-origin URL.
  */
-export type NamedNavigationTarget = PageRouteTarget & {
-  query?: RouteQuery;
-};
-
 export function navigateTo(path: string, options?: { replace?: boolean }): boolean;
 export function navigateTo(target: NamedNavigationTarget, options?: { replace?: boolean }): boolean;
 export function navigateTo(
@@ -49,24 +50,34 @@ export function navigateTo(
 ): boolean {
   const navigator = currentNavigator();
 
-  if (!navigator) return false;
+  if (!navigator && typeof window === "undefined") return false;
 
   const path =
     typeof destination === "string"
       ? localizedPath(destination)
       : localizedHref(destination.name, destination.params, destination.query);
 
+  // No client runtime in a browser: the user still has to arrive, so load it.
+  if (!navigator) return hardNavigate(path, options);
+
   if (navigator(path, options)) return true;
 
   // The runtime declines another origin (a cross-site route name): load it.
-  if (typeof window !== "undefined" && new URL(path, window.location.href).origin !== window.location.origin) {
-    if (options?.replace === true) window.location.replace(path);
-    else window.location.assign(path);
-
-    return true;
+  if (
+    typeof window !== "undefined" &&
+    new URL(path, window.location.href).origin !== window.location.origin
+  ) {
+    return hardNavigate(path, options);
   }
 
   return false;
+}
+
+function hardNavigate(path: string, options?: { replace?: boolean }): true {
+  if (options?.replace === true) window.location.replace(path);
+  else window.location.assign(path);
+
+  return true;
 }
 
 /**

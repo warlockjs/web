@@ -76,9 +76,42 @@ describe("navigateTo", () => {
    * The server render, and the window between first paint and hydration. Both
    * are real call sites and neither has a runtime to delegate to.
    */
-  it("returns false without throwing when no navigator is connected", () => {
+  it("returns false without throwing on the server, where no navigator is connected", () => {
     expect(() => navigateTo("/products")).not.toThrow();
     expect(navigateTo("/products", { replace: true })).toBe(false);
+  });
+
+  /**
+   * A browser with no runtime (pre-hydration, or a page without the client
+   * runtime) still owes the user the destination, so the verb loads it for
+   * real instead of making every caller hand-write `location.assign`.
+   */
+  it("hard-navigates in a browser when no navigator is connected", () => {
+    const assign = vi.fn();
+    const replace = vi.fn();
+
+    vi.stubGlobal("window", {
+      location: { href: "https://shop.test/", origin: "https://shop.test", assign, replace },
+    });
+
+    expect(navigateTo("/products")).toBe(true);
+    expect(assign).toHaveBeenCalledWith("/products");
+
+    expect(navigateTo("/cart", { replace: true })).toBe(true);
+    expect(replace).toHaveBeenCalledWith("/cart");
+    expect(assign).toHaveBeenCalledTimes(1);
+  });
+
+  it("hard-navigates a named destination in a browser when no navigator is connected", () => {
+    const assign = vi.fn();
+
+    vi.stubGlobal("window", {
+      location: { href: "https://shop.test/", origin: "https://shop.test", assign, replace: vi.fn() },
+    });
+    publishRouteTable([{ name: "products.show", path: "/products/:id" }]);
+
+    expect(navigateTo({ name: "products.show", params: { id: 7 } })).toBe(true);
+    expect(assign).toHaveBeenCalledWith("/products/7");
   });
 });
 

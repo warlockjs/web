@@ -105,15 +105,11 @@ eager module initializer before boot.
 ## Programmatic navigation
 
 ```tsx title="src/web/components/checkout-button.tsx"
-import { href, navigateBack, navigateTo } from "@warlock.js/web";
+import { navigateBack, navigateTo } from "@warlock.js/web";
 
 export function CheckoutButtons() {
   const openCheckout = () => {
-    const url = href("checkout.index");
-
-    if (!navigateTo(url)) {
-      window.location.assign(url);
-    }
+    navigateTo({ name: "checkout.index", query: { step: "shipping" } });
   };
 
   return (
@@ -129,7 +125,7 @@ export function CheckoutButtons() {
 }
 ```
 
-`navigateTo(path, { replace?: boolean })` accepts a path, not a route name. Resolve a name with `href()` first. It returns `false` when no client runtime accepted the navigation; use a real browser navigation when arrival is mandatory. `navigateBack()` is a no-op without a browser.
+`navigateTo(pathOrTarget, { replace?: boolean })` accepts a path or a `{ name, params, query }` route target. In a browser with no client runtime connected (before hydration), it falls back to a real browser navigation and returns `true`, so callers never hand-write `window.location.assign`. It returns `false` on the server, or when the runtime declines a same-origin URL. `navigateBack()` is a no-op without a browser.
 
 ## Re-fetch after a mutation
 
