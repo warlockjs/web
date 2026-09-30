@@ -247,12 +247,12 @@ export function productionAssetsDirectoryOptions(clientDir: string) {
     immutable: true,
     preCompressed: true,
     // Typed structurally against `@fastify/static`'s own `setHeaders` shape
-    // (`res.setHeader`) rather than importing its type: `web` has no direct
+    // (`reply.header`) rather than importing its type: `web` has no direct
     // dependency on `@fastify/static` (only `core` does, and hands these
     // options through untyped via `router.directory`), so importing from it
     // here would be a phantom dependency.
-    setHeaders(response: { setHeader(name: string, value: string): void }) {
-      response.setHeader("Vary", "Accept-Encoding");
+    setHeaders(reply: { header(name: string, value: string): unknown }) {
+      reply.header("Vary", "Accept-Encoding");
     },
   };
 }

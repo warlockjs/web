@@ -121,6 +121,9 @@ describe("production precompressed asset negotiation", () => {
     });
 
     expect(brResponse.headers.vary).toBe("Accept-Encoding");
+    expect(Object.keys(brResponse.headers).filter((name) => name.toLowerCase() === "vary")).toEqual([
+      "vary",
+    ]);
     expect(identityResponse.headers.vary).toBe("Accept-Encoding");
   });
 
