@@ -220,18 +220,7 @@ What each loader value becomes:
 | a `defer()` key holding a promise                           | `Promise<Serialized<settled value>>`: the key stays a promise for `use()` |
 | plain JSON-ish data                                         | unchanged                                                               |
 
-Register a model once so its resource output is what the page types as:
-
-```ts title="src/app/products/product-resource.type.ts"
-import type { Product } from "app/products/models/product";
-import type { ProductResource } from "app/products/resources/product.resource";
-
-declare module "@warlock.js/core" {
-  interface ModelResourceRegistry {
-    Product: { model: Product; resource: typeof ProductResource };
-  }
-}
-```
+A model with `static resource = ProductResource` is registered automatically: `warlock generate.typings` and `warlock dev` write `.warlock/typings/model-resources.d.ts`, so the page types it as the resource's output with no extra code.
 
 See [`define-resource`](../../../core/skills/define-resource/SKILL.md) in core for `Serialized<T, W>` and the registry.
 

@@ -950,7 +950,7 @@ split the browser-safe constraints into a shared schema.
 
 ---
 name: load-page-data
-description: "Load App, Layout, and Page data with named loaders; page validation and middleware belong in `config`. Triggers: `PageLoader`, `LayoutLoader`, `AppLoader`, `PageProps`, `config.validation`, `config.middleware`, `request.validated`, `shared`."
+description: "Load App, Layout, and Page data with named loaders; page validation and middleware belong in `config`. Also how loader data is typed on the page (`Serialized` on the devalue wire). Triggers: `PageLoader`, `LayoutLoader`, `AppLoader`, `PageProps`, `Serialized`, `ModelResourceRegistry`, `config.validation`, `config.middleware`, `request.validated`, `shared`."
 ---
 
 # Warlock — load page data
@@ -1090,8 +1090,7 @@ export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
 }
 ```
 
-`LoaderShortCircuit` values from
-otFound()`and redirects are excluded from`PageProps["data"]`, so the component sees only the successful loader return.
+`LoaderShortCircuit` values from `notFound()` and redirects are excluded from `PageProps["data"]`, so the component sees only the successful loader return.
 
 ## What survives the wire
 
@@ -1136,6 +1135,46 @@ stricter gate (scalars, arrays, plain objects, or `toJSON()` — `Date`, `Map`,
 `Set`, functions, and arbitrary class instances are rejected there
 regardless) — see [Declare the shared payload](#declare-the-shared-payload)
 below.
+
+## What the component sees: `Serialized<Return, "devalue">`
+
+`data` in `PageProps`, `LayoutProps`, `AppProps` and in `config.metadata` callbacks is typed as what actually reaches the page, not the loader's raw return: `Serialized<Return, "devalue">` from `@warlock.js/core` (a `Response` the loader may return is excluded first). The loader's own declared return type is untouched.
+
+```tsx title="src/web/products/product.page.tsx"
+import type { PageProps } from "@warlock.js/web";
+import { getProduct } from "app/products/services/get-product.service";
+
+export async function loader() {
+  const product = await getProduct(); // a Product model
+
+  return { product, publishedAt: new Date() };
+}
+
+export default function ProductPage({ data }: PageProps<typeof loader>) {
+  // data.product      -> the output of the model's resource (see below)
+  // data.publishedAt  -> Date (devalue keeps it native)
+  return <h1>{data.product.title}</h1>;
+}
+```
+
+What each loader value becomes:
+
+| Loader returns                                              | The page reads                                                          |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------- |
+| a cascade model registered in `ModelResourceRegistry`       | that resource's output (`ResourceOutput<typeof XResource>`)             |
+| a model with no registry entry                              | its serialized `data` type                                              |
+| any value with `toJSON()`                                   | the (awaited) result of `toJSON()`                                      |
+| `Date`, `Map`, `Set`, `RegExp`, `URL`                       | the same native type                                                    |
+| a function-valued key                                       | removed from the type; devalue refuses a function at render, so do not return one |
+| a class instance with private members and no `toJSON()`     | `never` (devalue would throw at render)                                 |
+| a `defer()` key holding a promise                           | `Promise<Serialized<settled value>>`: the key stays a promise for `use()` |
+| plain JSON-ish data                                         | unchanged                                                               |
+
+A model with `static resource = ProductResource` is registered automatically: `warlock generate.typings` and `warlock dev` write `.warlock/typings/model-resources.d.ts`, so the page types it as the resource's output with no extra code.
+
+See [`define-resource`](../../../core/skills/define-resource/SKILL.md) in core for `Serialized<T, W>` and the registry.
+
+**A promise nested in plain loader data is awaited, and its settled value is serialized.** `return { product: getProduct() }` delivers the resolved `product` (a model resolved from a promise reaches the page as its `toJSON()` output instead of making devalue throw), and the type reads `Serialized` of the settled value. This is not streaming: only a top-level `defer()` key streams, and inside `defer()` a promise nested under a key is still refused with `NestedDeferredValueError`.
 
 ## Three loader levels
 
@@ -1232,8 +1271,7 @@ return response.permanentRedirect("/products");
 return response.notFound();
 ```
 
-Do not continue after a redirect or
-otFound`; return the result. Surviving buffers are committed root to leaf. For the same header key, the leafward write wins. A loader that throws or a lower level discarded by a short-circuit does not leak its buffered writes.
+Do not continue after a redirect or `notFound`; return the result. Surviving buffers are committed root to leaf. For the same header key, the leafward write wins. A loader that throws or a lower level discarded by a short-circuit does not leak its buffered writes.
 
 ## Declare the shared payload
 
@@ -2343,7 +2381,7 @@ in tracing attributes.
 
 ---
 name: protect-a-page
-description: "Guard a Web page and read the signed-in user with web.session, useUser, requireUser and requireGuest. Triggers: useUser, requireUser, requireGuest, safeRedirectTarget, SessionRegistry, web.session, pageSession, login redirect, guest-only page."
+description: "Guard a Web page and read the signed-in user with web.session, useUser, requireUser and requireGuest. Triggers: useUser, requireUser, requireGuest, safeRedirectTarget, SessionRegistry, web.session, pageSession, login redirect, guest-only page, GuardedPageRouteName, guard: user, non-null user, useUser(routeName)."
 ---
 
 # Protect a page
@@ -2378,6 +2416,57 @@ export const config = { route: "/login", middleware: [requireGuest({ to: "/accou
 - Renewal is automatic (refresh cookie). Do not resolve the session from deferred work.
 - After login or logout call `clearPrefetchCache()` before `navigateTo`/`refresh()`.
 - Log in with `authService.loginWithSessionCookies`, which requires an Origin/Referer.
+
+## Type a guarded page as signed-in
+
+A page guarded by `requireUser()` can never be reached by a guest, so its types say so. The route-types generator reads the guard statically and writes `guard: "user"` on that page's `PageRouteRegistry` entry; `GuardedPageRouteName` (exported from `@warlock.js/web`) is the union of those names.
+
+```tsx title="src/web/account/account.page.tsx"
+import { useUser } from "@warlock.js/web";
+import type { PageConfig, PageLoaderContext, PageProps } from "@warlock.js/web";
+import { requireUser } from "@warlock.js/web/session";
+
+export const config = {
+  route: { path: "/account", name: "account.show" },
+  middleware: [requireUser({ loginPath: "/login" })],
+} satisfies PageConfig;
+
+export async function loader({ session }: PageLoaderContext<undefined, undefined, "account.show">) {
+  // session is { user, model } here, neither null, and request.locals.user is non-null
+  return { user: session.user };
+}
+
+export default function AccountPage({ data }: PageProps<typeof loader>) {
+  const user = useUser("account.show"); // SessionUser, never null
+
+  return <h1>{user.name}</h1>; // assumes your SessionRegistry user has a name
+}
+```
+
+- **Loader context.** `PageLoaderContext<Validation, typeof route>` (and `PageLoader`) type `session` as non-optional `{ user, model }` and `request.locals.user` as non-null for a guarded page. The route name comes from the third type argument as above, or from `typeof config.route` when `route` keeps a literal name: declare `config` `as const satisfies PageConfig`, because plain `satisfies` widens `name` to `string` and the loader then types `session` as optional. Layout and app loaders, page actions and unguarded pages are unchanged: there `session` is still optional and `user` may be `null`.
+- **`useUser(routeName)`** returns a non-null `SessionUser`; any name that is not a guarded page fails to compile. Passing the name also keeps the last signed-in user while that component stays mounted, so a sign-out that flips the store to a guest a frame before navigation completes does not hand `null` to a component reading `user.name`. Plain `useUser()` is unchanged and still returns `null` for a guest.
+
+### What counts as a guard (exact rule)
+
+The page is typed as guarded only when the generator can prove it from source. The page, **any layout on its chain**, or the root (`root.tsx`) must export a **literal** `config` whose `middleware` is an **array literal** with a **direct element** that is a call `requireUser(...)`, where `requireUser` is a **value import** from `"@warlock.js/web/session"`. Arguments do not matter. An aliased import (`import { requireUser as ru }`) counts, and `as`/`satisfies`/parentheses around the array or the call are looked through. A page's `config` may live in its `.setup.ts` companion (in one of the two files, not both).
+
+These do **not** count (the page stays unguarded in the types and `guard` is not emitted):
+
+| Not a guard                                                          | Example                                               |
+| -------------------------------------------------------------------- | ----------------------------------------------------- |
+| a spread into the array                                              | `middleware: [...guards]`                             |
+| `middleware` that is not an array literal (identifier, call)        | `middleware: guards`                                  |
+| a guard behind a conditional                                         | `middleware: [isPrivate ? requireUser() : audit]`     |
+| a wrapper call around it                                             | `middleware: [withAudit(requireUser())]`              |
+| an identifier in the array                                           | `middleware: [guard]`                                 |
+| `requireGuest()`                                                     | `middleware: [requireGuest()]`                        |
+| `config.action.middleware`                                           | only the page's action is guarded                     |
+| a type-only import of `requireUser`, or one from any other module   | `import type { requireUser } ...`                     |
+| a namespace or member call                                           | `session.requireUser()`                               |
+| the loader form `requireUser(ctx)` inside a loader                   | it guards at runtime but is not seen by the generator |
+
+The not-found page is never guarded. A guard the generator cannot prove still works at runtime; only the types stay loose (`useUser()` returns `null`-able).
+In dev, a file the generator cannot parse reads as unguarded rather than breaking boot.
 
 ## render-client-only  `@warlock.js/web/render-client-only/SKILL.md`
 
@@ -3018,7 +3107,7 @@ cache never serves one representation to a client that asked for the other.
 
 ---
 name: submit-a-form
-description: "Submit a @mongez/react-form through a named Core API route or explicit path with useSubmitForm from @warlock.js/web/form. Triggers: useSubmitForm, FormData API submit, beforeSubmit, mapFieldErrors, formErrors, named API route."
+description: "Submit a @mongez/react-form through a named Core API route or explicit path with useSubmitForm from @warlock.js/web/form. Types `data` and `onSuccess` from the route's `responseSchema`. Triggers: useSubmitForm, FormData API submit, beforeSubmit, mapFieldErrors, formErrors, named API route, ApiResponse, ApiSuccessResponse, typed response."
 ---
 
 # Submit a form
@@ -3075,7 +3164,56 @@ the schema in `config.action.validation` and submit with `useSubmitAction`, not
 `useSubmitForm`. Do not share database uniqueness checks or other server-only
 rules with the browser; keep those server-side or split the schema.
 
-Named route metadata contains only name, path, and method. A route declared with method `all` cannot select a browser verb: use a direct `path` and explicit `method`.
+## Typed responses from `responseSchema`
+
+When the API handler declares `responseSchema` (see core's `create-controller`), the generated `ApiRouteRegistry` entry carries a `response` map and `useSubmitForm({ route })` types `data`, `response` and `onSuccess` from the route's declared 2xx body. No generic argument and no cast.
+
+```ts title="src/app/auth/controllers/login.controller.ts (core)"
+loginController.responseSchema = {
+  200: { body: { user: UserResource, token: "string" } },
+  400: { body: { error: "string" } },
+};
+```
+
+```tsx title="src/web/login.page.tsx"
+import { Form } from "@mongez/react-form";
+import { useSubmitForm } from "@warlock.js/web/form";
+
+export default function Login() {
+  const login = useSubmitForm({
+    route: "auth.login",
+    onSuccess: async ({ data }) => {
+      if (data) {
+        console.log(data.user.name, data.token); // typed from the 200 body
+      }
+    },
+  });
+
+  return <Form onSubmit={login.submit}>{/* fields */}</Form>;
+}
+```
+
+`login.data` is the same body type (or `null` until a success). The body is the whole declared 2xx body: with several 2xx statuses it is their union.
+
+Read a declared body anywhere with the public types from `@warlock.js/web`:
+
+| Type                            | Is                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------- |
+| `ApiResponse<Name, Status = 200>` | The declared body for that status, or `unknown` when the route or status is undeclared (never `any`). |
+| `ApiResponses<Name>`            | The whole status-to-body map (empty for an undeclared or `runtimeRoute` name).   |
+| `ApiSuccessResponse<Name>`      | The union of the declared 2xx bodies, or `unknown` when there is none.            |
+
+```ts
+import type { ApiResponse } from "@warlock.js/web";
+
+type LoginError = ApiResponse<"auth.login", 400>; // { error: string }
+```
+
+- Without `responseSchema` the body stays `unknown`, and an app with no `responseSchema` anywhere generates a byte-identical registry file.
+- A path target (`{ path }`) and an explicit `useSubmitForm<Schema, Data>` call are unchanged: you supply `Data` yourself.
+- The generated entry maps each resource back to its `*.resource.ts(x)` export; a resource defined elsewhere is typed `unknown` and core warns with the route and field.
+
+Named route metadata contains the name, path and method, and a `response` map when the handler declares `responseSchema`. A route declared with method `all` cannot select a browser verb: use a direct `path` and explicit `method`.
 
 Generated API declarations live in `ApiRouteRegistry`, separately from page
 names. They preserve canonical method case (for example `POST`) and parameter
