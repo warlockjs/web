@@ -24,6 +24,21 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
 }
 
 /**
+ * A promise nested in page data is awaited, and what it settles to is serialized
+ * like any other value, so a model or resource resolved from a promise reaches
+ * devalue as its `toJSON()` output rather than as a class instance.
+ */
+function settleAndSerialize(item: PromiseLike<unknown>, request: Request): Promise<unknown> {
+  return Promise.resolve(item).then((resolved) => serializeLoaderData(resolved, request));
+}
+
+function serializeItem(value: unknown, request: Request): unknown {
+  const item = serializeLoaderData(value, request);
+
+  return isThenable(item) ? settleAndSerialize(item, request) : item;
+}
+
+/**
  * Converts page-loader data to the same JSON-facing shape as a core response
  * body, while retaining the richer values that devalue can represent itself.
  *
@@ -57,7 +72,7 @@ export function serializeLoaderData(value: unknown, request: Request): unknown {
 
   if (Symbol.iterator in value) {
     const items = Array.from(value as Iterable<unknown>, (item) =>
-      serializeLoaderData(item, request),
+      serializeItem(item, request),
     );
     return items.some(isThenable) ? Promise.all(items) : items;
   }
@@ -74,7 +89,7 @@ export function serializeLoaderData(value: unknown, request: Request): unknown {
       // Reserve the slot now so key order matches the loader's object.
       serialized[key] = undefined;
       pending.push(
-        Promise.resolve(item).then((resolved) => {
+        settleAndSerialize(item, request).then((resolved) => {
           serialized[key] = resolved;
         }),
       );

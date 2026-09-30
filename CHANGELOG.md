@@ -8,6 +8,12 @@ All notable changes to `@warlock.js/web` are documented here.
 
 - Typed API responses. Each generated `ApiRouteRegistry` entry now carries `response: { 200: ...; 400: ... }` when the route's handler declares `responseSchema` (the generator accepts an optional `response` on the route snapshot and emits it verbatim). New public types `ApiResponse<Name, Status = 200>` (the declared body, or `unknown` when the route or status is undeclared, never `any`), `ApiResponses<Name>` (the whole status map) and `ApiSuccessResponse<Name>` (the union of declared 2xx bodies). `useSubmitForm({ route: "auth.login" })` now types `data`, `response` and `onSuccess` from the route's declared 2xx body; path targets and explicit `useSubmitForm<Schema, Data>` calls are unchanged, and apps with no `responseSchema` generate a byte-identical file.
 
+- Page, layout, app and metadata `data` is now typed as what actually reaches the page: `Serialized<LoaderReturn, "devalue">` from `@warlock.js/core`, not the loader's raw return. A cascade model registered in `ModelResourceRegistry` reads as its resource output, `Date`/`Map`/`Set`/`RegExp`/`URL` stay native, function keys are dropped, and a class instance without `toJSON` reads as `never` (devalue would throw at render). Deferred `defer()` keys stay promises whose settled value is serialized. Plain JSON-ish data is unchanged; the loader's own declared return type is untouched.
+
+### Fixed
+
+- Page data: a promise nested in a loader's data (not a `defer()` key) is awaited and its settled value is now serialized too, so a model or resource resolved from a promise reaches the page as its `toJSON()` output instead of making devalue throw.
+
 ## 5.26.0 - 2026-09-30
 
 ### Added

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Response } from "@warlock.js/core";
+import type { Response, Serialized } from "@warlock.js/core";
 import type { SharedContext } from "./index";
 import type { DeferredResult } from "./loaders/defer";
 
@@ -7,22 +7,43 @@ import type { DeferredResult } from "./loaders/defer";
 export type LoaderFunction = (...args: any[]) => unknown;
 
 /**
- * Unwraps a PAGE loader's `defer()` marker (Stage 2 implementation contract,
- * rule 1) down to its plain `data` shape. A deferred TOP-LEVEL key keeps
- * whatever promise type the loader declared for it — `Awaited` only unwraps
- * the OUTER promise a loader function returns, never a promise nested inside
- * one of that value's own properties — so `data.reviews` types as
- * `Promise<Review[]>` for the page component exactly as the loader authored
- * it. A loader that never called `defer()` passes through unchanged.
+ * One top-level value of a `defer()` call's data, as the page reads it.
+ *
+ * A promise is a deferred value: the runtime serializes its SETTLED value, so
+ * the type serializes `Awaited<V>` and keeps the promise-ness the page sees
+ * (`use(data.reviews)`). Every other value is `Serialized<V, "devalue">`. A
+ * raw `Promise` must never reach `Serialized` itself, which would map its
+ * methods away.
  */
-type UnwrapDeferred<T> = T extends DeferredResult<infer TData> ? TData : T;
+type SerializedDeferredValue<V> = V extends PromiseLike<unknown>
+  ? Promise<Serialized<Awaited<V>, "devalue">>
+  : Serialized<V, "devalue">;
 
 /**
- * The loader's literal return shape minus core Response. Returning that exact
- * class is terminal; every other value is data.
+ * What survives `serializeLoaderData` + devalue for a loader's return value:
+ * `Serialized<_, "devalue">`. A `defer()` result is unwrapped to its `data`
+ * first and mapped key by key, because only its TOP-LEVEL keys may be promises
+ * (see {@link SerializedDeferredValue}). `void` passes through unchanged (the
+ * page reads `undefined`).
+ */
+type SerializedLoaderReturn<T> = T extends DeferredResult<infer TData>
+  ? { -readonly [K in keyof TData]: SerializedDeferredValue<TData[K]> }
+  : [T] extends [void]
+    ? T
+    : Serialized<T, "devalue">;
+
+/**
+ * What a page, layout or app component reads from its loader: the loader's
+ * literal return shape minus core Response (returning that exact class is
+ * terminal; every other value is data), after the same serialization the
+ * pipeline applies, `Serialized<Return, "devalue">`: a registered cascade model
+ * becomes its resource output, `Date`/`Map`/`Set`/`RegExp`/`URL` stay native,
+ * functions are dropped, and a class instance without `toJSON` becomes
+ * `never` (devalue throws on it at render). Metadata callbacks receive the
+ * same value.
  */
 export type LoaderData<TLoader> = TLoader extends LoaderFunction
-  ? UnwrapDeferred<Exclude<Awaited<ReturnType<TLoader>>, Response>>
+  ? SerializedLoaderReturn<Exclude<Awaited<ReturnType<TLoader>>, Response>>
   : undefined;
 
 /**
