@@ -21,7 +21,8 @@ export function getSessionIdentity(): string | number | null {
 
 /**
  * Feed the client session store from a hydration payload's `session` key.
- * A missing key reads as a guest. Called beside every `hydrateShared`.
+ * A missing key reads as a guest. Called before the initial `hydrateRoot` and
+ * beside `hydrateShared` for every client navigation.
  *
  * An identity change clears the prefetch cache: entries fetched under the old
  * identity are pages the new one must not be served. Components re-render only

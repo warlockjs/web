@@ -6,6 +6,7 @@ All notable changes to `@warlock.js/web` are documented here.
 
 ### Fixed
 
+- Initial client hydration now seeds `useUser()` from the session payload before React's first render, preventing signed-in server markup from mismatching the client.
 - Production `/assets/*` responses set `Vary: Accept-Encoding` through the Fastify reply. With `@fastify/static` 10, the old callback threw on every asset request, so production pages loaded without their scripts and styles.
 
 ## 5.25.0 - 2026-09-28
@@ -131,7 +132,6 @@ Move each `src/web/(group)` site folder to `src/web/$sites/<key>` and delete `pa
 ### Fixed
 
 - Build gates: Gate C, the unread `PUBLIC_` env check and `*.setup.ts` handling are more accurate.
-
 
 ### Fixed
 

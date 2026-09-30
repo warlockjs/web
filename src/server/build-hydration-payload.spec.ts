@@ -208,4 +208,12 @@ describe("buildHydrationPayload — actionData and session", () => {
     expect(payload.actionData).toEqual({ data: { ok: true } });
     expect(payload.session).toEqual({ user: null });
   });
+
+  it("names web.session's resolver when its user projection cannot cross the hydration wire", () => {
+    const session = { user: { service: new UnserializableService("identity") } };
+
+    expect(() => buildHydrationPayload(bundleOf(), "en", { session })).toThrow(
+      /web\.session's resolver.*products\.details.*\.service/,
+    );
+  });
 });

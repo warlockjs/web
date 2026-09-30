@@ -19,6 +19,7 @@
  * it without copying five lines that would then be free to diverge.
  */
 import { getKeywordsListOf } from "@mongez/localization";
+import { DevalueError, stringify } from "devalue";
 import type { HydrationDocumentPayloadSource } from "../components/document-context";
 import type { PageDataBundle } from "./execute-page-request";
 import { assertPageDataSerializable } from "./page-data-serialization-error";
@@ -33,6 +34,29 @@ import { assertPageDataSerializable } from "./page-data-serialization-error";
  */
 function serializableData(data: unknown): unknown {
   return data === undefined ? {} : data;
+}
+
+/** Attribute a session wire failure to the resolver that produced the user. */
+function assertSessionUserSerializable(
+  session: HydrationDocumentPayloadSource["session"],
+  route: string,
+): void {
+  if (session === undefined) return;
+
+  try {
+    stringify(session.user);
+  } catch (error) {
+    if (error instanceof DevalueError) {
+      throw new Error(
+        `Cannot serialize the user returned by web.session's resolver for route "${route}" ` +
+          `(key path: ${error.path.length > 0 ? error.path : "<root>"}): ${error.message}. ` +
+          "The web.session resolver must return a plain user projection that devalue can put on the hydration wire.",
+        { cause: error },
+      );
+    }
+
+    throw error;
+  }
 }
 
 /**
@@ -94,6 +118,8 @@ export function buildHydrationPayload(
   assertPageDataSerializable(appData, "app", bundle.route.name);
   assertPageDataSerializable(layoutData, "layout", bundle.route.name);
   assertPageDataSerializable(pageData, "page", bundle.route.name);
+  const session = extras.session ?? bundle.session;
+  assertSessionUserSerializable(session, bundle.route.name);
 
   return {
     appData,
@@ -144,8 +170,6 @@ export function buildHydrationPayload(
       ? {}
       : { actionData: extras.actionData ?? bundle.actionData }),
     // Stage 2.5 rides on the bundle, so the data (JSON/NDJSON) writers carry it too.
-    ...((extras.session ?? bundle.session) === undefined
-      ? {}
-      : { session: extras.session ?? bundle.session }),
+    ...(session === undefined ? {} : { session }),
   };
 }

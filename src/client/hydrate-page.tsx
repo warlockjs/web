@@ -7,6 +7,7 @@ import {
 } from "../components/document-context";
 import { readHydrationPayload, type HydrationDocumentPayloadSource } from "../hydration-payload";
 import { hydrateShared } from "../shared";
+import { installSession } from "../session/use-user";
 import { LevelErrorBoundary } from "./build-hydrated-tree";
 import { DefaultErrorBoundary } from "./default-error-boundary";
 import { reportClientError } from "./report-client-error";
@@ -195,6 +196,10 @@ export function hydratePage(buildTree: BuildHydratedTree, options: HydratePageOp
   prepareDeferredPayload(payload);
 
   hydrateShared(payload.shared);
+  // SessionContext supplies this value only during SSR. Seed the client store
+  // before React's first render so useUser() hydrates against the same user.
+  // On a full load the prefetch cache is empty, making its eviction harmless.
+  installSession(payload.session);
 
   const mountElement = document.getElementById(HYDRATION_ROOT_ID);
 

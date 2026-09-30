@@ -2,8 +2,11 @@
 import { act, createElement, useEffect, useState } from "react";
 import { stringify } from "devalue";
 import type { Root } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HYDRATION_ROOT_ID, PAYLOAD_SCRIPT_ID } from "../components/document-context";
+import { resetClientErrorReporterForTests, onClientError } from "./report-client-error";
+import { resetSession, SessionContext, useUser } from "../session/use-user";
 import { hydratePage } from "./hydrate-page";
 
 const actEnvironment = globalThis as typeof globalThis & {
@@ -100,6 +103,8 @@ afterEach(async () => {
     hydratedRoot?.unmount();
   });
   hydratedRoot = undefined;
+  resetSession();
+  resetClientErrorReporterForTests();
   if (previousActEnvironment === undefined) delete actEnvironment.IS_REACT_ACT_ENVIRONMENT;
   else actEnvironment.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
   vi.restoreAllMocks();
@@ -118,4 +123,40 @@ describe("hydratePage strict mode", () => {
       expect(await hydrateWith(strictMode)).toEqual(expected);
     },
   );
+
+  it("seeds useUser from the session payload before the first real hydration render", async () => {
+    const user = { id: 7, name: "Ada" };
+    const firstClientUsers: unknown[] = [];
+    const recoverableErrors = vi.fn();
+    let renderingServerMarkup = true;
+
+    function WhoAmI() {
+      const currentUser = useUser() as { id: string | number; name: string } | null;
+      if (!renderingServerMarkup) firstClientUsers.push(currentUser);
+
+      return createElement("span", null, currentUser === null ? "guest" : currentUser.name);
+    }
+
+    const serverMarkup = renderToString(
+      createElement(SessionContext.Provider, { value: { user } }, createElement(WhoAmI)),
+    );
+    renderingServerMarkup = false;
+    document.body.innerHTML =
+      `<div id="${HYDRATION_ROOT_ID}">${serverMarkup}</div>` +
+      `<script id="${PAYLOAD_SCRIPT_ID}" type="application/json">${stringify({
+        ...payload,
+        session: { user },
+      })}</script>`;
+    onClientError((event) => {
+      if (event.kind === "hydration") recoverableErrors(event);
+    });
+
+    await act(async () => {
+      hydratePage(() => createElement(WhoAmI));
+    });
+
+    expect(firstClientUsers).toEqual([user]);
+    expect(recoverableErrors).not.toHaveBeenCalled();
+    expect(document.querySelector(`#${HYDRATION_ROOT_ID}`)?.textContent).toBe("Ada");
+  });
 });
