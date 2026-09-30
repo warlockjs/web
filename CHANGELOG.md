@@ -2,6 +2,12 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## Unreleased
+
+### Fixed
+
+- Production `/assets/*` responses set `Vary: Accept-Encoding` through the Fastify reply. With `@fastify/static` 10, the old callback threw on every asset request, so production pages loaded without their scripts and styles.
+
 ## 5.25.0 - 2026-09-28
 
 ### Added
