@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { connectNavigator, type Navigator } from "../../routing/navigator";
 import { getHash, navigateBack, navigateTo } from "./verbs";
+import { publishRouteTable, resetRouteTable } from "../../routing/route-table";
 
 /**
  * The three history verbs, and specifically their behaviour with NOTHING
@@ -25,6 +26,7 @@ function withNavigator(navigator: Navigator | undefined): void {
 
 afterEach(() => {
   withNavigator(undefined);
+  resetRouteTable();
   vi.unstubAllGlobals();
 });
 
@@ -46,6 +48,17 @@ describe("navigateTo", () => {
     navigateTo("/products");
 
     expect(navigator).toHaveBeenCalledWith("/products", undefined);
+  });
+
+  it("resolves a named object destination with params and query", () => {
+    const navigator = vi.fn<Navigator>(() => true);
+    withNavigator(navigator);
+    publishRouteTable([{ name: "products.show", path: "/products/:id" }]);
+
+    expect(
+      navigateTo({ name: "products.show", params: { id: 7 }, query: { tab: "reviews" } }),
+    ).toBe(true);
+    expect(navigator).toHaveBeenCalledWith("/products/7?tab=reviews", undefined);
   });
 
   /**

@@ -104,8 +104,18 @@ export type ApiRouteName = HasGeneratedApiRoutes extends true
   ? SubmittableApiRouteName | RuntimeRouteName
   : string;
 
+/** API names with a concrete published browser route. */
+export type ApiHrefName = ApiRouteName;
+
 /** The parameter object associated with one API route name. */
 export type ApiRouteParams<Name extends ApiRouteName> = Name extends RuntimeRouteName
+  ? Record<string, RouteParamValue>
+  : HasGeneratedApiRoutes extends true
+    ? EntryParams<RegistryEntry<ApiRouteRegistry, Extract<Name, string>>>
+    : Record<string, RouteParamValue>;
+
+/** The parameter object associated with an API URL target. */
+export type ApiHrefParams<Name extends ApiHrefName> = Name extends RuntimeRouteName
   ? Record<string, RouteParamValue>
   : HasGeneratedApiRoutes extends true
     ? EntryParams<RegistryEntry<ApiRouteRegistry, Extract<Name, string>>>

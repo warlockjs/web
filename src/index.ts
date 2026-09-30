@@ -64,7 +64,11 @@ export type {
   SiteConfig,
   SitesConfig,
 } from "./sites/site-config.types";
-export { validateSitesConfig, normalizeHost, assertResolvedSite } from "./sites/validate-sites-config";
+export {
+  validateSitesConfig,
+  normalizeHost,
+  assertResolvedSite,
+} from "./sites/validate-sites-config";
 export type { SiteConfigError, SiteConfigErrorCode } from "./sites/validate-sites-config";
 export { createSiteSelector, validateSitesAtBoot } from "./sites/site-selector";
 export type { SiteSelection } from "./sites/site-selector";
@@ -131,12 +135,15 @@ export { localeDirection } from "./text-direction";
 export type { TextDirection } from "./text-direction";
 export { useTextDirection } from "./use-text-direction";
 export { href } from "./routing/route-table";
+export { apiHref } from "./routing/api-href";
 export { siteUrl } from "./routing/site-url";
 export type { CurrentSite } from "./routing/site-url";
 export type { RouteParameters, RouteQuery } from "./routing/route-table";
 export { runtimeRoute } from "./routing/route-types";
 export type {
   ApiRouteDefinition,
+  ApiHrefName,
+  ApiHrefParams,
   ApiRouteMethod,
   HasGeneratedApiRoutes,
   HasGeneratedPageRoutes,

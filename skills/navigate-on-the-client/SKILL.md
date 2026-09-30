@@ -72,7 +72,7 @@ Modified clicks, middle clicks, downloads, another browsing context, or an earli
 
 ## Build a URL without React
 
-`href(name, params?, query?)` is the durable primitive for redirects, headers, email bodies, and other non-component callers:
+`href(name, params?, query?)` is the durable primitive for redirects, headers, email bodies, and other non-component callers. It also accepts `href(name, { params, query })`:
 
 ```ts
 import { href } from "@warlock.js/web";
@@ -82,7 +82,19 @@ const productUrl = href(
   { id: "42" },
   { tab: "reviews", tags: ["featured", "sale"] },
 );
+
+const productApiUrl = apiHref("products.show", {
+  params: { id: "42" },
+  query: { include: "reviews" },
+});
 ```
+
+Import `apiHref` from `@warlock.js/web` for a generated named API route. It uses
+the separate `ApiRouteRegistry`, requires its path params, and serializes query
+values exactly like `href()`. Object form is recognized only for objects whose
+only keys are object-shaped `params` and/or `query`; therefore a positional
+route-param object such as `{ params: "one", query: "two" }` is never
+misread as options.
 
 Generated declarations make known route names and parameters type-safe when
 they are available. Runtime validation remains active before generation, and
@@ -189,6 +201,7 @@ correlated:
 
 ```ts
 navigateTo({ name: "products.details", params: { id: "42" } });
+navigateTo({ name: "products.details", params: { id: "42" }, query: { tab: "reviews" } });
 ```
 
 The existing string form remains a literal URL/path. A route declared with a

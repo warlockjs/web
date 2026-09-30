@@ -4,6 +4,10 @@ All notable changes to `@warlock.js/web` are documented here.
 
 ## Unreleased
 
+### Added
+
+- `href(name, { params, query })` now supports an object form alongside its positional arguments; `navigateTo({ name, params, query })` and new `apiHref(name, { params, query })` keep generated page/API route names and required path params type-safe while using the shared query-string grammar. Object form is reserved for objects containing only object-shaped `params`/`query` options, so route params literally named `params` or `query` remain positional.
+
 ### Fixed
 
 - Initial client hydration now seeds `useUser()` from the session payload before React's first render, preventing signed-in server markup from mismatching the client.

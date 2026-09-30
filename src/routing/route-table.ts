@@ -247,7 +247,10 @@ export function registerSiteRoutes(
 ): void {
   const previous = readSlot();
   const bySite = new Map(previous?.bySite);
-  bySite.set(site, entries.map((entry) => ({ ...entry, site })));
+  bySite.set(
+    site,
+    entries.map((entry) => ({ ...entry, site })),
+  );
   const all = [...bySite.values()].flat();
   const publish = prepareRouteTable(all, publishedBy);
   publish();
@@ -295,6 +298,47 @@ export function routeTablePublisher(): string | undefined {
   return readSlot()?.publishedBy;
 }
 
+type HrefObjectArguments<Name extends PageRouteName> = HasGeneratedPageRoutes extends true
+  ? Name extends import("./route-types").RuntimeRouteName
+    ? { params?: RouteParameters; query?: RouteQuery }
+    : {} extends PageRouteParams<Name>
+      ? { params?: PageRouteParams<Name>; query?: RouteQuery }
+      : { params: PageRouteParams<Name>; query?: RouteQuery }
+  : { params?: RouteParameters; query?: RouteQuery };
+
+type HrefArguments<Name extends PageRouteName> = HasGeneratedPageRoutes extends true
+  ? Name extends import("./route-types").RuntimeRouteName
+    ? [params?: RouteParameters, query?: RouteQuery]
+    : {} extends PageRouteParams<Name>
+      ? [params?: PageRouteParams<Name>, query?: RouteQuery]
+      : [params: PageRouteParams<Name>, query?: RouteQuery]
+  : [params?: RouteParameters, query?: RouteQuery];
+
+/**
+ * A value is object-form only when it has no route-parameter keys and both
+ * fields have their object-shaped option values. Thus `{ params: "x" }` and
+ * `{ query: "x" }` remain positional parameter objects for routes using those
+ * names; generated types enforce that distinction before runtime as well.
+ */
+function isHrefOptions(
+  value: object | undefined,
+): value is { params?: object; query?: RouteQuery } {
+  if (value === undefined || Array.isArray(value)) return false;
+  const keys = Object.keys(value);
+  if (!keys.every((key) => key === "params" || key === "query")) return false;
+  const candidate = value as { params?: unknown; query?: unknown };
+  return (
+    (candidate.params === undefined ||
+      (typeof candidate.params === "object" &&
+        candidate.params !== null &&
+        !Array.isArray(candidate.params))) &&
+    (candidate.query === undefined ||
+      (typeof candidate.query === "object" &&
+        candidate.query !== null &&
+        !Array.isArray(candidate.query)))
+  );
+}
+
 /**
  * Resolve a route NAME to a URL.
  *
@@ -311,16 +355,16 @@ export function routeTablePublisher(): string | undefined {
  * @throws {UnserializableQueryValueError} when a query value nests deeper than
  * the wire format core parses can carry.
  */
-type HrefArguments<Name extends PageRouteName> = HasGeneratedPageRoutes extends true
-  ? Name extends import("./route-types").RuntimeRouteName
-    ? [params?: RouteParameters, query?: RouteQuery]
-    : {} extends PageRouteParams<Name>
-      ? [params?: PageRouteParams<Name>, query?: RouteQuery]
-      : [params: PageRouteParams<Name>, query?: RouteQuery]
-  : [params?: RouteParameters, query?: RouteQuery];
-
 export function href<Name extends PageRouteName>(name: Name, ...args: HrefArguments<Name>): string;
-export function href(name: string, params?: object, query?: RouteQuery): string {
+export function href<Name extends PageRouteName>(
+  name: Name,
+  options: HrefObjectArguments<Name>,
+): string;
+export function href(name: string, paramsOrOptions?: object, positionalQuery?: RouteQuery): string {
+  const objectForm = positionalQuery === undefined && isHrefOptions(paramsOrOptions);
+  const options = objectForm ? paramsOrOptions : undefined;
+  const params = objectForm ? options?.params : paramsOrOptions;
+  const query = objectForm ? options?.query : positionalQuery;
   const slot = readSlot();
 
   if (slot === undefined) throw new RouteTableNotPublishedError(name);

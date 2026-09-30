@@ -73,6 +73,21 @@ describe("href — the name→URL primitive", () => {
     expect(href("products.list", undefined, { page: 2, sort: undefined })).toBe("/products?page=2");
   });
 
+  it("accepts the object form without changing the positional form", () => {
+    publishRouteTable([{ name: "products.details", path: "/products/:id" }]);
+
+    expect(href("products.details", { params: { id: 7 }, query: { ref: "email" } })).toBe(
+      "/products/7?ref=email",
+    );
+    expect(href("products.details", { id: 7 }, { ref: "email" })).toBe("/products/7?ref=email");
+  });
+
+  it("keeps a positional parameter object with params/query keys positional", () => {
+    publishRouteTable([{ name: "search", path: "/search/:params/:query" }]);
+
+    expect(href("search", { params: "one", query: "two" })).toBe("/search/one/two");
+  });
+
   it("carries an array and a nested filter in the grammar core parses", () => {
     /*
       `String(value)` used to flatten both of these before they reached the wire:
