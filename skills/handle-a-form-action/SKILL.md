@@ -5,7 +5,7 @@ description: "Handle a form POST on a page with an `action` (or named `actions`)
 
 # Handle a form action
 
-Use a page action when a form belongs to a page and the result should re-render it or redirect. To post to an API route from the browser, use `submit-a-form.md` instead.
+Use a page action when a form belongs to a page and the result should re-render it or redirect. To post to an API route from the browser, use the `submit-a-form` topic instead.
 
 ```tsx
 import { Form, FieldError, useActionData, useIsSubmitting, href } from "@warlock.js/web";
@@ -55,6 +55,91 @@ export default function Contact() {
 - `<Form>` defaults to `multipart/form-data`, so file inputs work; read them with `request.file(name)`.
 - Per-user limit: `config.action.middleware: [middleware.rateLimit({ max: 5, duration: 60_000, key: "user", guests: "ip" })]` (`import { middleware } from "@warlock.js/core"`). Keyed on `request.locals.user.id`, so it needs `pageSession()` from `@warlock.js/auth`. `guests`: `"ip"` (default) or `"skip"`. Over the limit: 429, action not run.
 - With `@mongez/react-form`, use `useSubmitAction` from `@warlock.js/web/form` and alias one of the two `Form`s.
+
+## Set and clear a cookie, then redirect (sign in and out)
+
+The action's `response` is the same buffered response a loader gets, plus the failure helpers. `cookie()`, `clearCookie()`, `header()` and `redirect()` are queued and committed with the reply, so an action can set a cookie and redirect in one step. Writes survive both a redirect and a failure; the cookie options are the core ones (`maxAge` in seconds, `path`, `httpOnly`, `sameSite`, `secure`, `raw`). See the `load-page-data` topic for the full response surface.
+
+This example shows the cookie mechanics with an app-owned `signIn` service. For the framework's own session and a guarded page, see the `protect-a-page` topic.
+
+```tsx title="src/web/login.page.tsx"
+import { Form, FieldError, useActionData, useIsSubmitting } from "@warlock.js/web";
+import type { PageActionContext, PageConfig } from "@warlock.js/web";
+import { v } from "@warlock.js/seal";
+import { signIn } from "app/accounts/services/sign-in.service";
+
+const loginSchema = v.object({
+  email: v.string().email(),
+  password: v.string().minLength(8),
+});
+
+export const config = {
+  route: { path: "/login", name: "login" },
+  action: { validation: loginSchema },
+} satisfies PageConfig;
+
+export async function action({ request, response }: PageActionContext<typeof loginSchema>) {
+  const { email, password } = request.validated();
+  const token = await signIn(email, password); // app code: undefined for wrong credentials
+
+  if (!token) {
+    return response.unauthorized({ message: "Wrong email or password." });
+  }
+
+  response.cookie("session", token, { raw: true, maxAge: 60 * 60 * 24 * 7, path: "/" });
+
+  return response.redirect("/account");
+}
+
+export default function LoginPage() {
+  const result = useActionData<typeof action>();
+  const pending = useIsSubmitting();
+
+  return (
+    <Form>
+      <input name="email" type="email" defaultValue={result?.values?.email} />
+      <FieldError name="email" />
+      <input name="password" type="password" />
+      <FieldError name="password" />
+      {result?.formErrors.map((message) => <p key={message}>{message}</p>)}
+      <button disabled={pending}>Sign in</button>
+    </Form>
+  );
+}
+```
+
+Sign out is a second, named action on the page that owns the button. `clearCookie` must use the same `path` (and `domain`) the cookie was set with:
+
+```tsx title="src/web/account.page.tsx"
+import { Form } from "@warlock.js/web";
+import type { PageActionContext, PageConfig } from "@warlock.js/web";
+
+export const config = {
+  route: { path: "/account", name: "account" },
+} satisfies PageConfig;
+
+export const actions = {
+  async logout({ response }: PageActionContext) {
+    response.clearCookie("session", { path: "/" });
+
+    return response.redirect("/login");
+  },
+};
+
+export default function AccountPage() {
+  return (
+    <Form action="logout">
+      <button>Sign out</button>
+    </Form>
+  );
+}
+```
+
+A sign-out button that lives on another page or in a layout posts to this action with `<Form to="account" action="logout">`: `to` is the route name of the page that owns the action.
+
+- **Failure keeps the cookie writes too.** A failed sign-in that also called `response.cookie()` would still send it, so set the cookie only after the credentials check passes.
+- **The password is never echoed.** `values` omits `password` by default (`web.forms.redactValues`), so only `email` is re-filled.
+- **A response with a cookie is never cached.** It is `Cache-Control: private, no-store`, as every action response is.
 
 ## Validate in the browser with the same schema
 

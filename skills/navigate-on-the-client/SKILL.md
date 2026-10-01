@@ -1,13 +1,13 @@
 ---
 name: navigate-on-the-client
-description: 'Navigate hydrated pages with `<Link>`, resolve named URLs with `href()`, use `navigateTo` / `navigateBack`, prefetch on interaction, inspect the server match with `currentRoute()`, re-fetch loaders after a mutation with `refresh()`, and read one query-string key live with `useQueryString`. Triggers: `Link`, `href`, `navigateTo`, `navigateBack`, `refresh`, `currentRoute`, `previousRoute`, `useQueryString`; "navigate without a reload", "link to a named route", "refresh page data", "revalidate loaders", "client-side back", "read query string in a component", "query string stale after Link navigation"; typical import `import { Link, refresh, useQueryString } from "@warlock.js/web"`. Skip: define a page route — `@warlock.js/web/create-a-page/SKILL.md`; loader mechanics — `@warlock.js/web/load-page-data/SKILL.md`; root hydration boundary — `@warlock.js/web/write-the-root/SKILL.md`; competing routers `@mongez/react-router`, `react-router-dom`, Next navigation.'
+description: 'Navigate hydrated pages with `<Link>`, resolve named URLs with `href()`, use `navigateTo` / `navigateBack`, prefetch on interaction, style the active link in a navbar, render `<Link>` as your own component (`component`) or without locale prefixing (`locale`), inspect the server match with `currentRoute()`, re-fetch loaders after a mutation with `refresh()`, and read one query-string key live with `useQueryString`. Triggers: `Link`, `href`, `navigateTo`, `navigateBack`, `refresh`, `currentRoute`, `previousRoute`, `useQueryString`, `component`, `locale`; "active link", "highlight current nav item", "NavLink", "aria-current", "navigate without a reload", "link to a named route", "refresh page data", "revalidate loaders", "client-side back", "read query string in a component", "query string stale after Link navigation"; typical import `import { Link, refresh, useQueryString } from "@warlock.js/web"`. Skip: define a page route — the `create-a-page` topic; loader mechanics — the `load-page-data` topic; root hydration boundary — the `write-the-root` topic; competing routers `@mongez/react-router`, `react-router-dom`, Next navigation.'
 ---
 
 # Warlock — navigate on the client
 
 `<Link>` renders a real anchor for progressive enhancement and intercepts a plain in-app click after hydration. The server remains the only route matcher; client navigation fetches the page-data representation of the URL and swaps the Layout + Page tree.
 
-Every behaviour on this page depends on hydration having mounted. See [write-the-root](../write-the-root/SKILL.md#vessel-is-the-hydration-boundary).
+Every behaviour on this page depends on hydration having mounted. See the `write-the-root` topic (section "`#vessel` is the hydration boundary").
 
 ## The shape
 
@@ -69,6 +69,138 @@ export function NavigationLinks() {
 `prefetch` fetches in-app page data on hover or keyboard focus. It is ignored for external, email, telephone, new-tab, and explicitly targeted links. Prefetch is best-effort and never delays the interaction.
 
 Modified clicks, middle clicks, downloads, another browsing context, or an earlier `preventDefault()` remain browser-owned.
+
+## Link props beyond the destination
+
+Besides the destination (`to` / `href` / `email` / `tel`), `params`, `query`, `newTab` and `prefetch`, `<Link>` accepts every `<a>` attribute (`className`, `aria-*`, `onClick`, ...) plus two more:
+
+- `component` — render something other than `<a>`: a tag name or a component. It receives the resolved `href`, the click handler and every remaining prop, so a design-system anchor keeps client-side navigation as long as it spreads what it is given onto the element it renders.
+- `locale` — locale prefixing for a **literal** in-app path. `false` leaves the path exactly as written; a locale code prefixes with that code instead of the current one. It is ignored for route names, which are always localized.
+
+```tsx title="src/web/components/links.tsx"
+import { forwardRef, type AnchorHTMLAttributes } from "react";
+import { Link } from "@warlock.js/web";
+
+// Receives href + onClick from <Link>; it must put them on the element it renders.
+const BrandAnchor = forwardRef<HTMLAnchorElement, AnchorHTMLAttributes<HTMLAnchorElement>>(
+  function BrandAnchor({ className, ...props }, ref) {
+    return <a ref={ref} {...props} className={["brand-anchor", className].filter(Boolean).join(" ")} />;
+  },
+);
+
+export function Links() {
+  return (
+    <nav>
+      {/* Your own anchor component, still a client-side navigation. */}
+      <Link to="products.index" component={BrandAnchor}>
+        Products
+      </Link>
+
+      {/* A path that must not get a locale prefix. */}
+      <Link href="/api/catalog" locale={false}>
+        Catalog JSON
+      </Link>
+
+      {/* Force a locale: "/ar/about" under a prefix strategy. */}
+      <Link href="/about" locale="ar">
+        Arabic
+      </Link>
+    </nav>
+  );
+}
+```
+
+`locale` only does something when `web.localeRouting.strategy` is `prefix` or `prefix-except-default` (the default is `none`, which never prefixes). The default locale stays bare under `prefix-except-default`, a path that already starts with a routed locale code is never prefixed twice, and a path ending in a file extension is treated as a file and never prefixed. See the `localize-pages` topic.
+
+## Style the active link in a navbar
+
+There is **no built-in active-link API**: no `NavLink`, no `isActive` prop, and no `usePathname()` / `useLocation()` / `useCurrentRoute()` hook is exported from `@warlock.js/web`. `<Link>` does not add an `active` class or `aria-current` for you. Build one from two real pieces:
+
+1. **Server-correct (recommended): pass the matched route name down from a layout loader.** Page, layout and metadata loaders receive `route: { name, path, params }`, the page the server matched. Return `route.name` from the layout loader and the navbar renders the right item on the server, during hydration and after every client navigation (layout loaders run again for each page-data request).
+2. **Client only: `currentRoute()`.** It returns what the server matched for the page on screen, but it is plain module state: `undefined` during the server render, and not a subscription (a component only sees a change when React re-renders it). Reading it directly while rendering would make the server markup (inactive) differ from the first client render (active), so gate it with `useIsClient()`.
+
+### Server-correct: layout loader + NavLink
+
+```tsx title="src/web/components/nav-link.tsx"
+import { Link, type LinkProps } from "@warlock.js/web";
+
+export type NavLinkProps = LinkProps & {
+  /** The route name on screen, from the layout loader's `route.name`. */
+  activeName: string | undefined;
+  /** Match on the first dotted segment, so "products.details" lights up "products.index". */
+  section?: boolean;
+};
+
+const firstSegment = (name: string) => name.split(".")[0];
+
+export function NavLink({ activeName, section = false, className, ...link }: NavLinkProps) {
+  // Route-name destinations only; a literal "/pricing" has no route name to compare.
+  const target = link.to ?? link.href;
+  const isActive =
+    activeName !== undefined &&
+    typeof target === "string" &&
+    (section ? firstSegment(activeName) === firstSegment(target) : activeName === target);
+
+  return (
+    <Link
+      {...link}
+      className={[className, isActive ? "is-active" : undefined].filter(Boolean).join(" ") || undefined}
+      aria-current={isActive ? "page" : undefined}
+    />
+  );
+}
+```
+
+```tsx title="src/web/layout.tsx"
+import type { LayoutLoader, LayoutProps } from "@warlock.js/web";
+import { NavLink } from "./components/nav-link";
+
+export const loader = (async ({ route }) => {
+  return { activeName: route.name };
+}) satisfies LayoutLoader;
+
+export default function SiteLayout({ data, children }: LayoutProps<typeof loader>) {
+  return (
+    <>
+      <nav aria-label="Main">
+        <NavLink to="home" activeName={data.activeName}>
+          Home
+        </NavLink>
+        <NavLink to="products.index" section activeName={data.activeName}>
+          Products
+        </NavLink>
+      </nav>
+      {children}
+    </>
+  );
+}
+```
+
+`route.name` is the page's `config.route.name` (or its generated name) and is `undefined` only when the page has none, so give navbar targets explicit names. A `404.page.tsx` renders with no layout, so no navbar is drawn there.
+
+### Client only: `currentRoute()` behind `useIsClient()`
+
+```tsx title="src/web/components/client-nav-link.tsx"
+import { Link, currentRoute, useIsClient, type LinkProps } from "@warlock.js/web";
+
+export function ClientNavLink({ className, ...link }: LinkProps) {
+  // false on the server and during hydration, true afterwards: no mismatch,
+  // the active style appears right after mount.
+  const isClient = useIsClient();
+  const target = link.to ?? link.href;
+  const isActive = isClient && typeof target === "string" && currentRoute()?.name === target;
+
+  return (
+    <Link
+      {...link}
+      className={[className, isActive ? "is-active" : undefined].filter(Boolean).join(" ") || undefined}
+      aria-current={isActive ? "page" : undefined}
+    />
+  );
+}
+```
+
+Do not wrap this component in `React.memo` unless a prop changes per navigation: it would not re-render and the highlight would go stale.
 
 ## Build a URL without React
 
@@ -256,6 +388,8 @@ export function CurrentProductId() {
 }
 ```
 
+Both return `undefined` during the server render and before hydration mounts, so branching on them in markup needs `useIsClient()` (see the navbar recipe above).
+
 `previousRoute()` means the previously swapped page, not the previous browser-history entry. On the first page it is `undefined`.
 
 `routerEvents` is exported and `refresh()` emits its start/end/error lifecycle today. Ordinary Link and `navigateTo` swaps are not yet wired to that emitter, so do not use it as a complete global navigation progress signal yet.
@@ -275,13 +409,6 @@ export function CurrentProductId() {
 - **Do not add `params` or `query` to a literal URL.** Put them in the URL itself or use a route name.
 - **Do not build a client matcher.** The server's matched name and params travel in the payload.
 - **Do not import `esm/hydration/index.mjs`.** Normal consumers import navigation from `@warlock.js/web`; low-level runtime contracts live at `@warlock.js/web/client/runtime`.
-
-## See also
-
-- [`create-a-page/SKILL.md`](../create-a-page/SKILL.md) — declare route names and params.
-- [`load-page-data/SKILL.md`](../load-page-data/SKILL.md) — what `refresh()` re-runs.
-- [`use-layouts/SKILL.md`](../use-layouts/SKILL.md) — why layout state persists.
-- [`write-the-root/SKILL.md`](../write-the-root/SKILL.md) — the `#vessel` swap boundary.
 
 ## Switch the locale
 
@@ -310,3 +437,11 @@ function LocalePicker() {
 ```
 
 The switch re-fetches the current page and commits after its tree is ready. In the default strategy, the browser writes its locale preference only at that commit, so a failed or superseded switch leaves the displayed page and the next document load unchanged. Prefix and `[locale]` routes update their path as part of the successful navigation. Await the returned promise when failure handling matters.
+
+## See also
+
+- The `create-a-page` topic: declare route names and params.
+- The `load-page-data` topic: what `refresh()` re-runs, and the `route` loader argument.
+- The `use-layouts` topic: why layout state persists.
+- The `write-the-root` topic: the `#vessel` swap boundary.
+- The `localize-pages` topic: locale URL strategies and the locale switcher.

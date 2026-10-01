@@ -31,6 +31,7 @@ const packageNotes = [
 ];
 
 function parseFrontmatter(contents) {
+  contents = contents.replace(/\r\n/g, "\n");
   const match = contents.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
   if (!match) return { meta: {}, body: contents };
 

@@ -230,8 +230,9 @@ export function registerSitemapRoutes(router: Router, options: RegisterSitemapRo
       return context.response.notFound() as ReturnedResponse;
     }
     if (selected) {
-      context.response.header("Content-Type", "application/xml");
-      return context.response.text(
+      // `response.text()` would overwrite Content-Type with text/plain; `xml()`
+      // sets application/xml, matching the manifest-backed path.
+      return context.response.xml(
         await buildSiteSitemapXml({
           request: context.request,
           site: selected,

@@ -7,7 +7,7 @@ description: 'Observe SSR page request phases through core `TracingHooks`: page 
 
 Web emits page spans through core's `TracingHooks.onPhase`; there is no
 web-specific tracing API. Configure or register the hook as documented in
-[`@warlock.js/core/request-tracing/SKILL.md`](@warlock.js/core/request-tracing/SKILL.md).
+the `request-tracing` topic of the `warlock-js-core` skill.
 
 ```ts
 import { registerTracingHooks } from "@warlock.js/core";

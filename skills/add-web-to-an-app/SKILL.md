@@ -1,6 +1,6 @@
 ---
 name: add-web-to-an-app
-description: 'Install the SSR page layer with `warlock add web`: add React/Vite peers, scaffold `src/web/root.tsx` and `src/web/index.page.tsx`, register `webConnector()`, and safely relocate the stock top-level `GET "/"` JSON route to `/welcome`. Triggers: `warlock add web`, `webConnector`, `src/web/root.tsx`, `src/web/index.page.tsx`, `GET "/welcome"`; "add web to an app", "install Warlock web", "scaffold SSR", "homepage route collision". Skip: author a page — `@warlock.js/web/create-a-page/SKILL.md`; customize the document — `@warlock.js/web/write-the-root/SKILL.md`; dev/build/start commands — `@warlock.js/core/run-app/SKILL.md`; competing installers `create-next-app`, `vite create`, `remix init`.'
+description: 'Install the SSR page layer with `warlock add web`: add React/Vite peers, scaffold `src/web/root.tsx` and `src/web/index.page.tsx`, register `webConnector()`, and safely relocate the stock top-level `GET "/"` JSON route to `/welcome`. Triggers: `warlock add web`, `webConnector`, `src/web/root.tsx`, `src/web/index.page.tsx`, `GET "/welcome"`; "add web to an app", "install Warlock web", "scaffold SSR", "homepage route collision". Skip: author a page — the `create-a-page` topic; customize the document — the `write-the-root` topic; dev/build/start commands — the `run-app` topic of the `warlock-js-core` skill; competing installers `create-next-app`, `vite create`, `remix init`.'
 ---
 
 # Warlock — add web to an app
@@ -113,7 +113,7 @@ The desired result is one page route at `/` and, when the stock JSON route exist
 
 ## See also
 
-- [`create-a-page/SKILL.md`](../create-a-page/SKILL.md) — write the page after installation.
-- [`write-the-root/SKILL.md`](../write-the-root/SKILL.md) — customize the generated document shell.
-- [`serve-styles/SKILL.md`](../serve-styles/SKILL.md) — add global CSS from the root.
-- [`@warlock.js/core/run-app/SKILL.md`](@warlock.js/core/run-app/SKILL.md) — run dev, build, and production.
+- The `create-a-page` topic: write the page after installation.
+- The `write-the-root` topic: customize the generated document shell.
+- The `serve-styles` topic: add global CSS from the root.
+- The `run-app` topic of the `warlock-js-core` skill: run dev, build, and production.

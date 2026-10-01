@@ -1,6 +1,6 @@
 ---
 name: stream-deferred-data
-description: 'Stream slow page-loader data after the shell with `defer()` and React `use()` inside `<Suspense>`, instead of blocking the first byte on it. Covers the wire contract (a deferred value settles as a chunk script after the shell, or as an NDJSON line on client navigation), errors reaching the nearest `<Suspense>` error boundary with status 200 already sent, `web.streaming.deferTimeout`, and the metadata rule (`config.metadata` may read only resolved keys). Triggers: `defer()`, `use(data.`, `DeferredValueError`, `DeferTimeoutError`, `DeferredStreamClosedError`, `DeferredKeyInMetadataError`, `web.streaming.deferTimeout`, `__WARLOCK_DEFER__`; "stream part of a page", "slow loader data", "show a skeleton while reviews load", "Suspense in a page component", "defer a promise from a loader". Skip: the rest of the loader contract — `@warlock.js/web/load-page-data/SKILL.md`; re-fetching after a mutation — `@warlock.js/web/navigate-on-the-client/SKILL.md`; competing primitives Remix `defer()`/`Await`, Next.js `loading.tsx`/streaming RSC (this framework has no RSC).'
+description: 'Stream slow page-loader data after the shell with `defer()` and React `use()` inside `<Suspense>`, instead of blocking the first byte on it. Covers the wire contract (a deferred value settles as a chunk script after the shell, or as an NDJSON line on client navigation), errors reaching the nearest `<Suspense>` error boundary with status 200 already sent, `web.streaming.deferTimeout`, and the metadata rule (`config.metadata` may read only resolved keys). Triggers: `defer()`, `use(data.`, `DeferredValueError`, `DeferTimeoutError`, `DeferredStreamClosedError`, `DeferredKeyInMetadataError`, `web.streaming.deferTimeout`, `__WARLOCK_DEFER__`; "stream part of a page", "slow loader data", "show a skeleton while reviews load", "Suspense in a page component", "defer a promise from a loader". Skip: the rest of the loader contract — the `load-page-data` topic; re-fetching after a mutation — the `navigate-on-the-client` topic; competing primitives Remix `defer()`/`Await`, Next.js `loading.tsx`/streaming RSC (this framework has no RSC).'
 ---
 
 # Warlock — stream deferred page data
@@ -231,8 +231,8 @@ instead: the server awaits every deferred value and inlines the fully
 resolved data into one JSON response.
 
 **Wire format:** devalue is the page-data wire format (the same standing
-ruling `load-page-data/SKILL.md`'s ["What survives the
-wire"](../load-page-data/SKILL.md#what-survives-the-wire) section documents),
+ruling the "What survives the wire" section of the `load-page-data`
+topic documents),
 including a deferred value's settlement — a `Date`, `Map`, `Set`, or `BigInt`
 returned from inside `defer({ ... })` survives the chunk script and the
 NDJSON line intact, not just the page's other, non-deferred data. The
@@ -322,5 +322,5 @@ cache never serves one representation to a client that asked for the other.
 
 ## See also
 
-- [`load-page-data/SKILL.md`](../load-page-data/SKILL.md) — the rest of the loader contract `defer()` builds on.
-- [`navigate-on-the-client/SKILL.md`](../navigate-on-the-client/SKILL.md) — the NDJSON data request this streams over.
+- The `load-page-data` topic: the rest of the loader contract `defer()` builds on.
+- The `navigate-on-the-client` topic: the NDJSON data request this streams over.

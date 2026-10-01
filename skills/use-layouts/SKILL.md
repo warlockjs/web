@@ -1,6 +1,6 @@
 ---
 name: use-layouts
-description: 'Wrap pages with positional `layout.tsx` modules, compose literal `config.prefix`, inherited middleware, static robots, and sitemap defaults, load typed layout data with `LayoutLoader` / `LayoutProps`, and preserve layout state during client navigation. Triggers: `layout.tsx`, `prefix`, `LayoutLoader`, `LayoutProps`, `children`; "add a page layout", "share navigation between pages", "prefix page routes", "keep a layout mounted". Skip: full-document root — `@warlock.js/web/write-the-root/SKILL.md`; page route export — `@warlock.js/web/create-a-page/SKILL.md`; loader and shared lifecycle — `@warlock.js/web/load-page-data/SKILL.md`; competing layout systems `next/layout`, React Router outlets, Remix nested routes.'
+description: 'Wrap pages with positional `layout.tsx` modules, compose literal `config.prefix`, inherited middleware, static robots, and sitemap defaults, load typed layout data with `LayoutLoader` / `LayoutProps`, and preserve layout state during client navigation. Triggers: `layout.tsx`, `prefix`, `LayoutLoader`, `LayoutProps`, `children`; "add a page layout", "share navigation between pages", "prefix page routes", "keep a layout mounted". Skip: full-document root — the `write-the-root` topic; page route export — the `create-a-page` topic; loader and shared lifecycle — the `load-page-data` topic; competing layout systems `next/layout`, React Router outlets, Remix nested routes.'
 ---
 
 # Warlock — use layouts
@@ -105,7 +105,7 @@ A `404.page.tsx` renders with no layouts, even when it sits in a directory with 
 
 This is scoped to the not-found page: an ordinary page in the same directory still gets its full layout chain, and nested-layout refusal on the 404's own path is still enforced exactly as it is for any other page.
 
-`error.page.tsx` — the application's other special page, its one error boundary ([create-a-page](../create-a-page/SKILL.md)) — is excluded from discovery's layout-chain analysis the same way: neither special page has a layout chain of its own.
+`error.page.tsx` — the application's other special page, its one error boundary (the `create-a-page` topic) — is excluded from discovery's layout-chain analysis the same way: neither special page has a layout chain of its own.
 
 ## Why layout state persists
 
@@ -117,11 +117,11 @@ Client navigation rebuilds the Layout + Page element tree at the same `#vessel` 
 
 `LayoutLoader` receives the full `PageContext` and its return reaches `LayoutProps<typeof loader>["data"]`. Loaders run sequentially as App, every matched layout from outermost to innermost, then Page. Each loader's return belongs only to its own component, so a layout loader still cannot read another loader's result.
 
-Use `shared` when multiple levels need one request-derived value, and write it in middleware before loaders run. See [load-page-data](../load-page-data/SKILL.md).
+Use `shared` when multiple levels need one request-derived value, and write it in middleware before loaders run. See the `load-page-data` topic.
 
 ## The client boundary
 
-A layout is projected for the browser the same way a page is: `config` and `loader` are stripped, including imports used only by them. The default component and `register()` form the client graph; `register()` runs once per module namespace on both the server and the browser. A named `ErrorBoundary` remains a separate server-rendered boundary export. See [create-a-page](../create-a-page/SKILL.md).
+A layout is projected for the browser the same way a page is: `config` and `loader` are stripped, including imports used only by them. The default component and `register()` form the client graph; `register()` runs once per module namespace on both the server and the browser. A named `ErrorBoundary` remains a separate server-rendered boundary export. See the `create-a-page` topic.
 
 ## Inherited policy
 
@@ -159,7 +159,7 @@ cache policy, validation, or a sitemap supplier.
 
 ## See also
 
-- [`create-a-page/SKILL.md`](../create-a-page/SKILL.md) — declare the page path composed after the prefix.
-- [`write-the-root/SKILL.md`](../write-the-root/SKILL.md) — the document and `#vessel` outside the layout.
-- [`load-page-data/SKILL.md`](../load-page-data/SKILL.md) — `LayoutLoader`, sequential execution, and `shared`.
-- [`navigate-on-the-client/SKILL.md`](../navigate-on-the-client/SKILL.md) — client swaps and `refresh()`.
+- The `create-a-page` topic: declare the page path composed after the prefix.
+- The `write-the-root` topic: the document and `#vessel` outside the layout.
+- The `load-page-data` topic: `LayoutLoader`, sequential execution, and `shared`.
+- The `navigate-on-the-client` topic: client swaps and `refresh()`.

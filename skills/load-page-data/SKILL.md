@@ -1,16 +1,30 @@
 ---
 name: load-page-data
-description: "Load App, Layout, and Page data with named loaders; page validation and middleware belong in `config`. Also how loader data is typed on the page (`Serialized` on the devalue wire). Triggers: `PageLoader`, `LayoutLoader`, `AppLoader`, `PageProps`, `Serialized`, `ModelResourceRegistry`, `config.validation`, `config.middleware`, `request.validated`, `shared`."
+description: "Load App, Layout, and Page data with named loaders; page validation and middleware belong in `config`. Also how loader data is typed on the page (`Serialized` on the devalue wire). Triggers: `PageLoader`, `LayoutLoader`, `AppLoader`, `PageProps`, `Serialized`, `ModelResourceRegistry`, `config.validation`, `config.middleware`, `request.validated`, `shared`, `response.cookie`, `response.clearCookie`, `response.redirect`, `response.notFound`."
 ---
 
 # Warlock — load page data
 
 Loaders run on the server and return serializable data to their own component level.
-Prefer a named `async function loader` with a public context type such as
-`PageLoaderContext<typeof config.validation, typeof config.route>`. Let the
-named function infer its return; do not use `satisfies` or annotate the whole
-function as `PageLoader`.
-Pass `typeof loader` to the matching props type.
+Declare the loader so TypeScript infers its return type, then pass `typeof loader`
+to the matching props type (`PageProps<typeof loader>`). Two spellings do that, and
+this skill uses both:
+
+```tsx
+// Either: a named function, with the context typed on the parameter.
+export async function loader({ request }: PageLoaderContext<typeof config.validation, typeof config.route>) {
+  return { id: request.validated().params.id };
+}
+
+// Or: an arrow function checked with `satisfies`; the context is typed from PageLoader.
+export const loader = (async ({ request }) => {
+  return { id: request.validated().params.id };
+}) satisfies PageLoader<typeof config.validation, typeof config.route>;
+```
+
+Never annotate the loader itself as `export const loader: PageLoader = ...`.
+`PageLoader` returns `unknown`, so the annotation replaces the inferred return type
+and `data` in `PageProps<typeof loader>` loses its shape.
 
 ## Pass environment values through loader data
 
@@ -173,8 +187,8 @@ reaches the browser as a plain value. A resource / toJSON() is the serialization
 page data.
 ```
 
-The fix is always the same: give the offending value a `resource` (see
-[`define-resource/SKILL.md`](../../../core/skills/define-resource/SKILL.md)) or a
+The fix is always the same: give the offending value a `resource` (see the
+`define-resource` topic of the `warlock-js-core` skill) or a
 `toJSON()` method so it reaches the wire as the plain value devalue already
 knows how to serialize — never work around the throw by hand-flattening the
 value in the loader.
@@ -183,8 +197,7 @@ This applies to `appData`/`layoutData`/`pageData` and to a `defer()`red value's
 eventual settlement. It does **not** change `shared`, which keeps its own,
 stricter gate (scalars, arrays, plain objects, or `toJSON()` — `Date`, `Map`,
 `Set`, functions, and arbitrary class instances are rejected there
-regardless) — see [Declare the shared payload](#declare-the-shared-payload)
-below.
+regardless) — see Declare the shared payload below.
 
 ## What the component sees: `Serialized<Return, "devalue">`
 
@@ -222,7 +235,7 @@ What each loader value becomes:
 
 A model with `static resource = ProductResource` is registered automatically: `warlock generate.typings` and `warlock dev` write `.warlock/typings/model-resources.d.ts`, so the page types it as the resource's output with no extra code.
 
-See [`define-resource`](../../../core/skills/define-resource/SKILL.md) in core for `Serialized<T, W>` and the registry.
+See the `define-resource` topic of the `warlock-js-core` skill for `Serialized<T, W>` and the registry.
 
 **A promise nested in plain loader data is awaited, and its settled value is serialized.** `return { product: getProduct() }` delivers the resolved `product` (a model resolved from a promise reaches the page as its `toJSON()` output instead of making devalue throw), and the type reads `Serialized` of the settled value. This is not streaming: only a top-level `defer()` key streams, and inside `defer()` a promise nested under a key is still refused with `NestedDeferredValueError`.
 
@@ -234,18 +247,20 @@ See [`define-resource`](../../../core/skills/define-resource/SKILL.md) in core f
 | positional `layout.tsx` | `LayoutLoader` | `LayoutProps<typeof loader>` |
 | `*.page.tsx`            | `PageLoader`   | `PageProps<typeof loader>`   |
 
-All receive one context object with `request`, `response`, `shared`, and `signal`. Page loaders add generics that connect their sibling `validation` and `route` exports to `request.validated()` and `request.input()`.
+All receive one context object with `request`, `response`, `shared`, and `route`; page loaders also get `site` and `session` when those are configured. Page loaders add generics that connect their sibling `validation` and `route` exports to `request.validated()` and `request.input()`.
 
 Page loaders, layout loaders, metadata callbacks, and page actions also receive `route: { name, path, params }` — the MATCHED page's route. Read it instead of `request.route`: under `sites`, core registers one `/*` catch-all per method, so `request.route` is that catch-all there. `name` is the page's `config.route.name`, or its generated name (never a `<site>.` prefixed or internal key); it is `undefined` only if the page has none.
 
 ## Abandoned-request signal
 
-`ctx.signal` is an `AbortSignal` that fires when the client disconnects before the response finishes. Hand it to anything cancelable:
+The runtime passes every loader a `signal`, an `AbortSignal` that fires when the client disconnects before the response finishes. The exported `PageLoaderContext` type does not declare it, so add it to the parameter type. Hand it to anything cancelable:
 
 ```ts
 import type { PageLoaderContext } from "@warlock.js/web";
 
-export async function loader({ signal }: PageLoaderContext<undefined, undefined>) {
+export async function loader({
+  signal,
+}: PageLoaderContext<undefined, undefined> & { signal: AbortSignal }) {
   const res = await fetch("https://api.example.com/products", { signal });
   return { products: await res.json() };
 }
@@ -270,7 +285,7 @@ export const config = {
 
 **Seal objects reject unknown keys by default.** A `query` schema without `.stripUnknown()` answers 400 to `?utm_source=newsletter`, `?fbclid=…`, or any other tracking param a real visitor's link carries — that default is not changing. `.stripUnknown()` on the `query` object is the normal spelling for a public page; drop it only when you deliberately want to 400 on any extra key.
 
-A legacy `{ schema, validating }` shape is still accepted — `schema` a single Seal validator, `validating` any ordered subset of `"body"`, `"query"`, `"params"`, and `"headers"` (defaulting to query + params, with params winning a duplicate key) — but it is legacy: `{ params, query }` is the shape every new page should declare. See [create-a-page](../create-a-page/SKILL.md#validate-the-pages-input--the-validation-export) for the full example.
+A legacy `{ schema, validating }` shape is still accepted — `schema` a single Seal validator, `validating` any ordered subset of `"body"`, `"query"`, `"params"`, and `"headers"` (defaulting to query + params, with params winning a duplicate key) — but it is legacy: `{ params, query }` is the shape every new page should declare. See the `create-a-page` topic (Validate the page's input) for the full example.
 
 Either shape builds one schema and runs ONE validation pass at the page level's turn: after the app and layout loaders (so a layout redirect still wins, and the error page renders inside layouts that have their data), before the page loader. A failure short-circuits with status **400**, never 422 — a page is a document, not an API endpoint. A full page load renders the application's `error.page.tsx` with status 400, exactly as an ordinary loader throw with its own `statusCode` already does; the error it receives carries the validation issues:
 
@@ -311,17 +326,73 @@ A loader that **throws** is also terminal: it stops lower loaders, discards its 
 
 ## Loader response surface
 
-Each loader gets its own buffered response — never the live one — so that a level discarded by a short-circuit or a throw cannot leak half-written headers onto a response it no longer owns. The public loader methods are:
+Each loader gets its own buffered response, never the live one, so that a level discarded by a short-circuit or a throw cannot leak half-written headers or cookies onto a response it no longer owns. These are all of its public methods. The first six return the buffered response, so they chain; the last three return a short-circuit value that you must `return`.
+
+| Method                                  | What it does                                                                                       |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `header(key, value)`                    | Queue one response header. The value is converted with `String()`                                   |
+| `headers(bag)`                          | Queue every entry of a `Record<string, unknown>` as a header                                        |
+| `setStatusCode(code)`                   | Queue the status code. There is no `status()` method                                                |
+| `cookie(name, value, options?)`         | Queue a `Set-Cookie`. Same arguments as core `response.cookie()`                                    |
+| `clearCookie(name, options?)`           | Queue a cookie deletion. Same arguments as core `response.clearCookie()`                            |
+| `redirect(url, statusCode = 302)`       | Queue the status and `Location`, and return a redirect short-circuit                                |
+| `permanentRedirect(url)`                | `redirect(url, 301)`                                                                                |
+| `notFound(body?)`                       | Queue status 404 and return a not-found short-circuit that renders your `404.page.tsx`              |
 
 ```ts
 response.header("cache-control", "private, max-age=60");
+response.headers({ "x-feature": "beta", "x-tenant": tenantKey });
 response.setStatusCode(201);
 return response.redirect("/login");
 return response.permanentRedirect("/products");
 return response.notFound();
 ```
 
-Do not continue after a redirect or `notFound`; return the result. Surviving buffers are committed root to leaf. For the same header key, the leafward write wins. A loader that throws or a lower level discarded by a short-circuit does not leak its buffered writes.
+Do not continue after a redirect or `notFound`; return the result. Surviving buffers are committed root to leaf. For the same header key (case-insensitive) or the same cookie name, the leafward write wins. A loader that throws, or a lower level discarded by a short-circuit, does not leak its buffered writes.
+
+### Cookies
+
+`cookie()` and `clearCookie()` take the same options as the core `Response` (`maxAge` in seconds, `path`, `domain`, `httpOnly`, `sameSite`, `secure`, plus `raw`):
+
+- **Secure defaults.** A cookie is `httpOnly`, `sameSite: "lax"` and, outside development, `secure`. Override per call (`{ httpOnly: false }`) only when browser code must read it.
+- **JSON by default.** The value is `JSON.stringify`-ed, and `request.cookie(name)` parses it back. Pass `{ raw: true }` for a plain string such as a token.
+- **Match the scope when clearing.** A cookie is deleted only when `clearCookie` is given the same `path` (and `domain`) it was set with.
+- **Not cacheable.** A response that sets or clears a cookie is always `Cache-Control: private, no-store`, even on a page with a `config.cache` opt-in.
+- **Reads see the incoming cookie.** Within the same request `request.cookie()` returns what the browser sent, not what you just queued.
+
+A theme preference, set from a query string and cleared on request:
+
+```tsx title="src/web/settings.page.tsx"
+import type { PageConfig, PageLoaderContext, PageProps } from "@warlock.js/web";
+
+const ONE_YEAR = 60 * 60 * 24 * 365;
+
+export const config = { route: { path: "/settings", name: "settings" } } satisfies PageConfig;
+
+export async function loader({ request, response }: PageLoaderContext<undefined, typeof config.route>) {
+  const requested = request.input("theme");
+
+  if (requested === "dark" || requested === "light") {
+    response.cookie("theme", requested, { maxAge: ONE_YEAR, path: "/", httpOnly: false });
+
+    return { theme: requested };
+  }
+
+  if (requested === "reset") {
+    response.clearCookie("theme", { path: "/" });
+
+    return { theme: "light" };
+  }
+
+  return { theme: request.cookie("theme", "light") as string };
+}
+
+export default function SettingsPage({ data }: PageProps<typeof loader>) {
+  return <p>Current theme: {data.theme}</p>;
+}
+```
+
+A form that sets or clears a cookie on submit belongs in a page action; see the `handle-a-form-action` topic.
 
 ## Declare the shared payload
 
@@ -402,7 +473,7 @@ Only put browser-safe data in `shared`: scalars, arrays, plain objects, or value
 
 ## Gotchas
 
-- **Use `satisfies`, not a type annotation.** Preserve the return type for component props.
+- **Let the loader's return type be inferred.** Use `satisfies PageLoader<...>` on an arrow function or a typed named function; never `: PageLoader`, which erases the return type that `PageProps` needs.
 - **Return client-safe data.** Components render again in the browser; models and server handles do not survive the wire. `Date`/`Map`/`Set`/`BigInt` DO survive now (devalue is the wire format — see [What survives the wire](#what-survives-the-wire)); a class instance, function, or symbol still does not, and fails the build loudly instead of silently.
 - **Write `shared` in middleware only.** Loaders run after the seal.
 - **Required shared keys need unconditional writers.** The type is a promise for every request.
@@ -415,9 +486,10 @@ Only put browser-safe data in `shared`: scalars, arrays, plain objects, or value
 
 ## See also
 
-- [`create-a-page/SKILL.md`](../create-a-page/SKILL.md) — the complete page module.
-- [`write-the-root/SKILL.md`](../write-the-root/SKILL.md) — `AppLoader`, `<Head />`, and `<Scripts />`.
-- [`use-layouts/SKILL.md`](../use-layouts/SKILL.md) — `LayoutLoader` and persistent wrappers.
-- [
-  avigate-on-the-client/SKILL.md`](../navigate-on-the-client/SKILL.md) — re-fetch loaders with `refresh()`.
-- [`stream-deferred-data/SKILL.md`](../stream-deferred-data/SKILL.md) — stream a slow page-loader key after the shell with `defer()` and `use()`.
+- `create-a-page` topic: the complete page module, including `404.page.tsx`.
+- `set-page-metadata` topic: metadata functions that receive this loader's data.
+- `write-the-root` topic: `AppLoader`, `<Head />`, and `<Scripts />`.
+- `use-layouts` topic: `LayoutLoader` and persistent wrappers.
+- `navigate-on-the-client` topic: re-fetch loaders with `refresh()`.
+- `stream-deferred-data` topic: stream a slow page-loader key after the shell with `defer()` and `use()`.
+- `handle-a-form-action` topic: set cookies and redirect from a form POST.

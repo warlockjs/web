@@ -1,6 +1,6 @@
 ---
 name: write-the-root
-description: 'Author `src/web/root.tsx`, the full-document application root that owns `<html>`, `<head>`, and `<body>`, places page metadata with `<Head />`, renders the hydrated subtree inside `#vessel`, and emits the payload with `<Scripts />`. Triggers: `root.tsx`, `AppProps`, `AppLoader`, `Head`, `Scripts`, `id="vessel"`; "customize the root document", "add html lang", "add an app provider", "where do Head and Scripts go"; typical import `import { Head, Scripts, type AppProps } from "@warlock.js/web"`. Skip: page component contract — `@warlock.js/web/create-a-page/SKILL.md`; layout wrappers — `@warlock.js/web/use-layouts/SKILL.md`; CSS delivery — `@warlock.js/web/serve-styles/SKILL.md`; competing roots `next/layout`, Remix `root`, React `createRoot`.'
+description: 'Author `src/web/root.tsx`, the full-document application root that owns `<html>`, `<head>`, and `<body>`, places page metadata with `<Head />`, renders the hydrated subtree inside `#vessel`, and emits the payload with `<Scripts />`. Triggers: `root.tsx`, `AppProps`, `AppLoader`, `Head`, `Scripts`, `id="vessel"`; "customize the root document", "add html lang", "add an app provider", "where do Head and Scripts go"; typical import `import { Head, Scripts, type AppProps } from "@warlock.js/web"`. Skip: page component contract — the `create-a-page` topic; layout wrappers — the `use-layouts` topic; CSS delivery — the `serve-styles` topic; competing roots `next/layout`, Remix `root`, React `createRoot`.'
 ---
 
 # Warlock — write the root
@@ -71,13 +71,14 @@ export default function App({ children }: AppProps) {
 
 To switch the active locale without a full reload, call `changeLocaleCode(code)`. The switch commits a browser locale preference only after the replacement tree is ready, so a failed or superseded request cannot change the next document load. `lang` and `dir` follow the committed locale on the next render (and every render after).
 
-### `useTrans()` and route translations
+### `useTrans()` survives hydration
 
-The hydration payload carries the selected route-locale translation snapshot.
-`LocaleProvider` receives that snapshot and `useTrans()` translates from it;
-route JSON is not registered into a process-global localization table. The
-snapshot contains the active locale only, so a request or client navigation
-cannot inherit another route's keywords.
+The hydration payload ships a `translations` key holding **only the active locale's keywords** (never the other locales' tables), and `<Scripts />` carries it to the browser. `useTrans()` reads from it before the first client render, so the hydrated text matches the server's. How it gets there depends on where the copy came from:
+
+- **Route `locales.json` (scoped mode, the `localize-pages` topic).** The payload also carries `translationMode: "scoped"`. `LocaleProvider` receives that snapshot and `useTrans()` translates from it; the route JSON is **not** registered into a process-global localization table, so a request or a client navigation cannot inherit another route's keywords.
+- **Module translations (`groupedTranslations`, module `locales.json`; legacy mode).** There is no `translationMode`, so the client installs the payload's keywords into `@mongez/localization`'s global table for the payload's locale (`extend(locale, translations)`) *before* any `register()` hook runs and before the first client render. The same step runs on every client navigation, `refresh()` and `changeLocaleCode()`, so a page does not need its own `register()` to repeat copy the server already sent.
+
+Either way, a component that calls `useTrans()` under `#vessel` renders the same strings on the server and in the browser. Do not read translations from `navigator.language` or a client-only store during render; that is a hydration mismatch (see the `render-client-only` topic).
 
 ## `#vessel` is the hydration boundary
 
@@ -94,7 +95,7 @@ The browser hydrates `#vessel`, not the whole document. The client tree delibera
 
 Because App is outside the hydrated subtree, put client state that must survive navigation in a layout or component beneath `#vessel`, not in the document root.
 
-If `root.tsx` (or any module it needs) fails to load or its `register()` throws, there is no trustworthy Layout+Page composition left to hydrate — Warlock falls back to a plain document with no hydration script at all rather than hydrate the browser against markup nothing can vouch for. See [create-a-page](../create-a-page/SKILL.md) for the app's own `error.page.tsx` boundary, which is tried first.
+If `root.tsx` (or any module it needs) fails to load or its `register()` throws, there is no trustworthy Layout+Page composition left to hydrate — Warlock falls back to a plain document with no hydration script at all rather than hydrate the browser against markup nothing can vouch for. See the `create-a-page` topic for the app's own `error.page.tsx` boundary, which is tried first.
 
 ## `<Head />`
 
@@ -131,7 +132,7 @@ export default function App({ children, shared }: AppProps) {
 }
 ```
 
-Prefer declaring `nonce` on `SharedContext` so the cast is unnecessary; see [load-page-data](../load-page-data/SKILL.md). If no prop is supplied, `<Scripts />` falls back to the framework's request nonce slot.
+Prefer declaring `nonce` on `SharedContext` so the cast is unnecessary; see the `load-page-data` topic. If no prop is supplied, `<Scripts />` falls back to the framework's request nonce slot.
 
 **This is the same nonce a `Content-Security-Policy` header would enforce.**
 `@warlock.js/core`'s opt-in `http.csp` (5.12.0 — see its `configure-app` and
@@ -234,11 +235,11 @@ in production.
 - **Render `<Scripts />` in a custom root.** Without the payload script, the browser cannot hydrate the server-rendered page.
 - **Do not make the component `async`.** Load data with `AppLoader`.
 - **Do not import browser-only state into the root expecting it to persist.** The client hydrates the subtree inside the root, not the root itself.
-- **Stylesheet links are installed separately.** They are inserted before `</head>`; read [serve-styles](../serve-styles/SKILL.md) for the dev/production rules.
+- **Stylesheet links are installed separately.** They are inserted before `</head>`; read the `serve-styles` topic for the dev/production rules.
 
 ## See also
 
-- [`create-a-page/SKILL.md`](../create-a-page/SKILL.md) — the Page level rendered under the root.
-- [`use-layouts/SKILL.md`](../use-layouts/SKILL.md) — the persistent wrapper inside `#vessel`.
-- [`load-page-data/SKILL.md`](../load-page-data/SKILL.md) — `AppLoader` and typed `shared`.
-- [`serve-styles/SKILL.md`](../serve-styles/SKILL.md) — global CSS from `root.tsx`.
+- The `create-a-page` topic: the Page level rendered under the root.
+- The `use-layouts` topic: the persistent wrapper inside `#vessel`.
+- The `load-page-data` topic: `AppLoader` and typed `shared`.
+- The `serve-styles` topic: global CSS from `root.tsx`.

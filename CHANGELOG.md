@@ -2,6 +2,19 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.28.0
+
+### Fixed
+
+- Multi-site apps: the per-site sitemap is served as `application/xml`; it was `text/plain` (the handler set the XML header, then `response.text()` overwrote it).
+
+### Documentation
+
+- Skills: new `set-page-metadata` (every metadata field, merge order, per-locale values), `render-images` (`<Image>`) and `test-a-page` (testing loaders, actions and rendering, proven against a real spec) topics.
+- Skills: cookies from loaders and actions (`cookie`, `clearCookie`, `headers`), a `404.page.tsx` example, active-link styling, the `web.localeRouting.strategy` key with an en/ar example, Tailwind/PostCSS setup, a "breaks after hydration" checklist with `onClientError`, and the `useTrans()` hydration section in `write-the-root`.
+- Skills: `create-a-page` no longer claims there is no client-only component (`ClientOnly` / `useIsClient` exist); the `satisfies PageLoader` guidance is consistent; cross-references name topics instead of file paths, so they still resolve after the skills are copied into an app.
+- `llms.txt` lists every topic with its description (frontmatter in CRLF files was not parsed).
+
 ## 5.27.0 - 2026-10-01
 
 ### Added

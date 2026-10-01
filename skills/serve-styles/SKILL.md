@@ -1,6 +1,6 @@
 ---
 name: serve-styles
-description: 'Serve CSS imported by `root.tsx` or `*.page.tsx`, with render-blocking `<link rel="stylesheet">` delivery from Vite source URLs in development and Vite manifest assets in production. Triggers: `import "./app.css"`, page CSS, `?direct`, `manifest.json`, stylesheet flash, FOUC, `<head>`; "add global styles", "style a page", "CSS missing in SSR", "page flashes unstyled", "serve CSS in production". Skip: root document markup — `@warlock.js/web/write-the-root/SKILL.md`; page authoring — `@warlock.js/web/create-a-page/SKILL.md`; client navigation — `@warlock.js/web/navigate-on-the-client/SKILL.md`; competing styling systems CSS-in-JS, Next CSS, styled-components.'
+description: 'Serve CSS imported by `root.tsx` or `*.page.tsx`, with render-blocking `<link rel="stylesheet">` delivery from Vite source URLs in development and Vite manifest assets in production. Also covers Tailwind v4 setup (`warlock add tailwind`, `postcss.config.mjs`, `@import "tailwindcss"`). Triggers: `import "./app.css"`, `tailwind`, `postcss.config.mjs`, page CSS, `?direct`, `manifest.json`, stylesheet flash, FOUC, `<head>`; "add global styles", "style a page", "CSS missing in SSR", "page flashes unstyled", "serve CSS in production", "add Tailwind", "Tailwind classes not applied". Skip: root document markup — the `write-the-root` topic; page authoring — the `create-a-page` topic; client navigation — the `navigate-on-the-client` topic; competing styling systems CSS-in-JS, Next CSS, styled-components.'
 ---
 
 # Warlock — serve styles
@@ -117,7 +117,7 @@ A module imported with `import()` — a theme picked per tenant — is not in th
 linkStylesheetsFor(request, "src/web/themes/alpha/alpha-theme.tsx");
 ```
 
-The id is the module's app-root-relative source path. Its CSS (plus its static imports' CSS) is linked after the chain's links, for this response only: module graph in dev, manifest in production. An id the build does not know throws `UnknownStylesheetSourceError`; a malformed id throws `InvalidStylesheetSourceError`. See [`multi-theme/SKILL.md`](../multi-theme/SKILL.md).
+The id is the module's app-root-relative source path. Its CSS (plus its static imports' CSS) is linked after the chain's links, for this response only: module graph in dev, manifest in production. An id the build does not know throws `UnknownStylesheetSourceError`; a malformed id throws `InvalidStylesheetSourceError`. See the `multi-theme` topic.
 
 ## Where links land
 
@@ -133,6 +133,47 @@ Consequences:
 ## What ships to the browser
 
 The hydration entry is built from the projected client graph. CSS imports are known-safe asset edges and survive projection even when server exports in the same page module are removed. Application code never imports the published hydration file directly; the web build uses `esm/hydration/index.mjs` as an input and the route handler installs its emitted module URL.
+
+## Tailwind CSS (v4)
+
+Tailwind is not part of `@warlock.js/web`; it is the `tailwind` feature of the Warlock CLI. It needs only a stylesheet imported from `root.tsx` plus a PostCSS config, because Vite runs PostCSS over every imported stylesheet.
+
+**What the scaffold ships** (a new app from `create-warlock` with the web layer):
+
+- `postcss.config.mjs` at the project root, registering the v4 adapter:
+
+  ```js title="postcss.config.mjs"
+  export default {
+    plugins: {
+      "@tailwindcss/postcss": {},
+    },
+  };
+  ```
+
+- `src/web/app.css`, whose first line is `@import "tailwindcss";` (the scaffold also `@import`s its page CSS after it).
+- `import "./app.css";` in `src/web/root.tsx`, the bare side-effect import described above.
+- `tailwindcss` and `@tailwindcss/postcss` (both `^4.1.16`) in `devDependencies`.
+
+**Enable it in an existing app:**
+
+```bash
+npx warlock add tailwind
+```
+
+The feature requires `web` (it resolves it first), adds the two dev dependencies to `package.json`, then:
+
+1. creates `src/web/app.css` containing `@import "tailwindcss";` (skipped if the file exists, so a re-run never overwrites your design tokens),
+2. creates `postcss.config.mjs` (skipped if any PostCSS config already exists; it prints `plugins: { "@tailwindcss/postcss": {} }` for you to add by hand, because two PostCSS configs in one project is undefined behaviour),
+3. prepends `import "./app.css";` to `src/web/root.tsx` as its first line (skipped if the root already imports `app.css`; if `root.tsx` is missing it prints the line for you to add).
+
+Afterwards confirm both packages are in `node_modules`, and run your package manager's install if they are not. To do it by hand, do those three things yourself: install `tailwindcss` and `@tailwindcss/postcss`, create the PostCSS config, and add the stylesheet with `@import "tailwindcss";` imported from `root.tsx`.
+
+Notes:
+
+- **There is no `tailwind.config.js` in v4.** Configuration is CSS: design tokens go in an `@theme { ... }` block in `app.css`, plugins are `@plugin "...";` lines beside the import. The engine finds the class names in your templates through the bundler graph, so there are no `content` globs to maintain.
+- **Put the import in `root.tsx`**, not in a page, so the utilities are linked for every route (a stylesheet imported by the root is part of every response's CSS chain; see "Page-local styles").
+- **Use the PostCSS file, not `@tailwindcss/vite`.** The only app-facing Vite plugin hook is `webConnector({ plugins })`, and it feeds the development server only; the production client build composes its own plugin list. A Tailwind Vite plugin registered there would style `warlock dev` and silently vanish from `warlock build`. The PostCSS config is found from the app root in both: the dev server is rooted at the app, and the production client build points Vite's PostCSS discovery at the app root explicitly.
+- Tailwind output is ordinary imported CSS, so everything above (the `?direct` dev link, the manifest-linked production link, `</head>` placement) applies unchanged. If utilities are missing in production, run through "Diagnose missing or late CSS" below.
 
 ## Diagnose missing or late CSS
 
@@ -152,6 +193,6 @@ The hydration entry is built from the projected client graph. CSS imports are kn
 
 ## See also
 
-- [`write-the-root/SKILL.md`](../write-the-root/SKILL.md) — the document `<head>` these links enter.
-- [`create-a-page/SKILL.md`](../create-a-page/SKILL.md) — page-local asset imports and projection.
-- [`navigate-on-the-client/SKILL.md`](../navigate-on-the-client/SKILL.md) — client swaps after the initial styled document.
+- The `write-the-root` topic: the document `<head>` these links enter.
+- The `create-a-page` topic: page-local asset imports and projection.
+- The `navigate-on-the-client` topic: client swaps after the initial styled document.

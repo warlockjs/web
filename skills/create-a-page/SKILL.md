@@ -19,8 +19,6 @@ export function ErrorBoundary({ error, status }: { error: unknown; status: numbe
 
 The closest authored boundary handles the failure. Keep the boundary itself defensive: if it throws, Warlock escalates to the next boundary or framework fallback.
 
-## The shape
-
 ## Optional server setup module
 
 Pair `product-details.page.tsx` with `product-details.setup.ts` when the React
@@ -80,7 +78,7 @@ export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
 }
 ```
 
-Use `satisfies PageLoader`, not `: PageLoader`. `satisfies` checks the context contract while retaining the loader's concrete return type, which is how `PageProps<typeof loader>` knows the shape of `data`.
+Use `satisfies PageLoader`, not `: PageLoader`. `satisfies` checks the context contract while retaining the loader's concrete return type, which is how `PageProps<typeof loader>` knows the shape of `data`. An annotation `: PageLoader` makes the return type `unknown`. A named `export async function loader(context: PageLoaderContext<...>)` keeps the return type as well; see the `load-page-data` topic.
 
 ## The minimum page
 
@@ -133,7 +131,7 @@ export const config = {
 
 Prefer an explicit stable `name` for links. Without one, Warlock derives a name from the declared path — a global root page gets `index`, another global page gets its dotted path — the same derivation [filesystem routing](#filesystem-routing) uses when there is no `route` at all.
 
-Every segment of a page's URL is written down somewhere: `config.route.path` (or the derived filesystem path), prefixed by positional layouts' `config.prefix` ([use-layouts](../use-layouts/SKILL.md)).
+Every segment of a page's URL is written down somewhere: `config.route.path` (or the derived filesystem path), prefixed by positional layouts' `config.prefix` (see the `use-layouts` topic).
 
 The server validates `config` at module ingress without invoking loaders or helpers. Use plain objects and literal route strings; unknown config keys and `route.cache` are refused.
 
@@ -166,15 +164,15 @@ export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
 }
 ```
 
-`request.validated()` types `params` and `query` from the schema — never a flattened merge of the two — and only includes the key(s) actually declared, so a page validating just `params` gets `{ params }` back, not `{ params, query: undefined }`. There is exactly ONE validation surface on a page; see [load-page-data](../load-page-data/SKILL.md) for how the validated data reaches the loader.
+`request.validated()` types `params` and `query` from the schema — never a flattened merge of the two — and only includes the key(s) actually declared, so a page validating just `params` gets `{ params }` back, not `{ params, query: undefined }`. There is exactly ONE validation surface on a page; see the `load-page-data` topic for how the validated data reaches the loader.
 
 `request.params`/`request.query` arrive as strings, so a numeric `id` or `tab` needs `v.int().coerce()` (or the matching coercing primitive), not `v.int()` alone. `query` objects are strict by default — an unrecognized key such as `?utm_source=…` 400s unless the schema calls `.stripUnknown()`, the normal spelling for a public page's query.
 
-Rejected input never reaches the page loader — validation runs after the app and layout loaders and before the page's own. A full page load renders the application's `error.page.tsx` boundary at status 400, and the error it receives carries the validation issues (read them off `(error as { errors?: unknown }).errors` — see [load-page-data](../load-page-data/SKILL.md#validation) for the full shape) — a page is a document, not an API endpoint, so invalid input never gets a raw JSON body. Those issues are always the safe `{ input, type, error }` shape. In production, the `:value` placeholder in page-validation messages renders `…` instead of the submitted value. A custom rule or translation that builds its message from raw input without `:value` isn't covered, so keep submitted values out of custom message text. A client navigation to the same URL gets the same 400 status, with no document to render.
+Rejected input never reaches the page loader — validation runs after the app and layout loaders and before the page's own. A full page load renders the application's `error.page.tsx` boundary at status 400, and the error it receives carries the validation issues (read them off `(error as { errors?: unknown }).errors` — see the Validation section of the `load-page-data` topic for the full shape) — a page is a document, not an API endpoint, so invalid input never gets a raw JSON body. Those issues are always the safe `{ input, type, error }` shape. In production, the `:value` placeholder in page-validation messages renders `…` instead of the submitted value. A custom rule or translation that builds its message from raw input without `:value` isn't covered, so keep submitted values out of custom message text. A client navigation to the same URL gets the same 400 status, with no document to render.
 
 ### `config.middleware` — a page's own guard, run last
 
-Declare `config.middleware` as an array of `(ctx) => unknown | Promise<unknown>` guards on the page itself, alongside layout middleware above it ([use-layouts](../use-layouts/SKILL.md)). Layouts run outermost-first and the page's own middleware runs last.
+Declare `config.middleware` as an array of `(ctx) => unknown | Promise<unknown>` guards on the page itself, alongside layout middleware above it (see the `use-layouts` topic). Layouts run outermost-first and the page's own middleware runs last.
 
 `route.middleware` and a named `middleware` export are invalid.
 
@@ -342,7 +340,7 @@ Omit `route` and the URL comes from the page's own path beneath `src/web`:
 - A `(group)` directory — parentheses, not braces — contributes nothing to the URL, only to organization: `src/web/(marketing)/pricing.page.tsx` derives `/pricing`. Bracket syntax inside a group name is refused at boot because it can never contribute a dynamic segment; use `(marketing)/[id]/page.page.tsx`, not `(marketing[id])/page.page.tsx`.
 - `index.page.tsx` claims its own directory rather than adding a segment: `src/web/products/index.page.tsx` derives `/products`. This is the ONLY filename with special meaning — `home.page.tsx` is not magic and derives `/home`.
 - `[id]` becomes `:id`: `src/web/products/[id].page.tsx` derives `/products/:id`.
-- A layout `config.prefix` on the page's ancestry composes in front of the derived path exactly as it does for an explicit `config.route.path` ([use-layouts](../use-layouts/SKILL.md)).
+- A layout `config.prefix` on the page's ancestry composes in front of the derived path exactly as it does for an explicit `config.route.path` (see the `use-layouts` topic).
 
 Two pages that derive (or declare) the same effective path is a build error naming both files.
 
@@ -376,54 +374,70 @@ Examples that fail include `/users/:id?`, `/users/:id(\\d+)`,
 
 ## Metadata
 
-`config.metadata` may be a static object or a function of resolved loader data and readonly `shared` payload:
+`config.metadata` is a static object or a function of the resolved loader data:
 
 ```tsx
 import type { PageConfig } from "@warlock.js/web";
 
-export const config: PageConfig = {
+export const config = {
+  route: "/products",
   metadata: {
     title: "Products",
     description: "Browse the product catalogue",
-    robots: "index,follow",
-    openGraph: {
-      type: "website",
-      image: "/images/catalogue-card.png",
-    },
+    openGraph: { siteName: "Acme Store", images: [{ url: "/images/catalogue-card.png" }] },
   },
-};
+} satisfies PageConfig;
 ```
 
-Supported fields are `title`, `description`, `keywords`, `canonical`, `robots`, `openGraph`, and `twitter`. A title may be a string, `{ default?, template? }`, or `{ absolute }`. Function metadata runs after a successful loader. If a loader fails, Warlock uses error metadata instead of calling the page function with missing data. Layout and root metadata use the same input shape; their callbacks receive readonly `{ data, shared, child? }` and run server-side only. A callback returns its complete level: explicit returned fields override `child.metadata`, and omitted child fields are not retained. Spread `child.metadata` when retaining descendant metadata:
+Every field (title templates, `openGraph`, `twitter`, `meta`, `links`, `canonical`, `robots`), the function form, how root, layout and page metadata merge, and per-locale metadata and `alternates` are in the `set-page-metadata` topic.
+
+## The not-found page — `404.page.tsx`
+
+`404.page.tsx` anywhere beneath `src/web` is the application's one not-found page. It is the second of the two special page filenames, next to `error.page.tsx`. Without one, Warlock answers with a built-in "404 | Page not found" document.
+
+```tsx title="src/web/404.page.tsx"
+import type { PageConfig } from "@warlock.js/web";
+
+export const config = {
+  metadata: { title: "Page not found" },
+} satisfies PageConfig;
+
+export default function NotFoundPage() {
+  return (
+    <main>
+      <h1>404</h1>
+      <p>We could not find that page.</p>
+      <a href="/">Back to the homepage</a>
+    </main>
+  );
+}
+```
+
+- **No `config.route`.** It has no URL of its own and answers every URL nothing else matched. Declaring a route on it is a build error, and a second `404.page.tsx` is a build error naming both files.
+- **Props.** The default component receives the usual `{ data, shared, params }`: `shared` is the sealed payload, `params` is empty, and there is no page data because its own `loader` never runs. Its `register()` and `config.middleware` still run and `config.metadata` still applies. Keep the metadata static, since there is no `data` to read.
+- **No loader.** A `loader` export on it is ignored. The `root.tsx` app loader still runs on a 404, so keep it cheap.
+- **No layouts.** It renders inside `root.tsx` only, even when a `layout.tsx` sits above it, so it cannot depend on app chrome that might itself fail.
+- **Status and indexing.** The response status is 404 and `robots` is forced to `noindex`.
+- **Only for document requests.** It renders for `GET`/`HEAD` requests that explicitly list `text/html` in `Accept`. Any other unmatched request (a `fetch()` to a mistyped `/api/...` URL) keeps the JSON 404.
+
+A loader sends the visitor to it with `response.notFound()`, from an app, layout or page loader. Return the result:
 
 ```tsx
-export const config: LayoutConfig = {
-  metadata: ({ data, child }) => ({
-    ...child?.metadata,
-    title: `${data.sectionName} | ${child?.metadata.title ?? "Products"}`,
-  }),
-};
+import type { PageLoader } from "@warlock.js/web";
+import { findProduct } from "app/products/services/find-product.service";
+
+export const loader = (async ({ request, response }) => {
+  const product = await findProduct(request.input("id"));
+
+  if (!product) {
+    return response.notFound();
+  }
+
+  return { product };
+}) satisfies PageLoader;
 ```
 
-That callback may override the child title; an absolute child title remains authoritative. A supplied title resolves to a string in SSR and navigation output.
-
-### Per-locale content slugs (`metadata.alternates`)
-
-A locale-routed page's hreflang alternates are generated automatically from the current request's path (swapping only the locale prefix). That is wrong for a page whose SLUG also differs per locale — a listing page like `/en/apartments-for-rent-in-zamalek` vs. `/ar/شقق-للإيجار-في-الزمالك`. Set `metadata.alternates` to replace the generated set with the page's real per-locale URLs:
-
-```tsx
-export const config: PageConfig<typeof loader> = {
-  metadata: ({ data }) => ({
-    alternates: {
-      en: `/apartments-for-rent-in-${data.listing.slug.en}`,
-      ar: `/شقق-للإيجار-في-${data.listing.slug.ar}`,
-      "x-default": `/apartments-for-rent-in-${data.listing.slug.en}`,
-    },
-  }),
-};
-```
-
-Keys are locale codes plus the optional `"x-default"` key; values are paths (joined onto the public URL, same as `canonical`) or absolute URLs, taken as-is. Setting `alternates` REPLACES the generated locale-alternate `<link>` set entirely — no generated entries render alongside it — and it travels through client navigation the same way any other metadata field does. A page with no `alternates` keeps the generated set unchanged. `metadata.links` entries with `rel: "alternate"` for the same locale code are dropped in favor of `alternates`; don't declare both for the same hreflang.
+Throwing a Core `HttpError` that resolves to 404, such as `ResourceNotFoundError` from `@warlock.js/core`, does the same thing. A client navigation to such a URL falls back to a full page load, which renders the same 404 page. See the `load-page-data` topic for the other response methods.
 
 ## The error boundary — `error.page.tsx`
 
@@ -478,9 +492,11 @@ Keep server-only repository and service reads inside `loader`. Do not read them 
 A `.client.tsx` suffix is a naming convention, not an SSR-isolation boundary. A
 module statically imported by a page, layout, root, or any of their imports is
 still evaluated by the server. Top-level browser globals such as `window`
-therefore crash SSR boot. Warlock does not ship a client-only component
-primitive; code that requires browser globals at module scope cannot be part of
-the SSR page graph.
+therefore crash SSR boot. To keep browser-only UI out of the server render, use
+`<ClientOnly>` / `useIsClient()` from `@warlock.js/web` (see the `render-client-only`
+topic). They defer rendering only; for a module that touches `window` at import
+time, also load it with `React.lazy` inside `<ClientOnly>`, since an ordinary
+`import` still runs on the server.
 
 ### Static assets use `public/`
 
@@ -509,22 +525,24 @@ Creating a page, deleting one, or editing `config.route` is route-table churn ra
 
 - **A page with no `config.route` is not unreachable.** It derives a real URL from its file location — see [Filesystem routing](#filesystem-routing).
 - **A page with no default export IS refused.** Named exports alone fail the build naming the file, instead of serving a blank 200.
-- **`.client.tsx` does not prevent SSR evaluation.** It is a naming convention, not a client-only component primitive.
+- **`.client.tsx` does not prevent SSR evaluation.** It is a naming convention, not an isolation boundary. Use `<ClientOnly>` (the `render-client-only` topic).
 - **Imported static assets do not build.** Put them in `public/` and reference their root URL; CSS imports remain supported.
 - **`[...slug]` is not a catch-all.** It fails boot with
   `PageFileSegmentNotSupportedError`; use an explicit terminal `*` route
   instead — see [Catch-all segments are refused](#catch-all-segments-are-refused).
-- **`process.env` is refused in the client/universal graph, `PUBLIC_` prefix included.** Read env values in a loader and return them as page data; see [`load-page-data/SKILL.md`](../load-page-data/SKILL.md).
+- **`process.env` is refused in the client/universal graph, `PUBLIC_` prefix included.** Read env values in a loader and return them as page data; see the `load-page-data` topic.
 - **Keep `config.route` literal.** A computed route is refused.
 - **Do not annotate the loader with `: PageLoader`.** That erases the return type `PageProps` needs.
 - **Components receive data, not HTTP objects.** `request` and `response` belong to loaders; the component also renders in the browser.
 - **A default component is synchronous.** Fetch in the loader, then render its result.
-- **A page can export `action` (or `actions`) to handle its own form POST.** Use `<Form>` and `useActionData`; see [`handle-a-form-action/SKILL.md`](../handle-a-form-action/SKILL.md). Mutations through API routes remain ordinary requests; call `refresh()` after them.
+- **A page can export `action` (or `actions`) to handle its own form POST.** Use `<Form>` and `useActionData`; see the `handle-a-form-action` topic. Mutations through API routes remain ordinary requests; call `refresh()` after them.
 - **Do not import the hydration entry.** `esm/hydration/index.mjs` is a framework build input, not a consumer API. The public low-level runtime subpath is `@warlock.js/web/client/runtime`.
 
 ## See also
 
-- [`load-page-data/SKILL.md`](../load-page-data/SKILL.md) — validation, loader context, response short-circuits, and `shared`.
-- [`use-layouts/SKILL.md`](../use-layouts/SKILL.md) — positional layouts, prefixes, and persistence.
-- [`navigate-on-the-client/SKILL.md`](../navigate-on-the-client/SKILL.md) — `Link`, `href`, navigation, and `refresh()`.
-- [`serve-styles/SKILL.md`](../serve-styles/SKILL.md) — CSS imports in page and root modules.
+- `set-page-metadata` topic: every metadata field, merge order, per-locale recipes.
+- `load-page-data` topic: validation, loader context, response short-circuits, and `shared`.
+- `use-layouts` topic: positional layouts, prefixes, and persistence.
+- `navigate-on-the-client` topic: `Link`, `href`, navigation, and `refresh()`.
+- `render-client-only` topic: `ClientOnly` and `useIsClient` for browser-only UI.
+- `serve-styles` topic: CSS imports in page and root modules.

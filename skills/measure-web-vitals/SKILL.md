@@ -1,6 +1,6 @@
 ---
 name: measure-web-vitals
-description: 'Report field Core Web Vitals (LCP, INP, CLS, plus FCP/TTFB) from the browser with the official `web-vitals` library and `navigator.sendBeacon`, attributed to the current route and device class. Covers where to register the reporter (`<ClientOnly>` / a root-level effect component, never module scope), why LCP/CLS are a HARD-load metric while INP accumulates for the whole session, tagging soft (client) navigations with `routerEvents`, and the p75 field thresholds that judge a route. Triggers: `web-vitals`, `onLCP`, `onINP`, `onCLS`, `onFCP`, `onTTFB`, `sendBeacon`, "Core Web Vitals", "RUM", "real user monitoring", "field data", "LCP too slow", "layout shift", "INP budget", "p75". Skip: lab/synthetic budgets and CI performance gates — a later addition; the `<Image>` component''s own API — read `web/src/image/types.ts`; client-only rendering mechanics — `@warlock.js/web/render-client-only/SKILL.md`; the root document shell — `@warlock.js/web/write-the-root/SKILL.md`.'
+description: 'Report field Core Web Vitals (LCP, INP, CLS, plus FCP/TTFB) from the browser with the official `web-vitals` library and `navigator.sendBeacon`, attributed to the current route and device class. Covers where to register the reporter (`<ClientOnly>` / a root-level effect component, never module scope), why LCP/CLS are a HARD-load metric while INP accumulates for the whole session, tagging soft (client) navigations with `routerEvents`, and the p75 field thresholds that judge a route. Triggers: `web-vitals`, `onLCP`, `onINP`, `onCLS`, `onFCP`, `onTTFB`, `sendBeacon`, "Core Web Vitals", "RUM", "real user monitoring", "field data", "LCP too slow", "layout shift", "INP budget", "p75". Skip: lab/synthetic budgets and CI performance gates — a later addition; the `<Image>` component''s own API, descriptors and loaders — the `render-images` topic; client-only rendering mechanics — the `render-client-only` topic; the root document shell — the `write-the-root` topic.'
 ---
 
 # Warlock — measure Web Vitals (field RUM)
@@ -21,7 +21,7 @@ npm install web-vitals
 The reporter must run exactly once per document, on the browser only, and
 must not delay hydration or block the first render. That rules out module
 scope in anything reachable from the server render — a page, layout, or
-`root.tsx` module is [universal](../create-a-page/SKILL.md#the-client-boundary)
+`root.tsx` module is universal (see the `create-a-page` topic)
 and evaluated during SSR, so `web-vitals`' own `window` access at call time
 would need guarding anyway. The two supported places to call it:
 
@@ -64,7 +64,7 @@ compete with the page's own critical path for bandwidth.
 
 **Or `<ClientOnly>`**, if reporting lives next to other client-only widgets
 rather than the top-level layout — see
-[render-client-only](../render-client-only/SKILL.md). Either placement is
+the `render-client-only` topic. Either placement is
 fine; what matters is that the `web-vitals` import and every `on*` call stay
 inside a client-only effect, never at module scope, and that the effect has
 an empty dependency array so it fires exactly once per document.
@@ -144,7 +144,7 @@ for the document that was actually loaded from the network, because both are
 defined relative to a navigation's own paint timeline and layout history. A
 Warlock client navigation (`<Link>`, `navigateTo()`, `refresh()`) never
 reloads the document — it fetches page data and swaps the tree
-([navigate-on-the-client](../navigate-on-the-client/SKILL.md)) — so LCP and
+(the `navigate-on-the-client` topic) — so LCP and
 CLS keep firing for the route the visitor HARD-landed on, not whatever route
 is on screen ten client navigations later. `web-vitals` has no way to know a
 Warlock soft navigation happened at all; it only watches the DOM and the
@@ -213,7 +213,7 @@ image — it flips `loading` to `"eager"` and sets `fetchPriority="high"`,
 which is right for exactly one image per page and wrong (it competes for
 bandwidth with the real LCP candidate) for every other one. Every image is
 `loading="lazy"` by default unless `priority` says otherwise — do not add a
-blanket `loading="eager"` override.
+blanket `loading="eager"` override. The descriptor shape, `sizes`, the default loader and CDN loaders are in the `render-images` topic.
 
 **Fonts.** Preload the page's above-the-fold webfont with a `<link
 rel="preload" as="font">` in `root.tsx`'s `<head>` (beside `<Head />`, which
@@ -223,8 +223,8 @@ the `@font-face` rule. Both aim at LCP text and CLS from font-swap reflow,
 not at INP.
 
 **CSS.** Only imported stylesheets are supported —
-[create-a-page](../create-a-page/SKILL.md#static-assets-use-public)'s static
-asset rule and [serve-styles](../serve-styles/SKILL.md) cover the mechanics.
+the static-asset rule in the `create-a-page` topic and the
+`serve-styles` topic cover the mechanics.
 Canon: no inline `<style>` tags — imported CSS is what the framework's
 stylesheet pipeline can dedupe, cache and ship as a real `<link>`, which
 matters for LCP because it lets the browser start the CSS fetch as early and
@@ -233,11 +233,11 @@ as cacheably as possible.
 **Hydration.** Keep the client bundle small — every byte the browser must
 parse and execute before it can respond to input is a direct INP cost. Wrap
 non-critical widgets (a chat launcher, a "recently viewed" rail) in
-[`<ClientOnly>`](../render-client-only/SKILL.md) paired with `React.lazy`, so
+`<ClientOnly>` (see the `render-client-only` topic) paired with `React.lazy`, so
 their code does not even download until after the page has hydrated, rather
 than merely deferring when it _renders_.
 
-**Suspense / `defer()`.** A [deferred](../stream-deferred-data/SKILL.md)
+**Suspense / `defer()`.** A deferred (see the `stream-deferred-data` topic)
 section's `<Suspense>` fallback IS the layout that section occupies until the
 real content arrives — size the fallback (a skeleton with the same
 dimensions the resolved content will have) rather than leaving it collapse
@@ -259,7 +259,7 @@ all.
 - **Never call `web-vitals`' `on*` functions at module scope.** A page,
   layout, or `root.tsx` module is evaluated during SSR; `window` access there
   crashes the server render. Register from an effect, per
-  [render-client-only](../render-client-only/SKILL.md).
+  the `render-client-only` topic.
 - **LCP and CLS do not move with a soft navigation.** They stay attributed
   to the route the visitor hard-landed on; only INP's late report should be
   tagged with whatever `routerEvents.onNavigated` last saw.
@@ -270,12 +270,12 @@ all.
 
 ## See also
 
-- [`render-client-only/SKILL.md`](../render-client-only/SKILL.md) — the
+- The `render-client-only` topic: the
   `<ClientOnly>` / `useIsClient` primitive the reporter registration relies
   on.
-- [`write-the-root/SKILL.md`](../write-the-root/SKILL.md) — `root.tsx` and
+- The `write-the-root` topic: `root.tsx` and
   `#vessel`, where a root-level reporter component is placed.
-- [`navigate-on-the-client/SKILL.md`](../navigate-on-the-client/SKILL.md) —
+- The `navigate-on-the-client` topic:
   `Link`, `navigateTo()`, `refresh()`: what makes a navigation "soft".
-- [`stream-deferred-data/SKILL.md`](../stream-deferred-data/SKILL.md) —
+- The `stream-deferred-data` topic:
   `defer()` and `<Suspense>`, relevant to the CLS guidance above.

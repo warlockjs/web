@@ -1,6 +1,6 @@
 ---
 name: localize-pages
-description: 'Define route-owned `locales.json` dictionaries for SSR pages, use `useTrans()` and `useChangeLocaleCode()`, and maintain generated route translation key types. Triggers: `locales.json`, `$group`, `useTrans`, `useChangeLocaleCode`, `route translations`, `TranslationKeyRegistry`, `transFromKeywords`; "translate a page", "page-local copy", "route locale JSON", "switch locale". Skip: global module translations and localized database columns — `@warlock.js/core/use-localization/SKILL.md`.'
+description: 'Define route-owned `locales.json` dictionaries for SSR pages, use `useTrans()` and `useChangeLocaleCode()`, choose the locale URL strategy with `web.localeRouting.strategy` (`none`, `prefix`, `prefix-except-default`), build an en/ar page with a locale switcher, and maintain generated route translation key types. Triggers: `locales.json`, `$group`, `useTrans`, `useChangeLocaleCode`, `localeRouting`, `route translations`, `TranslationKeyRegistry`, `transFromKeywords`; "translate a page", "page-local copy", "route locale JSON", "switch locale", "/ar/ URL prefix", "language switcher". Skip: global module translations and localized database columns — the `use-localization` topic of the `warlock-js-core` skill.'
 ---
 
 # Warlock — localize pages with route-owned JSON
@@ -73,14 +73,9 @@ export function LocalePicker() {
 
 The hook returns `{ changeLocaleCode, changeLocale, isLoading }`; `changeLocale` is the deprecated compatibility alias. A successful switch rebuilds the current page with its selected locale snapshot. A rejected or superseded switch leaves the current UI unchanged.
 
-## See also
-
-- [`navigate-on-the-client/SKILL.md`](../navigate-on-the-client/SKILL.md) — navigation and refresh behavior.
-- [`@warlock.js/core/use-localization/SKILL.md`](../../../core/skills/use-localization/SKILL.md) — global/module dictionaries and localized data columns.
-
 ## Configure locale and URL strategy
 
-Route JSON requires a default locale included in the configured set:
+Route JSON requires a default locale included in the configured set (`app.localeCode` and `app.localeCodes`):
 
 ```ts title="src/config/app.ts"
 export default {
@@ -89,7 +84,104 @@ export default {
 };
 ```
 
-Choose one URL strategy in web configuration: `none` keeps locale out of the path; `prefix` uses `/en/...` and `/ar/...`; `prefix-except-default` keeps the default locale bare and prefixes the others. A page whose filesystem route begins with `[locale]` carries its own locale segment and cannot be combined with a non-`none` URL prefix strategy.
+The URL strategy is the config key **`web.localeRouting.strategy`**, set in `src/config/web.ts`:
+
+```ts title="src/config/web.ts"
+import type { WebConfigurations } from "@warlock.js/web";
+
+const web: WebConfigurations = {
+  localeRouting: { strategy: "prefix-except-default" },
+};
+
+export default web;
+```
+
+| `strategy` | URLs | Locale comes from |
+| --- | --- | --- |
+| `"none"` (**default** when the key is absent) | `/about` for every locale | `?locale=`, then the browser preference cookie, then the legacy server cookie, then a `locale` request header, else `app.localeCode` |
+| `"prefix"` | `/en/about`, `/ar/about`; a bare `/about` answers a 302 to the resolved locale's URL | the path prefix |
+| `"prefix-except-default"` | `/about` (default locale), `/ar/about`; `/en/about` answers a 301 to `/about` | the path prefix, else the default locale |
+
+Any other value, an empty `app.localeCodes`, or an `app.localeCode` that is not in `app.localeCodes` throws a `LocaleRoutingConfigError` at boot. A multi-site app can override the strategy per site with `sites.<key>.localeRouting` (see the `multi-site` topic). A page whose filesystem route begins with `[locale]` carries its own locale segment and cannot be combined with a non-`none` strategy (`LocaleParamRoutingConflictError` at boot). To build a locale-correct URL by hand, for a canonical link for example, use `localizedPath(path, locale?)` from `@warlock.js/web`; `<Link>` prefixes literal in-app paths itself (see the `navigate-on-the-client` topic for its `locale` prop).
+
+## Worked example: an en/ar routed page with a switcher
+
+With `app.localeCodes: ["en", "ar"]` and `strategy: "prefix-except-default"` as above, one page serves `/about` (English) and `/ar/about` (Arabic). There is no per-locale route to declare: the installers register the prefixed URLs for every page.
+
+```json title="src/web/about/locales.json"
+{
+  "title": { "en": "About us", "ar": "من نحن" },
+  "intro": { "en": "We build servers and pages.", "ar": "نبني الخوادم والصفحات." }
+}
+```
+
+The directory (`about`) is the namespace, so the keys are `about.title` and `about.intro`.
+
+```tsx title="src/web/about/about.page.tsx"
+import { useTrans, type PageConfig } from "@warlock.js/web";
+
+export const config = {
+  route: { path: "/about", name: "about" },
+} satisfies PageConfig;
+
+export default function AboutPage() {
+  const t = useTrans();
+
+  return (
+    <main>
+      <h1>{t("about.title")}</h1>
+      <p>{t("about.intro")}</p>
+    </main>
+  );
+}
+```
+
+```tsx title="src/web/components/locale-switcher.tsx"
+import { useState } from "react";
+import { useChangeLocaleCode, useLocale } from "@warlock.js/web";
+
+// Keep this list in step with app.localeCodes; the client has no export for it.
+const LOCALES = [
+  { code: "en", label: "English" },
+  { code: "ar", label: "العربية" },
+] as const;
+
+export function LocaleSwitcher() {
+  const current = useLocale();
+  const { changeLocaleCode, isLoading } = useChangeLocaleCode();
+  const [failed, setFailed] = useState(false);
+
+  const switchTo = async (code: string) => {
+    setFailed(false);
+
+    try {
+      await changeLocaleCode(code);
+    } catch {
+      setFailed(true);
+    }
+  };
+
+  return (
+    <div role="group" aria-label="Language">
+      {LOCALES.map(({ code, label }) => (
+        <button
+          key={code}
+          type="button"
+          lang={code}
+          aria-pressed={code === current}
+          disabled={isLoading || code === current}
+          onClick={() => switchTo(code)}
+        >
+          {label}
+        </button>
+      ))}
+      {failed ? <span role="alert">Could not switch language.</span> : null}
+    </div>
+  );
+}
+```
+
+Render `<LocaleSwitcher />` from a layout (see "Root and layout integration" below). Clicking "العربية" on `/about` re-fetches the page for the new locale, pushes `/ar/about`, and updates `<html lang dir>` when the root derives them from `useLocale()` / `useTextDirection()`. Under `prefix` and `prefix-except-default` the switch is a real URL change (`changeLocaleCode` re-prefixes the current path and keeps the query and hash); under `none` it re-fetches the current URL with `?locale=<code>` and records the choice in the browser preference cookie only once the new page is ready.
 
 ## Root and layout integration
 
@@ -126,3 +218,9 @@ export default function AccountLayout({ children }: { children: React.ReactNode 
   );
 }
 ```
+
+## See also
+
+- The `navigate-on-the-client` topic: navigation, refresh, and `<Link>`'s `locale` prop.
+- The `use-localization` topic of the `warlock-js-core` skill: global/module dictionaries and localized data columns.
+- The `multi-site` topic: per-site `localeRouting`.

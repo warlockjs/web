@@ -1,6 +1,6 @@
 ---
 name: multi-site
-description: 'Configure one @warlock.js/web app to serve several fixed-host and resolver-selected sites from `src/web/$sites/<name>/`: separate roots, `web.sites`, `web.resolveHost`, `resolveCache`, `basePath`, `unknownHost`, and `request.site`. Use for: marketing plus dashboard domains, white-label tenant domains, or tenant admin under a host path. Not this package → API host restrictions and middleware: @warlock.js/core; tenant query scoping: @warlock.js/cascade; per-tenant theme rendering: @warlock.js/web/multi-theme/SKILL.md.'
+description: 'Configure one @warlock.js/web app to serve several fixed-host and resolver-selected sites from `src/web/$sites/<name>/`: separate roots, `web.sites`, `web.resolveHost`, `resolveCache`, `basePath`, `unknownHost`, and `request.site`. Use for: marketing plus dashboard domains, white-label tenant domains, or tenant admin under a host path. Not this package → API host restrictions and middleware: @warlock.js/core; tenant query scoping: @warlock.js/cascade; per-tenant theme rendering: the `multi-theme` topic.'
 ---
 
 # One app, multiple sites
@@ -78,7 +78,7 @@ export async function loader({ site }: PageLoaderContext<undefined, undefined>) 
 }
 ```
 
-`ctx.site` is a `PageSite`, available in loaders and actions in multi-site mode. It has `key`, `host`, `basePath`, and `tenantKey` for a resolver-selected site. The resolver's `shared` fields merge into the regular shared payload before page middleware; use that for a theme hand-off, then follow `multi-theme/SKILL.md` for rendering and CSS.
+`ctx.site` is a `PageSite`, available in loaders and actions in multi-site mode. It has `key`, `host`, `basePath`, and `tenantKey` for a resolver-selected site. The resolver's `shared` fields merge into the regular shared payload before page middleware; use that for a theme hand-off, then follow `multi-theme` for rendering and CSS.
 
 ## 5. Route and error rules
 
