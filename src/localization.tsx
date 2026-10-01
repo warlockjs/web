@@ -37,18 +37,14 @@ export type TranslationConverter<Placeholders = unknown, Result = unknown> = (
  * default plain converter always yields a string). With an explicit converter
  * the result is exactly what that converter returns.
  */
-export interface TranslateFor<Key extends string> {
-  (
-    keyword: Key | InlineTranslation,
-    placeholders?: unknown,
-    converter?: undefined,
-  ): string;
-  <Placeholders, Result>(
-    keyword: Key | InlineTranslation,
-    placeholders: Placeholders,
-    converter: TranslationConverter<Placeholders, Result>,
-  ): Result;
-}
+// One generic signature, not overloads: an overloaded type gives a lambda
+// passed where a `Translate` is expected (`label((key) => t(key))`) no
+// contextual parameter type, which is an implicit-any error in apps.
+export type TranslateFor<Key extends string> = <Placeholders = unknown, Result = string>(
+  keyword: Key | InlineTranslation,
+  placeholders?: Placeholders,
+  converter?: TranslationConverter<Placeholders, Result>,
+) => Result;
 
 /** The translator `useTrans()` returns: keys follow `TranslationKeyRegistry` once the app generates it. */
 export type Translate = TranslateFor<TranslationKey>;

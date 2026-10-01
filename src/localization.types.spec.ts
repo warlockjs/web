@@ -67,4 +67,23 @@ describe("useTrans() public types", () => {
       GeneratedKey | { [localeCode: string]: string }
     >();
   });
+
+  it("contextually types a lambda passed where a Translate is expected", () => {
+    // The blog's pattern: a helper takes a `Translate`, the caller passes a lambda.
+    // An overloaded `Translate` left `key` implicitly `any` here (TS7006).
+    function label(translate: Translate): string {
+      return translate("posts.title");
+    }
+
+    function probe(trans: Translate) {
+      expectTypeOf(label((key) => trans(String(key)))).toEqualTypeOf<string>();
+      label((key) => {
+        expectTypeOf(key).not.toBeAny();
+
+        return trans(key);
+      });
+    }
+
+    expectTypeOf(probe).toBeFunction();
+  });
 });
