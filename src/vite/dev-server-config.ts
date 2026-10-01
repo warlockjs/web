@@ -1,13 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Alias, HttpServer, InlineConfig, PluginOption } from "vite";
-import type { DevelopmentModelModules } from "@warlock.js/core";
+import type { DevelopmentAppModules, DevelopmentModelModules } from "@warlock.js/core";
 import type { SitesConfig } from "../sites/site-config.types";
 import { appConventionAliases } from "./app-convention-aliases";
 import { cssModulesConfig } from "./css-modules-config";
+import { coreAppModules } from "./core-app-modules";
 import { coreModelModules } from "./core-model-modules";
 import { warlockClientBoundary } from "./index";
 import { resolveReactFastRefreshPlugins } from "./react-refresh-preamble";
+import { createSsrBoundaryState, isClientBoundModule } from "./ssr-client-view";
 
 /**
  * Third-party packages core reaches through `await import(...)` and that must
@@ -199,6 +201,8 @@ export type WebConnectorViteConfigOptions = {
   leadingPlugins: PluginOption[];
   /** Internal Core-owned model identities, when running through its development loader. */
   modelModules?: DevelopmentModelModules;
+  /** Internal Core-owned `src/` file versions, when running through its development loader. */
+  appModules?: DevelopmentAppModules;
   resolveAlias?: Alias[];
   ssrExternal?: string[];
   plugins?: PluginOption[];
@@ -233,6 +237,10 @@ export async function createWebConnectorViteConfig(
     ]),
   ];
 
+  // Shared between the SSR client-boundary mirror (which fills it) and
+  // `coreAppModules` (which must leave client-reachable modules inside Vite).
+  const ssrBoundaryState = createSsrBoundaryState(path.resolve(options.appRoot));
+
   return {
     root: options.appRoot,
     appType: "custom",
@@ -250,6 +258,15 @@ export async function createWebConnectorViteConfig(
         srcDir: path.relative(options.appRoot, options.appSrcRoot),
         sites: options.sites,
         beforePageHotUpdate: ({ file }) => options.handlePageHotUpdate(file),
+        ssrState: ssrBoundaryState,
+      }),
+      // Dev SSR only; see the plugin header. `enforce: "pre"` and a `load` hook,
+      // so it is ordered by enforce bucket and not by this position.
+      coreAppModules({
+        appSrcRoot: options.appSrcRoot,
+        registry: options.appModules,
+        modelModules: options.modelModules,
+        isClientBound: (id) => isClientBoundModule(ssrBoundaryState, id),
       }),
       coreModelModules(options.modelModules),
       // AFTER the boundary, and the order matters among `enforce: "pre"`

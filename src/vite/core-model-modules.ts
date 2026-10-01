@@ -1,67 +1,13 @@
-import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DevelopmentModelModules } from "@warlock.js/core";
-import { normalizePath, type EnvironmentModuleNode, type Plugin, type ViteDevServer } from "vite";
-
-const CODE_MODULE_EXTENSION = /\.[cm]?[jt]sx?$/;
-const ASSET_QUERY = /[?&](?:raw|url)(?:&|$)/;
-
-function moduleIdPath(id: string): string | undefined {
-  if (id.startsWith("\0") || id.startsWith("data:")) return undefined;
-  if (ASSET_QUERY.test(id)) return undefined;
-
-  const [fileName, query] = id.split("?", 2);
-  if (query !== undefined && !/^t=\d+$/.test(query)) return undefined;
-  if (!CODE_MODULE_EXTENSION.test(fileName)) return undefined;
-
-  try {
-    return fileName.startsWith("file:") ? fileURLToPath(fileName) : path.resolve(fileName);
-  } catch {
-    return undefined;
-  }
-}
-
-function versionedUrl(url: string, generation: number): string {
-  return `${url}${url.includes("?") ? "&" : "?"}v=${generation}`;
-}
-
-function isSsrEnvironment(
-  context: { environment?: { config?: { consumer?: string } } },
-  ssr?: boolean,
-) {
-  return ssr === true || context.environment?.config?.consumer === "server";
-}
-
-function trampoline(url: string, hasDefault: boolean): string {
-  const defaultExport = hasDefault ? `\nexport { default } from ${JSON.stringify(url)};` : "";
-  const nativeCode = `export * from ${JSON.stringify(url)};${defaultExport}`;
-  const nativeUrl = `data:text/javascript,${encodeURIComponent(nativeCode)}`;
-  const proxyDefault = hasDefault ? `\nexport { default } from ${JSON.stringify(nativeUrl)};` : "";
-
-  return `export * from ${JSON.stringify(nativeUrl)};${proxyDefault}`;
-}
-
-function invalidateWithImporters(
-  server: ViteDevServer,
-  file: string,
-  ids: ReadonlySet<string>,
-): void {
-  const graph = server.environments.ssr.moduleGraph;
-  const visited = new Set<EnvironmentModuleNode>();
-  const invalidate = (current: EnvironmentModuleNode) => {
-    if (visited.has(current)) return;
-    visited.add(current);
-    graph.invalidateModule(current, new Set(), Date.now(), true);
-    for (const importer of current.importers) invalidate(importer);
-  };
-
-  for (const id of ids) {
-    const module = graph.getModuleById(id);
-    if (module) invalidate(module);
-  }
-
-  for (const module of graph.getModulesByFile(normalizePath(file)) ?? []) invalidate(module);
-}
+import { normalizePath, type Plugin } from "vite";
+import {
+  invalidateWithImporters,
+  isSsrEnvironment,
+  moduleIdPath,
+  trampoline,
+  versionedUrl,
+} from "./dev-module-bridge";
 
 /**
  * Makes Vite's development SSR graph read Core-loaded model modules through

@@ -22,6 +22,20 @@ export type SsrBoundaryState = {
 
 const CODE_MODULE_EXTENSION = /\.([cm]?[jt]sx?)$/;
 
+/** The mutable record the SSR client-boundary mirror keeps for one dev server. */
+export function createSsrBoundaryState(appRoot: string): SsrBoundaryState {
+  return {
+    appRoot,
+    clientBoundModules: new Set(),
+    clientImportsByModule: new Map(),
+  };
+}
+
+/** Whether the mirror has classified this module id as client-reachable. */
+export function isClientBoundModule(state: SsrBoundaryState, id: string): boolean {
+  return state.clientBoundModules.has(clientBoundaryKey(id));
+}
+
 /**
  * A setup sidecar has two deliberately different module views. Its ordinary
  * id is server-only, while the framework-owned query exposes only `register`

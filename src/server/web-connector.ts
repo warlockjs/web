@@ -1013,6 +1013,7 @@ export class WebConnector extends BaseConnector {
         handlePageHotUpdate: (file) => this.handlePageHotUpdate(file),
         leadingPlugins: [devErrorTransportPlugin({ isProductionRuntime, buildErrorMessage })],
         modelModules: container.tryGet("development.modelModules"),
+        appModules: container.tryGet("development.appModules"),
         resolveAlias: this.options.resolveAlias,
         ssrExternal: this.options.ssrExternal,
         plugins: this.options.plugins,

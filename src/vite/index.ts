@@ -15,7 +15,11 @@ import { createPublicEnvTracker, gateBSecrets } from "./gate-b-secrets";
 import { gateCVerify } from "./gate-c-verify";
 import { clientPageRegistry, type ClientPageRegistryPluginOptions } from "./page-registry-plugin";
 import { projection } from "./projection";
-import { clientEnvironmentOnly, type SsrBoundaryState } from "./ssr-client-view";
+import {
+  clientEnvironmentOnly,
+  createSsrBoundaryState,
+  type SsrBoundaryState,
+} from "./ssr-client-view";
 import type { SitesConfig } from "../sites/site-config.types";
 
 export {
@@ -66,6 +70,12 @@ export type WarlockClientBoundaryOptions = Parameters<typeof gateAResolve>[0] & 
   srcDir?: ClientPageRegistryPluginOptions["srcDir"];
   /** Static `web.sites` shape for per-site client page registries. */
   sites?: ClientPageRegistryPluginOptions["sites"];
+  /**
+   * The SSR client-boundary mirror's state, for a caller that must read it —
+   * the dev server's `coreAppModules` asks which modules are client-bound.
+   * Defaults to a fresh state owned by this call.
+   */
+  ssrState?: SsrBoundaryState;
 };
 
 export type BuildWarlockHydrationClientOptions = Readonly<{
@@ -183,11 +193,8 @@ export type BuildWarlockHydrationClientOptions = Readonly<{
  */
 export function warlockClientBoundary(options: WarlockClientBoundaryOptions = {}): Plugin[] {
   const tracker = createPublicEnvTracker();
-  const ssrState: SsrBoundaryState = {
-    appRoot: path.resolve(options.appRoot ?? process.cwd()),
-    clientBoundModules: new Set(),
-    clientImportsByModule: new Map(),
-  };
+  const ssrState: SsrBoundaryState =
+    options.ssrState ?? createSsrBoundaryState(path.resolve(options.appRoot ?? process.cwd()));
   return [
     clientPageRegistry({
       appRoot: options.appRoot,

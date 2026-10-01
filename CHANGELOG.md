@@ -2,6 +2,12 @@
 
 All notable changes to `@warlock.js/web` are documented here.
 
+## 5.29.0
+
+### Fixed
+
+- `warlock dev`: an `src/app` module imported by a page, layout or root is the same instance the API side uses (one module graph), so module state such as an `AsyncLocalStorage` set in middleware, caches and registries is shared between controllers and page loaders. Pages reach those modules through a trampoline to the native module core already loaded. Modules that (transitively) import `@warlock.js/web`, live in `src/web`, are client-bound, or need Vite (`import.meta.env`/`glob`/`hot`, CSS or asset imports) keep loading through Vite as before. Dev only; production builds are unchanged.
+
 ## 5.28.0 - 2026-10-01
 
 ### Fixed
