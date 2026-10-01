@@ -20,6 +20,40 @@ describe("parseRouteLocaleFile", () => {
     });
   });
 
+  it("uses a declared $group without deriving a namespace from $-prefixed folders", () => {
+    expect(
+      parseRouteLocaleFile({
+        sourceFile: path.join(webRoot, "$sites", "my-site", "$auth", "account", "locales.json"),
+        webRoot,
+        source: '{"$group":"account","title":{"en":"Account","ar":"الحساب"}}',
+        localeCodes: locales,
+      }),
+    ).toMatchObject({ group: "account", entries: { "account.title": { en: "Account", ar: "الحساب" } } });
+  });
+
+  it("skips $sites/<site> and other $-prefixed folders when deriving the namespace", () => {
+    expect(
+      parseRouteLocaleFile({
+        sourceFile: path.join(webRoot, "$sites", "my-site", "$auth", "account", "locales.json"),
+        webRoot,
+        source: '{"title":{"en":"Account","ar":"الحساب"}}',
+        localeCodes: locales,
+      }),
+    ).toMatchObject({ group: "account", entries: { "account.title": { en: "Account", ar: "الحساب" } } });
+  });
+
+  it("does not derive a namespace at all when $group is declared", () => {
+    // `my site` is not a valid namespace segment; it must not matter when `$group` names the group.
+    expect(
+      parseRouteLocaleFile({
+        sourceFile: path.join(webRoot, "my site", "locales.json"),
+        webRoot,
+        source: '{"$group":"home","title":{"en":"Home","ar":"الرئيسية"}}',
+        localeCodes: locales,
+      }).group,
+    ).toBe("home");
+  });
+
   it("keeps the core parser error identity and byte-identical diagnostic", () => {
     const sourceFile = path.join(webRoot, "products", "locales.json");
     const message = `Cannot parse route locales in "${sourceFile}" at "products.title": missing locale code "ar".`;

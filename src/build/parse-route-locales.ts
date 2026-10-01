@@ -35,12 +35,35 @@ function namespaceFor(sourceFile: string, webRoot: string): string {
   if (relativeDirectory === ".." || relativeDirectory.startsWith(`..${path.sep}`)) {
     fail(sourceFile, "$group", "file is outside the web root");
   }
-  const segments = relativeDirectory
-    .split(path.sep)
-    .filter((segment) => !(segment.startsWith("(") && segment.endsWith(")")))
-    .filter((segment) => !(segment.startsWith("[") && segment.endsWith("]")));
+  const segments = withoutRouteOnlySegments(relativeDirectory.split(path.sep));
   for (const segment of segments) assertNamespaceSegment(sourceFile, segment, "$group");
   return segments.join(".");
+}
+
+/**
+ * Drops folder segments that never reach the URL and so never name a
+ * namespace: `(group)` and `[param]` folders, `$`-prefixed folders (`$sites`,
+ * guard folders), and the site name that follows `$sites`.
+ */
+function withoutRouteOnlySegments(segments: readonly string[]): string[] {
+  const kept: string[] = [];
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index] as string;
+
+    if (segment === "$sites") {
+      index += 1;
+      continue;
+    }
+
+    if (segment.startsWith("$")) continue;
+    if (segment.startsWith("(") && segment.endsWith(")")) continue;
+    if (segment.startsWith("[") && segment.endsWith("]")) continue;
+
+    kept.push(segment);
+  }
+
+  return kept;
 }
 
 function assertFileWithinWebRoot(sourceFile: string, webRoot: string): void {
@@ -66,7 +89,8 @@ export function parseRouteLocaleFile(input: {
   const parsed = parseLocaleDictionary({
     sourceFile,
     source,
-    defaultNamespace: namespaceFor(sourceFile, webRoot),
+    // Only derived when the file declares no `$group`.
+    defaultNamespace: () => namespaceFor(sourceFile, webRoot),
     localeCodes,
   });
   return { ...parsed, webRoot };
