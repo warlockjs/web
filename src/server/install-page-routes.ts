@@ -205,6 +205,14 @@ async function registerFailedPageRoute(input: {
 }): Promise<void> {
   const { router, pageFile, appSrcRoot, loadError, fileByPath } = input;
   const attributed = new PageModuleLoadError(pageFile, loadError);
+
+  // The ORIGINAL failure, with its own stack, logged now. `attributed` only
+  // surfaces when a request reaches this page's route, and only as a message:
+  // by then the module graph has usually broken further and a follow-on error
+  // (`useLocale() was called outside Warlock's LocaleProvider`) is what the
+  // log shows. The root cause is reported first and named as such.
+  console.error(`[warlock:web] ROOT CAUSE: "${pageFile}" failed to load:`, loadError);
+
   const filesystemPageFile = filesystemPageFileFor(pageFile, appSrcRoot);
 
   let effectivePath: string;

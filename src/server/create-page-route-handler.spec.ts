@@ -868,3 +868,46 @@ describe("createPageRouteHandler — Stage 2 slice S3 (NDJSON client navigation)
     );
   });
 });
+
+describe("createPageRouteHandler — the original failure is reported first, the failure page's own failure is marked as its consequence", () => {
+  it("logs the original error, then the LocaleProvider error as a consequence, and still rejects with the original", async () => {
+    const original = new Error("server-only barrel evaluated in the browser graph");
+    const secondary = new Error(
+      "useLocale() was called outside Warlock's LocaleProvider. Render the component " +
+        "through the @warlock.js/web page pipeline.",
+    );
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    renderPageFailure.mockRejectedValue(secondary);
+
+    const handler = createPageRouteHandler(
+      handlerOptions({
+        "app.tsx": {},
+        "composed-layout.tsx": {},
+        "account.page.tsx": {
+          default: MockPage,
+          register: () => {
+            throw original;
+          },
+        },
+      }),
+    );
+
+    await expect(handler(context() as never)).rejects.toBe(original);
+
+    const calls = errorSpy.mock.calls;
+
+    expect(calls).toHaveLength(2);
+
+    const [firstMessage, firstError] = calls[0] as [string, Error];
+    const [secondMessage, secondError] = calls[1] as [string, Error];
+
+    expect(firstMessage).toContain("failed");
+    expect(firstMessage).not.toContain("CONSEQUENCE");
+    expect(firstError).toBe(original);
+    expect(secondMessage).toContain("CONSEQUENCE");
+    expect(secondError).toBe(secondary);
+
+    errorSpy.mockRestore();
+  });
+});

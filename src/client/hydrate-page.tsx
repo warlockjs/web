@@ -10,6 +10,7 @@ import { hydrateShared } from "../shared";
 import { installSession } from "../session/use-user";
 import { LevelErrorBoundary } from "./build-hydrated-tree";
 import { DefaultErrorBoundary } from "./default-error-boundary";
+import { replayStashedNavigationFailure } from "./navigation-failure-stash";
 import { reportClientError } from "./report-client-error";
 import { installStreamClosedRejection, prepareDeferredPageData } from "./runtime/defer-registry";
 import { installHydrationSite } from "./hydrate-site";
@@ -179,6 +180,10 @@ function reportHydrationFailure(error: unknown): void {
  */
 export function hydratePage(buildTree: BuildHydratedTree, options: HydratePageOptions = {}): void {
   installWindowErrorReporters();
+  // FIRST, before anything in this document can fail: if the previous document
+  // fell back to this full load because of an error, log that ROOT CAUSE ahead
+  // of whatever this one reports next.
+  replayStashedNavigationFailure();
   installHydrationSite(document);
 
   const payload = readHydrationPayload(document);

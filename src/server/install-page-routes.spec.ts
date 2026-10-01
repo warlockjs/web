@@ -952,6 +952,41 @@ describe("installPageRoutes — a page module that fails to load", () => {
     expect((thrown as Error).message).toContain(cause.message);
   });
 
+  it("logs the ORIGINAL load error, with its stack, as the root cause at install time", async () => {
+    const appRoot = makeAppTree({
+      "src/web/home.page.tsx": "",
+      "src/web/dashboard.page.tsx": "",
+    });
+    const appSrcRoot = path.join(appRoot, "src");
+    const homeFile = path.join(appSrcRoot, "web", "home.page.tsx");
+    const dashboardFile = path.join(appSrcRoot, "web", "dashboard.page.tsx");
+    const cause = new Error("server-only barrel evaluated in the browser graph");
+
+    const vite = {
+      ssrLoadModule: vi.fn(async (id: string) => {
+        if (/[\\/]web[\\/]root\.tsx$/.test(id)) return { default: (): null => null };
+        if (id === dashboardFile) throw cause;
+        if (id === homeFile) return { default: (): null => null, config: { route: "/" } };
+
+        throw new Error(`fakeVite: no module registered for "${id}"`);
+      }),
+    } as unknown as InstallPageRoutesOptions["vite"];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await install(appSrcRoot, vite).run();
+
+    // Logged at install, not only when a request later reaches the broken route.
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+
+    const [message, logged] = errorSpy.mock.calls[0] as [string, unknown];
+
+    expect(message).toContain("ROOT CAUSE");
+    expect(message).toContain(dashboardFile);
+    expect(logged).toBe(cause);
+
+    errorSpy.mockRestore();
+  });
+
   it("good input still installs cleanly (no broken page in the tree)", async () => {
     const appRoot = makeAppTree({
       "src/web/home.page.tsx": "",

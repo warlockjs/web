@@ -48,6 +48,7 @@ import { hydrateScrollPositions } from "./scroll-positions";
 import { scrollToFragment } from "./scroll-to-fragment";
 import { syncDocumentLocale } from "./sync-document-locale";
 import { beginNavigationPending } from "./navigation-pending-store";
+import { stashNavigationFailure } from "../navigation-failure-stash";
 
 /**
  * Carry out a scroll decision (`scroll-restoration.ts`) once the target
@@ -361,6 +362,10 @@ export function NavigationRoot({
           // a stale bundle after a deploy is the realistic cause. A full load
           // fetches the current bundle, which is also the fix.
           console.warn("Warlock navigation could not build the page tree:", error);
+          // The full load below discards this document's console. Park the
+          // ORIGINAL error so the next document logs it first, before the
+          // follow-on error it will probably hit.
+          stashNavigationFailure(url, error);
           routerEvents.emitNavigationError({ url, mode, error });
           window.location.assign(url);
 

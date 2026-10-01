@@ -961,7 +961,27 @@ export function createPageRouteHandler(options: PageRouteHandlerOptions): PageRo
           wantsData,
           applyBufferedCookie,
         });
-      } catch {
+      } catch (failurePageThrown) {
+        // The ORIGINAL was reported above, first. This one is its consequence
+        // and used to vanish without a trace; log it, marked as such, so the
+        // secondary error (`useLocale() was called outside Warlock's
+        // LocaleProvider` when the module graph is broken) is never mistaken
+        // for the cause.
+        reportServerError(
+          `rendering the failure page for ${request.method} ${request.path} also failed ` +
+            "(a CONSEQUENCE of the earlier error logged above, not the root cause)",
+          failurePageThrown,
+          {
+            kind: "error-page",
+            phase: "error-page",
+            routeName: name,
+            routePath: path,
+            pathname: pathnameFromRequest(request),
+            method: request.method,
+            requestId: request.id,
+          },
+        );
+
         throw thrown;
       }
     }

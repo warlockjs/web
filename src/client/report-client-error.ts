@@ -24,7 +24,12 @@
  */
 
 /** What kind of client-side failure produced this report. */
-export type ClientErrorKind = "window-error" | "unhandled-rejection" | "hydration" | "boundary";
+export type ClientErrorKind =
+  | "window-error"
+  | "unhandled-rejection"
+  | "hydration"
+  | "boundary"
+  | "navigation";
 
 /** What a registered {@link ClientErrorReporter} receives. */
 export type ClientErrorEvent = {
@@ -69,6 +74,20 @@ const REPORTED_TO_APP_CALLBACK = Symbol.for("warlock.web.clientErrorReportedToAp
 let registeredReporter: ClientErrorReporter | undefined;
 
 /**
+ * Set once a ROOT-CAUSE error from a previous document (see
+ * `./navigation-failure-stash.ts`) has been logged in this one. Every error
+ * reported afterwards is then marked as a probable consequence of it: the
+ * original failure is what the developer must fix, and the follow-on error
+ * (a `useLocale()` outside its provider, a null context) only repeats it.
+ */
+let rootCauseLogged = false;
+
+/** Called by the navigation-failure replay after it logs the ROOT CAUSE line. */
+export function markRootCauseLogged(): void {
+  rootCauseLogged = true;
+}
+
+/**
  * Register the app-owned client error callback (Aria's ruling: "an explicit
  * app-owned callback registered in the browser, still alongside console").
  * Calling this again REPLACES the previously registered callback — there is
@@ -82,6 +101,7 @@ export function onClientError(reporter: ClientErrorReporter): void {
 /** Test-only: clear the registered callback between specs. */
 export function resetClientErrorReporterForTests(): void {
   registeredReporter = undefined;
+  rootCauseLogged = false;
 }
 
 function alreadyReportedToAppCallback(thrown: unknown): boolean {
@@ -112,7 +132,12 @@ export function reportClientError(
   thrown: unknown,
   event: Omit<ClientErrorEvent, "error"> = { kind: "boundary" },
 ): void {
-  console.error(`[warlock:web] ${context}:`, thrown);
+  console.error(
+    rootCauseLogged
+      ? `[warlock:web] ${context} (probably a CONSEQUENCE of the ROOT CAUSE logged above):`
+      : `[warlock:web] ${context}:`,
+    thrown,
+  );
 
   if (registeredReporter === undefined) return;
   if (alreadyReportedToAppCallback(thrown)) return;

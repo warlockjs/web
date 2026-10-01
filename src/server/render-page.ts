@@ -617,6 +617,11 @@ function reportRenderError(
   });
 }
 
+/** One line naming a failure: `Name: message`, whatever was thrown. */
+function describeRootCause(rootCause: unknown): string {
+  return rootCause instanceof Error ? `${rootCause.name}: ${rootCause.message}` : String(rootCause);
+}
+
 /**
  * Unconditional stderr floor for the application's OWN `error.page.tsx`
  * failing while rendering the fallback for some other error.
@@ -633,9 +638,20 @@ function reportErrorPageFailure(
   route: PageDataBundle["route"],
   thrown: unknown,
   request: Request,
+  rootCause?: unknown,
 ): void {
   const where = route?.path ?? route?.name ?? "an unknown route";
-  reportServerError(`the application error page itself failed while rendering ${where}`, thrown, {
+  // The error page runs BECAUSE something else already failed, and it often
+  // fails for the same reason (`useLocale() was called outside Warlock's
+  // LocaleProvider` is the classic: the broken module graph that threw first
+  // also split the locale context in two). Say so, and name the first failure
+  // on the same line, so the follow-on error is never read as the cause.
+  const consequence =
+    rootCause === undefined
+      ? ""
+      : ` (a CONSEQUENCE of the earlier error, not the root cause; ROOT CAUSE: ${describeRootCause(rootCause)})`;
+
+  reportServerError(`the application error page itself failed while rendering ${where}${consequence}`, thrown, {
     kind: "error-page",
     phase: "error-page",
     routeName: route?.name,
@@ -1210,7 +1226,12 @@ async function finishRender(
               currentError.error,
             )) ?? renderFrameworkRoot();
         } catch (errorPageThrown) {
-          reportErrorPageFailure(bundle.route, errorPageThrown, request);
+          reportErrorPageFailure(
+            bundle.route,
+            errorPageThrown,
+            request,
+            currentError.originalError ?? currentError.error,
+          );
           body = renderFrameworkAfterErrorPageFailure();
         }
         renderTimeThrow = true;
@@ -1241,7 +1262,7 @@ async function finishRender(
         try {
           body = (await renderErrorPage(thrown)) ?? renderFrameworkRoot();
         } catch (errorPageThrown) {
-          reportErrorPageFailure(bundle.route, errorPageThrown, request);
+          reportErrorPageFailure(bundle.route, errorPageThrown, request, thrown);
           body = renderFrameworkAfterErrorPageFailure();
         }
         break;
@@ -1486,7 +1507,7 @@ export async function renderPageFailure(options: RenderPageFailureOptions): Prom
       createElement(DefaultApp, { children: errorPageElement(module, ssrProps) }),
     );
   } catch (errorPageThrown) {
-    if (loadErrorPage) reportErrorPageFailure(bundle.route, errorPageThrown, request);
+    if (loadErrorPage) reportErrorPageFailure(bundle.route, errorPageThrown, request, thrown);
     bundle.errorPage = undefined;
     bundle.routeTranslations = bindRequestRouteTranslations(
       request,

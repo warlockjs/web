@@ -187,6 +187,15 @@ function withRealPath(directory: string): string[] {
   }
 }
 
+/**
+ * Where `warlock dev`'s Vite server keeps its optimized dependencies:
+ * `<appRoot>/node_modules/.vite/warlock-dev`, a sibling of (never the same as)
+ * the default `node_modules/.vite` that vitest and other Vite processes use.
+ */
+export function webDevServerCacheDir(appRoot: string): string {
+  return path.join(path.resolve(appRoot), "node_modules", ".vite", "warlock-dev");
+}
+
 export type WebConnectorViteConfigOptions = {
   appRoot: string;
   appSrcRoot: string;
@@ -244,6 +253,17 @@ export async function createWebConnectorViteConfig(
   return {
     root: options.appRoot,
     appType: "custom",
+    /**
+     * The dev server's OWN dependency cache, not Vite's shared default.
+     *
+     * Vite's default is `<appRoot>/node_modules/.vite`, and every Vite process
+     * in the app shares it — a `vitest` run included. A vitest run that
+     * re-optimizes dependencies rewrites and wipes the optimized deps the
+     * running dev server is serving, after which every SSR page answers 500
+     * until the dev server restarts. A directory of its own keeps the two
+     * processes from ever touching each other's files.
+     */
+    cacheDir: webDevServerCacheDir(options.appRoot),
     css: cssModulesConfig(options.appRoot),
     plugins: [
       // FIRST, and dev-only by construction: this method is reachable only
