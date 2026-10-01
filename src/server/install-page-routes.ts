@@ -35,8 +35,9 @@ import { readFileSync } from "node:fs";
 import type { ViteDevServer } from "vite";
 import {
   discoverPageFileGraph,
-  discoverPages,
+  discoverPageGraph,
   type DiscoveredPageFileGraph,
+  type DiscoveredPageGraph,
   ErrorPageDeclaresRouteError,
   isErrorPageFile,
   isFile,
@@ -463,24 +464,29 @@ export type InstallPageRoutesOptions = {
 };
 
 /**
- * Runs the same discovery + validation the build does (`discoverPages` with
+ * Runs the same discovery + validation the build does (`discoverPageGraph` with
  * `sites`), so a bad multi-site layout fails dev boot with the build's own
  * message. Returns each site's `root.tsx`.
  */
-function discoverSiteAppFiles(options: InstallPageRoutesOptions): Map<string, string> {
+function discoverSiteAppFiles(options: InstallPageRoutesOptions): {
+  appFiles: Map<string, string>;
+  graph?: DiscoveredPageGraph;
+} {
   const appFiles = new Map<string, string>();
 
-  if (options.siteDispatch === undefined) return appFiles;
+  if (options.siteDispatch === undefined) return { appFiles };
 
-  for (const page of discoverPages({
+  const graph = discoverPageGraph({
     appRoot: options.appRoot ?? path.dirname(options.appSrcRoot),
     srcDir: path.basename(options.appSrcRoot),
     sites: options.siteDispatch.sites,
-  })) {
+  });
+
+  for (const page of graph.pages) {
     if (page.site !== undefined && page.appFile !== undefined) appFiles.set(page.site, page.appFile);
   }
 
-  return appFiles;
+  return { appFiles, graph };
 }
 
 /** One site's slice of a multi-site install. */
@@ -502,7 +508,7 @@ type SiteScope = {
 export async function installPageRoutes(
   options: InstallPageRoutesOptions,
 ): Promise<InstalledPageRoute[]> {
-  const siteAppFiles = discoverSiteAppFiles(options);
+  const { appFiles: siteAppFiles, graph: siteGraph } = discoverSiteAppFiles(options);
   const multiSite = options.siteDispatch !== undefined;
 
   if (!multiSite) {
@@ -513,18 +519,30 @@ export async function installPageRoutes(
     }
   }
   const discoveredGraph = discoverPageFileGraph(options.appSrcRoot);
-  const graph = {
-    pages: [
-      ...discoveredGraph.pages,
-      ...(!multiSite
-        ? [{ pageFile: options.appFile, webRoot: path.dirname(options.appFile) }]
-        : [...siteAppFiles.values()].map((siteAppFile) => ({
-            pageFile: siteAppFile,
-            webRoot: path.dirname(siteAppFile),
-          }))),
-    ],
-    localeFiles: discoveredGraph.localeFiles,
-  };
+  // Multi-site: the manifest's page and locale identities come from the build's
+  // own `discoverPageGraph` (site-aware `webRoot`s), so a site's `root.tsx`,
+  // pages and `locales.json` agree on one root and key namespaces exactly as
+  // they do in production. The single-site filesystem walk would file them all
+  // under `src/web` while the site root sits under `src/web/$sites/<site>`.
+  const graph =
+    siteGraph === undefined
+      ? {
+          pages: [
+            ...discoveredGraph.pages,
+            { pageFile: options.appFile, webRoot: path.dirname(options.appFile) },
+          ],
+          localeFiles: discoveredGraph.localeFiles,
+        }
+      : {
+          pages: [
+            ...siteGraph.pages.map(({ pageFile, webRoot }) => ({ pageFile, webRoot })),
+            ...[...siteAppFiles.values()].map((siteAppFile) => ({
+              pageFile: siteAppFile,
+              webRoot: path.dirname(siteAppFile),
+            })),
+          ],
+          localeFiles: siteGraph.localeFiles,
+        };
   const localeOptions = {
     localeCodes: config.key<readonly string[] | undefined>("app.localeCodes"),
     localeCode: config.key<string | undefined>("app.localeCode"),
