@@ -207,7 +207,7 @@ Do not wrap this component in `React.memo` unless a prop changes per navigation:
 `href(name, params?, query?)` is the durable primitive for redirects, headers, email bodies, and other non-component callers. It also accepts `href(name, { params, query })`:
 
 ```ts
-import { href } from "@warlock.js/web";
+import { apiHref, href } from "@warlock.js/web";
 
 const productUrl = href(
   "products.details",
@@ -341,7 +341,7 @@ This is pending/not-pending, never percent-complete. Keep CSS in the imported
 stylesheet; do not add an inline `<style>` tag. `routerEvents` remains for
 analytics and post-navigation observation, but it is not a pending-state API.
 
-This is an ordinary API mutation followed by a re-fetch. Server actions are not supported.
+This is an ordinary API mutation followed by a re-fetch. A form that belongs to the page can use a page `action` instead (the `handle-a-form-action` topic).
 
 ## Read the query string live — `useQueryString`
 

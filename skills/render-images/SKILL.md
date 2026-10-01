@@ -1,6 +1,6 @@
 ---
 name: render-images
-description: 'Render responsive, CLS-safe images with the `<Image>` component from `@warlock.js/web`: pass a plain `ImageDescriptor` (`src`, `width`, `height`, named `variants`, optional `formats`) and get `srcSet`, `sizes`, intrinsic `width`/`height`, lazy loading and an optional `<picture>` of avif/webp sources, identical on the server and in the browser. Covers `alt`, `sizes`, `priority` for the LCP image, the default `warlockImageLoader` (`?variant=` URLs served by core''s `uploadedFileController`), a custom `loader` for a CDN, and producing descriptors with `generateImageVariants` and `uploads.images`. Triggers: `Image`, `ImageDescriptor`, `ImageProps`, `ImageLoader`, `warlockImageLoader`, `srcSet`, `sizes`, `priority`, `generateImageVariants`, `uploads.images`, `uploadedFileController`; "add an image to a page", "responsive images", "lazy load images", "LCP image", "image layout shift", "webp avif", "image CDN loader", "resize uploaded images". Skip: measuring LCP/CLS in the field — the `measure-web-vitals` topic; static files that need no resizing (`public/` URLs in a plain `<img>`) — the `create-a-page` topic; storage and upload handling — the `warlock-js-core` skill; competing components `next/image`, `react-image`, `unpic`.'
+description: 'Render responsive, CLS-safe images with the `<Image>` component from `@warlock.js/web`: pass a plain `ImageDescriptor` (`src`, `width`, `height`, named `variants`, optional `formats`) and get `srcSet`, `sizes`, intrinsic `width`/`height`, lazy loading and an optional `<picture>` of avif/webp sources, identical on the server and in the browser. Covers `alt`, `sizes`, `priority` for the LCP image, the default `warlockImageLoader` (`?variant=` URLs served by core''s `uploadedFileController`), a custom `loader` for a CDN, and producing descriptors with `generateImageVariants` and `uploads.images`. Triggers: `Image`, `ImageDescriptor`, `ImageProps`, `ImageLoader`, `warlockImageLoader`, `srcSet`, `sizes`, `priority`, `generateImageVariants`, `uploads.images`, `uploadedFileController`; "add an image to a page", "responsive images", "lazy load images", "LCP image", "image layout shift", "webp avif", "image CDN loader", "resize uploaded images", "upload an image and render it". Skip: measuring LCP/CLS in the field — the `measure-web-vitals` topic; static files that need no resizing (`public/` URLs in a plain `<img>`) — the `create-a-page` topic; storage and upload handling — the `warlock-js-core` skill; competing components `next/image`, `react-image`, `unpic`.'
 ---
 
 # Warlock — render images
@@ -21,7 +21,7 @@ const cover: ImageDescriptor = {
   formats: ["webp"],
 };
 
-export const config = { route: { path: "/blog/post", name: "blog.post" } } satisfies PageConfig;
+export const config = { route: { path: "/blog/post", name: "blog.post" } } as const satisfies PageConfig;
 
 export default function PostPage() {
   return (
@@ -125,6 +125,111 @@ Core serves those URLs for **local** uploads. Three pieces:
    ```
 
    Its result is structurally an `ImageDescriptor`, so pass it straight to `<Image image={cover}>`. It needs a local storage driver with a root, and throws `ImageVariantsConfigError` if `uploads.images` is missing, `HttpError` 400 for an unknown variant name, 404 for a path outside the storage root, 413 for an oversized source and 415 for a source that is not jpeg, png, webp or avif.
+
+## Recipe: upload an image and render it
+
+One flow from a file input to a responsive `<Image>`. It assumes the `/uploads/*` route and `src/config/uploads.ts` from the previous section, a local storage driver, and a model with a field for the descriptor.
+
+1. **A model field for the descriptor.** The descriptor is plain JSON, so the model keeps it as-is (add the column or field in its migration; see the `warlock-js-cascade` skill):
+
+   ```ts title="src/app/posts/models/post/post.model.ts"
+   import { Model, RegisterModel } from "@warlock.js/cascade";
+   import { v, type Infer } from "@warlock.js/seal";
+
+   const postSchema = v.object({
+     title: v.string(),
+     cover: v.any(), // the ImageDescriptor that generateImageVariants returns
+   });
+
+   @RegisterModel()
+   export class Post extends Model<Infer<typeof postSchema>> {
+     public static table = "posts";
+     public static schema = postSchema;
+   }
+   ```
+
+2. **The form page.** `<Form>` posts `multipart/form-data` by default, `config.action.validation` runs against the body with files included, and `v.file()` makes `request.validated()` hand back an `UploadedFile`:
+
+   ```tsx title="src/web/posts/new-post.page.tsx"
+   import { FieldError, Form } from "@warlock.js/web";
+   import type { PageActionContext, PageConfig } from "@warlock.js/web";
+   import { generateImageVariants } from "@warlock.js/core";
+   import { v } from "@warlock.js/seal";
+   import { Post } from "app/posts/models/post";
+
+   const newPostSchema = v.object({
+     title: v.string(),
+     cover: v
+       .file()
+       .image()
+       .maxSize({ unit: "MB", size: 5 })
+       .mimeType(["image/jpeg", "image/png", "image/webp", "image/avif"]),
+   });
+
+   export const config = {
+     route: { path: "/posts/new", name: "posts.new" },
+     action: { validation: newPostSchema },
+   } as const satisfies PageConfig;
+
+   export async function action({ request, response }: PageActionContext<typeof newPostSchema>) {
+     const { title, cover } = request.validated();
+
+     // Save the original; `saved.path` is relative to the storage root.
+     const saved = await cover.save("posts");
+
+     // Render the configured variants once, up front, and get the descriptor back.
+     const image = await generateImageVariants(saved.path);
+
+     const post = await Post.create({ title, cover: image });
+
+     return response.redirect(`/posts/${post.id}`);
+   }
+
+   export default function NewPostPage() {
+     return (
+       <Form>
+         <input name="title" />
+         <FieldError name="title" />
+         <input name="cover" type="file" accept="image/*" />
+         <FieldError name="cover" />
+         <button>Publish</button>
+       </Form>
+     );
+   }
+   ```
+
+   The `mimeType` list is exactly the source formats `generateImageVariants` accepts, so a gif or svg fails validation (422) instead of reaching it and throwing 415.
+
+3. **Render it.** The loader returns the stored descriptor and the page passes it straight to `<Image>`:
+
+   ```tsx title="src/web/posts/post.page.tsx"
+   import { Image } from "@warlock.js/web";
+   import type { ImageDescriptor, PageConfig, PageLoader, PageProps } from "@warlock.js/web";
+   import { Post } from "app/posts/models/post";
+
+   export const config = {
+     route: { path: "/posts/:id", name: "posts.show" },
+   } as const satisfies PageConfig;
+
+   export const loader = (async ({ request, response }) => {
+     const post = await Post.find(request.input("id"));
+
+     if (!post) return response.notFound();
+
+     return { title: post.get("title") as string, cover: post.get("cover") as ImageDescriptor };
+   }) satisfies PageLoader<undefined, typeof config.route>;
+
+   export default function PostPage({ data }: PageProps<typeof loader>) {
+     return (
+       <main>
+         <h1>{data.title}</h1>
+         <Image image={data.cover} alt={data.title} sizes="(min-width: 768px) 50vw, 100vw" priority />
+       </main>
+     );
+   }
+   ```
+
+The `?variant=` URLs inside that descriptor are served by the `/uploads/*` route using the variants declared in `uploads.images`, so there is nothing else to wire.
 
 ## A CDN or object storage
 

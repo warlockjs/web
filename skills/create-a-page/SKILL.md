@@ -55,7 +55,7 @@ export const config = {
   route: { path: "/products/:id", name: "products.details" },
   cache: { public: true, maxAge: 60 },
   metadata: { title: "Product details" },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export const loader = (async ({ request }) => {
   const id = request.input("id");
@@ -79,6 +79,8 @@ export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
 ```
 
 Use `satisfies PageLoader`, not `: PageLoader`. `satisfies` checks the context contract while retaining the loader's concrete return type, which is how `PageProps<typeof loader>` knows the shape of `data`. An annotation `: PageLoader` makes the return type `unknown`. A named `export async function loader(context: PageLoaderContext<...>)` keeps the return type as well; see the `load-page-data` topic.
+
+Declare `config` with `as const satisfies PageConfig`. `route.name` is typed `string`, so plain `satisfies` widens it, and `typeof config.route` then no longer carries the literal name that loader typing reads (a guarded page's non-null `session`, see the `protect-a-page` topic). `as const` keeps the literal and `satisfies` still checks the shape.
 
 ## The minimum page
 
@@ -126,7 +128,7 @@ export const config = { route: "/products" };
 export const config = {
   route: { path: "/products/:id", name: "products.details" },
   cache: { public: true, maxAge: 60 },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 ```
 
 Prefer an explicit stable `name` for links. Without one, Warlock derives a name from the declared path — a global root page gets `index`, another global page gets its dotted path — the same derivation [filesystem routing](#filesystem-routing) uses when there is no `route` at all.
@@ -151,7 +153,7 @@ export const config = {
     params: v.object({ id: v.string().minLength(2) }),
     query: v.object({ tab: v.string().optional() }).stripUnknown(),
   },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export const loader = (async ({ request }) => {
   const { params, query } = request.validated();
@@ -187,7 +189,7 @@ export const config = {
       }
     },
   ],
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 ```
 
 Returning anything other than `undefined` from a middleware short-circuits the request with that value, exactly as an app or layout middleware does. What that short-circuit actually produces differs by representation and by how the middleware answered:
@@ -207,7 +209,7 @@ default. Opt a public page into shared caching with sibling `config.cache`:
 export const config = {
   route: { path: "/products", name: "products.index" },
   cache: { public: true, maxAge: 60 },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 ```
 
 `maxAge` is seconds. Both keys are required: `cache: { public: true }` is a
@@ -243,7 +245,7 @@ export const config = {
     // or: tags: (data) => [`product:${data.id}`],
     ttl: 300, // optional — defaults to maxAge
   },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 ```
 
 - `serverCache` requires `public: true` (like every `cache` opt-in) AND
@@ -355,7 +357,7 @@ the rejected segment.
 Until a catch-all exists, use the terminal wildcard with an explicit `config.route`:
 
 ```tsx
-export const config = { route: { path: "/docs/*", name: "docs.catchAll" } } satisfies PageConfig;
+export const config = { route: { path: "/docs/*", name: "docs.catchAll" } } as const satisfies PageConfig;
 ```
 
 ## Page-route grammar
@@ -386,7 +388,7 @@ export const config = {
     description: "Browse the product catalogue",
     openGraph: { siteName: "Acme Store", images: [{ url: "/images/catalogue-card.png" }] },
   },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 ```
 
 Every field (title templates, `openGraph`, `twitter`, `meta`, `links`, `canonical`, `robots`), the function form, how root, layout and page metadata merge, and per-locale metadata and `alternates` are in the `set-page-metadata` topic.
@@ -400,7 +402,7 @@ import type { PageConfig } from "@warlock.js/web";
 
 export const config = {
   metadata: { title: "Page not found" },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export default function NotFoundPage() {
   return (

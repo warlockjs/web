@@ -44,7 +44,7 @@ export const loader = (async ({ request }) => {
 
 export const config = {
   validation,
-} satisfies PageConfig<typeof loader>;
+} as const satisfies PageConfig<typeof loader>;
 
 function Reviews({ reviews }: { reviews: Promise<Review[]> }) {
   const list = use(reviews);
@@ -171,14 +171,18 @@ silently unmounting the tree.
 
 ## `web.streaming.deferTimeout`
 
-```ts title="warlock.config.ts"
-export default {
-  web: {
-    streaming: {
-      deferTimeout: 15_000, // milliseconds; default 10000
-    },
+Set it under the `web` config namespace, which is the file `src/config/web.ts` (not `warlock.config.ts`):
+
+```ts title="src/config/web.ts"
+import type { WebConfigurations } from "@warlock.js/web";
+
+const web: WebConfigurations = {
+  streaming: {
+    deferTimeout: 15_000, // milliseconds; default 10000
   },
 };
+
+export default web;
 ```
 
 Applies per deferred key, not per request — three deferred keys on one page
@@ -203,12 +207,12 @@ const invalidConfig = {
   metadata: ({ data }) => ({
     title: String(data.reviews), // throws DeferredKeyInMetadataError
   }),
-} satisfies PageConfig<typeof loader>;
+} as const satisfies PageConfig<typeof loader>;
 
 // Right — describe the page from what's already resolved:
 export const config = {
   metadata: ({ data }) => ({ title: data.product.name }),
-} satisfies PageConfig<typeof loader>;
+} as const satisfies PageConfig<typeof loader>;
 ```
 
 There is no way to make `config.metadata` wait for a deferred value — a page's

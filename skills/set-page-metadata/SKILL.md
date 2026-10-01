@@ -18,7 +18,7 @@ export const config = {
     title: "Products",
     description: "Browse the product catalogue",
   },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export default function ProductsPage() {
   return <h1>Products</h1>;
@@ -53,7 +53,7 @@ export const config = {
     },
     twitter: { card: "summary_large_image", site: "@acme" },
   }),
-} satisfies PageConfig<typeof loader>;
+} as const satisfies PageConfig<typeof loader>;
 
 export const loader = (async ({ request }) => {
   const id = request.input("id");
@@ -223,7 +223,7 @@ export const config = {
     title: t("pricing.title"),
     description: t("pricing.description"),
   }),
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export default function PricingPage() {
   return <h1>Pricing</h1>;
@@ -251,7 +251,7 @@ export const config = {
       "x-default": `/apartments-for-rent-in-${data.listing.slug.en}`,
     },
   }),
-} satisfies PageConfig<typeof loader>;
+} as const satisfies PageConfig<typeof loader>;
 ```
 
 - Keys are locale codes plus the optional `"x-default"`. Values are paths (joined onto the public URL like `canonical`) or absolute URLs.

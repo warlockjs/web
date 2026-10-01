@@ -42,7 +42,7 @@ src/
 warlock.config.ts
 ```
 
-The generated index page declares `export const config = { route: { path: "/", name: "index" } } satisfies PageConfig`, so the server payload and client registry consume one explicit identity. Universal localization setup is inside its synchronous `register()` hook. The generated root owns the document, renders `<Head />`, keeps `{children}` inside `#vessel`, and renders `<Scripts />`. `warlock dev` turns literal `groupedTranslations` registrations into typed `useTrans()` keys; it accepts `string` until the first generated typing file exists.
+The generated index page declares `export const config: PageConfig = { route: { path: "/", name: "index" }, ... }`, so the server payload and client registry consume one explicit identity. Universal localization setup is inside its synchronous `register()` hook. The generated root owns the document, renders `<Head />`, keeps `{children}` inside `#vessel`, and renders `<Scripts />`. `warlock dev` turns literal `groupedTranslations` registrations into typed `useTrans()` keys; it accepts `string` until the first generated typing file exists.
 
 Every added `@warlock.js/*` package is saved at the exact version of the Core CLI executing the command. Third-party dependency ranges stay as declared by the feature.
 
@@ -93,7 +93,7 @@ Indented `router.get("/", ...)` declarations inside a prefixed group are not roo
 - Exactly one recognized top-level `GET "/"` and no top-level `GET "/welcome"`: move it to `/welcome`, then create the home page.
 - More than one top-level `GET "/"`, an existing top-level `GET "/welcome"`, an unreadable/unwritable routes file, or an unrecognized rewrite: create `root.tsx`, do not create `index.page.tsx`, set a failing exit code, and still register the connector.
 
-On the refusal path, free `/` yourself and create a page with either `export const config = { route: { path: "/", name: "index" } } satisfies PageConfig` or another literal `config.route`.
+On the refusal path, free `/` yourself and create a page with either `export const config = { route: { path: "/", name: "index" } } as const satisfies PageConfig` or another literal `config.route`.
 
 ## Re-running the command
 
@@ -185,7 +185,7 @@ export const config = {
   route: { path: "/products/:id", name: "products.details" },
   cache: { public: true, maxAge: 60 },
   metadata: { title: "Product details" },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export const loader = (async ({ request }) => {
   const id = request.input("id");
@@ -209,6 +209,8 @@ export default function ProductDetailsPage({ data }: PageProps<typeof loader>) {
 ```
 
 Use `satisfies PageLoader`, not `: PageLoader`. `satisfies` checks the context contract while retaining the loader's concrete return type, which is how `PageProps<typeof loader>` knows the shape of `data`. An annotation `: PageLoader` makes the return type `unknown`. A named `export async function loader(context: PageLoaderContext<...>)` keeps the return type as well; see the `load-page-data` topic.
+
+Declare `config` with `as const satisfies PageConfig`. `route.name` is typed `string`, so plain `satisfies` widens it, and `typeof config.route` then no longer carries the literal name that loader typing reads (a guarded page's non-null `session`, see the `protect-a-page` topic). `as const` keeps the literal and `satisfies` still checks the shape.
 
 ## The minimum page
 
@@ -256,7 +258,7 @@ export const config = { route: "/products" };
 export const config = {
   route: { path: "/products/:id", name: "products.details" },
   cache: { public: true, maxAge: 60 },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 ```
 
 Prefer an explicit stable `name` for links. Without one, Warlock derives a name from the declared path — a global root page gets `index`, another global page gets its dotted path — the same derivation [filesystem routing](#filesystem-routing) uses when there is no `route` at all.
@@ -281,7 +283,7 @@ export const config = {
     params: v.object({ id: v.string().minLength(2) }),
     query: v.object({ tab: v.string().optional() }).stripUnknown(),
   },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export const loader = (async ({ request }) => {
   const { params, query } = request.validated();
@@ -317,7 +319,7 @@ export const config = {
       }
     },
   ],
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 ```
 
 Returning anything other than `undefined` from a middleware short-circuits the request with that value, exactly as an app or layout middleware does. What that short-circuit actually produces differs by representation and by how the middleware answered:
@@ -337,7 +339,7 @@ default. Opt a public page into shared caching with sibling `config.cache`:
 export const config = {
   route: { path: "/products", name: "products.index" },
   cache: { public: true, maxAge: 60 },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 ```
 
 `maxAge` is seconds. Both keys are required: `cache: { public: true }` is a
@@ -373,7 +375,7 @@ export const config = {
     // or: tags: (data) => [`product:${data.id}`],
     ttl: 300, // optional — defaults to maxAge
   },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 ```
 
 - `serverCache` requires `public: true` (like every `cache` opt-in) AND
@@ -485,7 +487,7 @@ the rejected segment.
 Until a catch-all exists, use the terminal wildcard with an explicit `config.route`:
 
 ```tsx
-export const config = { route: { path: "/docs/*", name: "docs.catchAll" } } satisfies PageConfig;
+export const config = { route: { path: "/docs/*", name: "docs.catchAll" } } as const satisfies PageConfig;
 ```
 
 ## Page-route grammar
@@ -516,7 +518,7 @@ export const config = {
     description: "Browse the product catalogue",
     openGraph: { siteName: "Acme Store", images: [{ url: "/images/catalogue-card.png" }] },
   },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 ```
 
 Every field (title templates, `openGraph`, `twitter`, `meta`, `links`, `canonical`, `robots`), the function form, how root, layout and page metadata merge, and per-locale metadata and `alternates` are in the `set-page-metadata` topic.
@@ -530,7 +532,7 @@ import type { PageConfig } from "@warlock.js/web";
 
 export const config = {
   metadata: { title: "Page not found" },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export default function NotFoundPage() {
   return (
@@ -739,12 +741,12 @@ async function productSitemap() {
   }));
 }
 
-export const config: PageConfig = {
+export const config = {
   sitemap: {
     entries: productSitemap,
     invalidateOn: [Product],
   },
-};
+} as const satisfies PageConfig;
 ```
 
 The query helper above is application-owned: select eligible published rows.
@@ -870,10 +872,10 @@ import { v } from "@warlock.js/seal";
 
 const contactSchema = v.object({ email: v.string().email() });
 
-export const config: PageConfig = {
+export const config = {
   route: { path: "/contact", name: "contact" },
   action: { validation: contactSchema },
-};
+} as const satisfies PageConfig;
 
 export async function action({ request, response }: PageActionContext<typeof contactSchema>) {
   const { email } = request.validated();
@@ -932,7 +934,7 @@ const loginSchema = v.object({
 export const config = {
   route: { path: "/login", name: "login" },
   action: { validation: loginSchema },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export async function action({ request, response }: PageActionContext<typeof loginSchema>) {
   const { email, password } = request.validated();
@@ -972,7 +974,7 @@ import type { PageActionContext, PageConfig } from "@warlock.js/web";
 
 export const config = {
   route: { path: "/account", name: "account" },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export const actions = {
   async logout({ response }: PageActionContext) {
@@ -1020,10 +1022,10 @@ import { useSubmitAction } from "@warlock.js/web/form";
 import type { PageActionContext, PageConfig } from "@warlock.js/web";
 import { contactSchema } from "./contact.schema";
 
-export const config: PageConfig = {
+export const config = {
   route: { path: "/contact", name: "contact" },
   action: { validation: contactSchema },
-};
+} as const satisfies PageConfig;
 
 export async function action({ request, response }: PageActionContext<typeof contactSchema>) {
   const values = request.validated();
@@ -1173,7 +1175,7 @@ import type { PageConfig, PageLoaderContext, PageProps } from "@warlock.js/web";
 export const config = {
   route: { path: "/products/:id", name: "products.details" },
   validation: { params: v.object({ id: v.string().minLength(2) }) },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export async function loader({
   request,
@@ -1331,7 +1333,7 @@ export const config = {
     params: v.object({ id: v.int().coerce() }),
     query: v.object({ tab: v.string().optional() }).stripUnknown(),
   },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 ```
 
 **`params` and `query` arrive as strings — coerce numeric ones.** `request.params`/`request.query` come off the URL, so `v.int()` alone rejects `"2"` ("This input accepts only numbers"). Reach for `v.int().coerce()` (or the matching coercing primitive) on every numeric param or query key.
@@ -1367,7 +1369,7 @@ In production this `errors` array is always the safe issue shape — `{ input, t
 
 A client navigation to the same URL still receives that same 400 status, with no document to render — nothing here changes the data representation's contract.
 
-`request.validated()` uses the schema's output type, so fields with `.default(...)` are present. `request.input("id")` is narrowed from a literal route path when the loader uses `typeof route`.
+`request.validated()` uses the schema's output type, so fields with `.default(...)` are present. Route params are read from `route.params.id` (a `Record<string, string>`) or `request.input("id")`; neither is narrowed per route.
 
 ## Execution order
 
@@ -1379,7 +1381,7 @@ A loader that **throws** is also terminal: it stops lower loaders, discards its 
 
 ## Loader response surface
 
-Each loader gets its own buffered response, never the live one, so that a level discarded by a short-circuit or a throw cannot leak half-written headers or cookies onto a response it no longer owns. These are all of its public methods. The first six return the buffered response, so they chain; the last three return a short-circuit value that you must `return`.
+Each loader gets its own buffered response, never the live one, so that a level discarded by a short-circuit or a throw cannot leak half-written headers or cookies onto a response it no longer owns. These are all of its public methods. The first five return the buffered response, so they chain; the last three return a short-circuit value that you must `return`.
 
 | Method                                  | What it does                                                                                       |
 | --------------------------------------- | -------------------------------------------------------------------------------------------------- |
@@ -1420,7 +1422,7 @@ import type { PageConfig, PageLoaderContext, PageProps } from "@warlock.js/web";
 
 const ONE_YEAR = 60 * 60 * 24 * 365;
 
-export const config = { route: { path: "/settings", name: "settings" } } satisfies PageConfig;
+export const config = { route: { path: "/settings", name: "settings" } } as const satisfies PageConfig;
 
 export async function loader({ request, response }: PageLoaderContext<undefined, typeof config.route>) {
   const requested = request.input("theme");
@@ -1534,7 +1536,7 @@ Only put browser-safe data in `shared`: scalars, arrays, plain objects, or value
 - **`404.page.tsx` never runs its own loader.** The not-found page's module is registered and rendered for real — `register()` and its middleware still run — but the page loader is omitted from the request in both dev and production, so a missing URL cannot trigger application data work or fail a second time. Its ancestry contributes nothing either: the 404 page renders with an empty layout chain by construction. **The root `AppLoader` in `root.tsx` still runs** for a 404 request, so keep it cheap and make sure it tolerates a request that matched nothing.
 - **`process.env` is refused in the client/universal graph, with no `PUBLIC_` exception.** Read it in a loader and return it as page data.
 - **In `warlock dev`, app modules can load twice.** Loaders import through Vite SSR while HTTP handlers load natively, so a module-level singleton (`AsyncLocalStorage`, cache, registry) may exist in two copies. Until the single module graph (planned 5.26), store it on `globalThis[Symbol.for("your-app.name")]`; `warlock start` has one graph and is unaffected.
-- **Server actions are not supported.** POST to an ordinary Warlock API route and call `refresh()` after success.
+- **There are no RSC-style server actions.** Mutate through the page's own `action` export (the `handle-a-form-action` topic) or POST to an ordinary Warlock API route, then call `refresh()` after success.
 - **Responses now stream via React's streaming renderer.** The response still waits for every loader, middleware short-circuit and validation to settle before the first byte goes out — status codes, headers and cookies are unchanged — so this is not an API change for apps built on the framework.
 
 ## See also
@@ -1673,7 +1675,7 @@ import { useTrans, type PageConfig } from "@warlock.js/web";
 
 export const config = {
   route: { path: "/about", name: "about" },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export default function AboutPage() {
   const t = useTrans();
@@ -2274,7 +2276,7 @@ The server cannot see which lazy module rendered, and it never follows `dynamicI
 ```ts
 import type { PageConfig } from "@warlock.js/web";
 
-export const config: PageConfig = {
+export const config = {
   route: "/",
   cache: {
     public: true,
@@ -2282,7 +2284,7 @@ export const config: PageConfig = {
     serverCache: true,
     tags: (_data, { shared }) => [`theme:${shared.theme}`],
   },
-};
+} as const satisfies PageConfig;
 ```
 
 - The key always includes the request host, so tenants on different hosts never share an entry.
@@ -2506,7 +2508,7 @@ Do not wrap this component in `React.memo` unless a prop changes per navigation:
 `href(name, params?, query?)` is the durable primitive for redirects, headers, email bodies, and other non-component callers. It also accepts `href(name, { params, query })`:
 
 ```ts
-import { href } from "@warlock.js/web";
+import { apiHref, href } from "@warlock.js/web";
 
 const productUrl = href(
   "products.details",
@@ -2640,7 +2642,7 @@ This is pending/not-pending, never percent-complete. Keep CSS in the imported
 stylesheet; do not add an inline `<style>` tag. `routerEvents` remains for
 analytics and post-navigation observation, but it is not a pending-state API.
 
-This is an ordinary API mutation followed by a re-fetch. Server actions are not supported.
+This is an ordinary API mutation followed by a re-fetch. A form that belongs to the page can use a page `action` instead (the `handle-a-form-action` topic).
 
 ## Read the query string live — `useQueryString`
 
@@ -2837,7 +2839,7 @@ import { requireUser } from "@warlock.js/web/session";
 export const config = {
   route: { path: "/account", name: "account.show" },
   middleware: [requireUser({ loginPath: "/login" })],
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export async function loader({ session }: PageLoaderContext<undefined, undefined, "account.show">) {
   // session is { user, model } here, neither null, and request.locals.user is non-null
@@ -2853,6 +2855,8 @@ export default function AccountPage({ data }: PageProps<typeof loader>) {
 
 - **Loader context.** `PageLoaderContext<Validation, typeof route>` (and `PageLoader`) type `session` as non-optional `{ user, model }` and `request.locals.user` as non-null for a guarded page. The route name comes from the third type argument as above, or from `typeof config.route` when `route` keeps a literal name: declare `config` `as const satisfies PageConfig`, because plain `satisfies` widens `name` to `string` and the loader then types `session` as optional. Layout and app loaders, page actions and unguarded pages are unchanged: there `session` is still optional and `user` may be `null`.
 - **`useUser(routeName)`** returns a non-null `SessionUser`; any name that is not a guarded page fails to compile. Passing the name also keeps the last signed-in user while that component stays mounted, so a sign-out that flips the store to a guest a frame before navigation completes does not hand `null` to a component reading `user.name`. Plain `useUser()` is unchanged and still returns `null` for a guest.
+
+To guard a whole subtree at once, put `requireUser()` in a layout's `config.middleware` instead of repeating it per page; the `use-layouts` topic has a worked `/admin` example.
 
 ### What counts as a guard (exact rule)
 
@@ -3106,7 +3110,7 @@ Rules that follow from the source:
 
 ---
 name: render-images
-description: 'Render responsive, CLS-safe images with the `<Image>` component from `@warlock.js/web`: pass a plain `ImageDescriptor` (`src`, `width`, `height`, named `variants`, optional `formats`) and get `srcSet`, `sizes`, intrinsic `width`/`height`, lazy loading and an optional `<picture>` of avif/webp sources, identical on the server and in the browser. Covers `alt`, `sizes`, `priority` for the LCP image, the default `warlockImageLoader` (`?variant=` URLs served by core''s `uploadedFileController`), a custom `loader` for a CDN, and producing descriptors with `generateImageVariants` and `uploads.images`. Triggers: `Image`, `ImageDescriptor`, `ImageProps`, `ImageLoader`, `warlockImageLoader`, `srcSet`, `sizes`, `priority`, `generateImageVariants`, `uploads.images`, `uploadedFileController`; "add an image to a page", "responsive images", "lazy load images", "LCP image", "image layout shift", "webp avif", "image CDN loader", "resize uploaded images". Skip: measuring LCP/CLS in the field — the `measure-web-vitals` topic; static files that need no resizing (`public/` URLs in a plain `<img>`) — the `create-a-page` topic; storage and upload handling — the `warlock-js-core` skill; competing components `next/image`, `react-image`, `unpic`.'
+description: 'Render responsive, CLS-safe images with the `<Image>` component from `@warlock.js/web`: pass a plain `ImageDescriptor` (`src`, `width`, `height`, named `variants`, optional `formats`) and get `srcSet`, `sizes`, intrinsic `width`/`height`, lazy loading and an optional `<picture>` of avif/webp sources, identical on the server and in the browser. Covers `alt`, `sizes`, `priority` for the LCP image, the default `warlockImageLoader` (`?variant=` URLs served by core''s `uploadedFileController`), a custom `loader` for a CDN, and producing descriptors with `generateImageVariants` and `uploads.images`. Triggers: `Image`, `ImageDescriptor`, `ImageProps`, `ImageLoader`, `warlockImageLoader`, `srcSet`, `sizes`, `priority`, `generateImageVariants`, `uploads.images`, `uploadedFileController`; "add an image to a page", "responsive images", "lazy load images", "LCP image", "image layout shift", "webp avif", "image CDN loader", "resize uploaded images", "upload an image and render it". Skip: measuring LCP/CLS in the field — the `measure-web-vitals` topic; static files that need no resizing (`public/` URLs in a plain `<img>`) — the `create-a-page` topic; storage and upload handling — the `warlock-js-core` skill; competing components `next/image`, `react-image`, `unpic`.'
 ---
 
 # Warlock — render images
@@ -3127,7 +3131,7 @@ const cover: ImageDescriptor = {
   formats: ["webp"],
 };
 
-export const config = { route: { path: "/blog/post", name: "blog.post" } } satisfies PageConfig;
+export const config = { route: { path: "/blog/post", name: "blog.post" } } as const satisfies PageConfig;
 
 export default function PostPage() {
   return (
@@ -3231,6 +3235,111 @@ Core serves those URLs for **local** uploads. Three pieces:
    ```
 
    Its result is structurally an `ImageDescriptor`, so pass it straight to `<Image image={cover}>`. It needs a local storage driver with a root, and throws `ImageVariantsConfigError` if `uploads.images` is missing, `HttpError` 400 for an unknown variant name, 404 for a path outside the storage root, 413 for an oversized source and 415 for a source that is not jpeg, png, webp or avif.
+
+## Recipe: upload an image and render it
+
+One flow from a file input to a responsive `<Image>`. It assumes the `/uploads/*` route and `src/config/uploads.ts` from the previous section, a local storage driver, and a model with a field for the descriptor.
+
+1. **A model field for the descriptor.** The descriptor is plain JSON, so the model keeps it as-is (add the column or field in its migration; see the `warlock-js-cascade` skill):
+
+   ```ts title="src/app/posts/models/post/post.model.ts"
+   import { Model, RegisterModel } from "@warlock.js/cascade";
+   import { v, type Infer } from "@warlock.js/seal";
+
+   const postSchema = v.object({
+     title: v.string(),
+     cover: v.any(), // the ImageDescriptor that generateImageVariants returns
+   });
+
+   @RegisterModel()
+   export class Post extends Model<Infer<typeof postSchema>> {
+     public static table = "posts";
+     public static schema = postSchema;
+   }
+   ```
+
+2. **The form page.** `<Form>` posts `multipart/form-data` by default, `config.action.validation` runs against the body with files included, and `v.file()` makes `request.validated()` hand back an `UploadedFile`:
+
+   ```tsx title="src/web/posts/new-post.page.tsx"
+   import { FieldError, Form } from "@warlock.js/web";
+   import type { PageActionContext, PageConfig } from "@warlock.js/web";
+   import { generateImageVariants } from "@warlock.js/core";
+   import { v } from "@warlock.js/seal";
+   import { Post } from "app/posts/models/post";
+
+   const newPostSchema = v.object({
+     title: v.string(),
+     cover: v
+       .file()
+       .image()
+       .maxSize({ unit: "MB", size: 5 })
+       .mimeType(["image/jpeg", "image/png", "image/webp", "image/avif"]),
+   });
+
+   export const config = {
+     route: { path: "/posts/new", name: "posts.new" },
+     action: { validation: newPostSchema },
+   } as const satisfies PageConfig;
+
+   export async function action({ request, response }: PageActionContext<typeof newPostSchema>) {
+     const { title, cover } = request.validated();
+
+     // Save the original; `saved.path` is relative to the storage root.
+     const saved = await cover.save("posts");
+
+     // Render the configured variants once, up front, and get the descriptor back.
+     const image = await generateImageVariants(saved.path);
+
+     const post = await Post.create({ title, cover: image });
+
+     return response.redirect(`/posts/${post.id}`);
+   }
+
+   export default function NewPostPage() {
+     return (
+       <Form>
+         <input name="title" />
+         <FieldError name="title" />
+         <input name="cover" type="file" accept="image/*" />
+         <FieldError name="cover" />
+         <button>Publish</button>
+       </Form>
+     );
+   }
+   ```
+
+   The `mimeType` list is exactly the source formats `generateImageVariants` accepts, so a gif or svg fails validation (422) instead of reaching it and throwing 415.
+
+3. **Render it.** The loader returns the stored descriptor and the page passes it straight to `<Image>`:
+
+   ```tsx title="src/web/posts/post.page.tsx"
+   import { Image } from "@warlock.js/web";
+   import type { ImageDescriptor, PageConfig, PageLoader, PageProps } from "@warlock.js/web";
+   import { Post } from "app/posts/models/post";
+
+   export const config = {
+     route: { path: "/posts/:id", name: "posts.show" },
+   } as const satisfies PageConfig;
+
+   export const loader = (async ({ request, response }) => {
+     const post = await Post.find(request.input("id"));
+
+     if (!post) return response.notFound();
+
+     return { title: post.get("title") as string, cover: post.get("cover") as ImageDescriptor };
+   }) satisfies PageLoader<undefined, typeof config.route>;
+
+   export default function PostPage({ data }: PageProps<typeof loader>) {
+     return (
+       <main>
+         <h1>{data.title}</h1>
+         <Image image={data.cover} alt={data.title} sizes="(min-width: 768px) 50vw, 100vw" priority />
+       </main>
+     );
+   }
+   ```
+
+The `?variant=` URLs inside that descriptor are served by the `/uploads/*` route using the variants declared in `uploads.images`, so there is nothing else to wire.
 
 ## A CDN or object storage
 
@@ -3337,9 +3446,9 @@ A page may import CSS directly:
 import "./products.css";
 import type { PageConfig } from "@warlock.js/web";
 
-export const config: PageConfig = {
+export const config = {
   route: { path: "/products", name: "products.index" },
-};
+} as const satisfies PageConfig;
 
 export default function ProductsPage() {
   return (
@@ -3487,7 +3596,7 @@ export const config = {
     title: "Products",
     description: "Browse the product catalogue",
   },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export default function ProductsPage() {
   return <h1>Products</h1>;
@@ -3522,7 +3631,7 @@ export const config = {
     },
     twitter: { card: "summary_large_image", site: "@acme" },
   }),
-} satisfies PageConfig<typeof loader>;
+} as const satisfies PageConfig<typeof loader>;
 
 export const loader = (async ({ request }) => {
   const id = request.input("id");
@@ -3692,7 +3801,7 @@ export const config = {
     title: t("pricing.title"),
     description: t("pricing.description"),
   }),
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export default function PricingPage() {
   return <h1>Pricing</h1>;
@@ -3720,7 +3829,7 @@ export const config = {
       "x-default": `/apartments-for-rent-in-${data.listing.slug.en}`,
     },
   }),
-} satisfies PageConfig<typeof loader>;
+} as const satisfies PageConfig<typeof loader>;
 ```
 
 - Keys are locale codes plus the optional `"x-default"`. Values are paths (joined onto the public URL like `canonical`) or absolute URLs.
@@ -3792,7 +3901,7 @@ export const loader = (async ({ request }) => {
 
 export const config = {
   validation,
-} satisfies PageConfig<typeof loader>;
+} as const satisfies PageConfig<typeof loader>;
 
 function Reviews({ reviews }: { reviews: Promise<Review[]> }) {
   const list = use(reviews);
@@ -3919,14 +4028,18 @@ silently unmounting the tree.
 
 ## `web.streaming.deferTimeout`
 
-```ts title="warlock.config.ts"
-export default {
-  web: {
-    streaming: {
-      deferTimeout: 15_000, // milliseconds; default 10000
-    },
+Set it under the `web` config namespace, which is the file `src/config/web.ts` (not `warlock.config.ts`):
+
+```ts title="src/config/web.ts"
+import type { WebConfigurations } from "@warlock.js/web";
+
+const web: WebConfigurations = {
+  streaming: {
+    deferTimeout: 15_000, // milliseconds; default 10000
   },
 };
+
+export default web;
 ```
 
 Applies per deferred key, not per request — three deferred keys on one page
@@ -3951,12 +4064,12 @@ const invalidConfig = {
   metadata: ({ data }) => ({
     title: String(data.reviews), // throws DeferredKeyInMetadataError
   }),
-} satisfies PageConfig<typeof loader>;
+} as const satisfies PageConfig<typeof loader>;
 
 // Right — describe the page from what's already resolved:
 export const config = {
   metadata: ({ data }) => ({ title: data.product.name }),
-} satisfies PageConfig<typeof loader>;
+} as const satisfies PageConfig<typeof loader>;
 ```
 
 There is no way to make `config.metadata` wait for a deferred value — a page's
@@ -4260,7 +4373,7 @@ const subscribeSchema = v.object({ email: v.string().email() });
 export const config = {
   route: { path: "/products/:id", name: "products.details" },
   action: { validation: subscribeSchema },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export const loader = (async ({ request, response }) => {
   const product = await findProduct(request.input("id"));
@@ -4477,7 +4590,7 @@ describe("Test Infrastructure", () => {
 
 ---
 name: use-layouts
-description: 'Wrap pages with positional `layout.tsx` modules, compose literal `config.prefix`, inherited middleware, static robots, and sitemap defaults, load typed layout data with `LayoutLoader` / `LayoutProps`, and preserve layout state during client navigation. Triggers: `layout.tsx`, `prefix`, `LayoutLoader`, `LayoutProps`, `children`; "add a page layout", "share navigation between pages", "prefix page routes", "keep a layout mounted". Skip: full-document root — the `write-the-root` topic; page route export — the `create-a-page` topic; loader and shared lifecycle — the `load-page-data` topic; competing layout systems `next/layout`, React Router outlets, Remix nested routes.'
+description: 'Wrap pages with positional `layout.tsx` modules, compose literal `config.prefix`, inherited middleware, static robots, and sitemap defaults, load typed layout data with `LayoutLoader` / `LayoutProps`, and preserve layout state during client navigation. Triggers: `layout.tsx`, `prefix`, `LayoutLoader`, `LayoutProps`, `children`; "add a page layout", "share navigation between pages", "prefix page routes", "keep a layout mounted", "guard all admin pages with a layout". Skip: full-document root — the `write-the-root` topic; page route export — the `create-a-page` topic; loader and shared lifecycle — the `load-page-data` topic; competing layout systems `next/layout`, React Router outlets, Remix nested routes.'
 ---
 
 # Warlock — use layouts
@@ -4525,9 +4638,9 @@ A page beside it can declare its path relative to the prefix:
 ```tsx title="src/web/products/index.page.tsx"
 import type { PageConfig } from "@warlock.js/web";
 
-export const config: PageConfig = {
+export const config = {
   route: { path: "/", name: "products.index" },
-};
+} as const satisfies PageConfig;
 
 export default function ProductsPage() {
   return <h1>Products</h1>;
@@ -4555,9 +4668,9 @@ export const config: LayoutConfig = { prefix: "/account" };
 ```tsx title="src/web/users/account/settings.page.tsx"
 import type { PageConfig } from "@warlock.js/web";
 
-export const config: PageConfig = {
+export const config = {
   route: { path: "/settings", name: "users.account.settings" },
-};
+} as const satisfies PageConfig;
 
 export default function SettingsPage() {
   return <h1>Account settings</h1>;
@@ -4575,6 +4688,49 @@ Prefix nesting does not imply wrapper nesting. Pages currently support at most o
 The two prefix-only layouts above are legal because neither renders. Add a default export to at most one of them. If two layouts on the path have default exports, discovery and boot throw `NestedLayoutsNotSupportedError`, naming the page and both rendering layouts.
 
 Non-rendering layouts may carry `config.prefix` and `config.middleware` and may nest freely. Do not delete a middleware-only authorization boundary to satisfy the rendering limit; consolidate only the default-export wrappers.
+
+## Example: a guarded `/admin` layout
+
+One layout guards every page under `/admin`. The `prefix` puts the subtree at `/admin`, and the layout's `middleware` runs before any descendant loader.
+
+Prerequisite: `requireUser()` needs the page session. Wire `web.session` once in `src/config/web.ts` with `pageSession(...)` from `@warlock.js/auth`, as the `protect-a-page` topic shows. Without it nobody resolves as signed in, so every request is treated as a guest.
+
+```tsx title="src/web/admin/layout.tsx"
+import type { LayoutConfig, LayoutProps } from "@warlock.js/web";
+import { requireUser } from "@warlock.js/web/session";
+
+export const config: LayoutConfig = {
+  prefix: "/admin",
+  middleware: [requireUser({ loginPath: "/login", userType: "admin" })],
+};
+
+export default function AdminLayout({ children }: LayoutProps) {
+  return (
+    <div className="admin-shell">
+      <nav aria-label="Admin">{/* admin navigation */}</nav>
+      {children}
+    </div>
+  );
+}
+```
+
+```tsx title="src/web/admin/dashboard.page.tsx"
+import type { PageConfig } from "@warlock.js/web";
+
+export const config = {
+  route: { path: "/dashboard", name: "admin.dashboard" },
+} as const satisfies PageConfig;
+
+export default function DashboardPage() {
+  return <h1>Dashboard</h1>;
+}
+```
+
+The page is served at `/admin/dashboard` and is guarded without declaring any middleware of its own. A guest gets a 302 to `/login?redirect=<url>`; a signed-in user whose `userType` differs gets a 403.
+
+- **Keep `/login` outside `src/web/admin/`.** Every page below the layout is guarded, so a login page there would redirect to itself.
+- **Omit the default export to guard without wrapping.** A layout with only `config` is a middleware-only boundary and does not count toward the one-rendering-layout limit.
+- **Types follow the guard.** The route-types generator sees a literal `requireUser(...)` in a layout's `config.middleware` and types every page below it as guarded, so `useUser("admin.dashboard")` is non-null. See the `protect-a-page` topic for the exact rule.
 
 ## `404.page.tsx` never gets a layout
 
@@ -4637,6 +4793,7 @@ cache policy, validation, or a sitemap supplier.
 ## See also
 
 - The `create-a-page` topic: declare the page path composed after the prefix.
+- The `protect-a-page` topic: `web.session`, `requireUser()` and `requireGuest()` options, and what the generator treats as a guard.
 - The `write-the-root` topic: the document and `#vessel` outside the layout.
 - The `load-page-data` topic: `LayoutLoader`, sequential execution, and `shared`.
 - The `navigate-on-the-client` topic: client swaps and `refresh()`.

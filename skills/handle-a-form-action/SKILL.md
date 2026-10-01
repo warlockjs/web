@@ -14,10 +14,10 @@ import { v } from "@warlock.js/seal";
 
 const contactSchema = v.object({ email: v.string().email() });
 
-export const config: PageConfig = {
+export const config = {
   route: { path: "/contact", name: "contact" },
   action: { validation: contactSchema },
-};
+} as const satisfies PageConfig;
 
 export async function action({ request, response }: PageActionContext<typeof contactSchema>) {
   const { email } = request.validated();
@@ -76,7 +76,7 @@ const loginSchema = v.object({
 export const config = {
   route: { path: "/login", name: "login" },
   action: { validation: loginSchema },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export async function action({ request, response }: PageActionContext<typeof loginSchema>) {
   const { email, password } = request.validated();
@@ -116,7 +116,7 @@ import type { PageActionContext, PageConfig } from "@warlock.js/web";
 
 export const config = {
   route: { path: "/account", name: "account" },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export const actions = {
   async logout({ response }: PageActionContext) {
@@ -164,10 +164,10 @@ import { useSubmitAction } from "@warlock.js/web/form";
 import type { PageActionContext, PageConfig } from "@warlock.js/web";
 import { contactSchema } from "./contact.schema";
 
-export const config: PageConfig = {
+export const config = {
   route: { path: "/contact", name: "contact" },
   action: { validation: contactSchema },
-};
+} as const satisfies PageConfig;
 
 export async function action({ request, response }: PageActionContext<typeof contactSchema>) {
   const values = request.validated();

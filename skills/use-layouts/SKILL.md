@@ -1,6 +1,6 @@
 ---
 name: use-layouts
-description: 'Wrap pages with positional `layout.tsx` modules, compose literal `config.prefix`, inherited middleware, static robots, and sitemap defaults, load typed layout data with `LayoutLoader` / `LayoutProps`, and preserve layout state during client navigation. Triggers: `layout.tsx`, `prefix`, `LayoutLoader`, `LayoutProps`, `children`; "add a page layout", "share navigation between pages", "prefix page routes", "keep a layout mounted". Skip: full-document root — the `write-the-root` topic; page route export — the `create-a-page` topic; loader and shared lifecycle — the `load-page-data` topic; competing layout systems `next/layout`, React Router outlets, Remix nested routes.'
+description: 'Wrap pages with positional `layout.tsx` modules, compose literal `config.prefix`, inherited middleware, static robots, and sitemap defaults, load typed layout data with `LayoutLoader` / `LayoutProps`, and preserve layout state during client navigation. Triggers: `layout.tsx`, `prefix`, `LayoutLoader`, `LayoutProps`, `children`; "add a page layout", "share navigation between pages", "prefix page routes", "keep a layout mounted", "guard all admin pages with a layout". Skip: full-document root — the `write-the-root` topic; page route export — the `create-a-page` topic; loader and shared lifecycle — the `load-page-data` topic; competing layout systems `next/layout`, React Router outlets, Remix nested routes.'
 ---
 
 # Warlock — use layouts
@@ -48,9 +48,9 @@ A page beside it can declare its path relative to the prefix:
 ```tsx title="src/web/products/index.page.tsx"
 import type { PageConfig } from "@warlock.js/web";
 
-export const config: PageConfig = {
+export const config = {
   route: { path: "/", name: "products.index" },
-};
+} as const satisfies PageConfig;
 
 export default function ProductsPage() {
   return <h1>Products</h1>;
@@ -78,9 +78,9 @@ export const config: LayoutConfig = { prefix: "/account" };
 ```tsx title="src/web/users/account/settings.page.tsx"
 import type { PageConfig } from "@warlock.js/web";
 
-export const config: PageConfig = {
+export const config = {
   route: { path: "/settings", name: "users.account.settings" },
-};
+} as const satisfies PageConfig;
 
 export default function SettingsPage() {
   return <h1>Account settings</h1>;
@@ -98,6 +98,49 @@ Prefix nesting does not imply wrapper nesting. Pages currently support at most o
 The two prefix-only layouts above are legal because neither renders. Add a default export to at most one of them. If two layouts on the path have default exports, discovery and boot throw `NestedLayoutsNotSupportedError`, naming the page and both rendering layouts.
 
 Non-rendering layouts may carry `config.prefix` and `config.middleware` and may nest freely. Do not delete a middleware-only authorization boundary to satisfy the rendering limit; consolidate only the default-export wrappers.
+
+## Example: a guarded `/admin` layout
+
+One layout guards every page under `/admin`. The `prefix` puts the subtree at `/admin`, and the layout's `middleware` runs before any descendant loader.
+
+Prerequisite: `requireUser()` needs the page session. Wire `web.session` once in `src/config/web.ts` with `pageSession(...)` from `@warlock.js/auth`, as the `protect-a-page` topic shows. Without it nobody resolves as signed in, so every request is treated as a guest.
+
+```tsx title="src/web/admin/layout.tsx"
+import type { LayoutConfig, LayoutProps } from "@warlock.js/web";
+import { requireUser } from "@warlock.js/web/session";
+
+export const config: LayoutConfig = {
+  prefix: "/admin",
+  middleware: [requireUser({ loginPath: "/login", userType: "admin" })],
+};
+
+export default function AdminLayout({ children }: LayoutProps) {
+  return (
+    <div className="admin-shell">
+      <nav aria-label="Admin">{/* admin navigation */}</nav>
+      {children}
+    </div>
+  );
+}
+```
+
+```tsx title="src/web/admin/dashboard.page.tsx"
+import type { PageConfig } from "@warlock.js/web";
+
+export const config = {
+  route: { path: "/dashboard", name: "admin.dashboard" },
+} as const satisfies PageConfig;
+
+export default function DashboardPage() {
+  return <h1>Dashboard</h1>;
+}
+```
+
+The page is served at `/admin/dashboard` and is guarded without declaring any middleware of its own. A guest gets a 302 to `/login?redirect=<url>`; a signed-in user whose `userType` differs gets a 403.
+
+- **Keep `/login` outside `src/web/admin/`.** Every page below the layout is guarded, so a login page there would redirect to itself.
+- **Omit the default export to guard without wrapping.** A layout with only `config` is a middleware-only boundary and does not count toward the one-rendering-layout limit.
+- **Types follow the guard.** The route-types generator sees a literal `requireUser(...)` in a layout's `config.middleware` and types every page below it as guarded, so `useUser("admin.dashboard")` is non-null. See the `protect-a-page` topic for the exact rule.
 
 ## `404.page.tsx` never gets a layout
 
@@ -160,6 +203,7 @@ cache policy, validation, or a sitemap supplier.
 ## See also
 
 - The `create-a-page` topic: declare the page path composed after the prefix.
+- The `protect-a-page` topic: `web.session`, `requireUser()` and `requireGuest()` options, and what the generator treats as a guard.
 - The `write-the-root` topic: the document and `#vessel` outside the layout.
 - The `load-page-data` topic: `LayoutLoader`, sequential execution, and `shared`.
 - The `navigate-on-the-client` topic: client swaps and `refresh()`.

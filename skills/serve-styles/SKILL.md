@@ -69,9 +69,9 @@ A page may import CSS directly:
 import "./products.css";
 import type { PageConfig } from "@warlock.js/web";
 
-export const config: PageConfig = {
+export const config = {
   route: { path: "/products", name: "products.index" },
-};
+} as const satisfies PageConfig;
 
 export default function ProductsPage() {
   return (

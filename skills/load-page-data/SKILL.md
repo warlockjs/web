@@ -120,7 +120,7 @@ import type { PageConfig, PageLoaderContext, PageProps } from "@warlock.js/web";
 export const config = {
   route: { path: "/products/:id", name: "products.details" },
   validation: { params: v.object({ id: v.string().minLength(2) }) },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export async function loader({
   request,
@@ -278,7 +278,7 @@ export const config = {
     params: v.object({ id: v.int().coerce() }),
     query: v.object({ tab: v.string().optional() }).stripUnknown(),
   },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 ```
 
 **`params` and `query` arrive as strings — coerce numeric ones.** `request.params`/`request.query` come off the URL, so `v.int()` alone rejects `"2"` ("This input accepts only numbers"). Reach for `v.int().coerce()` (or the matching coercing primitive) on every numeric param or query key.
@@ -314,7 +314,7 @@ In production this `errors` array is always the safe issue shape — `{ input, t
 
 A client navigation to the same URL still receives that same 400 status, with no document to render — nothing here changes the data representation's contract.
 
-`request.validated()` uses the schema's output type, so fields with `.default(...)` are present. `request.input("id")` is narrowed from a literal route path when the loader uses `typeof route`.
+`request.validated()` uses the schema's output type, so fields with `.default(...)` are present. Route params are read from `route.params.id` (a `Record<string, string>`) or `request.input("id")`; neither is narrowed per route.
 
 ## Execution order
 
@@ -326,7 +326,7 @@ A loader that **throws** is also terminal: it stops lower loaders, discards its 
 
 ## Loader response surface
 
-Each loader gets its own buffered response, never the live one, so that a level discarded by a short-circuit or a throw cannot leak half-written headers or cookies onto a response it no longer owns. These are all of its public methods. The first six return the buffered response, so they chain; the last three return a short-circuit value that you must `return`.
+Each loader gets its own buffered response, never the live one, so that a level discarded by a short-circuit or a throw cannot leak half-written headers or cookies onto a response it no longer owns. These are all of its public methods. The first five return the buffered response, so they chain; the last three return a short-circuit value that you must `return`.
 
 | Method                                  | What it does                                                                                       |
 | --------------------------------------- | -------------------------------------------------------------------------------------------------- |
@@ -367,7 +367,7 @@ import type { PageConfig, PageLoaderContext, PageProps } from "@warlock.js/web";
 
 const ONE_YEAR = 60 * 60 * 24 * 365;
 
-export const config = { route: { path: "/settings", name: "settings" } } satisfies PageConfig;
+export const config = { route: { path: "/settings", name: "settings" } } as const satisfies PageConfig;
 
 export async function loader({ request, response }: PageLoaderContext<undefined, typeof config.route>) {
   const requested = request.input("theme");
@@ -481,7 +481,7 @@ Only put browser-safe data in `shared`: scalars, arrays, plain objects, or value
 - **`404.page.tsx` never runs its own loader.** The not-found page's module is registered and rendered for real — `register()` and its middleware still run — but the page loader is omitted from the request in both dev and production, so a missing URL cannot trigger application data work or fail a second time. Its ancestry contributes nothing either: the 404 page renders with an empty layout chain by construction. **The root `AppLoader` in `root.tsx` still runs** for a 404 request, so keep it cheap and make sure it tolerates a request that matched nothing.
 - **`process.env` is refused in the client/universal graph, with no `PUBLIC_` exception.** Read it in a loader and return it as page data.
 - **In `warlock dev`, app modules can load twice.** Loaders import through Vite SSR while HTTP handlers load natively, so a module-level singleton (`AsyncLocalStorage`, cache, registry) may exist in two copies. Until the single module graph (planned 5.26), store it on `globalThis[Symbol.for("your-app.name")]`; `warlock start` has one graph and is unaffected.
-- **Server actions are not supported.** POST to an ordinary Warlock API route and call `refresh()` after success.
+- **There are no RSC-style server actions.** Mutate through the page's own `action` export (the `handle-a-form-action` topic) or POST to an ordinary Warlock API route, then call `refresh()` after success.
 - **Responses now stream via React's streaming renderer.** The response still waits for every loader, middleware short-circuit and validation to settle before the first byte goes out — status codes, headers and cookies are unchanged — so this is not an API change for apps built on the framework.
 
 ## See also

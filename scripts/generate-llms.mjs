@@ -23,11 +23,9 @@ const projectName =
     )
     .join(" ");
 const packageNotes = [
-  "SSR React pages served by the same Warlock HTTP server that serves the API — a backend framework that renders React, not a React framework.",
-  "First published release: 5.0.0. `@warlock.js/web` had never been published to npm before this release.",
-  "Use 5.1 or newer. In an installed 5.0.0–5.0.2 app no client JavaScript ran at all: the dev server served `react-dom/client` as raw CommonJS, so `hydrateRoot` was missing and hydration failed on import — dead `useState`, no HMR, `<Link>` falling back to full page loads. Pages still server-rendered, which is why it looked like a React problem.",
-  "Consumer entry points: `@warlock.js/web`, `@warlock.js/web/client/runtime`, `@warlock.js/web/connector`, and `@warlock.js/web/vite`. The published `@warlock.js/web/hydration` subpath is a framework build input; application code never imports it.",
-  "Deliberate non-goals: server actions are a v2 design decision rather than a missing v1 feature; page routes reject regex parameters, optional parameters, and multiple parameters in one segment.",
+  "Server-rendered React pages served by the same Warlock HTTP server that serves the API — a backend framework that renders React, not a React framework. Pages live under `src/web/**` as `*.page.tsx`, each declaring route, middleware, validation, and metadata in one `config` export.",
+  "Consumer entry points: `@warlock.js/web` (pages, loaders, `Link`, `Image`, `Form`), `@warlock.js/web/session` (`requireUser`, `requireGuest`), `@warlock.js/web/form`, `@warlock.js/web/sitemap`, `@warlock.js/web/page-cache`, `@warlock.js/web/client/runtime`, and `@warlock.js/web/connector` (`webConnector`). `@warlock.js/web/build` and `@warlock.js/web/vite` are framework build tooling; application code does not import them. Server-only helpers stay on their subpaths, never the root barrel.",
+  "Deliberate non-goals: no React Server Components (a form that belongs to a page uses its `action` / `actions` export, anything else posts to an ordinary API route); page routes accept only whole-segment `:param` and a terminal `*`, rejecting regex, optional, and multiple parameters in one segment; a page has at most one rendering layout.",
 ];
 
 function parseFrontmatter(contents) {

@@ -58,12 +58,12 @@ async function productSitemap() {
   }));
 }
 
-export const config: PageConfig = {
+export const config = {
   sitemap: {
     entries: productSitemap,
     invalidateOn: [Product],
   },
-};
+} as const satisfies PageConfig;
 ```
 
 The query helper above is application-owned: select eligible published rows.

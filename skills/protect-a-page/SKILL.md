@@ -48,7 +48,7 @@ import { requireUser } from "@warlock.js/web/session";
 export const config = {
   route: { path: "/account", name: "account.show" },
   middleware: [requireUser({ loginPath: "/login" })],
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export async function loader({ session }: PageLoaderContext<undefined, undefined, "account.show">) {
   // session is { user, model } here, neither null, and request.locals.user is non-null
@@ -64,6 +64,8 @@ export default function AccountPage({ data }: PageProps<typeof loader>) {
 
 - **Loader context.** `PageLoaderContext<Validation, typeof route>` (and `PageLoader`) type `session` as non-optional `{ user, model }` and `request.locals.user` as non-null for a guarded page. The route name comes from the third type argument as above, or from `typeof config.route` when `route` keeps a literal name: declare `config` `as const satisfies PageConfig`, because plain `satisfies` widens `name` to `string` and the loader then types `session` as optional. Layout and app loaders, page actions and unguarded pages are unchanged: there `session` is still optional and `user` may be `null`.
 - **`useUser(routeName)`** returns a non-null `SessionUser`; any name that is not a guarded page fails to compile. Passing the name also keeps the last signed-in user while that component stays mounted, so a sign-out that flips the store to a guest a frame before navigation completes does not hand `null` to a component reading `user.name`. Plain `useUser()` is unchanged and still returns `null` for a guest.
+
+To guard a whole subtree at once, put `requireUser()` in a layout's `config.middleware` instead of repeating it per page; the `use-layouts` topic has a worked `/admin` example.
 
 ### What counts as a guard (exact rule)
 

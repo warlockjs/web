@@ -101,7 +101,7 @@ The server cannot see which lazy module rendered, and it never follows `dynamicI
 ```ts
 import type { PageConfig } from "@warlock.js/web";
 
-export const config: PageConfig = {
+export const config = {
   route: "/",
   cache: {
     public: true,
@@ -109,7 +109,7 @@ export const config: PageConfig = {
     serverCache: true,
     tags: (_data, { shared }) => [`theme:${shared.theme}`],
   },
-};
+} as const satisfies PageConfig;
 ```
 
 - The key always includes the request host, so tenants on different hosts never share an entry.

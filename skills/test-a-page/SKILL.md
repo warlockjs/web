@@ -57,7 +57,7 @@ const subscribeSchema = v.object({ email: v.string().email() });
 export const config = {
   route: { path: "/products/:id", name: "products.details" },
   action: { validation: subscribeSchema },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export const loader = (async ({ request, response }) => {
   const product = await findProduct(request.input("id"));

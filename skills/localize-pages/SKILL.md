@@ -122,7 +122,7 @@ import { useTrans, type PageConfig } from "@warlock.js/web";
 
 export const config = {
   route: { path: "/about", name: "about" },
-} satisfies PageConfig;
+} as const satisfies PageConfig;
 
 export default function AboutPage() {
   const t = useTrans();
