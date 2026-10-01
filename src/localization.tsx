@@ -37,14 +37,19 @@ export type TranslationConverter<Placeholders = unknown, Result = unknown> = (
  * default plain converter always yields a string). With an explicit converter
  * the result is exactly what that converter returns.
  */
-// One generic signature, not overloads: an overloaded type gives a lambda
-// passed where a `Translate` is expected (`label((key) => t(key))`) no
-// contextual parameter type, which is an implicit-any error in apps.
-export type TranslateFor<Key extends string> = <Placeholders = unknown, Result = string>(
+// One plain signature returning `string` — neither overloads nor generics:
+// - overloads give a lambda passed where a `Translate` is expected
+//   (`label((key) => t(key))`) no contextual parameter type (implicit any);
+// - a generic `Result` makes `(key) => t(String(key))` (core's `t`, which
+//   returns `string`) unassignable to it, and leaves `t(...)` unresolved in
+//   expressions such as `name ?? t("fallback")`.
+// A converter that renders something other than a string (e.g. JSX) is the
+// `transX`/`transFrom` territory of `@mongez/react-localization`, not `useTrans()`.
+export type TranslateFor<Key extends string> = (
   keyword: Key | InlineTranslation,
-  placeholders?: Placeholders,
-  converter?: TranslationConverter<Placeholders, Result>,
-) => Result;
+  placeholders?: unknown,
+  converter?: TranslationConverter<never, unknown>,
+) => string;
 
 /** The translator `useTrans()` returns: keys follow `TranslationKeyRegistry` once the app generates it. */
 export type Translate = TranslateFor<TranslationKey>;

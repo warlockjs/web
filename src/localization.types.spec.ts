@@ -1,5 +1,4 @@
 import { describe, expectTypeOf, it } from "vitest";
-import type { ReactElement } from "react";
 import type { Translate, TranslateFor, TranslationKey } from "./index";
 import { useTrans } from "./localization";
 
@@ -23,24 +22,38 @@ describe("useTrans() public types", () => {
     expectTypeOf(probe).toBeFunction();
   });
 
-  it("returns exactly what an explicit converter returns", () => {
+  it("accepts a converter and still types the result as string", () => {
     function probe(trans: Translate) {
-      const element = trans("anything", {}, (translation): ReactElement => {
+      const viaConverter = trans("anything", { count: 2 }, (translation, placeholders: { count: number }) => {
         expectTypeOf(translation).toEqualTypeOf<string>();
 
-        return null as unknown as ReactElement;
+        return `${translation} ${placeholders.count}`;
       });
 
-      expectTypeOf(element).toEqualTypeOf<ReactElement>();
-      expectTypeOf(element).not.toBeAny();
+      expectTypeOf(viaConverter).toEqualTypeOf<string>();
+    }
 
-      const length = trans("anything", { count: 2 }, (translation, placeholders) => {
-        expectTypeOf(placeholders).toEqualTypeOf<{ count: number }>();
+    expectTypeOf(probe).toBeFunction();
+  });
 
-        return translation.length;
-      });
+  it("types t(...) as string inside a ?? fallback (the blog's post card)", () => {
+    function probe(trans: Translate, name?: string) {
+      const authorName = name ?? trans("public.cardAuthorFallback");
 
-      expectTypeOf(length).toEqualTypeOf<number>();
+      expectTypeOf(authorName).toEqualTypeOf<string>();
+    }
+
+    expectTypeOf(probe).toBeFunction();
+  });
+
+  it("accepts a string-returning function where a Translate is expected (the blog's setup file)", () => {
+    // core's server-side `t` returns string; passing a lambda over it to a helper typed `Translate` must compile.
+    function label(translate: Translate): string {
+      return translate("posts.title");
+    }
+
+    function probe(serverT: (key: string) => string) {
+      expectTypeOf(label((key) => serverT(String(key)))).toEqualTypeOf<string>();
     }
 
     expectTypeOf(probe).toBeFunction();
@@ -58,7 +71,7 @@ describe("useTrans() public types", () => {
       // @ts-expect-error -- "posts.missing" is not in the generated registry
       trans("posts.missing");
 
-      // @ts-expect-error -- unknown keys are rejected on the converter overload too
+      // @ts-expect-error -- unknown keys are rejected with a converter too
       trans("posts.missing", {}, (translation) => translation);
     }
 
