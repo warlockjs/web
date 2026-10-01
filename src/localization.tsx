@@ -16,11 +16,42 @@ export type LocaleProviderProps = {
   readonly children: ReactNode;
 };
 
-export type Translate = (
-  keyword: TranslationKey | Exclude<Translatable, string>,
-  placeholders?: unknown,
-  converter?: Converter,
-) => ReturnType<typeof transFrom>;
+/** An inline translation: one string per locale code, resolved without the keyword tables. */
+export type InlineTranslation = Exclude<Translatable, string>;
+
+/**
+ * A converter handed to the translator: receives the resolved translation,
+ * the placeholders the caller passed, and the placeholder pattern, and returns
+ * whatever the caller wants rendered (a string, JSX, ...).
+ */
+export type TranslationConverter<Placeholders = unknown, Result = unknown> = (
+  translation: string,
+  placeholders: Placeholders,
+  placeholderPattern: RegExp,
+) => Result;
+
+/**
+ * The translator `useTrans()` returns, checked against `Key`.
+ *
+ * Without a converter the result is the converted translation string (the
+ * default plain converter always yields a string). With an explicit converter
+ * the result is exactly what that converter returns.
+ */
+export interface TranslateFor<Key extends string> {
+  (
+    keyword: Key | InlineTranslation,
+    placeholders?: unknown,
+    converter?: undefined,
+  ): string;
+  <Placeholders, Result>(
+    keyword: Key | InlineTranslation,
+    placeholders: Placeholders,
+    converter: TranslationConverter<Placeholders, Result>,
+  ): Result;
+}
+
+/** The translator `useTrans()` returns: keys follow `TranslationKeyRegistry` once the app generates it. */
+export type Translate = TranslateFor<TranslationKey>;
 
 type LocaleValue = {
   readonly locale: string;
@@ -76,10 +107,10 @@ export function useTrans(): Translate {
   const { locale, translations } = value;
 
   return useCallback(
-    (keyword, placeholders, converter) =>
+    (keyword: Translatable, placeholders?: unknown, converter?: Converter): unknown =>
       translations === undefined
         ? transFrom(locale, keyword, placeholders, converter)
         : transFromKeywords(locale, translations, keyword, placeholders, converter),
     [locale, translations],
-  );
+  ) as Translate;
 }

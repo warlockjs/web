@@ -6,6 +6,7 @@ All notable changes to `@warlock.js/web` are documented here.
 
 ### Fixed
 
+- `useTrans()` returns a typed translator: the result is `string` (or your converter's return type when you pass one), not `any`; keys are still checked against `TranslationKeyRegistry`. New type exports: `TranslateFor`, `TranslationConverter`, `InlineTranslation` (FORMAI).
 - Multi-site apps in `warlock dev`: a site's `root.tsx` and its `locales.json` are keyed by the same site folder (as in production), so the root `LocaleProvider` gets the site dictionary instead of `{}`, including when the client rebuilds after an SSR failure (FORMAI).
 - `locales.json` under `﻿# Changelog
 

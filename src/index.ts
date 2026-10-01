@@ -130,7 +130,13 @@ import type { PipelineLoaderContext } from "./server/execute-page-request.types"
 
 /** The session stage 2.5 resolved, as `ctx.session` on a loader, action or action middleware. */
 export type PageSession = NonNullable<PipelineLoaderContext["session"]>;
-export type { LocaleProviderProps, Translate } from "./localization";
+export type {
+  InlineTranslation,
+  LocaleProviderProps,
+  Translate,
+  TranslateFor,
+  TranslationConverter,
+} from "./localization";
 export { localeDirection } from "./text-direction";
 export type { TextDirection } from "./text-direction";
 export { useTextDirection } from "./use-text-direction";
